@@ -7,18 +7,18 @@ import type {
 
 export const MOCK_USERS: User[] = [
   { id:'u0',  name:'ABK Admin',         email:'abk@cesolutionplus.com', username:'abk',      role:'ADMIN',         avatar:'AB',  status:'active', firstLogin:false, mfaEnabled:true,  createdAt:'2024-01-01', password:'abk123' },
-  { id:'u1',  name:'Mehdi El Yaagoubi', email:'mehdi@nexuserp.com',    username:'mehdi',    role:'ADMIN',         avatar:'ME',  status:'active', firstLogin:false, mfaEnabled:true,  createdAt:'2023-01-15' },
-  { id:'u2',  name:'Nissrine Essahi',   email:'nissrine@nexuserp.com', username:'nissrine', role:'BDS',           avatar:'NE',  status:'active', firstLogin:false, mfaEnabled:true,  createdAt:'2023-03-10' },
-  { id:'u3',  name:'Mehdi El Ayachi',   email:'mehdia@nexuserp.com',   username:'mehdia',   role:'BDS',           avatar:'MEA', status:'active', firstLogin:false, mfaEnabled:true,  createdAt:'2023-03-12' },
-  { id:'u4',  name:'Aymane Chhouma',    email:'aymane@nexuserp.com',   username:'aymane',   role:'BDM',           avatar:'AC',  status:'active', firstLogin:false, mfaEnabled:true,  createdAt:'2023-02-08' },
-  { id:'u5',  name:'Maroua Azelmat',    email:'maroua@nexuserp.com',   username:'maroua',   role:'BDS',           avatar:'MA',  status:'active', firstLogin:false, mfaEnabled:false, createdAt:'2023-04-01' },
-  { id:'u6',  name:'Mohamed Sirraj',    email:'sirraj@nexuserp.com',   username:'sirraj',   role:'BDS',           avatar:'MS',  status:'active', firstLogin:false, mfaEnabled:true,  createdAt:'2023-02-20' },
-  { id:'u7',  name:'Oussama Es-sebaly', email:'oussama@nexuserp.com',  username:'oussama',  role:'BDS',           avatar:'OE',  status:'active', firstLogin:false, mfaEnabled:true,  createdAt:'2023-05-15' },
-  { id:'u8',  name:'Anas Benali',       email:'anas@nexuserp.com',     username:'anas',     role:'PM',            avatar:'AN',  status:'active', firstLogin:false, mfaEnabled:true,  createdAt:'2023-01-20' },
-  { id:'u9',  name:'Zoubair Khalid',    email:'zoubair@nexuserp.com',  username:'zoubair',  role:'SPM',           avatar:'ZK',  status:'active', firstLogin:false, mfaEnabled:true,  createdAt:'2023-01-10' },
-  { id:'u10', name:'Mahmoud El Azzabi', email:'mahmoud@nexuserp.com',  username:'mahmoud',  role:'PM',            avatar:'MA2', status:'active', firstLogin:false, mfaEnabled:true,  createdAt:'2023-03-05' },
-  { id:'u11', name:'Kholoud Rhylane',   email:'kholoud@nexuserp.com',  username:'kholoud',  role:'SUPPORT_AGENT', avatar:'KR',  status:'active', firstLogin:true,  mfaEnabled:false, createdAt:'2024-01-08' },
-  { id:'u12', name:'Zakaria Farouk',    email:'zakaria@nexuserp.com',  username:'zakaria',  role:'BDS',           avatar:'ZF',  status:'active', firstLogin:false, mfaEnabled:true,  createdAt:'2023-06-14' },
+  { id:'u1',  name:'Mehdi El Yaagoubi', email:'mehdi@cesolutionplus.com',    username:'mehdi',    role:'ADMIN',         avatar:'ME',  status:'active', firstLogin:false, mfaEnabled:true,  createdAt:'2023-01-15' },
+  { id:'u2',  name:'Nissrine Essahi',   email:'nissrine@cesolutionplus.com', username:'nissrine', role:'BDS',           avatar:'NE',  status:'active', firstLogin:false, mfaEnabled:true,  createdAt:'2023-03-10' },
+  { id:'u3',  name:'Mehdi El Ayachi',   email:'mehdia@cesolutionplus.com',   username:'mehdia',   role:'BDS',           avatar:'MEA', status:'active', firstLogin:false, mfaEnabled:true,  createdAt:'2023-03-12' },
+  { id:'u4',  name:'Aymane Chhouma',    email:'aymane@cesolutionplus.com',   username:'aymane',   role:'BDM',           avatar:'AC',  status:'active', firstLogin:false, mfaEnabled:true,  createdAt:'2023-02-08' },
+  { id:'u5',  name:'Maroua Azelmat',    email:'maroua@cesolutionplus.com',   username:'maroua',   role:'BDS',           avatar:'MA',  status:'active', firstLogin:false, mfaEnabled:false, createdAt:'2023-04-01' },
+  { id:'u6',  name:'Mohamed Sirraj',    email:'sirraj@cesolutionplus.com',   username:'sirraj',   role:'BDS',           avatar:'MS',  status:'active', firstLogin:false, mfaEnabled:true,  createdAt:'2023-02-20' },
+  { id:'u7',  name:'Oussama Es-sebaly', email:'oussama@cesolutionplus.com',  username:'oussama',  role:'BDS',           avatar:'OE',  status:'active', firstLogin:false, mfaEnabled:true,  createdAt:'2023-05-15' },
+  { id:'u8',  name:'Anas Benali',       email:'anas@cesolutionplus.com',     username:'anas',     role:'PM',            avatar:'AN',  status:'active', firstLogin:false, mfaEnabled:true,  createdAt:'2023-01-20' },
+  { id:'u9',  name:'Zoubair Khalid',    email:'zoubair@cesolutionplus.com',  username:'zoubair',  role:'SPM',           avatar:'ZK',  status:'active', firstLogin:false, mfaEnabled:true,  createdAt:'2023-01-10' },
+  { id:'u10', name:'Mahmoud El Azzabi', email:'mahmoud@cesolutionplus.com',  username:'mahmoud',  role:'PM',            avatar:'MA2', status:'active', firstLogin:false, mfaEnabled:true,  createdAt:'2023-03-05' },
+  { id:'u11', name:'Kholoud Rhylane',   email:'kholoud@cesolutionplus.com',  username:'kholoud',  role:'SUPPORT_AGENT', avatar:'KR',  status:'active', firstLogin:true,  mfaEnabled:false, createdAt:'2024-01-08' },
+  { id:'u12', name:'Zakaria Farouk',    email:'zakaria@cesolutionplus.com',  username:'zakaria',  role:'BDS',           avatar:'ZF',  status:'active', firstLogin:false, mfaEnabled:true,  createdAt:'2023-06-14' },
 ]
 
 export const MOCK_SUBCONTRACTORS: Subcontractor[] = [
@@ -294,7 +294,7 @@ export const MOCK_NOTIFICATIONS: Notification[] = [
   { id:'n10', type:'REPORT_REMINDER',   title:'Non-submission report pending',message:'You have 1 non-submission report awaiting review: NYARNG Meal Drop off FTIG.',       read:true,  createdAt:'2026-05-10T10:00:00', relatedId:'nsr3',targetRole:'BDS' },
   { id:'n11', type:'NON_SUB_REVIEW',    title:'Non-sub report approved',      message:'Generator Maintenance non-submission report was approved by Mehdi.',                  read:true,  createdAt:'2026-05-03T09:30:00', relatedId:'nsr1',targetRole:'BDS' },
   { id:'n12', type:'DELETION_REQUEST',  title:'Deletion request pending',    message:'Photography & Video Production Services deletion requested by Mehdi. Review needed.', read:true,  createdAt:'2026-05-12T09:30:00', relatedId:'dr2', targetRole:'ADMIN' },
-  { id:'n13', type:'SYSTEM',            title:'System update v2.4.1',         message:'NEXUS ERP updated. New BD Tracker analytics and deletion workflow available.',        read:true,  createdAt:'2026-05-09T08:00:00', targetRole:'ALL' },
+  { id:'n13', type:'SYSTEM',            title:'System update v2.4.1',         message:'CE Solution Plus CRM updated. New BD Tracker analytics and deletion workflow available.',        read:true,  createdAt:'2026-05-09T08:00:00', targetRole:'ALL' },
 ]
 
 export const TEAM_STATS = [

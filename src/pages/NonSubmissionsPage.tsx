@@ -313,7 +313,7 @@ export default function NonSubmissionsPage() {
     <div className="p-6 space-y-5 page-enter">
       {/* Header */}
       <motion.div variants={fadeUp} initial="initial" animate="animate">
-        <p className="text-[10px] font-bold text-slate-400 tracking-[0.2em] mb-1">NEXUS Â· NON-SUBMISSIONS</p>
+        <p className="text-[10px] font-bold text-slate-400 tracking-[0.2em] mb-1">CES · NON-SUBMISSIONS</p>
         <h1 className="text-2xl font-black text-slate-900 flex items-center gap-3">
           <ClipboardList size={22} className="text-indigo-500" /> Non-Submission Reports
         </h1>

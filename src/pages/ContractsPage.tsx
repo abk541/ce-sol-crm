@@ -639,7 +639,7 @@ export default function ContractsPage() {
     <div className="p-6 page-enter">
       {/* Header */}
       <div className="mb-5">
-        <p className="text-[10px] font-bold text-slate-400 tracking-[0.2em] mb-1">NEXUS · CONTRACT ADMIN</p>
+        <p className="text-[10px] font-bold text-slate-400 tracking-[0.2em] mb-1">CES · CONTRACT ADMIN</p>
         <h1 className="text-2xl font-black text-slate-900 flex items-center gap-3">
           <FileCheck2 size={22} className="text-indigo-500" /> Active Contracts
         </h1>

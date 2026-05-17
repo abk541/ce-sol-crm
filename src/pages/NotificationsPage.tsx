@@ -71,7 +71,7 @@ export default function NotificationsPage() {
     if (n.targetRole && n.targetRole !== 'ALL' && n.targetRole !== currentUser?.role) return false
     if (filter === 'unread') return !n.read
     const group = FILTER_GROUPS.find(g => g.id === filter)
-    if (group && 'types' in group) return (group.types as string[]).includes(n.type)
+    if (group && 'types' in group) return (group.types as readonly string[]).includes(n.type)
     return true
   })
 
@@ -82,7 +82,7 @@ export default function NotificationsPage() {
       {/* Header */}
       <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
         <div>
-          <p className="text-[10px] font-bold text-slate-400 tracking-[0.2em] mb-1">NEXUS · NOTIFICATIONS</p>
+          <p className="text-[10px] font-bold text-slate-400 tracking-[0.2em] mb-1">CES · NOTIFICATIONS</p>
           <h1 className="text-2xl font-black text-slate-900 flex items-center gap-3">
             <Bell size={20} className="text-indigo-500" /> Notifications
           </h1>
@@ -103,7 +103,7 @@ export default function NotificationsPage() {
           const cnt = notifications.filter(n => {
             if (n.targetRole && n.targetRole !== 'ALL' && n.targetRole !== currentUser?.role) return false
             if (g.id === 'unread') return !n.read
-            if ('types' in g) return (g.types as string[]).includes(n.type)
+            if ('types' in g) return (g.types as readonly string[]).includes(n.type)
             return true
           }).length
           return (

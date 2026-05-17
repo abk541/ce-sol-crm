@@ -21,7 +21,7 @@ const FAKE_QR = `data:image/svg+xml,${encodeURIComponent(`
   <rect x="14" y="14" width="20" height="20" rx="2" fill="#6366F1"/>
   <rect x="166" y="14" width="20" height="20" rx="2" fill="#6366F1"/>
   <rect x="14" y="166" width="20" height="20" rx="2" fill="#6366F1"/>
-  <text x="100" y="105" text-anchor="middle" fill="#22D3EE" font-size="9" font-family="monospace">NEXUS ERP MFA</text>
+  <text x="100" y="105" text-anchor="middle" fill="#22D3EE" font-size="9" font-family="monospace">CES · MFA</text>
 </svg>`)}`
 
 export default function MFASetupPage() {

@@ -276,7 +276,7 @@ export default function PastPerformancesPage() {
       {/* Header */}
       <div className="flex items-start justify-between mb-6 flex-wrap gap-3">
         <div>
-          <p className="text-[10px] font-bold text-slate-400 tracking-[0.2em] mb-1">NEXUS · BUSINESS DEV</p>
+          <p className="text-[10px] font-bold text-slate-400 tracking-[0.2em] mb-1">CES · BUSINESS DEV</p>
           <h1 className="text-2xl font-black text-slate-900 flex items-center gap-3">
             <History size={22} className="text-indigo-500" /> Past Performances
           </h1>

@@ -47,7 +47,7 @@ export default function TopBar() {
       {/* Breadcrumb */}
       <div className="flex items-center gap-2 text-sm select-none">
         <span className="flex items-center gap-1.5 text-slate-400 font-medium">
-          <span className="text-[10px] font-black tracking-widest text-indigo-600 uppercase">NEXUS</span>
+          <span className="text-[10px] font-black tracking-widest text-indigo-600 uppercase">CES</span>
         </span>
         <ChevronRight size={12} className="text-slate-300" />
         <span className="text-slate-700 font-semibold">{label}</span>

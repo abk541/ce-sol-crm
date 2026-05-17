@@ -372,7 +372,7 @@ function AgentDashboard() {
       <motion.div variants={fadeUp} initial="initial" animate="animate">
         <div className="flex items-start justify-between flex-wrap gap-3">
           <div>
-            <p className="text-[10px] font-bold text-slate-400 tracking-[0.2em] mb-1">NEXUS Â· PERFORMANCE COMMAND</p>
+            <p className="text-[10px] font-bold text-slate-400 tracking-[0.2em] mb-1">CES · PERFORMANCE COMMAND</p>
             <h1 className="text-2xl font-black text-slate-900">
               {currentUser?.name.split(' ')[0]}'s Command Center
             </h1>
@@ -679,7 +679,7 @@ function AdminDashboard() {
       <motion.div variants={fadeUp} initial="initial" animate="animate">
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div>
-            <p className="text-[10px] font-bold text-slate-400 tracking-[0.2em] mb-1">NEXUS Â· COMMAND CENTER</p>
+            <p className="text-[10px] font-bold text-slate-400 tracking-[0.2em] mb-1">CES · COMMAND CENTER</p>
             <h1 className="text-2xl font-black text-slate-900">Company Overview</h1>
             <p className="text-slate-500 text-sm mt-0.5">
               Real-time intelligence Â· {new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}

@@ -95,7 +95,7 @@ export default function LoginPage() {
                           value={email}
                           onChange={e => setEmail(e.target.value)}
                           className="input-field pl-10"
-                          placeholder="you@nexuserp.com"
+                          placeholder="you@cesolutionplus.com"
                           required
                         />
                       </div>
@@ -195,7 +195,7 @@ export default function LoginPage() {
         </div>
 
         <p className="text-center text-xs text-slate-700 mt-6">
-          NEXUS ERP v2.4.1 · Protected by MFA
+          CE Solution Plus CRM v2.4.1 · Protected by MFA
         </p>
       </motion.div>
     </div>

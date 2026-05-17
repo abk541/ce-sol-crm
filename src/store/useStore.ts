@@ -743,6 +743,6 @@ export const useStore = create<AppState>()(
       // ── UI ──────────────────────────────────────────────────────────
       toggleSidebar: () => set(s => ({ sidebarCollapsed: !s.sidebarCollapsed })),
     }),
-    { name: 'nexus-erp-store', partialize: s => ({ sidebarCollapsed: s.sidebarCollapsed }) }
+    { name: 'ces-crm-store', partialize: s => ({ sidebarCollapsed: s.sidebarCollapsed }) }
   )
 )

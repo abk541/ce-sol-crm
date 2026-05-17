@@ -41,7 +41,7 @@ export default function CompanyLogo({ variant = 'full', className = '', height =
   if (!imgError) {
     return (
       <img
-        src="/logo.png"
+        src={`${import.meta.env.BASE_URL}logo.png`}
         alt="CE Solution Plus"
         height={height}
         style={{ height, width: 'auto', objectFit: 'contain' }}

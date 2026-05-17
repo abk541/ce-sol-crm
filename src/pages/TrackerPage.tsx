@@ -128,7 +128,7 @@ export default function TrackerPage() {
       <motion.div variants={fadeUp} initial="initial" animate="animate">
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div>
-            <p className="text-[10px] font-bold text-slate-400 tracking-[0.2em] mb-1">NEXUS Â· TRACKER</p>
+            <p className="text-[10px] font-bold text-slate-400 tracking-[0.2em] mb-1">CES · TRACKER</p>
             <h1 className="text-2xl font-black text-slate-900 flex items-center gap-3">
               <ListChecks size={22} className="text-indigo-500" /> Opportunity Tracker
             </h1>

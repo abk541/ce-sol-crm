@@ -22,7 +22,7 @@ const TABS: Tab[] = [
 const STATUS_BADGE: Record<OppStatus, string> = {
   ACTIVE: 'badge-active', SUBMITTED: 'badge-submitted', WON: 'badge-won', LOST: 'badge-lost',
   DISCUSSION: 'badge-discussion', CANCELED: 'badge-canceled', NOT_SUBMITTED: 'badge-notsubmitted',
-  NEW_ASSIGNMENT: 'badge-pending', TERMINATED: 'badge-canceled',
+  NEW_ASSIGNMENT: 'badge-pending', TERMINATED: 'badge-canceled', DROPPED: 'badge-canceled',
 }
 
 function AssignModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) {

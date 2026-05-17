@@ -79,7 +79,7 @@ function UserModal({ user, onClose }: { user: User | null; onClose: () => void }
           <div>
             <label className="text-xs text-slate-500 block mb-1">Email *</label>
             <input type="email" value={form.email} onChange={e => setForm(p => ({ ...p, email: e.target.value }))}
-              className="input-field" placeholder="user@nexuserp.com" required />
+              className="input-field" placeholder="user@cesolutionplus.com" required />
             {form.email.includes('@') && (
               <p className="text-[11px] text-indigo-400 mt-1">Username: {form.email.split('@')[0]}</p>
             )}

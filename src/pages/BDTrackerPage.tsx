@@ -68,7 +68,7 @@ export default function BDTrackerPage() {
     <div className="p-6 page-enter space-y-5">
       {/* Header */}
       <div>
-        <p className="text-[10px] font-bold text-slate-400 tracking-[0.2em] mb-1">NEXUS · BUSINESS DEV</p>
+        <p className="text-[10px] font-bold text-slate-400 tracking-[0.2em] mb-1">CES · BUSINESS DEV</p>
         <h1 className="text-2xl font-black text-slate-900 flex items-center gap-3">
           <TrendingUp size={22} className="text-indigo-500" /> BD Tracker
         </h1>

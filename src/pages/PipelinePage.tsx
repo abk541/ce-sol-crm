@@ -708,7 +708,7 @@ export default function PipelinePage() {
       {/* Header */}
       <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
         <div>
-          <p className="text-[10px] font-bold text-slate-400 tracking-[0.2em] mb-1">NEXUS · PIPELINE</p>
+          <p className="text-[10px] font-bold text-slate-400 tracking-[0.2em] mb-1">CES · PIPELINE</p>
           <h1 className="text-2xl font-black text-slate-900">General Pipeline</h1>
           <p className="text-slate-500 text-sm mt-0.5">{filtered.length} opportunities</p>
         </div>
