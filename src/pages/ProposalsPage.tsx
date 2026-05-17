@@ -1,10 +1,11 @@
 import { useState, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Search, Download, UserPlus, X, Check } from 'lucide-react'
+import { Search, Download, UserPlus, X, Check, ChevronUp, ChevronDown, ChevronsUpDown } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import type { OppStatus, Opportunity } from '../types'
 import toast from 'react-hot-toast'
 import HierarchyAssignPicker from '../components/shared/HierarchyAssignPicker'
+import PeriodFilter, { type Period, filterByPeriod } from '../components/shared/PeriodFilter'
 
 type Tab = { key: OppStatus | 'ALL'; label: string }
 
@@ -24,6 +25,35 @@ const STATUS_BADGE: Record<OppStatus, string> = {
   ACTIVE: 'badge-active', SUBMITTED: 'badge-submitted', WON: 'badge-won', LOST: 'badge-lost',
   DISCUSSION: 'badge-discussion', CANCELED: 'badge-canceled', NOT_SUBMITTED: 'badge-notsubmitted',
   NEW_ASSIGNMENT: 'badge-pending', TERMINATED: 'badge-canceled', DROPPED: 'badge-canceled',
+}
+
+const ROLE_LABELS: Record<string, string> = {
+  MANAGER: 'Manager',
+  OPERATIONS_MANAGER: 'Ops Mgr',
+  TEAM_MANAGER: 'Team Mgr',
+  ASSOCIATE: 'Associate',
+}
+const ROLE_COLORS: Record<string, { color: string; bg: string }> = {
+  MANAGER:            { color: '#4338CA', bg: '#EEF2FF' },
+  OPERATIONS_MANAGER: { color: '#7C3AED', bg: '#F5F3FF' },
+  TEAM_MANAGER:       { color: '#1D4ED8', bg: '#EFF6FF' },
+  ASSOCIATE:          { color: '#0E7490', bg: '#ECFEFF' },
+}
+
+function SortHeader({ col, label, currentKey, dir, onSort }: {
+  col: string; label: string; currentKey: string; dir: 'asc' | 'desc'; onSort: (k: string) => void
+}) {
+  const active = currentKey === col
+  return (
+    <th className="cursor-pointer select-none hover:bg-slate-50 transition-colors" onClick={() => onSort(col)}>
+      <div className="flex items-center gap-1">
+        {label}
+        {active
+          ? (dir === 'asc' ? <ChevronUp size={11} className="text-indigo-500" /> : <ChevronDown size={11} className="text-indigo-500" />)
+          : <ChevronsUpDown size={10} className="text-slate-300" />}
+      </div>
+    </th>
+  )
 }
 
 function AssignModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) {
@@ -83,10 +113,18 @@ function AssignModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }
 }
 
 export default function ProposalsPage() {
-  const { opportunities, updateOpportunity } = useStore()
+  const { opportunities, employees, updateOpportunity } = useStore()
   const [activeTab, setActiveTab] = useState<OppStatus>('ACTIVE')
   const [search, setSearch] = useState('')
   const [assignTarget, setAssignTarget] = useState<Opportunity | null>(null)
+  const [period, setPeriod] = useState<Period | null>(null)
+  const [sortKey, setSortKey] = useState<string>('')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
+
+  const handleSort = (key: string) => {
+    if (sortKey === key) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    else { setSortKey(key); setSortDir('asc') }
+  }
 
   const counts = useMemo(() =>
     Object.fromEntries(TABS.map(t => [t.key, opportunities.filter(o => o.status === t.key).length])),
@@ -103,8 +141,20 @@ export default function ProposalsPage() {
         o.solicitationId.toLowerCase().includes(q)
       )
     }
+    if (period) list = list.filter(o => filterByPeriod(o.dueDate, period))
+    if (sortKey) {
+      list = [...list].sort((a, b) => {
+        let av: any = (a as any)[sortKey]
+        let bv: any = (b as any)[sortKey]
+        if (typeof av === 'string') av = av.toLowerCase()
+        if (typeof bv === 'string') bv = bv.toLowerCase()
+        if (av < bv) return sortDir === 'asc' ? -1 : 1
+        if (av > bv) return sortDir === 'asc' ? 1 : -1
+        return 0
+      })
+    }
     return list
-  }, [opportunities, activeTab, search])
+  }, [opportunities, activeTab, search, period, sortKey, sortDir])
 
   return (
     <div className="p-6 page-enter">
@@ -131,12 +181,15 @@ export default function ProposalsPage() {
         ))}
       </div>
 
-      {/* Search */}
+      {/* Search + Period Filter */}
       <div className="glass rounded-2xl p-4 mb-4">
-        <div className="relative max-w-sm">
-          <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
-          <input value={search} onChange={e => setSearch(e.target.value)}
-            className="input-field pl-9 text-xs" placeholder="Search solicitation, client, ID…" />
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="relative max-w-sm flex-1">
+            <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+            <input value={search} onChange={e => setSearch(e.target.value)}
+              className="input-field pl-9 text-xs" placeholder="Search solicitation, client, ID…" />
+          </div>
+          <PeriodFilter value={period} onChange={setPeriod} />
         </div>
       </div>
 
@@ -146,10 +199,15 @@ export default function ProposalsPage() {
           <table className="data-table">
             <thead>
               <tr>
-                <th>Importance</th><th>Solicitation</th><th>Client</th>
-                <th>Prime</th><th>Type</th><th>Due Date</th><th>Local Time</th>
-                <th>POP</th><th>Location</th><th>Set Aside</th>
-                <th>BDM</th><th>BDS</th><th>POC</th><th>Status</th><th>Actions</th>
+                <th>Importance</th>
+                <SortHeader col="solicitation" label="Solicitation" currentKey={sortKey} dir={sortDir} onSort={handleSort} />
+                <SortHeader col="client" label="Client" currentKey={sortKey} dir={sortDir} onSort={handleSort} />
+                <th>Prime</th><th>Type</th>
+                <SortHeader col="dueDate" label="Due Date" currentKey={sortKey} dir={sortDir} onSort={handleSort} />
+                <th>Local Time</th><th>POP</th><th>Location</th><th>Set Aside</th>
+                <th>Assigned</th>
+                <SortHeader col="status" label="Status" currentKey={sortKey} dir={sortDir} onSort={handleSort} />
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -183,9 +241,21 @@ export default function ProposalsPage() {
                     <td className="text-slate-500 text-xs max-w-[120px]"><p className="truncate">{o.pop || 'N/A'}</p></td>
                     <td className="text-slate-400 text-xs max-w-[100px]"><p className="truncate">{o.location}</p></td>
                     <td><span className="badge badge-canceled text-[10px]">{o.setAside}</span></td>
-                    <td><span className="text-xs text-slate-300 bg-white/5 px-2 py-0.5 rounded-md">{o.bdm}</span></td>
-                    <td><span className="text-xs text-slate-300 bg-white/5 px-2 py-0.5 rounded-md">{o.bds}</span></td>
-                    <td className="text-slate-500 text-xs">{o.poc ?? o.bdm}</td>
+                    <td>
+                      {(() => {
+                        const emp = o.assignedTo ? employees.find(e => e.id === o.assignedTo) : null
+                        if (!emp) return <span className="text-slate-400 text-xs">—</span>
+                        return (
+                          <div className="flex flex-col gap-0.5">
+                            <span className="text-xs font-medium text-slate-700">{emp.name}</span>
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold"
+                              style={{ color: ROLE_COLORS[emp.role]?.color ?? '#475569', background: ROLE_COLORS[emp.role]?.bg ?? '#F1F5F9' }}>
+                              {ROLE_LABELS[emp.role] ?? emp.role}
+                            </span>
+                          </div>
+                        )
+                      })()}
+                    </td>
                     <td><span className={`badge ${STATUS_BADGE[o.status]}`}>{o.status.replace('_',' ')}</span></td>
                     <td>
                       <button onClick={() => setAssignTarget(o)}

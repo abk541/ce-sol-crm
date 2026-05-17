@@ -940,7 +940,7 @@ export default function PipelinePage() {
   const [primeFilter, setPrimeFilter] = useState('All')
   const [typeFilter, setTypeFilter]   = useState('All')
   const [statusFilter, setStatusFilter] = useState('All')
-  const [period, setPeriod]           = useState<Period>('ALL')
+  const [period, setPeriod]           = useState<Period | null>(null)
   const [showCreate, setShowCreate]   = useState(false)
   const [editOpp, setEditOpp]         = useState<Opportunity | null>(null)
   const [subOpp, setSubOpp]           = useState<Opportunity | null>(null)
@@ -954,7 +954,7 @@ export default function PipelinePage() {
     let list = opportunities.filter(o => !o.isDeleted)
 
     // Period filter (by dueDate)
-    list = filterByPeriod(list, period, 'dueDate')
+    if (period) list = list.filter(o => filterByPeriod(o.dueDate, period))
 
     if (search) {
       const q = search.toLowerCase()
@@ -1071,7 +1071,6 @@ export default function PipelinePage() {
                   { label: 'ID', k: 'solicitationId' }, { label: 'Solicitation', k: 'solicitation' },
                   { label: 'Set Aside', k: 'setAside' }, { label: 'Due Date', k: 'dueDate' },
                   { label: 'Time / TZ', k: 'localTime' }, { label: 'Location', k: 'location' },
-                  { label: 'BDM', k: 'bdm' }, { label: 'BDS', k: 'bds' },
                   { label: 'Assigned', k: 'assignedTo' },
                   { label: 'Value', k: 'contractAmount' }, { label: 'Status', k: 'status' },
                   { label: 'Actions', k: '' },
@@ -1127,8 +1126,6 @@ export default function PipelinePage() {
                       )}
                     </td>
                     <td><span className="text-slate-500 text-xs">{o.location}</span></td>
-                    <td><span className="text-slate-600 text-xs font-medium">{o.bdm}</span></td>
-                    <td><span className="text-slate-600 text-xs font-medium">{o.bds}</span></td>
                     <td>
                       {(() => {
                         const emp = o.assignedTo ? employees.find(e => e.id === o.assignedTo) : null
@@ -1217,8 +1214,6 @@ export default function PipelinePage() {
             </DrawerSection>
 
             <DrawerSection title="Team">
-              <DrawerField label="BDM"           value={selectedOpp.bdm} />
-              <DrawerField label="BDS"           value={selectedOpp.bds} />
               <DrawerField label="Support Agent" value={selectedOpp.supportAgent ?? '—'} />
               <DrawerField label="Assigned To"   value={(() => {
                 const emp = selectedOpp.assignedTo ? employees.find(e => e.id === selectedOpp.assignedTo) : null

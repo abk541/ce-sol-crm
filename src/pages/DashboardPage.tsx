@@ -15,7 +15,7 @@ import {
 import { useStore } from '../store/useStore'
 import { AGENT_STATS, REVENUE_TREND, SUBMISSIONS_TREND } from '../data/mock'
 import AnimatedNumber from '../components/shared/AnimatedNumber'
-import PeriodFilter, { type Period, sliceTrendByPeriod } from '../components/shared/PeriodFilter'
+import { PeriodFilterPills as PeriodFilter, type PeriodPill as Period, sliceTrendByPeriod } from '../components/shared/PeriodFilter'
 import { formatCurrency, avatarColor } from '../lib/utils'
 import { useNavigate } from 'react-router-dom'
 

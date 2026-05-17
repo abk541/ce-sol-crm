@@ -42,7 +42,7 @@ export const MOCK_DELETION_REQUESTS: DeletionRequest[] = [
 
 export const MOCK_OPPORTUNITIES: Opportunity[] = [
   {
-    id:'o1', solicitation:'Boiler Repair Philadelphia', solicitationId:'36C24426Q0318',
+    id:'o1', assignedTo:'emp-15', solicitation:'Boiler Repair Philadelphia', solicitationId:'36C24426Q0318',
     client:'Veterans Affairs', prime:'TECH-OR', type:'OTJ', naicsCode:'238220', setAside:'SB',
     priority:'MEDIUM', status:'ACTIVE', dueDate:'2026-05-01', localTime:'20:00', timezone:'EST',
     location:'Philadelphia, PA', pop:'N/A', bdm:'MehdiY', bds:'MehdiY', supportAgent:'Mahmoud',
@@ -51,7 +51,7 @@ export const MOCK_OPPORTUNITIES: Opportunity[] = [
     proposals:[], subcontractors:[],
   },
   {
-    id:'o2', solicitation:'H263—New Base+4 Top Door Alarm Inspection', solicitationId:'36C25226Q0334',
+    id:'o2', assignedTo:'emp-16', solicitation:'H263—New Base+4 Top Door Alarm Inspection', solicitationId:'36C25226Q0334',
     client:'VA Medical Center', prime:'TECH-OR', type:'RECURRING', naicsCode:'561621', setAside:'SB',
     priority:'MEDIUM', status:'ACTIVE', dueDate:'2026-05-01', localTime:'13:00', timezone:'CST',
     location:'Illinois', pop:'1 base yr + 4 option yrs', bdm:'MehdiY', bds:'Sirraj', supportAgent:'Anas',
@@ -59,7 +59,7 @@ export const MOCK_OPPORTUNITIES: Opportunity[] = [
     comments:[], proposals:[], subcontractors:[],
   },
   {
-    id:'o3', solicitation:'MXG Air Compressor Maintenance', solicitationId:'FA462026QA204',
+    id:'o3', assignedTo:'emp-17', solicitation:'MXG Air Compressor Maintenance', solicitationId:'FA462026QA204',
     client:'Fairchild Air Force Base', prime:'TECH-OR', type:'OTJ', naicsCode:'811310', setAside:'SB',
     priority:'MEDIUM', status:'SUBMITTED', dueDate:'2026-05-01', localTime:'17:00', timezone:'PST',
     location:'Fairchild AFB, WA', pop:'N/A', bdm:'Aymane', bds:'Maroua',
@@ -69,7 +69,7 @@ export const MOCK_OPPORTUNITIES: Opportunity[] = [
     proposals:['Proposal_FA462026QA204_v2.pdf'], subcontractors: MOCK_SUBCONTRACTORS.filter(s => s.opportunityId === 'o3'),
   },
   {
-    id:'o4', solicitation:'Sloan Canyon NCA Security Camera System', solicitationId:'140L3826Q0017',
+    id:'o4', assignedTo:'emp-18', solicitation:'Sloan Canyon NCA Security Camera System', solicitationId:'140L3826Q0017',
     client:'National Cemetery Admin', prime:'TECH-OR', type:'OTJ', naicsCode:'561621', setAside:'SB',
     priority:'MEDIUM', status:'ACTIVE', dueDate:'2026-05-01', localTime:'18:00', timezone:'PST',
     location:'NV', pop:'N/A', bdm:'MehdiY', bds:'MehdiY', supportAgent:'Ayoub',
@@ -77,7 +77,7 @@ export const MOCK_OPPORTUNITIES: Opportunity[] = [
     comments:[], proposals:[], subcontractors:[],
   },
   {
-    id:'o5', solicitation:'OLYM Fire Extinguisher Inspection & Repair', solicitationId:'140P8326Q0032',
+    id:'o5', assignedTo:'emp-19', solicitation:'OLYM Fire Extinguisher Inspection & Repair', solicitationId:'140P8326Q0032',
     client:'Olympic National Park', prime:'TECH-OR', type:'RECURRING', naicsCode:'541990', setAside:'SB',
     priority:'MEDIUM', status:'ACTIVE', dueDate:'2026-05-01', localTime:'20:00', timezone:'PST',
     location:'Olympia, WA', pop:'1 base yr + 4 option yrs', bdm:'MehdiY', bds:'Nissrine', supportAgent:'Zoubair',
@@ -85,7 +85,7 @@ export const MOCK_OPPORTUNITIES: Opportunity[] = [
     comments:[], proposals:[], subcontractors:[],
   },
   {
-    id:'o6', solicitation:'CCTV Install', solicitationId:'FA448426Q0006',
+    id:'o6', assignedTo:'emp-20', solicitation:'CCTV Install', solicitationId:'FA448426Q0006',
     client:'Travis Air Force Base', prime:'TECH-OR', type:'OTJ', naicsCode:'561621', setAside:'SB',
     priority:'MEDIUM', status:'DISCUSSION', dueDate:'2026-05-01', localTime:'19:00', timezone:'EST',
     location:'Cape May, NJ', pop:'N/A', bdm:'Aymane', bds:'MehdiA', supportAgent:'Mahmoud',
@@ -94,7 +94,7 @@ export const MOCK_OPPORTUNITIES: Opportunity[] = [
     proposals:[], subcontractors: MOCK_SUBCONTRACTORS.filter(s => s.opportunityId === 'o6'),
   },
   {
-    id:'o7', solicitation:'Security Systems Service', solicitationId:'140L2626Q0031',
+    id:'o7', assignedTo:'emp-21', solicitation:'Security Systems Service', solicitationId:'140L2626Q0031',
     client:'Department of Defense', prime:'TECH-OR', type:'OTJ', naicsCode:'561621', setAside:'SB',
     priority:'MEDIUM', status:'ACTIVE', dueDate:'2026-05-01', localTime:'21:00', timezone:'MST',
     location:'Boise, ID', pop:'N/A', bdm:'Aymane', bds:'Aymane', supportAgent:'Anas',
@@ -102,7 +102,7 @@ export const MOCK_OPPORTUNITIES: Opportunity[] = [
     comments:[], proposals:[], subcontractors: MOCK_SUBCONTRACTORS.filter(s => s.opportunityId === 'o7'),
   },
   {
-    id:'o8', solicitation:'CAT Equipment Rental, Parts & Repair', solicitationId:'140L2626Q0030',
+    id:'o8', assignedTo:'emp-22', solicitation:'CAT Equipment Rental, Parts & Repair', solicitationId:'140L2626Q0030',
     client:'Fort Wainwright', prime:'TECH-OR', type:'RECURRING', naicsCode:'532490', setAside:'SB',
     priority:'MEDIUM', status:'ACTIVE', dueDate:'2026-05-01', localTime:'21:00', timezone:'MST',
     location:'Boise, ID', pop:'N/A', bdm:'Aymane', bds:'MehdiA',
@@ -110,7 +110,7 @@ export const MOCK_OPPORTUNITIES: Opportunity[] = [
     comments:[], proposals:[], subcontractors:[],
   },
   {
-    id:'o9', solicitation:'Fire Panel Maintenance & Service', solicitationId:'37050PR26FIREPANEL',
+    id:'o9', assignedTo:'emp-23', solicitation:'Fire Panel Maintenance & Service', solicitationId:'37050PR26FIREPANEL',
     client:'Delaware Bay AOR', prime:'TECH-OR', type:'RECURRING', naicsCode:'561621', setAside:'SB',
     priority:'MEDIUM', status:'DROPPED', dueDate:'2026-05-01', localTime:'20:00', timezone:'EST',
     location:'Philadelphia, PA', pop:'N/A', bdm:'Aymane', bds:'Aymane', supportAgent:'Khaloud',
@@ -118,7 +118,7 @@ export const MOCK_OPPORTUNITIES: Opportunity[] = [
     comments:[], proposals:[], subcontractors:[], nonSubmissionReportId:'nsr2',
   },
   {
-    id:'o10', solicitation:'R614—Document Destruction NF/SG VHS', solicitationId:'36C24826Q0460',
+    id:'o10', assignedTo:'emp-24', solicitation:'R614—Document Destruction NF/SG VHS', solicitationId:'36C24826Q0460',
     client:'Veterans Affairs', prime:'AYJ-S', type:'RECURRING', naicsCode:'561990', setAside:'SDVOSB',
     priority:'MEDIUM', status:'SUBMITTED', dueDate:'2026-05-01', localTime:'21:00', timezone:'EST',
     location:'N. Florida/S. Georgia', pop:'1 base yr + 4 option yrs', bdm:'Aymane', bds:'Aymane',
@@ -127,7 +127,7 @@ export const MOCK_OPPORTUNITIES: Opportunity[] = [
     comments:[], proposals:['Proposal_R614_FINAL.pdf', 'Price_Schedule_R614.xlsx'], subcontractors:[],
   },
   {
-    id:'o11', solicitation:'Emergency Generators ATS Service Contract', solicitationId:'36C24126Q0410',
+    id:'o11', assignedTo:'emp-25', solicitation:'Emergency Generators ATS Service Contract', solicitationId:'36C24126Q0410',
     client:'Veterans Affairs', prime:'AYJ-S', type:'RECURRING', naicsCode:'811310', setAside:'SDVOSB',
     priority:'MEDIUM', status:'ACTIVE', dueDate:'2026-05-01', localTime:'22:00', timezone:'EST',
     location:'Manchester', pop:'N/A', bdm:'Aymane', bds:'Maroua', supportAgent:'Zakaria',
@@ -135,7 +135,7 @@ export const MOCK_OPPORTUNITIES: Opportunity[] = [
     comments:[], proposals:[], subcontractors:[],
   },
   {
-    id:'o12', solicitation:'Sacramento Water Center Tank Cleaning', solicitationId:'127EAV26Q0037',
+    id:'o12', assignedTo:'emp-26', solicitation:'Sacramento Water Center Tank Cleaning', solicitationId:'127EAV26Q0037',
     client:'EPA Sacramento', prime:'TECH-OR', type:'OTJ', naicsCode:'221310', setAside:'SB',
     priority:'MEDIUM', status:'ACTIVE', dueDate:'2026-05-03', localTime:'23:00', timezone:'CST',
     location:'Sacramento, NM', pop:'N/A', bdm:'Aymane', bds:'Aymane',
@@ -143,7 +143,7 @@ export const MOCK_OPPORTUNITIES: Opportunity[] = [
     comments:[], proposals:[], subcontractors: MOCK_SUBCONTRACTORS.filter(s => s.opportunityId === 'o12'),
   },
   {
-    id:'o13', solicitation:'FY26 AFLCMC Mold Removal & Remediation', solicitationId:'F2XTRA8077A001',
+    id:'o13', assignedTo:'emp-27', solicitation:'FY26 AFLCMC Mold Removal & Remediation', solicitationId:'F2XTRA8077A001',
     client:'Wright-Patterson AFB', prime:'TECH-OR', type:'OTJ', naicsCode:'562910', setAside:'SB',
     priority:'MEDIUM', status:'ACTIVE', dueDate:'2026-05-04', localTime:'17:00', timezone:'EST',
     location:'Montgomery, AL', pop:'N/A', bdm:'MehdiY', bds:'Sirraj', supportAgent:'Mahmoud',
@@ -151,7 +151,7 @@ export const MOCK_OPPORTUNITIES: Opportunity[] = [
     comments:[], proposals:[], subcontractors:[],
   },
   {
-    id:'o14', solicitation:'Generator Maintenance', solicitationId:'1232SA26Q0395',
+    id:'o14', assignedTo:'emp-28', solicitation:'Generator Maintenance', solicitationId:'1232SA26Q0395',
     client:'Beltsville Agricultural Center', prime:'TECH-OR', type:'RECURRING', naicsCode:'561210', setAside:'SB',
     priority:'MEDIUM', status:'NOT_SUBMITTED', dueDate:'2026-05-04', localTime:'21:00', timezone:'EST',
     location:'Beltsville, MD', pop:'N/A', bdm:'MehdiY', bds:'MehdiY', supportAgent:'Zakaria',
@@ -159,7 +159,7 @@ export const MOCK_OPPORTUNITIES: Opportunity[] = [
     comments:[], proposals:[], subcontractors:[], nonSubmissionReportId:'nsr1',
   },
   {
-    id:'o15', solicitation:'J046—Plumbing Flushing Services LLVAHCS', solicitationId:'36C26228Q0499',
+    id:'o15', assignedTo:'emp-29', solicitation:'J046—Plumbing Flushing Services LLVAHCS', solicitationId:'36C26228Q0499',
     client:'VA Loma Linda', prime:'AYJ-S', type:'RECURRING', naicsCode:'238220', setAside:'SDVOSB',
     priority:'MEDIUM', status:'ACTIVE', dueDate:'2026-05-04', localTime:'22:00', timezone:'PST',
     location:'Loma Linda', pop:'1 base yr + 4 option yrs', bdm:'Aymane', bds:'MehdiA',
@@ -167,7 +167,7 @@ export const MOCK_OPPORTUNITIES: Opportunity[] = [
     comments:[], proposals:[], subcontractors:[],
   },
   {
-    id:'o16', solicitation:'Maintenance of HVAC Equipment & Components', solicitationId:'1232SA26Q0422',
+    id:'o16', assignedTo:'emp-30', solicitation:'Maintenance of HVAC Equipment & Components', solicitationId:'1232SA26Q0422',
     client:'USDA Hilo', prime:'TECH-OR', type:'RECURRING', naicsCode:'238220', setAside:'SB',
     priority:'MEDIUM', status:'ACTIVE', dueDate:'2026-05-05', localTime:'20:00', timezone:'HST',
     location:'Hilo, HI', pop:'N/A', bdm:'MehdiY', bds:'Nissrine', supportAgent:'Ayoub',
@@ -175,7 +175,7 @@ export const MOCK_OPPORTUNITIES: Opportunity[] = [
     comments:[], proposals:[], subcontractors:[],
   },
   {
-    id:'o17', solicitation:'Professional Painting Services', solicitationId:'W509TC24Q2550',
+    id:'o17', assignedTo:'emp-7', solicitation:'Professional Painting Services', solicitationId:'W509TC24Q2550',
     client:'U.S. Consulate Jeddah', prime:'SANFORD', type:'OTJ', naicsCode:'238320', setAside:'UNRES',
     priority:'HIGH', status:'ACTIVE', dueDate:'2026-04-25', localTime:'17:00', timezone:'AST',
     location:'Saudi Arabia', pop:'Three years', bdm:'Mehdi ELYAAGOUBI', bds:'Mehdi ELYAAGOUBI',
@@ -183,7 +183,7 @@ export const MOCK_OPPORTUNITIES: Opportunity[] = [
     comments:[], proposals:[], subcontractors: MOCK_SUBCONTRACTORS.filter(s => s.opportunityId === 'o17'),
   },
   {
-    id:'o18', solicitation:'Electrical Materials Supply', solicitationId:'W509TC24Q1100',
+    id:'o18', assignedTo:'emp-8', solicitation:'Electrical Materials Supply', solicitationId:'W509TC24Q1100',
     client:'U.S. Consulate Erbil', prime:'SANFORD', type:'SUPPLY', naicsCode:'335110', setAside:'UNRES',
     priority:'MEDIUM', status:'ACTIVE', dueDate:'2026-04-21', localTime:'17:00', timezone:'IRT',
     location:'Iraq', pop:'N/A', bdm:'Mehdi ELYAAGOUBI', bds:'Mehdi ELYAAGOUBI',
@@ -191,7 +191,7 @@ export const MOCK_OPPORTUNITIES: Opportunity[] = [
     comments:[], proposals:[], subcontractors:[],
   },
   {
-    id:'o19', solicitation:'Supply & Installation of Ceramic Tiles', solicitationId:'W509TC24Q1220',
+    id:'o19', assignedTo:'emp-9', solicitation:'Supply & Installation of Ceramic Tiles', solicitationId:'W509TC24Q1220',
     client:'U.S. Embassy Amman', prime:'SANFORD', type:'OTJ', naicsCode:'238340', setAside:'UNRES',
     priority:'MEDIUM', status:'ACTIVE', dueDate:'2026-04-25', localTime:'16:00', timezone:'EET',
     location:'Jordan', pop:'N/A', bdm:'Mehdi ELYAAGOUBI', bds:'Mehdi ELYAAGOUBI',
@@ -199,7 +199,7 @@ export const MOCK_OPPORTUNITIES: Opportunity[] = [
     comments:[], proposals:[], subcontractors:[],
   },
   {
-    id:'o20', solicitation:'Photography & Video Production Services', solicitationId:'W509TC24Q1340',
+    id:'o20', assignedTo:'emp-10', solicitation:'Photography & Video Production Services', solicitationId:'W509TC24Q1340',
     client:'American Embassy Amman', prime:'SANFORD', type:'OTJ', naicsCode:'541922', setAside:'UNRES',
     priority:'MEDIUM', status:'SUBMITTED', dueDate:'2026-04-28', localTime:'16:00', timezone:'EET',
     location:'Jordan', pop:'N/A', bdm:'Mehdi ELYAAGOUBI', bds:'Mehdi ELYAAGOUBI',
@@ -208,7 +208,7 @@ export const MOCK_OPPORTUNITIES: Opportunity[] = [
     comments:[], proposals:['Proposal_W509TC24Q1340.pdf'], subcontractors:[], nonSubmissionReportId:undefined,
   },
   {
-    id:'o21', solicitation:'B44 Elevator Repair', solicitationId:'W50S7X26Q0003',
+    id:'o21', assignedTo:'emp-11', solicitation:'B44 Elevator Repair', solicitationId:'W50S7X26Q0003',
     client:'Prairie View A&M', prime:'TECH-OR', type:'OTJ', naicsCode:'238290', setAside:'SB',
     priority:'MEDIUM', status:'SUBMITTED', dueDate:'2026-04-30', localTime:'14:00', timezone:'CST',
     location:'Prairie Village, KS', pop:'N/A', bdm:'Aymane', bds:'MehdiA', supportAgent:'Zoubair',
@@ -217,7 +217,7 @@ export const MOCK_OPPORTUNITIES: Opportunity[] = [
     comments:[], proposals:[], subcontractors:[],
   },
   {
-    id:'o22', solicitation:'CAT Dozer Repair Parts', solicitationId:'W911S226U3096',
+    id:'o22', assignedTo:'emp-12', solicitation:'CAT Dozer Repair Parts', solicitationId:'W911S226U3096',
     client:'Fort Drum', prime:'TECH-OR', type:'SUPPLY', naicsCode:'336412', setAside:'SB',
     priority:'MEDIUM', status:'ACTIVE', dueDate:'2026-04-30', localTime:'16:30', timezone:'EST',
     location:'Fort Drum, NY', pop:'N/A', bdm:'Aymane', bds:'Aymane', supportAgent:'Zakaria',
@@ -225,7 +225,7 @@ export const MOCK_OPPORTUNITIES: Opportunity[] = [
     comments:[], proposals:[], subcontractors:[], deletionRequested:false,
   },
   {
-    id:'o23', solicitation:'ZIDA—FY26 Service Elevator Maintenance', solicitationId:'36C24226Q0527',
+    id:'o23', assignedTo:'emp-13', solicitation:'ZIDA—FY26 Service Elevator Maintenance', solicitationId:'36C24226Q0527',
     client:'Veterans Affairs', prime:'AYJ-S', type:'RECURRING', naicsCode:'561621', setAside:'SB',
     priority:'MEDIUM', status:'SUBMITTED', dueDate:'2026-04-29', localTime:'21:00', timezone:'EST',
     location:'Batavia, NY', pop:'N/A', bdm:'MehdiY', bds:'Nissrine', supportAgent:'Aamir',
@@ -234,7 +234,7 @@ export const MOCK_OPPORTUNITIES: Opportunity[] = [
     comments:[], proposals:['Proposal_ZIDA_Elevator.pdf'], subcontractors:[],
   },
   {
-    id:'o24', solicitation:'NYARNG Meal Drop off FTIG', solicitationId:'W912PO-26-Q-A013',
+    id:'o24', assignedTo:'emp-14', solicitation:'NYARNG Meal Drop off FTIG', solicitationId:'W912PO-26-Q-A013',
     client:'New York National Guard', prime:'TECH-OR', type:'OTJ', naicsCode:'722310', setAside:'SB',
     priority:'MEDIUM', status:'NOT_SUBMITTED', dueDate:'2026-04-30', localTime:'21:00', timezone:'EST',
     location:'New York, NY', pop:'N/A', bdm:'MehdiY', bds:'Sirraj',
@@ -242,7 +242,7 @@ export const MOCK_OPPORTUNITIES: Opportunity[] = [
     comments:[], proposals:[], subcontractors:[], nonSubmissionReportId:'nsr3',
   },
   {
-    id:'o25', solicitation:'Fire Pump Services Iowa City VAMC', solicitationId:'36C26326Q0436',
+    id:'o25', assignedTo:'emp-3', solicitation:'Fire Pump Services Iowa City VAMC', solicitationId:'36C26326Q0436',
     client:'VA Iowa City', prime:'TECH-OR', type:'RECURRING', naicsCode:'238220', setAside:'SB',
     priority:'HIGH', status:'WON', dueDate:'2026-04-30', localTime:'21:00', timezone:'CST',
     location:'Iowa City, IA', pop:'1 base yr + 4 option yrs', bdm:'Aymane', bds:'MehdiA',
@@ -360,19 +360,19 @@ export const MOCK_OPPORTUNITIES: Opportunity[] = [
 )
 
 export const MOCK_CONTRACTS: Contract[] = [
-  { id:'c1',  contractId:'FA44726P0021',   title:'WY Snow Removal Mills Complex',             prime:'TECH-OR', type:'RECURRING', naicsCode:'561720', status:'ON_GOING',       location:'Mills WY 82644',                     popStart:'Dec 20, 2025', popEnd:'Dec 30, 2027', value:11702,    spm:'Zoubair', pm:'Anas',    followUpDate:'2026-06-01', billingNotes:'Monthly invoices due 1st.' },
-  { id:'c2',  contractId:'FA44726P0021',   title:'Fire Door Drop Test/Certification B9',       prime:'TECH-OR', type:'OTJ',       naicsCode:'561621', status:'ACTIVE',         location:'Travis AFB, TX',                     popStart:'Apr 30, 2026', popEnd:'Jan 15, 2028', value:9900,     spm:'Mahmoud', pm:'Sirraj',  followUpDate:'2026-07-15' },
-  { id:'c3',  contractId:'W919K826CA09',   title:'China Relief Wells Pump',                   prime:'TECH-OR', type:'OTJ',       naicsCode:'541380', status:'KICK_OFF',       location:'North Pole, AK 99705',               popStart:'Apr 01, 2026', popEnd:'Mar 31, 2027', value:1675677,  spm:'Anas',    pm:'Anas',    billingNotes:'Milestone billing upon completion.' },
-  { id:'c4',  contractId:'FA671226P0005',  title:'CAT 6 Premise Cable Installation',          prime:'TECH-OR', type:'OTJ',       naicsCode:'236210', status:'ACTIVE',         location:'2531 Defense Ave, Coraopolis',       popStart:'Mar 24, 2026', popEnd:'Jul 22, 2026', value:7650,     spm:'Anas',    pm:'Anas',    followUpDate:'2026-06-15' },
-  { id:'c5',  contractId:'FA480026P0013',  title:'B301 Transformer Repair',                   prime:'TECH-OR', type:'OTJ',       naicsCode:'811310', status:'KICK_OFF',       location:'Offutt AFB, NE 68113',               popStart:'Feb 01, 2026', popEnd:'Dec 14, 2026', value:30634,    spm:'Aamir',   pm:'Aamir',   billingNotes:'50% upfront, 50% on completion.' },
-  { id:'c6',  contractId:'W912PQ26P0001',  title:'Tractor and Trailer Rental',                prime:'TECH-OR', type:'RECURRING', naicsCode:'532490', status:'ON_GOING',       location:'Rochester, NY',                      popStart:'Jan 26, 2026', popEnd:'Jan 26, 2027', value:87750,    spm:'Anas',    pm:'Anas',    followUpDate:'2026-07-01', billingNotes:'Monthly invoices, Net 30.' },
-  { id:'c7',  contractId:'W9115A26PA034',  title:'MI643 Refuse & Recycle Services',           prime:'TECH-OR', type:'RECURRING', naicsCode:'562111', status:'ON_GOING',       location:'Michigan',                           popStart:'Dec 23, 2025', popEnd:'Dec 21, 2026', value:23988,    spm:'Anas',    pm:'Anas',    billingNotes:'Bi-monthly billing cycle.' },
-  { id:'c8',  contractId:'FA461026C0002',  title:'3D CES — Hood and Duct Inspection',         prime:'TECH-OR', type:'RECURRING', naicsCode:'561760', status:'KICK_OFF',       location:'Vandenberg SFB, CA 93437',           popStart:'Dec 01, 2025', popEnd:'Jul 31, 2026', value:8098,     spm:'Mahmoud', pm:'Sirraj' },
-  { id:'c9',  contractId:'2032H825P00079', title:'IRS Spokane WA Shred Services',             prime:'TECH-OR', type:'RECURRING', naicsCode:'561990', status:'ON_GOING',       location:'Spokane, WA',                        popStart:'Sep 30, 2025', popEnd:'Sep 29, 2026', value:3971,     spm:'Anas',    pm:'Anas',    billingNotes:'Quarterly billing.' },
-  { id:'c10', contractId:'FA521525P0032',  title:'EAS Alternator Inspections',                prime:'TECH-OR', type:'OTJ',       naicsCode:'811310', status:'ACTIVE',         location:'Joint Base Elmendorf-Richardson, AK', popStart:'Sep 30, 2025', popEnd:'Jul 31, 2026', value:44206,    spm:'Mahmoud', pm:'Sirraj' },
-  { id:'c11', contractId:'FA301625P0207',  title:'FSH B268 R&R Heating Coils',                prime:'TECH-OR', type:'OTJ',       naicsCode:'238220', status:'PENDING_PAYMENT',location:'Houston, TX',                        popStart:'Sep 21, 2025', popEnd:'Dec 20, 2025', value:40800,    spm:'Aamir',   pm:'Mahmoud', billingNotes:'Final invoice submitted, awaiting payment.' },
-  { id:'c12', contractId:'FA930125P0085',  title:'FM9 Base Theater Equipment',                prime:'TECH-OR', type:'S&D',       naicsCode:'334310', status:'ON_GOING',       location:'Edwards AFB, CA 93524',              popStart:'Sep 08, 2025', popEnd:'Mar 15, 2026', value:184548,   spm:'Aamir',   pm:'Sirraj' },
-  { id:'c13', contractId:'140R2025P0060',  title:'Northern California Area Office INC',       prime:'TECH-OR', type:'RECURRING', naicsCode:'561210', status:'ON_GOING',       location:'Shasta Lake, CA 96019',              popStart:'Aug 21, 2025', popEnd:'Sep 30, 2026', value:33750,    spm:'Aamir',   pm:'Aamir',   billingNotes:'Annual billing cycle.' },
+  { id:'c1',  assignedTo:'emp-15', contractId:'FA44726P0021',   title:'WY Snow Removal Mills Complex',             prime:'TECH-OR', type:'RECURRING', naicsCode:'561720', status:'ON_GOING',       location:'Mills WY 82644',                     popStart:'Dec 20, 2025', popEnd:'Dec 30, 2027', value:11702,    spm:'Zoubair', pm:'Anas',    followUpDate:'2026-06-01', billingNotes:'Monthly invoices due 1st.' },
+  { id:'c2',  assignedTo:'emp-16', contractId:'FA44726P0021',   title:'Fire Door Drop Test/Certification B9',       prime:'TECH-OR', type:'OTJ',       naicsCode:'561621', status:'ACTIVE',         location:'Travis AFB, TX',                     popStart:'Apr 30, 2026', popEnd:'Jan 15, 2028', value:9900,     spm:'Mahmoud', pm:'Sirraj',  followUpDate:'2026-07-15' },
+  { id:'c3',  assignedTo:'emp-17', contractId:'W919K826CA09',   title:'China Relief Wells Pump',                   prime:'TECH-OR', type:'OTJ',       naicsCode:'541380', status:'KICK_OFF',       location:'North Pole, AK 99705',               popStart:'Apr 01, 2026', popEnd:'Mar 31, 2027', value:1675677,  spm:'Anas',    pm:'Anas',    billingNotes:'Milestone billing upon completion.' },
+  { id:'c4',  assignedTo:'emp-18', contractId:'FA671226P0005',  title:'CAT 6 Premise Cable Installation',          prime:'TECH-OR', type:'OTJ',       naicsCode:'236210', status:'ACTIVE',         location:'2531 Defense Ave, Coraopolis',       popStart:'Mar 24, 2026', popEnd:'Jul 22, 2026', value:7650,     spm:'Anas',    pm:'Anas',    followUpDate:'2026-06-15' },
+  { id:'c5',  assignedTo:'emp-19', contractId:'FA480026P0013',  title:'B301 Transformer Repair',                   prime:'TECH-OR', type:'OTJ',       naicsCode:'811310', status:'KICK_OFF',       location:'Offutt AFB, NE 68113',               popStart:'Feb 01, 2026', popEnd:'Dec 14, 2026', value:30634,    spm:'Aamir',   pm:'Aamir',   billingNotes:'50% upfront, 50% on completion.' },
+  { id:'c6',  assignedTo:'emp-20', contractId:'W912PQ26P0001',  title:'Tractor and Trailer Rental',                prime:'TECH-OR', type:'RECURRING', naicsCode:'532490', status:'ON_GOING',       location:'Rochester, NY',                      popStart:'Jan 26, 2026', popEnd:'Jan 26, 2027', value:87750,    spm:'Anas',    pm:'Anas',    followUpDate:'2026-07-01', billingNotes:'Monthly invoices, Net 30.' },
+  { id:'c7',  assignedTo:'emp-21', contractId:'W9115A26PA034',  title:'MI643 Refuse & Recycle Services',           prime:'TECH-OR', type:'RECURRING', naicsCode:'562111', status:'ON_GOING',       location:'Michigan',                           popStart:'Dec 23, 2025', popEnd:'Dec 21, 2026', value:23988,    spm:'Anas',    pm:'Anas',    billingNotes:'Bi-monthly billing cycle.' },
+  { id:'c8',  assignedTo:'emp-22', contractId:'FA461026C0002',  title:'3D CES — Hood and Duct Inspection',         prime:'TECH-OR', type:'RECURRING', naicsCode:'561760', status:'KICK_OFF',       location:'Vandenberg SFB, CA 93437',           popStart:'Dec 01, 2025', popEnd:'Jul 31, 2026', value:8098,     spm:'Mahmoud', pm:'Sirraj' },
+  { id:'c9',  assignedTo:'emp-23', contractId:'2032H825P00079', title:'IRS Spokane WA Shred Services',             prime:'TECH-OR', type:'RECURRING', naicsCode:'561990', status:'ON_GOING',       location:'Spokane, WA',                        popStart:'Sep 30, 2025', popEnd:'Sep 29, 2026', value:3971,     spm:'Anas',    pm:'Anas',    billingNotes:'Quarterly billing.' },
+  { id:'c10', assignedTo:'emp-24', contractId:'FA521525P0032',  title:'EAS Alternator Inspections',                prime:'TECH-OR', type:'OTJ',       naicsCode:'811310', status:'ACTIVE',         location:'Joint Base Elmendorf-Richardson, AK', popStart:'Sep 30, 2025', popEnd:'Jul 31, 2026', value:44206,    spm:'Mahmoud', pm:'Sirraj' },
+  { id:'c11', assignedTo:'emp-25', contractId:'FA301625P0207',  title:'FSH B268 R&R Heating Coils',                prime:'TECH-OR', type:'OTJ',       naicsCode:'238220', status:'PENDING_PAYMENT',location:'Houston, TX',                        popStart:'Sep 21, 2025', popEnd:'Dec 20, 2025', value:40800,    spm:'Aamir',   pm:'Mahmoud', billingNotes:'Final invoice submitted, awaiting payment.' },
+  { id:'c12', assignedTo:'emp-26', contractId:'FA930125P0085',  title:'FM9 Base Theater Equipment',                prime:'TECH-OR', type:'S&D',       naicsCode:'334310', status:'ON_GOING',       location:'Edwards AFB, CA 93524',              popStart:'Sep 08, 2025', popEnd:'Mar 15, 2026', value:184548,   spm:'Aamir',   pm:'Sirraj' },
+  { id:'c13', assignedTo:'emp-27', contractId:'140R2025P0060',  title:'Northern California Area Office INC',       prime:'TECH-OR', type:'RECURRING', naicsCode:'561210', status:'ON_GOING',       location:'Shasta Lake, CA 96019',              popStart:'Aug 21, 2025', popEnd:'Sep 30, 2026', value:33750,    spm:'Aamir',   pm:'Aamir',   billingNotes:'Annual billing cycle.' },
   // c20-c27 — added with assignedTo
   { id:'c20', contractId:'W911SA26C0044',  title:'HVAC Preventive Maintenance — JBLM',        prime:'TECH-OR', type:'RECURRING', naicsCode:'238220', status:'KICK_OFF',       location:'Tacoma, WA',                         popStart:'Jun 15, 2026', popEnd:'Jun 14, 2027', value:92000,    spm:'Zoubair', pm:'Anas',    billingNotes:'Monthly invoices due 1st.', assignedTo:'emp-7' },
   { id:'c21', contractId:'36C24226C0312',  title:'Elevator Inspection & Repair — Walter Reed', prime:'AYJ-S',  type:'RECURRING', naicsCode:'238290', status:'LOCKING_SUB',    location:'Bethesda, MD',                       popStart:'Jul 01, 2026', popEnd:'Jun 30, 2027', value:112000,   spm:'Mahmoud', pm:'Anas',    billingNotes:'Net 30 quarterly.', assignedTo:'emp-15' },

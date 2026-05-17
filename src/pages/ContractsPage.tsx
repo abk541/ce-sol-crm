@@ -5,7 +5,9 @@ import {
   AlertTriangle, ListChecks, ChevronRight, X, Save, Plus,
   ArrowRight, CheckCircle2, Info, DollarSign, MapPin, Calendar,
   Phone, Mail, Clock, Shield, FileText, Trash2, AlertCircle,
+  ChevronUp, ChevronDown, ChevronsUpDown,
 } from 'lucide-react'
+import PeriodFilter, { type Period, filterByPeriod } from '../components/shared/PeriodFilter'
 import toast from 'react-hot-toast'
 import { useStore } from '../store/useStore'
 import type {
@@ -217,10 +219,6 @@ function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClo
               <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Team</p>
               <div className="grid grid-cols-2 gap-2">
                 {[
-                  { label: 'SPM', value: contract.spm },
-                  { label: 'PM', value: contract.pm },
-                  { label: 'BDM', value: contract.bdm },
-                  { label: 'BDS', value: contract.bds },
                   { label: 'Support', value: contract.supportAgent },
                 ].filter(t => t.value).map(t => (
                   <div key={t.label} className="flex items-center gap-2 p-2 rounded-lg bg-slate-50">
@@ -635,12 +633,36 @@ function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClo
 // ─────────────────────────────────────────────────────────────────────────
 // Main Page
 // ─────────────────────────────────────────────────────────────────────────
+function SortHeader({ col, label, currentKey, dir, onSort }: {
+  col: string; label: string; currentKey: string; dir: 'asc' | 'desc'; onSort: (k: string) => void
+}) {
+  const active = currentKey === col
+  return (
+    <th className="cursor-pointer select-none hover:bg-slate-50 transition-colors" onClick={() => onSort(col)}>
+      <div className="flex items-center gap-1">
+        {label}
+        {active
+          ? (dir === 'asc' ? <ChevronUp size={11} className="text-indigo-500" /> : <ChevronDown size={11} className="text-indigo-500" />)
+          : <ChevronsUpDown size={10} className="text-slate-300" />}
+      </div>
+    </th>
+  )
+}
+
 export default function ContractsPage() {
   const { contracts, employees } = useStore()
   const [tab, setTab] = useState<CTab>('ALL')
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<Contract | null>(null)
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
+  const [period, setPeriod] = useState<Period | null>(null)
+  const [sortKey, setSortKey] = useState<string>('')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
+
+  const handleSort = (key: string) => {
+    if (sortKey === key) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    else { setSortKey(key); setSortDir('asc') }
+  }
 
   const tabDef = C_TABS.find(t => t.key === tab)!
 
@@ -652,12 +674,24 @@ export default function ContractsPage() {
         c.title.toLowerCase().includes(q) ||
         c.contractId.toLowerCase().includes(q) ||
         c.location.toLowerCase().includes(q) ||
-        c.spm.toLowerCase().includes(q) ||
-        c.pm.toLowerCase().includes(q)
+        (c.spm ?? '').toLowerCase().includes(q) ||
+        (c.pm ?? '').toLowerCase().includes(q)
       )
     }
+    if (period) list = list.filter(c => filterByPeriod(c.popEnd, period))
+    if (sortKey) {
+      list = [...list].sort((a, b) => {
+        let av: any = (a as any)[sortKey]
+        let bv: any = (b as any)[sortKey]
+        if (typeof av === 'string') av = av.toLowerCase()
+        if (typeof bv === 'string') bv = bv.toLowerCase()
+        if (av < bv) return sortDir === 'asc' ? -1 : 1
+        if (av > bv) return sortDir === 'asc' ? 1 : -1
+        return 0
+      })
+    }
     return list
-  }, [contracts, tab, search])
+  }, [contracts, tab, search, period, sortKey, sortDir])
 
   const totalValue = contracts.reduce((s, c) => s + c.value, 0)
   const activeCount = contracts.filter(c => ['ACTIVE', 'ON_GOING', 'PERFORMING', 'KICK_OFF', 'LOCKING_SUB'].includes(c.status)).length
@@ -710,10 +744,13 @@ export default function ContractsPage() {
             )
           })}
         </div>
-        <div className="relative">
-          <Search size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-          <input value={search} onChange={e => setSearch(e.target.value)}
-            className="input-field pl-9 text-xs py-2 w-56" placeholder="Search contracts…" />
+        <div className="flex items-center gap-2">
+          <div className="relative">
+            <Search size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input value={search} onChange={e => setSearch(e.target.value)}
+              className="input-field pl-9 text-xs py-2 w-56" placeholder="Search contracts…" />
+          </div>
+          <PeriodFilter value={period} onChange={setPeriod} />
         </div>
       </div>
 
@@ -723,15 +760,14 @@ export default function ContractsPage() {
           <table className="data-table">
             <thead>
               <tr>
-                <th>Prime</th>
-                <th>Title</th>
+                <SortHeader col="prime" label="Prime" currentKey={sortKey} dir={sortDir} onSort={handleSort} />
+                <SortHeader col="title" label="Title" currentKey={sortKey} dir={sortDir} onSort={handleSort} />
                 <th>Contract ID</th>
                 <th>Type</th>
-                <th>Status</th>
-                <th>Location</th>
+                <SortHeader col="status" label="Status" currentKey={sortKey} dir={sortDir} onSort={handleSort} />
+                <SortHeader col="location" label="Location" currentKey={sortKey} dir={sortDir} onSort={handleSort} />
                 <th>POP</th>
-                <th>Value</th>
-                <th>SPM / PM</th>
+                <SortHeader col="value" label="Value" currentKey={sortKey} dir={sortDir} onSort={handleSort} />
                 <th>Assigned</th>
                 <th>Flags</th>
                 <th></th>
@@ -740,7 +776,7 @@ export default function ContractsPage() {
             <tbody>
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={12} className="text-center py-12 text-slate-400 text-sm">
+                  <td colSpan={11} className="text-center py-12 text-slate-400 text-sm">
                     No contracts in this category.
                   </td>
                 </tr>
@@ -784,10 +820,6 @@ export default function ContractsPage() {
                       </span>
                     </td>
                     <td className="text-xs font-semibold text-emerald-600 whitespace-nowrap">{formatCurrency(c.value)}</td>
-                    <td className="text-xs text-slate-600 whitespace-nowrap">
-                      <p>{c.spm}</p>
-                      <p className="text-slate-400">{c.pm}</p>
-                    </td>
                     <td className="text-xs">
                       {(() => {
                         const emp = c.assignedTo ? employees.find(e => e.id === c.assignedTo) : null
