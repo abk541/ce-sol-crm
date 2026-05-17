@@ -1,0 +1,627 @@
+/**
+ * Contract Workflow Tests
+ * Covers the full end-to-end state machine for contract opportunities.
+ *
+ * Workflow under test:
+ *   contract_opp (ACTIVE|NEW_ASSIGNMENT|DISCUSSION)
+ *     → submitOpportunity  → SUBMITTED   (leaves pipeline view)
+ *     → markOpportunityWon → WON + FreshAward created
+ *     → submitNonSubReport → reviewNonSubReport(APPROVED)  → NOT_SUBMITTED
+ *     → submitNonSubReport → reviewNonSubReport(DECLINED)  → DROPPED
+ *
+ *   FreshAward → moveFreshAwardToActive → Contract (KICK_OFF)
+ *   Contract   → advanceContractStatus  → LOCKING_SUB → PERFORMING
+ *                                         → PENDING_PAYMENT → ARCHIVED + PastPerformance
+ *   Contract   → terminateContract      → TERMINATED + PastPerformance
+ */
+
+import { describe, it, expect, beforeEach, vi } from 'vitest'
+
+// ── Mock DB + Supabase so no network calls happen ─────────────────────
+vi.mock('../lib/db', () => ({
+  loadAllData: vi.fn().mockResolvedValue(null),
+  seedIfEmpty: vi.fn().mockResolvedValue(null),
+  upsertOpportunity: vi.fn().mockResolvedValue(null),
+  upsertContract: vi.fn().mockResolvedValue(null),
+  upsertFreshAward: vi.fn().mockResolvedValue(null),
+  upsertPastPerformance: vi.fn().mockResolvedValue(null),
+}))
+
+vi.mock('../lib/supabase', () => ({
+  isSupabaseConnected: false,
+  supabase: null,
+}))
+
+import { useStore } from '../store/useStore'
+import type { Opportunity, Contract, OppStatus, ContractStatus } from '../types'
+
+// ── Pipeline view filter (mirrors PipelinePage) ───────────────────────
+const OPP_VIEW_STATUSES: OppStatus[] = ['ACTIVE', 'NEW_ASSIGNMENT', 'DISCUSSION']
+
+// ── Fixtures ──────────────────────────────────────────────────────────
+function makeOpp(overrides: Partial<Opportunity> = {}): Opportunity {
+  return {
+    id: `opp-${Math.random().toString(36).slice(2)}`,
+    solicitation: 'HVAC Maintenance Service',
+    solicitationId: 'FA4890-26-R-0001',
+    client: 'Andrews Air Force Base',
+    type: 'OTJ',
+    naicsCode: '238220',
+    setAside: 'SB',
+    priority: 'MEDIUM',
+    status: 'ACTIVE',
+    dueDate: '2026-12-31',
+    localTime: '16:00',
+    timezone: 'EST',
+    location: 'Camp Springs, MD',
+    pop: '1 base year + 4 option years',
+    bdm: 'alice',
+    bds: 'bob',
+    comments: [],
+    proposals: [],
+    period: 'DEC 2026',
+    capturedOn: 'December 1, 2026',
+    ...overrides,
+  }
+}
+
+function makeContract(overrides: Partial<Contract> = {}): Contract {
+  return {
+    id: `c-${Math.random().toString(36).slice(2)}`,
+    contractId: 'CONTRACT-TEST-001',
+    title: 'HVAC Maintenance Service',
+    prime: 'TECH-OR',
+    type: 'OTJ',
+    naicsCode: '238220',
+    status: 'KICK_OFF',
+    location: 'Camp Springs, MD',
+    popStart: '2026-06-01',
+    popEnd: '2027-05-31',
+    value: 500_000,
+    spm: 'carol',
+    pm: 'dave',
+    ...overrides,
+  }
+}
+
+// ── Reset store data before every test ───────────────────────────────
+const ADMIN_USER = {
+  id: 'u-admin', name: 'Admin User', email: 'admin@ces.com',
+  username: 'admin', role: 'ADMIN' as const, avatar: 'AU',
+  status: 'active' as const, firstLogin: false, mfaEnabled: true,
+  createdAt: '2026-01-01',
+}
+
+beforeEach(() => {
+  useStore.setState({
+    opportunities: [],
+    freshAwards: [],
+    nonSubReports: [],
+    contracts: [],
+    bdSubmissions: [],
+    pastPerformances: [],
+    deletionRequests: [],
+    notifications: [],
+    activityLogs: [],
+    currentUser: ADMIN_USER,
+    isAuthenticated: true,
+    loginTimestamp: Date.now(),
+  })
+})
+
+// ═════════════════════════════════════════════════════════════════════
+describe('1 · submitOpportunity', () => {
+  it('sets status → SUBMITTED', () => {
+    const opp = makeOpp({ id: 'opp1', status: 'ACTIVE' })
+    useStore.setState({ opportunities: [opp] })
+
+    useStore.getState().submitOpportunity('opp1')
+
+    const updated = useStore.getState().opportunities.find(o => o.id === 'opp1')
+    expect(updated?.status).toBe('SUBMITTED')
+  })
+
+  it('records submittedAt timestamp', () => {
+    const opp = makeOpp({ id: 'opp1' })
+    useStore.setState({ opportunities: [opp] })
+
+    useStore.getState().submitOpportunity('opp1')
+
+    const updated = useStore.getState().opportunities.find(o => o.id === 'opp1')
+    expect(updated?.submittedAt).toBeTruthy()
+    expect(new Date(updated!.submittedAt!).getTime()).toBeGreaterThan(0)
+  })
+
+  it('stores OTJ contract amount when provided', () => {
+    const opp = makeOpp({ id: 'opp1', type: 'OTJ' })
+    useStore.setState({ opportunities: [opp] })
+
+    useStore.getState().submitOpportunity('opp1', { contractAmount: 850_000 })
+
+    const updated = useStore.getState().opportunities.find(o => o.id === 'opp1')
+    expect(updated?.contractAmount).toBe(850_000)
+  })
+
+  it('stores RECURRING yearly + monthly values when provided', () => {
+    const opp = makeOpp({ id: 'opp1', type: 'RECURRING' })
+    useStore.setState({ opportunities: [opp] })
+
+    useStore.getState().submitOpportunity('opp1', {
+      baseAmount: 120_000,
+      monthlyPayment: 10_000,
+    })
+
+    const updated = useStore.getState().opportunities.find(o => o.id === 'opp1')
+    expect(updated?.baseAmount).toBe(120_000)
+    expect(updated?.monthlyPayment).toBe(10_000)
+  })
+
+  it('removes opp from pipeline view (SUBMITTED ∉ OPP_VIEW_STATUSES)', () => {
+    const opp = makeOpp({ id: 'opp1', status: 'ACTIVE' })
+    useStore.setState({ opportunities: [opp] })
+
+    useStore.getState().submitOpportunity('opp1')
+
+    const pipeline = useStore.getState().opportunities
+      .filter(o => !o.isDeleted && OPP_VIEW_STATUSES.includes(o.status as OppStatus))
+    expect(pipeline.some(o => o.id === 'opp1')).toBe(false)
+  })
+
+  it('works from NEW_ASSIGNMENT status too', () => {
+    const opp = makeOpp({ id: 'opp1', status: 'NEW_ASSIGNMENT' })
+    useStore.setState({ opportunities: [opp] })
+
+    useStore.getState().submitOpportunity('opp1')
+
+    const updated = useStore.getState().opportunities.find(o => o.id === 'opp1')
+    expect(updated?.status).toBe('SUBMITTED')
+  })
+})
+
+// ═════════════════════════════════════════════════════════════════════
+describe('2 · markOpportunityWon', () => {
+  it('sets status → WON', () => {
+    const opp = makeOpp({ id: 'opp1', status: 'SUBMITTED' })
+    useStore.setState({ opportunities: [opp], freshAwards: [] })
+
+    useStore.getState().markOpportunityWon('opp1')
+
+    const updated = useStore.getState().opportunities.find(o => o.id === 'opp1')
+    expect(updated?.status).toBe('WON')
+  })
+
+  it('creates exactly one FreshAward', () => {
+    const opp = makeOpp({ id: 'opp1', status: 'SUBMITTED' })
+    useStore.setState({ opportunities: [opp], freshAwards: [] })
+
+    useStore.getState().markOpportunityWon('opp1')
+
+    const awards = useStore.getState().freshAwards
+    expect(awards).toHaveLength(1)
+    expect(awards[0].opportunityId).toBe('opp1')
+  })
+
+  it('FreshAward starts as PENDING_ASSIGNMENT', () => {
+    const opp = makeOpp({ id: 'opp1', status: 'SUBMITTED' })
+    useStore.setState({ opportunities: [opp], freshAwards: [] })
+
+    useStore.getState().markOpportunityWon('opp1')
+
+    const award = useStore.getState().freshAwards[0]
+    expect(award.status).toBe('PENDING_ASSIGNMENT')
+  })
+
+  it('copies solicitation, client, and contract amount to FreshAward', () => {
+    const opp = makeOpp({ id: 'opp1', solicitation: 'Special HVAC', client: 'Pentagon', contractAmount: 1_200_000 })
+    useStore.setState({ opportunities: [opp], freshAwards: [] })
+
+    useStore.getState().markOpportunityWon('opp1')
+
+    const award = useStore.getState().freshAwards[0]
+    expect(award.solicitation).toBe('Special HVAC')
+    expect(award.client).toBe('Pentagon')
+    expect(award.contractAmount).toBe(1_200_000)
+  })
+
+  it('does NOT create a duplicate FreshAward on double-call', () => {
+    const opp = makeOpp({ id: 'opp1', status: 'SUBMITTED' })
+    useStore.setState({ opportunities: [opp], freshAwards: [] })
+
+    useStore.getState().markOpportunityWon('opp1')
+    useStore.getState().markOpportunityWon('opp1') // second call — must be a no-op for FreshAward
+
+    const awardsForOpp = useStore.getState().freshAwards.filter(fa => fa.opportunityId === 'opp1')
+    expect(awardsForOpp).toHaveLength(1)
+  })
+
+  it('still sets status → WON on second call even if FreshAward already exists', () => {
+    const opp = makeOpp({ id: 'opp1', status: 'SUBMITTED' })
+    useStore.setState({ opportunities: [opp], freshAwards: [] })
+
+    useStore.getState().markOpportunityWon('opp1')
+    // Manually revert status to SUBMITTED to simulate edge-case
+    useStore.setState(s => ({
+      opportunities: s.opportunities.map(o => o.id === 'opp1' ? { ...o, status: 'SUBMITTED' as OppStatus } : o)
+    }))
+    useStore.getState().markOpportunityWon('opp1')
+
+    const updated = useStore.getState().opportunities.find(o => o.id === 'opp1')
+    expect(updated?.status).toBe('WON')
+  })
+})
+
+// ═════════════════════════════════════════════════════════════════════
+describe('3 · Non-Submission Report workflow', () => {
+  it('submitNonSubReport creates a PENDING report', () => {
+    const opp = makeOpp({ id: 'opp1' })
+    useStore.setState({ opportunities: [opp], nonSubReports: [] })
+
+    useStore.getState().submitNonSubReport({
+      opportunityId: 'opp1',
+      agentUsername: 'agent1',
+      reason: 'Solicitation was cancelled before the submission deadline.',
+    })
+
+    const reports = useStore.getState().nonSubReports
+    expect(reports).toHaveLength(1)
+    expect(reports[0].status).toBe('PENDING')
+    expect(reports[0].opportunityId).toBe('opp1')
+  })
+
+  it('APPROVED → opportunity status becomes NOT_SUBMITTED', () => {
+    const opp = makeOpp({ id: 'opp1', status: 'ACTIVE' })
+    useStore.setState({ opportunities: [opp], nonSubReports: [] })
+
+    useStore.getState().submitNonSubReport({
+      opportunityId: 'opp1', agentUsername: 'agent1',
+      reason: 'Amendment arrived 2 hours before deadline — impossible to revise.',
+    })
+    const reportId = useStore.getState().nonSubReports[0].id
+    useStore.getState().reviewNonSubReport(reportId, 'APPROVED', 'Accepted', 'manager1')
+
+    const updated = useStore.getState().opportunities.find(o => o.id === 'opp1')
+    expect(updated?.status).toBe('NOT_SUBMITTED')
+  })
+
+  it('DECLINED → opportunity status becomes DROPPED', () => {
+    const opp = makeOpp({ id: 'opp1', status: 'ACTIVE' })
+    useStore.setState({ opportunities: [opp], nonSubReports: [] })
+
+    useStore.getState().submitNonSubReport({
+      opportunityId: 'opp1', agentUsername: 'agent1',
+      reason: 'Team bandwidth issue — could have been resolved with overtime.',
+    })
+    const reportId = useStore.getState().nonSubReports[0].id
+    useStore.getState().reviewNonSubReport(reportId, 'DECLINED', 'Insufficient reason', 'manager1')
+
+    const updated = useStore.getState().opportunities.find(o => o.id === 'opp1')
+    expect(updated?.status).toBe('DROPPED')
+  })
+
+  it('review records the reviewer and note on the report', () => {
+    const opp = makeOpp({ id: 'opp1' })
+    useStore.setState({ opportunities: [opp], nonSubReports: [] })
+
+    useStore.getState().submitNonSubReport({ opportunityId: 'opp1', agentUsername: 'agent1', reason: 'No capacity in Q2.' })
+    const reportId = useStore.getState().nonSubReports[0].id
+    useStore.getState().reviewNonSubReport(reportId, 'APPROVED', 'Capacity issue confirmed', 'director1')
+
+    const report = useStore.getState().nonSubReports.find(r => r.id === reportId)
+    expect(report?.status).toBe('APPROVED')
+    expect(report?.reviewedBy).toBe('director1')
+    expect(report?.reviewNote).toBe('Capacity issue confirmed')
+    expect(report?.reviewedAt).toBeTruthy()
+  })
+
+  it('NOT_SUBMITTED and DROPPED opps are absent from pipeline view', () => {
+    const opp1 = makeOpp({ id: 'opp1', status: 'ACTIVE' })
+    const opp2 = makeOpp({ id: 'opp2', status: 'ACTIVE' })
+    useStore.setState({ opportunities: [opp1, opp2], nonSubReports: [] })
+
+    // Submit and approve report for opp1 → NOT_SUBMITTED
+    useStore.getState().submitNonSubReport({ opportunityId: 'opp1', agentUsername: 'agent1', reason: 'Cancelled solicitation RFP.' })
+    useStore.getState().reviewNonSubReport(useStore.getState().nonSubReports[0].id, 'APPROVED', '', 'mgr')
+
+    // Submit and decline report for opp2 → DROPPED
+    useStore.getState().submitNonSubReport({ opportunityId: 'opp2', agentUsername: 'agent1', reason: 'Resource shortage at deadline.' })
+    useStore.getState().reviewNonSubReport(useStore.getState().nonSubReports.find(r => r.opportunityId === 'opp2')!.id, 'DECLINED', '', 'mgr')
+
+    const pipeline = useStore.getState().opportunities
+      .filter(o => !o.isDeleted && OPP_VIEW_STATUSES.includes(o.status as OppStatus))
+    expect(pipeline.some(o => o.id === 'opp1')).toBe(false)
+    expect(pipeline.some(o => o.id === 'opp2')).toBe(false)
+  })
+})
+
+// ═════════════════════════════════════════════════════════════════════
+describe('4 · FreshAward → Active Contract (moveFreshAwardToActive)', () => {
+  const FA_BASE = {
+    id: 'fa1', opportunityId: 'opp1',
+    solicitation: 'HVAC Maintenance Service',
+    solicitationId: 'FA4890-26-R-0001',
+    client: 'Andrews AFB',
+    prime: 'TECH-OR' as const,
+    type: 'OTJ' as const,
+    setAside: 'SB' as const,
+    naicsCode: '238220',
+    awardedDate: '2026-06-01',
+    status: 'ASSIGNED' as const,
+  }
+
+  it('creates a contract from the FreshAward', () => {
+    useStore.setState({ freshAwards: [FA_BASE], contracts: [] })
+
+    useStore.getState().moveFreshAwardToActive('fa1')
+
+    const contracts = useStore.getState().contracts
+    expect(contracts).toHaveLength(1)
+    expect(contracts[0].title).toBe('HVAC Maintenance Service')
+    expect(contracts[0].prime).toBe('TECH-OR')
+  })
+
+  it('contract starts at KICK_OFF status', () => {
+    useStore.setState({ freshAwards: [FA_BASE], contracts: [] })
+
+    useStore.getState().moveFreshAwardToActive('fa1')
+
+    expect(useStore.getState().contracts[0].status).toBe('KICK_OFF')
+  })
+
+  it('FreshAward status becomes MOVED_TO_ACTIVE', () => {
+    useStore.setState({ freshAwards: [FA_BASE], contracts: [] })
+
+    useStore.getState().moveFreshAwardToActive('fa1')
+
+    const award = useStore.getState().freshAwards.find(f => f.id === 'fa1')
+    expect(award?.status).toBe('MOVED_TO_ACTIVE')
+  })
+
+  it('links contractId back on the FreshAward', () => {
+    useStore.setState({ freshAwards: [FA_BASE], contracts: [] })
+
+    useStore.getState().moveFreshAwardToActive('fa1')
+
+    const award = useStore.getState().freshAwards.find(f => f.id === 'fa1')
+    const contract = useStore.getState().contracts[0]
+    expect(award?.contractId).toBe(contract.id)
+  })
+})
+
+// ═════════════════════════════════════════════════════════════════════
+describe('5 · Contract status flow (advanceContractStatus)', () => {
+  it('KICK_OFF → LOCKING_SUB', () => {
+    const c = makeContract({ id: 'c1', status: 'KICK_OFF' })
+    useStore.setState({ contracts: [c] })
+
+    useStore.getState().advanceContractStatus('c1')
+    expect(useStore.getState().contracts.find(x => x.id === 'c1')?.status).toBe('LOCKING_SUB')
+  })
+
+  it('LOCKING_SUB → PERFORMING', () => {
+    const c = makeContract({ id: 'c1', status: 'LOCKING_SUB' })
+    useStore.setState({ contracts: [c] })
+
+    useStore.getState().advanceContractStatus('c1')
+    expect(useStore.getState().contracts.find(x => x.id === 'c1')?.status).toBe('PERFORMING')
+  })
+
+  it('PERFORMING → PENDING_PAYMENT', () => {
+    const c = makeContract({ id: 'c1', status: 'PERFORMING' })
+    useStore.setState({ contracts: [c] })
+
+    useStore.getState().advanceContractStatus('c1')
+    expect(useStore.getState().contracts.find(x => x.id === 'c1')?.status).toBe('PENDING_PAYMENT')
+  })
+
+  it('PENDING_PAYMENT → ARCHIVED + PastPerformance auto-created', () => {
+    const c = makeContract({ id: 'c1', status: 'PENDING_PAYMENT' })
+    useStore.setState({ contracts: [c], pastPerformances: [] })
+
+    useStore.getState().advanceContractStatus('c1')
+
+    const updated = useStore.getState().contracts.find(x => x.id === 'c1')
+    expect(updated?.status).toBe('ARCHIVED')
+
+    const pps = useStore.getState().pastPerformances
+    expect(pps).toHaveLength(1)
+    expect(pps[0].contractId).toBe('c1')
+    expect(pps[0].title).toBe('HVAC Maintenance Service')
+  })
+
+  it('ARCHIVED is a terminal state — does not advance', () => {
+    const c = makeContract({ id: 'c1', status: 'ARCHIVED' })
+    useStore.setState({ contracts: [c] })
+
+    useStore.getState().advanceContractStatus('c1')
+
+    expect(useStore.getState().contracts.find(x => x.id === 'c1')?.status).toBe('ARCHIVED')
+  })
+
+  it('TERMINATED is a terminal state — does not advance', () => {
+    const c = makeContract({ id: 'c1', status: 'TERMINATED' })
+    useStore.setState({ contracts: [c] })
+
+    useStore.getState().advanceContractStatus('c1')
+
+    expect(useStore.getState().contracts.find(x => x.id === 'c1')?.status).toBe('TERMINATED')
+  })
+
+  it('advances through full chain: KICK_OFF → ARCHIVED in 4 steps', () => {
+    const c = makeContract({ id: 'c1', status: 'KICK_OFF' })
+    useStore.setState({ contracts: [c], pastPerformances: [] })
+
+    const expectedChain: ContractStatus[] = ['LOCKING_SUB', 'PERFORMING', 'PENDING_PAYMENT', 'ARCHIVED']
+    for (const expected of expectedChain) {
+      useStore.getState().advanceContractStatus('c1')
+      expect(useStore.getState().contracts.find(x => x.id === 'c1')?.status).toBe(expected)
+    }
+
+    // A PastPerformance must have been created when ARCHIVED
+    expect(useStore.getState().pastPerformances.some(p => p.contractId === 'c1')).toBe(true)
+  })
+})
+
+// ═════════════════════════════════════════════════════════════════════
+describe('6 · terminateContract', () => {
+  it('sets status → TERMINATED', () => {
+    const c = makeContract({ id: 'c1', status: 'PERFORMING' })
+    useStore.setState({ contracts: [c], pastPerformances: [] })
+
+    useStore.getState().terminateContract('c1', 'T4C', 'Convenience termination')
+
+    const updated = useStore.getState().contracts.find(x => x.id === 'c1')
+    expect(updated?.status).toBe('TERMINATED')
+  })
+
+  it('records termination type and reason', () => {
+    const c = makeContract({ id: 'c1', status: 'PERFORMING' })
+    useStore.setState({ contracts: [c], pastPerformances: [] })
+
+    useStore.getState().terminateContract('c1', 'T4D', 'Default on deliverables')
+
+    const updated = useStore.getState().contracts.find(x => x.id === 'c1')
+    expect(updated?.terminationType).toBe('T4D')
+    expect(updated?.terminationReason).toBe('Default on deliverables')
+  })
+
+  it('auto-creates a PastPerformance on termination', () => {
+    const c = makeContract({ id: 'c1', status: 'PERFORMING' })
+    useStore.setState({ contracts: [c], pastPerformances: [] })
+
+    useStore.getState().terminateContract('c1', 'T4C', 'Reason')
+
+    const pps = useStore.getState().pastPerformances
+    expect(pps).toHaveLength(1)
+    expect(pps[0].contractId).toBe('c1')
+  })
+})
+
+// ═════════════════════════════════════════════════════════════════════
+describe('7 · BD Submission status updates', () => {
+  const SAMPLE_BD = {
+    id: 42, prime: 'TECH-OR' as const, submittedOn: '2026-05-01',
+    solicitationId: 'BD-042', setAside: 'SB' as const, type: 'OTJ' as const,
+    solicitation: 'Test BD Submission', status: 'SUBMITTED' as const,
+    dueDate: '2026-06-01', localTime: '17:00', location: 'DC',
+    bdm: 'alice', bds: 'bob', value: 250_000,
+  }
+
+  it('updates status from SUBMITTED → DISCUSSING', () => {
+    useStore.setState({ bdSubmissions: [SAMPLE_BD] })
+    useStore.getState().updateBDSubmission(42, 'DISCUSSING')
+    expect(useStore.getState().bdSubmissions.find(s => s.id === 42)?.status).toBe('DISCUSSING')
+  })
+
+  it('updates status from DISCUSSING → AWARDED', () => {
+    useStore.setState({ bdSubmissions: [{ ...SAMPLE_BD, status: 'DISCUSSING' }] })
+    useStore.getState().updateBDSubmission(42, 'AWARDED')
+    expect(useStore.getState().bdSubmissions.find(s => s.id === 42)?.status).toBe('AWARDED')
+  })
+
+  it('updates status to LOST', () => {
+    useStore.setState({ bdSubmissions: [SAMPLE_BD] })
+    useStore.getState().updateBDSubmission(42, 'LOST')
+    expect(useStore.getState().bdSubmissions.find(s => s.id === 42)?.status).toBe('LOST')
+  })
+
+  it('updates status to NOT_SUBMITTED', () => {
+    useStore.setState({ bdSubmissions: [SAMPLE_BD] })
+    useStore.getState().updateBDSubmission(42, 'NOT_SUBMITTED')
+    expect(useStore.getState().bdSubmissions.find(s => s.id === 42)?.status).toBe('NOT_SUBMITTED')
+  })
+
+  it('does not affect other BD submissions', () => {
+    const other = { ...SAMPLE_BD, id: 99, status: 'SUBMITTED' as const }
+    useStore.setState({ bdSubmissions: [SAMPLE_BD, other] })
+    useStore.getState().updateBDSubmission(42, 'AWARDED')
+    expect(useStore.getState().bdSubmissions.find(s => s.id === 99)?.status).toBe('SUBMITTED')
+  })
+})
+
+// ═════════════════════════════════════════════════════════════════════
+describe('8 · Cancel opportunity', () => {
+  it('sets status → CANCELED via updateOpportunity', () => {
+    const opp = makeOpp({ id: 'opp1', status: 'ACTIVE' })
+    useStore.setState({ opportunities: [opp] })
+
+    useStore.getState().updateOpportunity('opp1', { status: 'CANCELED' })
+
+    const updated = useStore.getState().opportunities.find(o => o.id === 'opp1')
+    expect(updated?.status).toBe('CANCELED')
+  })
+
+  it('CANCELED opp is absent from pipeline view', () => {
+    const opp = makeOpp({ id: 'opp1', status: 'ACTIVE' })
+    useStore.setState({ opportunities: [opp] })
+
+    useStore.getState().updateOpportunity('opp1', { status: 'CANCELED' })
+
+    const pipeline = useStore.getState().opportunities
+      .filter(o => !o.isDeleted && OPP_VIEW_STATUSES.includes(o.status as OppStatus))
+    expect(pipeline.some(o => o.id === 'opp1')).toBe(false)
+  })
+
+  it('works from any pre-submission status (NEW_ASSIGNMENT, DISCUSSION)', () => {
+    for (const status of ['NEW_ASSIGNMENT', 'DISCUSSION'] as OppStatus[]) {
+      const opp = makeOpp({ id: `opp-${status}`, status })
+      useStore.setState({ opportunities: [opp] })
+      useStore.getState().updateOpportunity(`opp-${status}`, { status: 'CANCELED' })
+      const updated = useStore.getState().opportunities.find(o => o.id === `opp-${status}`)
+      expect(updated?.status).toBe('CANCELED')
+    }
+  })
+})
+
+// ═════════════════════════════════════════════════════════════════════
+describe('9 · Full end-to-end contract lifecycle', () => {
+  it('opp → submit → won → fresh award → contract → archive → past performance', () => {
+    // Step 1: Create opportunity
+    const opp = makeOpp({ id: 'opp-e2e', status: 'ACTIVE', contractAmount: 500_000 })
+    useStore.setState({ opportunities: [opp], freshAwards: [], contracts: [], pastPerformances: [] })
+
+    // Step 2: Verify opp is in pipeline
+    expect(
+      useStore.getState().opportunities.filter(o => OPP_VIEW_STATUSES.includes(o.status as OppStatus)).some(o => o.id === 'opp-e2e')
+    ).toBe(true)
+
+    // Step 3: Submit
+    useStore.getState().submitOpportunity('opp-e2e', { contractAmount: 500_000 })
+    expect(useStore.getState().opportunities.find(o => o.id === 'opp-e2e')?.status).toBe('SUBMITTED')
+
+    // Step 4: Opp no longer in pipeline
+    expect(
+      useStore.getState().opportunities.filter(o => OPP_VIEW_STATUSES.includes(o.status as OppStatus)).some(o => o.id === 'opp-e2e')
+    ).toBe(false)
+
+    // Step 5: Mark as WON → FreshAward created
+    useStore.getState().markOpportunityWon('opp-e2e')
+    expect(useStore.getState().opportunities.find(o => o.id === 'opp-e2e')?.status).toBe('WON')
+    const award = useStore.getState().freshAwards.find(fa => fa.opportunityId === 'opp-e2e')
+    expect(award).toBeTruthy()
+    expect(award?.status).toBe('PENDING_ASSIGNMENT')
+
+    // Step 6: Assign team to FreshAward
+    useStore.getState().assignFreshAward(award!.id, {
+      assignedBDM: 'alice', assignedBDS: 'bob', assignedSPM: 'carol', assignedPM: 'dave',
+    })
+    const assignedAward = useStore.getState().freshAwards.find(fa => fa.id === award!.id)
+    expect(assignedAward?.status).toBe('ASSIGNED')
+
+    // Step 7: Move FreshAward → Active Contract
+    useStore.getState().moveFreshAwardToActive(award!.id)
+    const movedAward = useStore.getState().freshAwards.find(fa => fa.id === award!.id)
+    expect(movedAward?.status).toBe('MOVED_TO_ACTIVE')
+    const contract = useStore.getState().contracts[0]
+    expect(contract.status).toBe('KICK_OFF')
+
+    // Step 8: Advance through full contract chain
+    const chain: ContractStatus[] = ['LOCKING_SUB', 'PERFORMING', 'PENDING_PAYMENT', 'ARCHIVED']
+    for (const expected of chain) {
+      useStore.getState().advanceContractStatus(contract.id)
+      expect(useStore.getState().contracts.find(c => c.id === contract.id)?.status).toBe(expected)
+    }
+
+    // Step 9: PastPerformance auto-created on archive
+    expect(useStore.getState().pastPerformances.some(p => p.contractId === contract.id)).toBe(true)
+  })
+})
