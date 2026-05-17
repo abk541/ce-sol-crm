@@ -921,8 +921,21 @@ function RowMenu({
 type SortKey = keyof Opportunity
 type SortDir = 'asc' | 'desc'
 
+const ROLE_LABEL: Record<string, string> = {
+  MANAGER: 'Manager',
+  OPERATIONS_MANAGER: 'Ops Manager',
+  TEAM_MANAGER: 'Team Manager',
+  ASSOCIATE: 'Associate',
+}
+const ROLE_COLOR: Record<string, { color: string; bg: string; border: string }> = {
+  MANAGER:            { color: '#4338CA', bg: '#EEF2FF', border: '#C7D2FE' },
+  OPERATIONS_MANAGER: { color: '#7C3AED', bg: '#F5F3FF', border: '#DDD6FE' },
+  TEAM_MANAGER:       { color: '#1D4ED8', bg: '#EFF6FF', border: '#BFDBFE' },
+  ASSOCIATE:          { color: '#0E7490', bg: '#ECFEFF', border: '#A5F3FC' },
+}
+
 export default function PipelinePage() {
-  const { opportunities, currentUser, markOpportunityWon } = useStore()
+  const { opportunities, employees, currentUser, markOpportunityWon } = useStore()
   const [search, setSearch]           = useState('')
   const [primeFilter, setPrimeFilter] = useState('All')
   const [typeFilter, setTypeFilter]   = useState('All')
@@ -1059,6 +1072,7 @@ export default function PipelinePage() {
                   { label: 'Set Aside', k: 'setAside' }, { label: 'Due Date', k: 'dueDate' },
                   { label: 'Time / TZ', k: 'localTime' }, { label: 'Location', k: 'location' },
                   { label: 'BDM', k: 'bdm' }, { label: 'BDS', k: 'bds' },
+                  { label: 'Assigned', k: 'assignedTo' },
                   { label: 'Value', k: 'contractAmount' }, { label: 'Status', k: 'status' },
                   { label: 'Actions', k: '' },
                 ].map(col => (
@@ -1115,6 +1129,22 @@ export default function PipelinePage() {
                     <td><span className="text-slate-500 text-xs">{o.location}</span></td>
                     <td><span className="text-slate-600 text-xs font-medium">{o.bdm}</span></td>
                     <td><span className="text-slate-600 text-xs font-medium">{o.bds}</span></td>
+                    <td>
+                      {(() => {
+                        const emp = o.assignedTo ? employees.find(e => e.id === o.assignedTo) : null
+                        if (!emp) return <span className="text-slate-400 text-xs">—</span>
+                        const rc = ROLE_COLOR[emp.role] ?? ROLE_COLOR.ASSOCIATE
+                        return (
+                          <div className="flex flex-col gap-0.5">
+                            <span className="text-xs text-slate-700 font-medium whitespace-nowrap">{emp.name}</span>
+                            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full w-fit"
+                              style={{ color: rc.color, background: rc.bg, border: `1px solid ${rc.border}` }}>
+                              {ROLE_LABEL[emp.role] ?? emp.role}
+                            </span>
+                          </div>
+                        )
+                      })()}
+                    </td>
                     <td>
                       <span className="text-slate-700 text-xs font-semibold whitespace-nowrap">
                         {o.contractAmount ? formatCurrency(o.contractAmount) : '—'}
@@ -1190,6 +1220,20 @@ export default function PipelinePage() {
               <DrawerField label="BDM"           value={selectedOpp.bdm} />
               <DrawerField label="BDS"           value={selectedOpp.bds} />
               <DrawerField label="Support Agent" value={selectedOpp.supportAgent ?? '—'} />
+              <DrawerField label="Assigned To"   value={(() => {
+                const emp = selectedOpp.assignedTo ? employees.find(e => e.id === selectedOpp.assignedTo) : null
+                if (!emp) return '—'
+                const rc = ROLE_COLOR[emp.role] ?? ROLE_COLOR.ASSOCIATE
+                return (
+                  <span className="flex items-center gap-1.5 flex-wrap">
+                    <span className="text-xs font-semibold text-slate-800">{emp.name}</span>
+                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full"
+                      style={{ color: rc.color, background: rc.bg, border: `1px solid ${rc.border}` }}>
+                      {ROLE_LABEL[emp.role] ?? emp.role}
+                    </span>
+                  </span>
+                )
+              })()} />
             </DrawerSection>
 
             <DrawerSection title="Schedule">

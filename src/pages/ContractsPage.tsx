@@ -67,8 +67,21 @@ const POC_ROLE_LABELS = { KO: 'Contracting Officer', COR: 'COR', END_USER: 'End 
 // ─────────────────────────────────────────────────────────────────────────
 // Detail Drawer
 // ─────────────────────────────────────────────────────────────────────────
+const ROLE_LABEL_C: Record<string, string> = {
+  MANAGER: 'Manager',
+  OPERATIONS_MANAGER: 'Ops Manager',
+  TEAM_MANAGER: 'Team Manager',
+  ASSOCIATE: 'Associate',
+}
+const ROLE_COLOR_C: Record<string, { color: string; bg: string; border: string }> = {
+  MANAGER:            { color: '#4338CA', bg: '#EEF2FF', border: '#C7D2FE' },
+  OPERATIONS_MANAGER: { color: '#7C3AED', bg: '#F5F3FF', border: '#DDD6FE' },
+  TEAM_MANAGER:       { color: '#1D4ED8', bg: '#EFF6FF', border: '#BFDBFE' },
+  ASSOCIATE:          { color: '#0E7490', bg: '#ECFEFF', border: '#A5F3FC' },
+}
+
 function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClose: () => void }) {
-  const { updateContract, addContractPoC, removeContractPoC, addLockedSubcontractor, addGovernmentWarning, resolveGovernmentWarning, advanceContractStatus, terminateContract, currentUser } = useStore()
+  const { updateContract, addContractPoC, removeContractPoC, addLockedSubcontractor, addGovernmentWarning, resolveGovernmentWarning, advanceContractStatus, terminateContract, currentUser, employees } = useStore()
   const [tab, setTab] = useState<'overview' | 'poc' | 'subk' | 'warnings' | 'deliverables'>('overview')
 
   // Terminate form
@@ -216,6 +229,21 @@ function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClo
                   </div>
                 ))}
               </div>
+              {contract.assignedTo && (() => {
+                const emp = employees.find(e => e.id === contract.assignedTo)
+                if (!emp) return null
+                const rc = ROLE_COLOR_C[emp.role] ?? ROLE_COLOR_C.ASSOCIATE
+                return (
+                  <div className="mt-2 flex items-center gap-2 p-2 rounded-lg bg-slate-50">
+                    <span className="text-[10px] text-slate-400 w-16 flex-shrink-0">Assigned To</span>
+                    <span className="text-xs font-semibold text-slate-700">{emp.name}</span>
+                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full"
+                      style={{ color: rc.color, background: rc.bg, border: `1px solid ${rc.border}` }}>
+                      {ROLE_LABEL_C[emp.role] ?? emp.role}
+                    </span>
+                  </div>
+                )
+              })()}
             </div>
 
             {/* Billing notes */}
@@ -608,7 +636,7 @@ function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClo
 // Main Page
 // ─────────────────────────────────────────────────────────────────────────
 export default function ContractsPage() {
-  const { contracts } = useStore()
+  const { contracts, employees } = useStore()
   const [tab, setTab] = useState<CTab>('ALL')
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<Contract | null>(null)
@@ -704,6 +732,7 @@ export default function ContractsPage() {
                 <th>POP</th>
                 <th>Value</th>
                 <th>SPM / PM</th>
+                <th>Assigned</th>
                 <th>Flags</th>
                 <th></th>
               </tr>
@@ -711,7 +740,7 @@ export default function ContractsPage() {
             <tbody>
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={11} className="text-center py-12 text-slate-400 text-sm">
+                  <td colSpan={12} className="text-center py-12 text-slate-400 text-sm">
                     No contracts in this category.
                   </td>
                 </tr>
@@ -758,6 +787,22 @@ export default function ContractsPage() {
                     <td className="text-xs text-slate-600 whitespace-nowrap">
                       <p>{c.spm}</p>
                       <p className="text-slate-400">{c.pm}</p>
+                    </td>
+                    <td className="text-xs">
+                      {(() => {
+                        const emp = c.assignedTo ? employees.find(e => e.id === c.assignedTo) : null
+                        if (!emp) return <span className="text-slate-400">—</span>
+                        const rc = ROLE_COLOR_C[emp.role] ?? ROLE_COLOR_C.ASSOCIATE
+                        return (
+                          <div className="flex flex-col gap-0.5">
+                            <span className="text-xs text-slate-700 font-medium whitespace-nowrap">{emp.name}</span>
+                            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full w-fit"
+                              style={{ color: rc.color, background: rc.bg, border: `1px solid ${rc.border}` }}>
+                              {ROLE_LABEL_C[emp.role] ?? emp.role}
+                            </span>
+                          </div>
+                        )
+                      })()}
                     </td>
                     <td className="text-xs" onClick={e => e.stopPropagation()}>
                       <div className="flex items-center gap-1">
