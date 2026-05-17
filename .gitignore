@@ -22,3 +22,13 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Local secrets — never commit
+.env
+.env.*
+.mcp.json
+
+# Agent skills & Claude internal
+.agents/
+.claude/skills/
+skills-lock.json
