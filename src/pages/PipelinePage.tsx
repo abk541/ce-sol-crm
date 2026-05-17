@@ -13,6 +13,7 @@ import { formatCurrency } from '../lib/utils'
 import toast from 'react-hot-toast'
 import DetailDrawer, { DrawerSection, DrawerField } from '../components/shared/DetailDrawer'
 import PeriodFilter, { type Period, filterByPeriod } from '../components/shared/PeriodFilter'
+import HierarchyAssignPicker from '../components/shared/HierarchyAssignPicker'
 
 // ── Constants ─────────────────────────────────────────────────────────
 const PRIMES   = ['All', 'TECH-OR', 'AYJ-S', 'SANFORD', 'SAUDI']
@@ -448,7 +449,7 @@ function CreateModal({ onClose }: { onClose: () => void }) {
     capturedOn: new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }),
     bdm: '', bds: '', naicsCode: '', solicitationId: '', solicitation: '',
     client: '', location: '', dueDate: '', localTime: '', timezone: 'EST',
-    comments: [], proposals: [], subcontractors: [],
+    comments: [], proposals: [], subcontractors: [], assignedTo: undefined,
   })
   const set = (k: keyof Opportunity, v: any) => setForm(p => ({ ...p, [k]: v }))
 
@@ -534,6 +535,15 @@ function CreateModal({ onClose }: { onClose: () => void }) {
             <div><label className={labelCls}>Base Amount ($)</label><input type="number" value={form.baseAmount ?? ''} onChange={e => set('baseAmount', Number(e.target.value))} className="input-field" /></div>
             <div><label className={labelCls}>Monthly Payment ($)</label><input type="number" value={form.monthlyPayment ?? ''} onChange={e => set('monthlyPayment', Number(e.target.value))} className="input-field" /></div>
           </div>
+        </div>
+
+        <div className="border-t border-slate-100 pt-4">
+          <HierarchyAssignPicker
+            label="Assign To"
+            value={form.assignedTo}
+            onChange={v => set('assignedTo', v)}
+            deadline={form.dueDate || undefined}
+          />
         </div>
 
         <div className="flex gap-3 pt-2 border-t border-slate-100">

@@ -4,13 +4,13 @@ import type {
   User, Opportunity, Contract, Notification, Subcontractor,
   NonSubmissionReport, DeletionRequest, FreshAward,
   PastPerformance, SubkDatabaseEntry, ActivityLog,
-  ContractPoC, LockedSubcontractor, GovernmentWarning,
+  ContractPoC, LockedSubcontractor, GovernmentWarning, Employee,
 } from '../types'
 import {
   MOCK_USERS, MOCK_OPPORTUNITIES, MOCK_NOTIFICATIONS,
   MOCK_SUBCONTRACTORS, MOCK_NON_SUB_REPORTS, MOCK_DELETION_REQUESTS,
   MOCK_CONTRACTS, MOCK_FRESH_AWARDS, MOCK_PAST_PERFORMANCES,
-  MOCK_SUBK_DATABASE, MOCK_ACTIVITY_LOGS,
+  MOCK_SUBK_DATABASE, MOCK_ACTIVITY_LOGS, MOCK_EMPLOYEES,
 } from '../data/mock'
 
 interface AppState {
@@ -32,6 +32,7 @@ interface AppState {
   pastPerformances: PastPerformance[]
   subkDatabase: SubkDatabaseEntry[]
   activityLogs: ActivityLog[]
+  employees: Employee[]
 
   // UI
   sidebarCollapsed: boolean
@@ -102,6 +103,10 @@ interface AppState {
   markAllRead: () => void
   addNotification: (n: Omit<Notification, 'id' | 'createdAt'>) => void
 
+  // ── Employee assignment ────────────────────────────────────────────
+  assignOpportunityToEmployee: (opportunityId: string, employeeId: string) => void
+  assignContractToEmployee: (contractId: string, employeeId: string) => void
+
   // ── UI ─────────────────────────────────────────────────────────────
   toggleSidebar: () => void
 }
@@ -134,6 +139,7 @@ export const useStore = create<AppState>()(
       pastPerformances: MOCK_PAST_PERFORMANCES,
       subkDatabase: MOCK_SUBK_DATABASE,
       activityLogs: MOCK_ACTIVITY_LOGS,
+      employees: MOCK_EMPLOYEES,
       sidebarCollapsed: false,
 
       // ── Auth ────────────────────────────────────────────────────────
@@ -739,6 +745,45 @@ export const useStore = create<AppState>()(
           createdAt: new Date().toISOString(),
         }, ...s.notifications]
       })),
+
+      // ── Employee assignment ─────────────────────────────────────────
+      assignOpportunityToEmployee: (opportunityId, employeeId) => {
+        set(s => ({
+          opportunities: s.opportunities.map(o =>
+            o.id === opportunityId ? { ...o, assignedTo: employeeId } : o
+          )
+        }))
+        const emp = get().employees.find(e => e.id === employeeId)
+        const opp = get().opportunities.find(o => o.id === opportunityId)
+        if (emp && opp) {
+          get().addNotification({
+            type: 'ASSIGNMENT',
+            title: 'Opportunity assigned',
+            message: `${opp.solicitation} assigned to ${emp.name}.`,
+            read: false,
+            relatedId: opportunityId,
+          })
+        }
+      },
+
+      assignContractToEmployee: (contractId, employeeId) => {
+        set(s => ({
+          contracts: s.contracts.map(c =>
+            c.id === contractId ? { ...c, assignedTo: employeeId } : c
+          )
+        }))
+        const emp = get().employees.find(e => e.id === employeeId)
+        const contract = get().contracts.find(c => c.id === contractId)
+        if (emp && contract) {
+          get().addNotification({
+            type: 'ASSIGNMENT',
+            title: 'Contract assigned',
+            message: `${contract.title} assigned to ${emp.name}.`,
+            read: false,
+            relatedId: contractId,
+          })
+        }
+      },
 
       // ── UI ──────────────────────────────────────────────────────────
       toggleSidebar: () => set(s => ({ sidebarCollapsed: !s.sidebarCollapsed })),

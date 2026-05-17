@@ -2,7 +2,7 @@ import type {
   User, Opportunity, Contract, BDSubmission,
   Notification, Subcontractor, NonSubmissionReport,
   DeletionRequest, AgentStats, FreshAward, PastPerformance,
-  SubkDatabaseEntry, ActivityLog,
+  SubkDatabaseEntry, ActivityLog, Employee,
 } from '../types'
 
 export const MOCK_USERS: User[] = [
@@ -528,6 +528,55 @@ export const MOCK_SUBK_DATABASE: SubkDatabaseEntry[] = [
     createdAt: '2026-04-21T14:15:00',
     createdBy: 'mehdia',
   },
+]
+
+// ── Employees (Hierarchy) ─────────────────────────────────────────────
+export const MOCK_EMPLOYEES: Employee[] = [
+  // Managers (top level)
+  { id: 'emp-1',  name: 'James Harrington', email: 'james.harrington@cesolutionplus.com', role: 'MANAGER',            managerId: null,    avatar: 'JA' },
+  { id: 'emp-2',  name: 'Priya Kapoor',     email: 'priya.kapoor@cesolutionplus.com',     role: 'MANAGER',            managerId: null,    avatar: 'PR' },
+  // Operations Managers under James Harrington
+  { id: 'emp-3',  name: 'Marcus Webb',      email: 'marcus.webb@cesolutionplus.com',      role: 'OPERATIONS_MANAGER', managerId: 'emp-1', avatar: 'MA' },
+  { id: 'emp-4',  name: 'Elena Torres',     email: 'elena.torres@cesolutionplus.com',     role: 'OPERATIONS_MANAGER', managerId: 'emp-1', avatar: 'EL' },
+  // Operations Managers under Priya Kapoor
+  { id: 'emp-5',  name: 'David Osei',       email: 'david.osei@cesolutionplus.com',       role: 'OPERATIONS_MANAGER', managerId: 'emp-2', avatar: 'DA' },
+  { id: 'emp-6',  name: 'Rachel Nguyen',    email: 'rachel.nguyen@cesolutionplus.com',    role: 'OPERATIONS_MANAGER', managerId: 'emp-2', avatar: 'RA' },
+  // Team Managers under Marcus Webb
+  { id: 'emp-7',  name: 'Kevin Patel',      email: 'kevin.patel@cesolutionplus.com',      role: 'TEAM_MANAGER',       managerId: 'emp-3', avatar: 'KE' },
+  { id: 'emp-8',  name: 'Aisha Johnson',    email: 'aisha.johnson@cesolutionplus.com',    role: 'TEAM_MANAGER',       managerId: 'emp-3', avatar: 'AI' },
+  // Team Managers under Elena Torres
+  { id: 'emp-9',  name: 'Chris Lawson',     email: 'chris.lawson@cesolutionplus.com',     role: 'TEAM_MANAGER',       managerId: 'emp-4', avatar: 'CH' },
+  { id: 'emp-10', name: 'Leila Morita',     email: 'leila.morita@cesolutionplus.com',     role: 'TEAM_MANAGER',       managerId: 'emp-4', avatar: 'LE' },
+  // Team Managers under David Osei
+  { id: 'emp-11', name: 'Ryan Collins',     email: 'ryan.collins@cesolutionplus.com',     role: 'TEAM_MANAGER',       managerId: 'emp-5', avatar: 'RY' },
+  { id: 'emp-12', name: 'Fatima Al-Hassan', email: 'fatima.al-hassan@cesolutionplus.com', role: 'TEAM_MANAGER',       managerId: 'emp-5', avatar: 'FA' },
+  // Team Managers under Rachel Nguyen
+  { id: 'emp-13', name: 'Ben Carter',       email: 'ben.carter@cesolutionplus.com',       role: 'TEAM_MANAGER',       managerId: 'emp-6', avatar: 'BE' },
+  { id: 'emp-14', name: 'Amara Diallo',     email: 'amara.diallo@cesolutionplus.com',     role: 'TEAM_MANAGER',       managerId: 'emp-6', avatar: 'AM' },
+  // Associates under Kevin Patel
+  { id: 'emp-15', name: 'Sophie Reid',      email: 'sophie.reid@cesolutionplus.com',      role: 'ASSOCIATE',          managerId: 'emp-7', avatar: 'SO' },
+  { id: 'emp-16', name: 'Omar Hassan',      email: 'omar.hassan@cesolutionplus.com',      role: 'ASSOCIATE',          managerId: 'emp-7', avatar: 'OM' },
+  // Associates under Aisha Johnson
+  { id: 'emp-17', name: 'Tyler Brooks',     email: 'tyler.brooks@cesolutionplus.com',     role: 'ASSOCIATE',          managerId: 'emp-8', avatar: 'TY' },
+  { id: 'emp-18', name: 'Mei Chen',         email: 'mei.chen@cesolutionplus.com',         role: 'ASSOCIATE',          managerId: 'emp-8', avatar: 'ME' },
+  // Associates under Chris Lawson
+  { id: 'emp-19', name: 'Jordan Lee',       email: 'jordan.lee@cesolutionplus.com',       role: 'ASSOCIATE',          managerId: 'emp-9', avatar: 'JO' },
+  { id: 'emp-20', name: 'Vanessa Price',    email: 'vanessa.price@cesolutionplus.com',    role: 'ASSOCIATE',          managerId: 'emp-9', avatar: 'VA' },
+  // Associates under Leila Morita
+  { id: 'emp-21', name: 'Samuel Okonkwo',   email: 'samuel.okonkwo@cesolutionplus.com',   role: 'ASSOCIATE',          managerId: 'emp-10', avatar: 'SA' },
+  { id: 'emp-22', name: 'Isabelle Martin',  email: 'isabelle.martin@cesolutionplus.com',  role: 'ASSOCIATE',          managerId: 'emp-10', avatar: 'IS' },
+  // Associates under Ryan Collins
+  { id: 'emp-23', name: 'Nathan Freed',     email: 'nathan.freed@cesolutionplus.com',     role: 'ASSOCIATE',          managerId: 'emp-11', avatar: 'NA' },
+  { id: 'emp-24', name: 'Alicia Morales',   email: 'alicia.morales@cesolutionplus.com',   role: 'ASSOCIATE',          managerId: 'emp-11', avatar: 'AL' },
+  // Associates under Fatima Al-Hassan
+  { id: 'emp-25', name: 'Derek Wilson',     email: 'derek.wilson@cesolutionplus.com',     role: 'ASSOCIATE',          managerId: 'emp-12', avatar: 'DE' },
+  { id: 'emp-26', name: 'Yuki Tanaka',      email: 'yuki.tanaka@cesolutionplus.com',      role: 'ASSOCIATE',          managerId: 'emp-12', avatar: 'YU' },
+  // Associates under Ben Carter
+  { id: 'emp-27', name: 'Patrick Rousseau', email: 'patrick.rousseau@cesolutionplus.com', role: 'ASSOCIATE',          managerId: 'emp-13', avatar: 'PA' },
+  { id: 'emp-28', name: 'Nia Scott',        email: 'nia.scott@cesolutionplus.com',        role: 'ASSOCIATE',          managerId: 'emp-13', avatar: 'NI' },
+  // Associates under Amara Diallo
+  { id: 'emp-29', name: 'Felix Adeyemi',    email: 'felix.adeyemi@cesolutionplus.com',    role: 'ASSOCIATE',          managerId: 'emp-14', avatar: 'FE' },
+  { id: 'emp-30', name: 'Chloe Burnet',     email: 'chloe.burnet@cesolutionplus.com',     role: 'ASSOCIATE',          managerId: 'emp-14', avatar: 'CL' },
 ]
 
 // ── Activity Logs ─────────────────────────────────────────────────────

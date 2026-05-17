@@ -4,6 +4,7 @@ import { Search, Download, UserPlus, X, Check } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import type { OppStatus, Opportunity } from '../types'
 import toast from 'react-hot-toast'
+import HierarchyAssignPicker from '../components/shared/HierarchyAssignPicker'
 
 type Tab = { key: OppStatus | 'ALL'; label: string }
 
@@ -26,50 +27,54 @@ const STATUS_BADGE: Record<OppStatus, string> = {
 }
 
 function AssignModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) {
-  const { users, assignOpportunity } = useStore()
-  const [bdm, setBdm] = useState(opp.bdm)
-  const [bds, setBds] = useState(opp.bds)
+  const { assignOpportunityToEmployee, employees } = useStore()
+  const [selectedEmpId, setSelectedEmpId] = useState<string | undefined>(opp.assignedTo)
 
   const handleAssign = () => {
-    assignOpportunity(opp.id, bdm, bds)
-    toast.success(`Assigned to ${bdm}`)
+    if (!selectedEmpId) { toast.error('Please select an employee'); return }
+    assignOpportunityToEmployee(opp.id, selectedEmpId)
+    const emp = employees.find(e => e.id === selectedEmpId)
+    toast.success(`Assigned to ${emp?.name ?? selectedEmpId}`)
     onClose()
   }
-
-  const agents = users.filter(u => ['BDM','BDS','SUPPORT_AGENT'].includes(u.role))
 
   return (
     <motion.div className="fixed inset-0 z-50 flex items-center justify-center p-4"
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
       <motion.div
         initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
         exit={{ scale: 0.95, opacity: 0 }}
-        className="relative z-10 w-full max-w-sm rounded-2xl p-6"
-        style={{ background: 'rgba(7,14,34,0.98)', border: '1px solid rgba(99,102,241,0.2)', boxShadow: '0 24px 80px rgba(0,0,0,0.7)' }}>
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="font-semibold text-white text-sm">Assign Proposal</h2>
-          <button onClick={onClose} className="btn-ghost p-1.5"><X size={13} /></button>
-        </div>
-        <p className="text-xs text-slate-500 mb-4 truncate">{opp.solicitation}</p>
-        <div className="space-y-3">
+        className="relative z-10 w-full max-w-3xl rounded-2xl bg-white border border-slate-200 shadow-2xl"
+        style={{ maxHeight: '90vh', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 bg-white flex-shrink-0">
           <div>
-            <label className="text-xs text-slate-500 block mb-1">BDM</label>
-            <select value={bdm} onChange={e => setBdm(e.target.value)} className="select-field">
-              {agents.map(u => <option key={u.id} value={u.username}>{u.name} ({u.role})</option>)}
-            </select>
+            <h2 className="font-bold text-slate-900 text-base">Assign Proposal</h2>
+            <p className="text-xs text-slate-500 mt-0.5 truncate max-w-sm">{opp.solicitation}</p>
           </div>
-          <div>
-            <label className="text-xs text-slate-500 block mb-1">BDS</label>
-            <select value={bds} onChange={e => setBds(e.target.value)} className="select-field">
-              {agents.map(u => <option key={u.id} value={u.username}>{u.name} ({u.role})</option>)}
-            </select>
-          </div>
+          <button onClick={onClose}
+            className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-all">
+            <X size={14} />
+          </button>
         </div>
-        <div className="flex gap-2 mt-5">
+
+        {/* Body */}
+        <div className="px-6 py-5 overflow-y-auto flex-1">
+          <HierarchyAssignPicker
+            label="Select Employee"
+            value={selectedEmpId}
+            onChange={setSelectedEmpId}
+            deadline={opp.dueDate}
+          />
+        </div>
+
+        {/* Footer */}
+        <div className="flex gap-3 px-6 py-4 border-t border-slate-200 bg-slate-50 flex-shrink-0">
           <button onClick={onClose} className="btn-secondary flex-1 justify-center">Cancel</button>
-          <button onClick={handleAssign} className="btn-primary flex-1 justify-center">
-            <Check size={13} /> Assign
+          <button onClick={handleAssign} disabled={!selectedEmpId}
+            className="btn-primary flex-1 justify-center disabled:opacity-40">
+            <Check size={13} /> Confirm Assignment
           </button>
         </div>
       </motion.div>

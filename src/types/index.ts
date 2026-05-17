@@ -1,3 +1,15 @@
+export type HierarchyRole = 'MANAGER' | 'OPERATIONS_MANAGER' | 'TEAM_MANAGER' | 'ASSOCIATE'
+
+export interface Employee {
+  id: string
+  name: string
+  email: string
+  role: HierarchyRole
+  managerId: string | null   // null for Managers (top level)
+  department?: string
+  avatar: string             // 2-letter initials
+}
+
 export type Role = 'ADMIN' | 'BDM' | 'BDS' | 'SPM' | 'PM' | 'SUPPORT_AGENT'
 
 export interface User {
@@ -189,6 +201,7 @@ export interface Opportunity {
   deletionRequested?: boolean
   submittedAt?: string
   nonSubmissionReportId?: string
+  assignedTo?: string        // employee id
 }
 
 // ── Contract ──────────────────────────────────────────────────────────
@@ -226,6 +239,7 @@ export interface Contract {
   terminationType?: 'T4C' | 'T4D' | 'CANCELED'
   terminationDate?: string
   terminationReason?: string
+  assignedTo?: string        // employee id
 }
 
 // ── BD Submission (BD Tracker) ────────────────────────────────────────
