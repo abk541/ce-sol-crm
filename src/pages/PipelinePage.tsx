@@ -114,9 +114,90 @@ function ModalWrap({ onClose, title, subtitle, children, maxW = 'max-w-2xl' }: {
   )
 }
 
+// ── Shared: tabbed opportunity modal shell ────────────────────────────
+type OppFormTab = 'details' | 'schedule' | 'team' | 'assign'
+const OPP_FORM_TABS: { id: OppFormTab; label: string }[] = [
+  { id: 'details',  label: 'Opportunity' },
+  { id: 'schedule', label: 'Schedule' },
+  { id: 'team',     label: 'Team & Finance' },
+  { id: 'assign',   label: 'Assignment' },
+]
+
+function OppModalShell({ title, subtitle, tab, setTab, onClose, extraHeader, footer, children }: {
+  title: string; subtitle?: string
+  tab: OppFormTab; setTab: (t: OppFormTab) => void
+  onClose: () => void
+  extraHeader?: React.ReactNode
+  footer: React.ReactNode
+  children: React.ReactNode
+}) {
+  return (
+    <motion.div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+      <div className="absolute inset-0" style={{ background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(6px)' }} onClick={onClose} />
+      <motion.div
+        className="relative z-10 w-full max-w-4xl bg-white rounded-2xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden"
+        style={{ height: 'min(88vh, 760px)' }}
+        initial={{ opacity: 0, scale: 0.96, y: 10 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.96, y: 10 }}
+        transition={{ type: 'spring', stiffness: 340, damping: 28 }}>
+
+        {/* ── Top header ── */}
+        <div className="flex-shrink-0 border-b border-slate-200">
+          <div className="flex items-start justify-between px-7 pt-5 pb-3 gap-4">
+            <div className="min-w-0">
+              <h2 className="text-[15px] font-bold text-slate-900 leading-tight">{title}</h2>
+              {subtitle && (
+                <p className="text-xs text-slate-400 mt-0.5 truncate max-w-lg">{subtitle}</p>
+              )}
+            </div>
+            <button onClick={onClose}
+              className="flex-shrink-0 w-8 h-8 rounded-xl flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-all mt-0.5">
+              <X size={14} />
+            </button>
+          </div>
+
+          {/* Optional row (SAM import, etc.) */}
+          {extraHeader && <div className="px-7 pb-3">{extraHeader}</div>}
+
+          {/* Tab bar */}
+          <div className="flex px-7 gap-0.5">
+            {OPP_FORM_TABS.map((t, i) => (
+              <button key={t.id} onClick={() => setTab(t.id)}
+                className={[
+                  'px-4 py-2.5 text-[12px] font-semibold border-b-2 transition-all whitespace-nowrap flex items-center gap-1.5',
+                  tab === t.id
+                    ? 'border-indigo-500 text-indigo-600'
+                    : 'border-transparent text-slate-400 hover:text-slate-600 hover:border-slate-200',
+                ].join(' ')}>
+                <span className={`w-4 h-4 rounded-full text-[9px] font-black flex items-center justify-center ${tab === t.id ? 'bg-indigo-100 text-indigo-600' : 'bg-slate-100 text-slate-400'}`}>
+                  {i + 1}
+                </span>
+                {t.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* ── Scrollable body ── */}
+        <div className="flex-1 overflow-y-auto px-7 py-6">
+          {children}
+        </div>
+
+        {/* ── Footer ── */}
+        <div className="flex-shrink-0 px-7 py-4 bg-slate-50/80 border-t border-slate-200">
+          {footer}
+        </div>
+      </motion.div>
+    </motion.div>
+  )
+}
+
 // ── Edit Modal ────────────────────────────────────────────────────────
 function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) {
   const { updateOpportunity, requestDeletion, deletionRequests, currentUser } = useStore()
+  const [tab, setTab] = useState<OppFormTab>('details')
   const [form, setForm] = useState<Partial<Opportunity>>({ ...opp })
   const [showDeleteReq, setShowDeleteReq] = useState(false)
   const [deleteReason, setDeleteReason] = useState('')
@@ -124,126 +205,33 @@ function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) 
   const isManager = ['ADMIN', 'BDM'].includes(currentUser?.role ?? '')
   const hasPendingDelete = deletionRequests.some(r => r.opportunityId === opp.id && r.status === 'PENDING')
   const set = (k: keyof Opportunity, v: any) => setForm(p => ({ ...p, [k]: v }))
+  const lbl = 'block text-xs font-semibold text-slate-500 mb-1.5'
 
-  const save = (e: React.FormEvent) => {
-    e.preventDefault()
+  const handleSave = () => {
+    if (!form.solicitation?.trim()) { toast.error('Solicitation title is required'); setTab('details'); return }
+    if (!form.dueDate) { toast.error('Due date is required'); setTab('schedule'); return }
     updateOpportunity(opp.id, form)
     toast.success('Opportunity updated')
     onClose()
   }
 
   const submitDeleteReq = () => {
-    if (deleteReason.trim().length < 10) { toast.error('Please provide a reason'); return }
+    if (deleteReason.trim().length < 10) { toast.error('Please provide a reason (min 10 chars)'); return }
     requestDeletion(opp.id, currentUser?.username ?? '', deleteReason.trim())
     toast.success('Deletion request submitted')
     setShowDeleteReq(false); onClose()
   }
 
-  const labelCls = 'block text-xs font-semibold text-slate-500 mb-1.5'
-
   return (
-    <ModalWrap onClose={onClose} title="Edit Opportunity" subtitle={opp.solicitation}>
-      <form onSubmit={save} className="p-6 space-y-5">
-        <div className="grid grid-cols-2 gap-3">
-          <div className="col-span-2">
-            <label className={labelCls}>Solicitation Title</label>
-            <input value={form.solicitation ?? ''} onChange={e => set('solicitation', e.target.value)} className="input-field" required />
-          </div>
-          <div>
-            <label className={labelCls}>Solicitation ID</label>
-            <input value={form.solicitationId ?? ''} onChange={e => set('solicitationId', e.target.value)} className="input-field" />
-          </div>
-          <div>
-            <label className={labelCls}>Client</label>
-            <input value={form.client ?? ''} onChange={e => set('client', e.target.value)} className="input-field" />
-          </div>
-        </div>
-
-        <div className="grid grid-cols-4 gap-3">
-          {[
-            { label: 'Type', key: 'type', opts: ['OTJ','RECURRING','BPA','IDIQ','S&D','SUPPLY'] },
-            { label: 'Prime', key: 'prime', opts: ['TECH-OR','AYJ-S','SANFORD','SAUDI'] },
-            { label: 'Set Aside', key: 'setAside', opts: ['SB','SDVOSB','WOSB','HUBZone','VOSB','8(a)','UNRES'] },
-          ].map(f => (
-            <div key={f.key}>
-              <label className={labelCls}>{f.label}</label>
-              <select value={(form as any)[f.key] ?? f.opts[0]} onChange={e => set(f.key as keyof Opportunity, e.target.value)} className="select-field">
-                {f.opts.map(o => <option key={o}>{o}</option>)}
-              </select>
-            </div>
-          ))}
-          <div>
-            <label className={labelCls}>NAICS Code</label>
-            <input value={form.naicsCode ?? ''} onChange={e => set('naicsCode', e.target.value)} className="input-field" />
-          </div>
-        </div>
-
-        <div className="grid grid-cols-3 gap-3">
-          <div>
-            <label className={labelCls}>Status</label>
-            <select value={form.status ?? 'ACTIVE'} onChange={e => set('status', e.target.value as OppStatus)} className="select-field">
-              {STATUSES.map(s => <option key={s}>{s}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className={labelCls}>Priority</label>
-            <select value={form.priority ?? 'MEDIUM'} onChange={e => set('priority', e.target.value as Priority)} className="select-field">
-              {['HIGH','MEDIUM','LOW'].map(p => <option key={p}>{p}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className={labelCls}>Location</label>
-            <input value={form.location ?? ''} onChange={e => set('location', e.target.value)} className="input-field" />
-          </div>
-        </div>
-
-        <div className="grid grid-cols-3 gap-3">
-          <div>
-            <label className={labelCls}>Due Date</label>
-            <input type="date" value={form.dueDate ?? ''} onChange={e => set('dueDate', e.target.value)} className="input-field" required />
-          </div>
-          <div>
-            <label className={labelCls}>Local Time (HH:MM)</label>
-            <input value={form.localTime ?? ''} onChange={e => set('localTime', e.target.value)} className="input-field" placeholder="17:00" />
-          </div>
-          <div>
-            <label className={labelCls}>Timezone</label>
-            <select value={form.timezone ?? 'EST'} onChange={e => set('timezone', e.target.value)} className="select-field">
-              {TZ_ABBREVS.map(t => <option key={t}>{t}</option>)}
-            </select>
-          </div>
-        </div>
-        {form.localTime && form.timezone && (
-          <p className="text-[11px] text-indigo-600 -mt-2 flex items-center gap-1 font-medium">
-            <Clock size={10} /> Your local: {convertTime(form.localTime, form.timezone)}
-          </p>
-        )}
-
-        <div className="grid grid-cols-3 gap-3">
-          <div><label className={labelCls}>BDM</label><input value={form.bdm ?? ''} onChange={e => set('bdm', e.target.value)} className="input-field" /></div>
-          <div><label className={labelCls}>BDS</label><input value={form.bds ?? ''} onChange={e => set('bds', e.target.value)} className="input-field" /></div>
-          <div><label className={labelCls}>Support Agent</label><input value={form.supportAgent ?? ''} onChange={e => set('supportAgent', e.target.value)} className="input-field" /></div>
-        </div>
-
-        <div className="border-t border-slate-100 pt-4">
-          <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">Contract Value</p>
-          <div className="grid grid-cols-3 gap-3">
-            <div><label className={labelCls}>Contract Amount ($)</label><input type="number" value={form.contractAmount ?? ''} onChange={e => set('contractAmount', Number(e.target.value))} className="input-field" /></div>
-            <div><label className={labelCls}>Base Amount ($)</label><input type="number" value={form.baseAmount ?? ''} onChange={e => set('baseAmount', Number(e.target.value))} className="input-field" /></div>
-            <div><label className={labelCls}>Monthly Payment ($)</label><input type="number" value={form.monthlyPayment ?? ''} onChange={e => set('monthlyPayment', Number(e.target.value))} className="input-field" /></div>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-2 gap-3">
-          <div><label className={labelCls}>Period of Performance</label><input value={form.pop ?? ''} onChange={e => set('pop', e.target.value)} className="input-field" placeholder="1 base yr + 4 option yrs" /></div>
-          <div><label className={labelCls}>SAM.gov Link</label><input value={form.link ?? ''} onChange={e => set('link', e.target.value)} className="input-field" placeholder="https://sam.gov/opp/…" /></div>
-          <div><label className={labelCls}>POC</label><input value={form.poc ?? ''} onChange={e => set('poc', e.target.value)} className="input-field" /></div>
-          <div><label className={labelCls}>Mandatory Events</label><input value={form.mandatoryEvents ?? ''} onChange={e => set('mandatoryEvents', e.target.value)} className="input-field" /></div>
-        </div>
-
-        <div className="flex gap-3 pt-2 border-t border-slate-100">
+    <OppModalShell
+      title="Edit Opportunity"
+      subtitle={opp.solicitation}
+      tab={tab} setTab={setTab}
+      onClose={onClose}
+      footer={
+        <div className="flex items-center gap-3">
           {isManager && !hasPendingDelete && (
-            <button type="button" onClick={() => setShowDeleteReq(true)}
+            <button type="button" onClick={() => setShowDeleteReq(v => !v)}
               className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold text-red-600 bg-red-50 border border-red-200 hover:bg-red-100 transition-colors">
               <Trash2 size={12} /> Request Deletion
             </button>
@@ -253,29 +241,181 @@ function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) 
               ⚠ Deletion pending review
             </span>
           )}
-          <button type="button" onClick={onClose} className="btn-secondary ml-auto">Cancel</button>
-          <button type="submit" className="btn-primary">Save Changes</button>
+          <div className="ml-auto flex gap-3">
+            <button type="button" onClick={onClose} className="btn-secondary">Cancel</button>
+            <button type="button" onClick={handleSave} className="btn-primary">Save Changes</button>
+          </div>
         </div>
-
-        <AnimatePresence>
-          {showDeleteReq && (
-            <motion.div className="border border-red-200 rounded-xl p-4 bg-red-50"
-              initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}>
-              <p className="text-xs font-bold text-red-600 mb-2">Reason for deletion request</p>
-              <textarea value={deleteReason} onChange={e => setDeleteReason(e.target.value)} rows={3}
-                className="input-field w-full resize-none text-sm" placeholder="Explain why this opportunity should be deleted…" />
-              <div className="flex gap-2 mt-2">
-                <button type="button" onClick={() => setShowDeleteReq(false)} className="btn-secondary text-xs">Cancel</button>
-                <button type="button" onClick={submitDeleteReq}
-                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold text-red-600 bg-red-100 border border-red-200 hover:bg-red-200 transition-colors">
-                  <Trash2 size={11} /> Submit Request
-                </button>
+      }
+    >
+      {/* ── Details tab ── */}
+      {tab === 'details' && (
+        <div className="space-y-5">
+          <div>
+            <label className={lbl}>Solicitation Title *</label>
+            <input value={form.solicitation ?? ''} onChange={e => set('solicitation', e.target.value)} className="input-field" />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className={lbl}>Solicitation ID</label>
+              <input value={form.solicitationId ?? ''} onChange={e => set('solicitationId', e.target.value)} className="input-field" />
+            </div>
+            <div>
+              <label className={lbl}>Client / Agency</label>
+              <input value={form.client ?? ''} onChange={e => set('client', e.target.value)} className="input-field" />
+            </div>
+          </div>
+          <div className="grid grid-cols-4 gap-3">
+            {([
+              { label: 'Contract Type', key: 'type',     opts: ['OTJ','RECURRING','BPA','IDIQ','S&D','SUPPLY'] },
+              { label: 'Prime',         key: 'prime',    opts: ['TECH-OR','AYJ-S','SANFORD','SAUDI'] },
+              { label: 'Set Aside',     key: 'setAside', opts: ['SB','SDVOSB','WOSB','HUBZone','VOSB','8(a)','UNRES'] },
+            ] as const).map(f => (
+              <div key={f.key}>
+                <label className={lbl}>{f.label}</label>
+                <select value={(form as any)[f.key] ?? f.opts[0]} onChange={e => set(f.key as keyof Opportunity, e.target.value)} className="select-field">
+                  {f.opts.map(o => <option key={o}>{o}</option>)}
+                </select>
               </div>
-            </motion.div>
+            ))}
+            <div>
+              <label className={lbl}>NAICS Code</label>
+              <input value={form.naicsCode ?? ''} onChange={e => set('naicsCode', e.target.value)} className="input-field" />
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-4">
+            <div>
+              <label className={lbl}>Status</label>
+              <select value={form.status ?? 'ACTIVE'} onChange={e => set('status', e.target.value as OppStatus)} className="select-field">
+                {STATUSES.map(s => <option key={s}>{s}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className={lbl}>Priority</label>
+              <select value={form.priority ?? 'MEDIUM'} onChange={e => set('priority', e.target.value as Priority)} className="select-field">
+                {['HIGH','MEDIUM','LOW'].map(p => <option key={p}>{p}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className={lbl}>Location</label>
+              <input value={form.location ?? ''} onChange={e => set('location', e.target.value)} className="input-field" placeholder="City, State" />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Schedule tab ── */}
+      {tab === 'schedule' && (
+        <div className="space-y-5">
+          <div className="grid grid-cols-3 gap-4">
+            <div>
+              <label className={lbl}>Due Date *</label>
+              <input type="date" value={form.dueDate ?? ''} onChange={e => set('dueDate', e.target.value)} className="input-field" />
+            </div>
+            <div>
+              <label className={lbl}>Local Time (HH:MM)</label>
+              <input value={form.localTime ?? ''} onChange={e => set('localTime', e.target.value)} className="input-field" placeholder="17:00" />
+            </div>
+            <div>
+              <label className={lbl}>Timezone</label>
+              <select value={form.timezone ?? 'EST'} onChange={e => set('timezone', e.target.value)} className="select-field">
+                {TZ_ABBREVS.map(t => <option key={t}>{t}</option>)}
+              </select>
+            </div>
+          </div>
+          {form.localTime && form.timezone && (
+            <p className="text-[11px] text-indigo-600 -mt-2 flex items-center gap-1 font-medium">
+              <Clock size={10} /> Your local: {convertTime(form.localTime, form.timezone)}
+            </p>
           )}
-        </AnimatePresence>
-      </form>
-    </ModalWrap>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className={lbl}>Period of Performance</label>
+              <input value={form.pop ?? ''} onChange={e => set('pop', e.target.value)} className="input-field" placeholder="1 base yr + 4 option yrs" />
+            </div>
+            <div>
+              <label className={lbl}>SAM.gov Link</label>
+              <input value={form.link ?? ''} onChange={e => set('link', e.target.value)} className="input-field" placeholder="https://sam.gov/opp/…" />
+            </div>
+            <div>
+              <label className={lbl}>POC</label>
+              <input value={form.poc ?? ''} onChange={e => set('poc', e.target.value)} className="input-field" />
+            </div>
+            <div>
+              <label className={lbl}>Mandatory Events</label>
+              <input value={form.mandatoryEvents ?? ''} onChange={e => set('mandatoryEvents', e.target.value)} className="input-field" />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Team & Finance tab ── */}
+      {tab === 'team' && (
+        <div className="space-y-6">
+          <div>
+            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4">Team Members</p>
+            <div className="grid grid-cols-3 gap-4">
+              <div><label className={lbl}>BDM</label><input value={form.bdm ?? ''} onChange={e => set('bdm', e.target.value)} className="input-field" /></div>
+              <div><label className={lbl}>BDS</label><input value={form.bds ?? ''} onChange={e => set('bds', e.target.value)} className="input-field" /></div>
+              <div><label className={lbl}>Support Agent</label><input value={form.supportAgent ?? ''} onChange={e => set('supportAgent', e.target.value)} className="input-field" /></div>
+            </div>
+          </div>
+          <div className="border-t border-slate-100 pt-5">
+            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4">Contract Value</p>
+            <div className="grid grid-cols-3 gap-4">
+              <div>
+                <label className={lbl}>Contract Amount ($)</label>
+                <input type="number" value={form.contractAmount ?? ''} onChange={e => set('contractAmount', Number(e.target.value))} className="input-field" />
+              </div>
+              <div>
+                <label className={lbl}>Base Amount ($)</label>
+                <input type="number" value={form.baseAmount ?? ''} onChange={e => set('baseAmount', Number(e.target.value))} className="input-field" />
+              </div>
+              <div>
+                <label className={lbl}>Monthly Payment ($)</label>
+                <input type="number" value={form.monthlyPayment ?? ''} onChange={e => set('monthlyPayment', Number(e.target.value))} className="input-field" />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Assignment tab ── */}
+      {tab === 'assign' && (
+        <div className="space-y-4">
+          <div>
+            <p className="text-sm font-semibold text-slate-700 mb-1">Assign to a team member</p>
+            <p className="text-xs text-slate-400 mb-4">
+              Select anyone in the hierarchy. The ⚠ badge shows when they already have a contract ending on the same due date.
+            </p>
+          </div>
+          <HierarchyAssignPicker
+            value={form.assignedTo}
+            onChange={v => set('assignedTo', v)}
+            deadline={form.dueDate || opp.dueDate || undefined}
+          />
+        </div>
+      )}
+
+      {/* Delete request panel */}
+      <AnimatePresence>
+        {showDeleteReq && (
+          <motion.div className="mt-5 border border-red-200 rounded-xl p-4 bg-red-50"
+            initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}>
+            <p className="text-xs font-bold text-red-600 mb-2">Reason for deletion request</p>
+            <textarea value={deleteReason} onChange={e => setDeleteReason(e.target.value)} rows={3}
+              className="input-field w-full resize-none text-sm" placeholder="Explain why this opportunity should be deleted…" />
+            <div className="flex gap-2 mt-2">
+              <button type="button" onClick={() => setShowDeleteReq(false)} className="btn-secondary text-xs">Cancel</button>
+              <button type="button" onClick={submitDeleteReq}
+                className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold text-red-600 bg-red-100 border border-red-200 hover:bg-red-200 transition-colors">
+                <Trash2 size={11} /> Submit Request
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </OppModalShell>
   )
 }
 
@@ -441,17 +581,20 @@ function SubmitModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }
 // ── Create Modal ──────────────────────────────────────────────────────
 function CreateModal({ onClose }: { onClose: () => void }) {
   const { createOpportunity } = useStore()
+  const [tab, setTab] = useState<OppFormTab>('details')
   const [samUrl, setSamUrl] = useState('')
   const [importing, setImporting] = useState(false)
   const [form, setForm] = useState<Partial<Opportunity>>({
     priority: 'MEDIUM', status: 'ACTIVE', type: 'OTJ', setAside: 'SB',
-    prime: 'TECH-OR', period: 'MAY 2026',
+    prime: 'TECH-OR',
+    period: new Date().toLocaleString('en-US', { month: 'short' }).toUpperCase() + ' ' + new Date().getFullYear(),
     capturedOn: new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }),
     bdm: '', bds: '', naicsCode: '', solicitationId: '', solicitation: '',
     client: '', location: '', dueDate: '', localTime: '', timezone: 'EST',
     comments: [], proposals: [], subcontractors: [], assignedTo: undefined,
   })
   const set = (k: keyof Opportunity, v: any) => setForm(p => ({ ...p, [k]: v }))
+  const lbl = 'block text-xs font-semibold text-slate-500 mb-1.5'
 
   const handleImport = async () => {
     if (!samUrl.trim()) return
@@ -466,92 +609,210 @@ function CreateModal({ onClose }: { onClose: () => void }) {
     set('pop', '1 base year + 4 option years')
     setImporting(false)
     toast.success('Details imported from SAM.gov!')
+    setTab('details')
   }
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!form.solicitation || !form.dueDate) return
+  const handleCreate = () => {
+    if (!form.solicitation?.trim()) { toast.error('Solicitation title is required'); setTab('details'); return }
+    if (!form.dueDate) { toast.error('Due date is required'); setTab('schedule'); return }
     createOpportunity(form as Omit<Opportunity, 'id'>)
     toast.success('Opportunity created!')
     onClose()
   }
 
-  const labelCls = 'block text-xs font-semibold text-slate-500 mb-1.5'
-
   return (
-    <ModalWrap onClose={onClose} title="Create New Opportunity" subtitle="Fill in the details or import from SAM.gov">
-      <form onSubmit={handleSubmit} className="p-6 space-y-4">
+    <OppModalShell
+      title="Create New Opportunity"
+      tab={tab} setTab={setTab}
+      onClose={onClose}
+      extraHeader={
         <div className="flex gap-2">
-          <input value={samUrl} onChange={e => setSamUrl(e.target.value)} className="input-field flex-1 text-sm" placeholder="https://sam.gov/opp/… (paste to auto-fill)" />
-          <button type="button" onClick={handleImport} disabled={importing || !samUrl.trim()} className="btn-primary flex-shrink-0 disabled:opacity-40">
+          <input
+            value={samUrl} onChange={e => setSamUrl(e.target.value)}
+            className="input-field flex-1 text-sm"
+            placeholder="Paste a SAM.gov URL to auto-fill all fields…"
+          />
+          <button type="button" onClick={handleImport} disabled={importing || !samUrl.trim()}
+            className="btn-primary flex-shrink-0 disabled:opacity-40">
             {importing ? <Loader size={13} className="animate-spin" /> : <ExternalLink size={13} />}
             {importing ? 'Importing…' : 'Import'}
           </button>
         </div>
-
-        <div className="border-t border-slate-100 pt-4 space-y-3">
-          <div className="grid grid-cols-2 gap-3">
-            <div className="col-span-2"><label className={labelCls}>Solicitation Title *</label><input value={form.solicitation ?? ''} onChange={e => set('solicitation', e.target.value)} className="input-field" required /></div>
-            <div><label className={labelCls}>Solicitation ID</label><input value={form.solicitationId ?? ''} onChange={e => set('solicitationId', e.target.value)} className="input-field" placeholder="W912EP-26-R-0001" /></div>
-            <div><label className={labelCls}>Client</label><input value={form.client ?? ''} onChange={e => set('client', e.target.value)} className="input-field" placeholder="Agency name" /></div>
+      }
+      footer={
+        <div className="flex items-center justify-between">
+          {/* Step dots */}
+          <div className="flex items-center gap-1.5">
+            {OPP_FORM_TABS.map(t => (
+              <button key={t.id} onClick={() => setTab(t.id)}
+                className={`rounded-full transition-all ${tab === t.id ? 'w-6 h-2 bg-indigo-500' : 'w-2 h-2 bg-slate-200 hover:bg-slate-300'}`} />
+            ))}
+          </div>
+          <div className="flex gap-3">
+            <button type="button" onClick={onClose} className="btn-secondary">Cancel</button>
+            <button type="button" onClick={handleCreate} className="btn-primary">
+              <Plus size={14} /> Create Opportunity
+            </button>
+          </div>
+        </div>
+      }
+    >
+      {/* ── Details tab ── */}
+      {tab === 'details' && (
+        <div className="space-y-5">
+          <div>
+            <label className={lbl}>Solicitation Title *</label>
+            <input value={form.solicitation ?? ''} onChange={e => set('solicitation', e.target.value)} className="input-field" placeholder="Full solicitation title as listed on SAM.gov" />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className={lbl}>Solicitation ID</label>
+              <input value={form.solicitationId ?? ''} onChange={e => set('solicitationId', e.target.value)} className="input-field" placeholder="W912EP-26-R-0001" />
+            </div>
+            <div>
+              <label className={lbl}>Client / Agency</label>
+              <input value={form.client ?? ''} onChange={e => set('client', e.target.value)} className="input-field" placeholder="Agency name" />
+            </div>
           </div>
           <div className="grid grid-cols-4 gap-3">
-            {[
-              { label: 'Type', key: 'type', opts: ['OTJ','RECURRING','BPA','IDIQ','S&D','SUPPLY'] },
-              { label: 'Prime', key: 'prime', opts: ['TECH-OR','AYJ-S','SANFORD','SAUDI'] },
-              { label: 'Set Aside', key: 'setAside', opts: ['SB','SDVOSB','WOSB','HUBZone','VOSB','8(a)','UNRES'] },
-            ].map(f => (
-              <div key={f.key}>
-                <label className={labelCls}>{f.label}</label>
-                <select value={(form as any)[f.key] ?? f.opts[0]} onChange={e => set(f.key as keyof Opportunity, e.target.value)} className="select-field">
-                  {f.opts.map(o => <option key={o}>{o}</option>)}
-                </select>
-              </div>
-            ))}
-            <div><label className={labelCls}>NAICS Code</label><input value={form.naicsCode ?? ''} onChange={e => set('naicsCode', e.target.value)} className="input-field" placeholder="238220" /></div>
-          </div>
-          <div className="grid grid-cols-3 gap-3">
-            <div><label className={labelCls}>Due Date *</label><input type="date" value={form.dueDate ?? ''} onChange={e => set('dueDate', e.target.value)} className="input-field" required /></div>
-            <div><label className={labelCls}>Local Time</label><input value={form.localTime ?? ''} onChange={e => set('localTime', e.target.value)} className="input-field" placeholder="17:00" /></div>
             <div>
-              <label className={labelCls}>Timezone</label>
+              <label className={lbl}>Contract Type</label>
+              <select value={form.type ?? 'OTJ'} onChange={e => set('type', e.target.value as any)} className="select-field">
+                {['OTJ','RECURRING','BPA','IDIQ','S&D','SUPPLY'].map(o => <option key={o}>{o}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className={lbl}>Prime</label>
+              <select value={form.prime ?? 'TECH-OR'} onChange={e => set('prime', e.target.value as any)} className="select-field">
+                {['TECH-OR','AYJ-S','SANFORD','SAUDI'].map(o => <option key={o}>{o}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className={lbl}>Set Aside</label>
+              <select value={form.setAside ?? 'SB'} onChange={e => set('setAside', e.target.value as any)} className="select-field">
+                {['SB','SDVOSB','WOSB','HUBZone','VOSB','8(a)','UNRES'].map(o => <option key={o}>{o}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className={lbl}>NAICS Code</label>
+              <input value={form.naicsCode ?? ''} onChange={e => set('naicsCode', e.target.value)} className="input-field" placeholder="238220" />
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-4">
+            <div>
+              <label className={lbl}>Priority</label>
+              <select value={form.priority ?? 'MEDIUM'} onChange={e => set('priority', e.target.value as any)} className="select-field">
+                {['HIGH','MEDIUM','LOW'].map(p => <option key={p}>{p}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className={lbl}>Status</label>
+              <select value={form.status ?? 'ACTIVE'} onChange={e => set('status', e.target.value as OppStatus)} className="select-field">
+                {STATUSES.map(s => <option key={s}>{s}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className={lbl}>Location</label>
+              <input value={form.location ?? ''} onChange={e => set('location', e.target.value)} className="input-field" placeholder="City, State" />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Schedule tab ── */}
+      {tab === 'schedule' && (
+        <div className="space-y-5">
+          <div className="grid grid-cols-3 gap-4">
+            <div>
+              <label className={lbl}>Due Date *</label>
+              <input type="date" value={form.dueDate ?? ''} onChange={e => set('dueDate', e.target.value)} className="input-field" />
+            </div>
+            <div>
+              <label className={lbl}>Local Time (HH:MM)</label>
+              <input value={form.localTime ?? ''} onChange={e => set('localTime', e.target.value)} className="input-field" placeholder="17:00" />
+            </div>
+            <div>
+              <label className={lbl}>Timezone</label>
               <select value={form.timezone ?? 'EST'} onChange={e => set('timezone', e.target.value)} className="select-field">
                 {TZ_ABBREVS.map(t => <option key={t}>{t}</option>)}
               </select>
             </div>
           </div>
           {form.localTime && form.timezone && (
-            <p className="text-[11px] text-indigo-600 -mt-1 flex items-center gap-1 font-medium">
+            <p className="text-[11px] text-indigo-600 -mt-2 flex items-center gap-1 font-medium">
               <Clock size={10} /> Your local: {convertTime(form.localTime, form.timezone)}
             </p>
           )}
-          <div className="grid grid-cols-3 gap-3">
-            <div><label className={labelCls}>Location</label><input value={form.location ?? ''} onChange={e => set('location', e.target.value)} className="input-field" placeholder="City, State" /></div>
-            <div><label className={labelCls}>BDM *</label><input value={form.bdm ?? ''} onChange={e => set('bdm', e.target.value)} className="input-field" /></div>
-            <div><label className={labelCls}>BDS</label><input value={form.bds ?? ''} onChange={e => set('bds', e.target.value)} className="input-field" /></div>
-          </div>
-          <div className="grid grid-cols-3 gap-3">
-            <div><label className={labelCls}>Contract Amount ($)</label><input type="number" value={form.contractAmount ?? ''} onChange={e => set('contractAmount', Number(e.target.value))} className="input-field" /></div>
-            <div><label className={labelCls}>Base Amount ($)</label><input type="number" value={form.baseAmount ?? ''} onChange={e => set('baseAmount', Number(e.target.value))} className="input-field" /></div>
-            <div><label className={labelCls}>Monthly Payment ($)</label><input type="number" value={form.monthlyPayment ?? ''} onChange={e => set('monthlyPayment', Number(e.target.value))} className="input-field" /></div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className={lbl}>Period of Performance</label>
+              <input value={form.pop ?? ''} onChange={e => set('pop', e.target.value)} className="input-field" placeholder="1 base yr + 4 option yrs" />
+            </div>
+            <div>
+              <label className={lbl}>SAM.gov Link</label>
+              <input value={form.link ?? ''} onChange={e => set('link', e.target.value)} className="input-field" placeholder="https://sam.gov/opp/…" />
+            </div>
+            <div>
+              <label className={lbl}>POC</label>
+              <input value={form.poc ?? ''} onChange={e => set('poc', e.target.value)} className="input-field" />
+            </div>
+            <div>
+              <label className={lbl}>Mandatory Events</label>
+              <input value={form.mandatoryEvents ?? ''} onChange={e => set('mandatoryEvents', e.target.value)} className="input-field" />
+            </div>
           </div>
         </div>
+      )}
 
-        <div className="border-t border-slate-100 pt-4">
+      {/* ── Team & Finance tab ── */}
+      {tab === 'team' && (
+        <div className="space-y-6">
+          <div>
+            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4">Team Members</p>
+            <div className="grid grid-cols-3 gap-4">
+              <div><label className={lbl}>BDM *</label><input value={form.bdm ?? ''} onChange={e => set('bdm', e.target.value)} className="input-field" /></div>
+              <div><label className={lbl}>BDS</label><input value={form.bds ?? ''} onChange={e => set('bds', e.target.value)} className="input-field" /></div>
+              <div><label className={lbl}>Support Agent</label><input value={form.supportAgent ?? ''} onChange={e => set('supportAgent', e.target.value)} className="input-field" /></div>
+            </div>
+          </div>
+          <div className="border-t border-slate-100 pt-5">
+            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4">Contract Value</p>
+            <div className="grid grid-cols-3 gap-4">
+              <div>
+                <label className={lbl}>Contract Amount ($)</label>
+                <input type="number" value={form.contractAmount ?? ''} onChange={e => set('contractAmount', Number(e.target.value))} className="input-field" />
+              </div>
+              <div>
+                <label className={lbl}>Base Amount ($)</label>
+                <input type="number" value={form.baseAmount ?? ''} onChange={e => set('baseAmount', Number(e.target.value))} className="input-field" />
+              </div>
+              <div>
+                <label className={lbl}>Monthly Payment ($)</label>
+                <input type="number" value={form.monthlyPayment ?? ''} onChange={e => set('monthlyPayment', Number(e.target.value))} className="input-field" />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Assignment tab ── */}
+      {tab === 'assign' && (
+        <div className="space-y-4">
+          <div>
+            <p className="text-sm font-semibold text-slate-700 mb-1">Assign to a team member</p>
+            <p className="text-xs text-slate-400 mb-4">
+              Select anyone in the hierarchy. The ⚠ badge appears when they already have a contract ending on the same due date.
+              {!form.dueDate && <span className="text-amber-600 font-medium"> — Set a due date in the Schedule tab to enable conflict detection.</span>}
+            </p>
+          </div>
           <HierarchyAssignPicker
-            label="Assign To"
             value={form.assignedTo}
             onChange={v => set('assignedTo', v)}
             deadline={form.dueDate || undefined}
           />
         </div>
-
-        <div className="flex gap-3 pt-2 border-t border-slate-100">
-          <button type="button" onClick={onClose} className="btn-secondary flex-1 justify-center">Cancel</button>
-          <button type="submit" className="btn-primary flex-1 justify-center"><Plus size={14} /> Create Opportunity</button>
-        </div>
-      </form>
-    </ModalWrap>
+      )}
+    </OppModalShell>
   )
 }
 
