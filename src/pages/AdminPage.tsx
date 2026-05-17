@@ -1,0 +1,244 @@
+import { useState } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
+import { Plus, Pencil, Trash2, X, Check, Shield, Search } from 'lucide-react'
+import { useStore } from '../store/useStore'
+import type { User, Role } from '../types'
+import { avatarColor } from '../lib/utils'
+import toast from 'react-hot-toast'
+
+const ROLES: Role[] = ['ADMIN', 'BDM', 'BDS', 'SPM', 'PM', 'SUPPORT_AGENT']
+const ROLE_BADGE: Record<Role, string> = {
+  ADMIN:         'bg-rose-500/15 text-rose-400 border-rose-500/25',
+  BDM:           'bg-indigo-500/15 text-indigo-400 border-indigo-500/25',
+  BDS:           'bg-violet-500/15 text-violet-400 border-violet-500/25',
+  SPM:           'bg-amber-500/15 text-amber-400 border-amber-500/25',
+  PM:            'bg-cyan-500/15 text-cyan-400 border-cyan-500/25',
+  SUPPORT_AGENT: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/25',
+}
+
+type FormState = {
+  name: string; email: string; role: Role; status: 'active' | 'inactive'
+}
+
+function UserModal({ user, onClose }: { user: User | null; onClose: () => void }) {
+  const { createUser, updateUser } = useStore()
+  const isEdit = !!user
+  const [form, setForm] = useState<FormState>({
+    name:   user?.name   ?? '',
+    email:  user?.email  ?? '',
+    role:   user?.role   ?? 'BDS',
+    status: user?.status ?? 'active',
+  })
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!form.name || !form.email) return
+    const username = form.email.split('@')[0]
+    if (isEdit) {
+      updateUser(user!.id, { ...form, username })
+      toast.success('User updated')
+    } else {
+      createUser({
+        ...form, username,
+        avatar: form.name.split(' ').map(p => p[0]).join('').slice(0,3).toUpperCase(),
+        firstLogin: true, mfaEnabled: false,
+      })
+      toast.success(`User created. They'll set their password on first login.`)
+    }
+    onClose()
+  }
+
+  return (
+    <motion.div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+      <motion.div
+        initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
+        exit={{ scale: 0.95, opacity: 0 }}
+        className="relative z-10 w-full max-w-md rounded-2xl p-6"
+        style={{ background: 'rgba(7,14,34,0.98)', border: '1px solid rgba(99,102,241,0.2)', boxShadow: '0 24px 80px rgba(0,0,0,0.7)' }}>
+        <div className="flex items-center justify-between mb-5">
+          <h2 className="font-semibold text-white">{isEdit ? 'Edit User' : 'Create User'}</h2>
+          <button onClick={onClose} className="btn-ghost p-1.5"><X size={13} /></button>
+        </div>
+
+        {!isEdit && (
+          <div className="p-3 rounded-xl border border-indigo-500/15 bg-indigo-500/5 mb-4">
+            <p className="text-[11px] text-slate-400">
+              The username will be auto-set from the email (part before @). The user will set their own password on first login and be prompted to enable MFA.
+            </p>
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} className="space-y-3">
+          <div>
+            <label className="text-xs text-slate-500 block mb-1">Full Name *</label>
+            <input value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))}
+              className="input-field" placeholder="e.g. Aymane Chhouma" required />
+          </div>
+          <div>
+            <label className="text-xs text-slate-500 block mb-1">Email *</label>
+            <input type="email" value={form.email} onChange={e => setForm(p => ({ ...p, email: e.target.value }))}
+              className="input-field" placeholder="user@nexuserp.com" required />
+            {form.email.includes('@') && (
+              <p className="text-[11px] text-indigo-400 mt-1">Username: {form.email.split('@')[0]}</p>
+            )}
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs text-slate-500 block mb-1">Role *</label>
+              <select value={form.role} onChange={e => setForm(p => ({ ...p, role: e.target.value as Role }))}
+                className="select-field">
+                {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs text-slate-500 block mb-1">Status</label>
+              <select value={form.status} onChange={e => setForm(p => ({ ...p, status: e.target.value as 'active' | 'inactive' }))}
+                className="select-field">
+                <option value="active">Active</option>
+                <option value="inactive">Inactive</option>
+              </select>
+            </div>
+          </div>
+          <div className="flex gap-2 pt-2">
+            <button type="button" onClick={onClose} className="btn-secondary flex-1 justify-center">Cancel</button>
+            <button type="submit" className="btn-primary flex-1 justify-center">
+              <Check size={13} /> {isEdit ? 'Save Changes' : 'Create User'}
+            </button>
+          </div>
+        </form>
+      </motion.div>
+    </motion.div>
+  )
+}
+
+export default function AdminPage() {
+  const { users, deleteUser, currentUser } = useStore()
+  const [search, setSearch] = useState('')
+  const [modal, setModal] = useState<'create' | User | null>(null)
+
+  const filtered = users.filter(u =>
+    !search ||
+    u.name.toLowerCase().includes(search.toLowerCase()) ||
+    u.email.toLowerCase().includes(search.toLowerCase()) ||
+    u.role.toLowerCase().includes(search.toLowerCase())
+  )
+
+  const handleDelete = (u: User) => {
+    if (u.id === currentUser?.id) { toast.error("You can't delete your own account."); return }
+    deleteUser(u.id)
+    toast.success(`${u.name} removed.`)
+  }
+
+  return (
+    <div className="p-6 page-enter">
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-2xl font-bold text-white tracking-tight flex items-center gap-2">
+            <Shield size={20} className="text-indigo-400" /> User Management
+          </h1>
+          <p className="text-slate-500 text-sm mt-0.5">{users.length} users · {users.filter(u => u.status === 'active').length} active</p>
+        </div>
+        <button onClick={() => setModal('create')} className="btn-primary">
+          <Plus size={14} /> Create User
+        </button>
+      </div>
+
+      {/* Stats row */}
+      <div className="grid grid-cols-3 sm:grid-cols-6 gap-3 mb-6">
+        {ROLES.map(r => {
+          const count = users.filter(u => u.role === r).length
+          return (
+            <div key={r} className="glass rounded-xl p-3 text-center">
+              <p className="text-lg font-bold text-white">{count}</p>
+              <p className={`badge ${ROLE_BADGE[r]} text-[9px] mt-1 justify-center border`}>{r}</p>
+            </div>
+          )
+        })}
+      </div>
+
+      {/* Search */}
+      <div className="glass rounded-2xl p-4 mb-4">
+        <div className="relative max-w-sm">
+          <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+          <input value={search} onChange={e => setSearch(e.target.value)}
+            className="input-field pl-9 text-xs" placeholder="Search by name, email, role…" />
+        </div>
+      </div>
+
+      {/* Table */}
+      <div className="glass rounded-2xl overflow-hidden">
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th>User</th><th>Username</th><th>Email</th><th>Role</th>
+              <th>Status</th><th>MFA</th><th>First Login</th><th>Created</th><th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <AnimatePresence>
+              {filtered.map((u, i) => (
+                <motion.tr key={u.id}
+                  initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0 }} transition={{ delay: i * 0.04 }}>
+                  <td>
+                    <div className="flex items-center gap-2.5">
+                      <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold text-white bg-gradient-to-br ${avatarColor(u.avatar)}`}>
+                        {u.avatar.slice(0,2)}
+                      </div>
+                      <span className="text-xs font-medium text-slate-200">{u.name}</span>
+                      {u.id === currentUser?.id && (
+                        <span className="text-[9px] font-semibold text-indigo-400 bg-indigo-400/10 px-1.5 py-0.5 rounded-md">YOU</span>
+                      )}
+                    </div>
+                  </td>
+                  <td className="text-indigo-400 text-xs font-mono">@{u.username}</td>
+                  <td className="text-slate-400 text-xs">{u.email}</td>
+                  <td>
+                    <span className={`badge border text-[10px] ${ROLE_BADGE[u.role]}`}>{u.role}</span>
+                  </td>
+                  <td>
+                    <span className={`badge text-[10px] ${u.status === 'active' ? 'badge-active' : 'badge-canceled'}`}>
+                      {u.status}
+                    </span>
+                  </td>
+                  <td>
+                    <span className={`badge text-[10px] ${u.mfaEnabled ? 'badge-active' : 'badge-lost'}`}>
+                      {u.mfaEnabled ? '✓ Enabled' : '✗ Off'}
+                    </span>
+                  </td>
+                  <td>
+                    <span className={`badge text-[10px] ${u.firstLogin ? 'badge-pending' : 'badge-active'}`}>
+                      {u.firstLogin ? 'Pending' : 'Complete'}
+                    </span>
+                  </td>
+                  <td className="text-slate-600 text-xs">{u.createdAt}</td>
+                  <td>
+                    <div className="flex items-center gap-1">
+                      <button onClick={() => setModal(u)} className="btn-ghost p-1.5 rounded-lg text-slate-400 hover:text-indigo-400">
+                        <Pencil size={12} />
+                      </button>
+                      <button onClick={() => handleDelete(u)} className="btn-ghost p-1.5 rounded-lg text-slate-400 hover:text-rose-400">
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                  </td>
+                </motion.tr>
+              ))}
+            </AnimatePresence>
+          </tbody>
+        </table>
+      </div>
+
+      <AnimatePresence>
+        {modal && (
+          <UserModal
+            user={modal === 'create' ? null : modal as User}
+            onClose={() => setModal(null)}
+          />
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
