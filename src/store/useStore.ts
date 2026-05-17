@@ -12,6 +12,15 @@ import {
   MOCK_CONTRACTS, MOCK_FRESH_AWARDS, MOCK_PAST_PERFORMANCES,
   MOCK_SUBK_DATABASE, MOCK_ACTIVITY_LOGS, MOCK_EMPLOYEES,
 } from '../data/mock'
+import { isSupabaseConnected } from '../lib/supabase'
+import {
+  loadAllData,
+  seedIfEmpty,
+  upsertOpportunity,
+  upsertContract,
+  upsertFreshAward,
+  upsertPastPerformance,
+} from '../lib/db'
 
 interface AppState {
   // Auth
@@ -109,6 +118,10 @@ interface AppState {
 
   // ── UI ─────────────────────────────────────────────────────────────
   toggleSidebar: () => void
+
+  // ── DB ─────────────────────────────────────────────────────────────
+  dbReady: boolean
+  initializeStore: () => Promise<void>
 }
 
 // Contract status advancement order
@@ -141,6 +154,7 @@ export const useStore = create<AppState>()(
       activityLogs: MOCK_ACTIVITY_LOGS,
       employees: MOCK_EMPLOYEES,
       sidebarCollapsed: false,
+      dbReady: false,
 
       // ── Auth ────────────────────────────────────────────────────────
       login: (email, password) => {
@@ -208,6 +222,7 @@ export const useStore = create<AppState>()(
       createOpportunity: (data) => {
         const opp: Opportunity = { ...data, id: `o${Date.now()}` }
         set(s => ({ opportunities: [opp, ...s.opportunities] }))
+        upsertOpportunity(opp)
         get().addNotification({
           type: 'ASSIGNMENT',
           title: 'New opportunity created',
@@ -217,9 +232,13 @@ export const useStore = create<AppState>()(
         })
       },
 
-      updateOpportunity: (id, data) => set(s => ({
-        opportunities: s.opportunities.map(o => o.id === id ? { ...o, ...data } : o)
-      })),
+      updateOpportunity: (id, data) => {
+        set(s => ({
+          opportunities: s.opportunities.map(o => o.id === id ? { ...o, ...data } : o)
+        }))
+        const updated = get().opportunities.find(o => o.id === id)
+        if (updated) upsertOpportunity(updated)
+      },
 
       assignOpportunity: (id, bdm, bds) => {
         set(s => ({
@@ -264,6 +283,8 @@ export const useStore = create<AppState>()(
             o.id === id ? { ...o, status: 'WON' } : o
           )
         }))
+        const wonOpp = get().opportunities.find(o => o.id === id)
+        if (wonOpp) upsertOpportunity(wonOpp)
         // 2. Create a FreshAward from the opportunity
         const freshAward: FreshAward = {
           id: `fa${Date.now()}`,
@@ -287,6 +308,7 @@ export const useStore = create<AppState>()(
           status: 'PENDING_ASSIGNMENT',
         }
         set(s => ({ freshAwards: [freshAward, ...s.freshAwards] }))
+        upsertFreshAward(freshAward)
         // 3. Add notification
         get().addNotification({
           type: 'FRESH_AWARD',
@@ -310,6 +332,7 @@ export const useStore = create<AppState>()(
       createContract: (data) => {
         const contract: Contract = { ...data, id: `c${Date.now()}` }
         set(s => ({ contracts: [contract, ...s.contracts] }))
+        upsertContract(contract)
         get().addNotification({
           type: 'CONTRACT_CREATED',
           title: 'New contract created',
@@ -319,9 +342,13 @@ export const useStore = create<AppState>()(
         })
       },
 
-      updateContract: (id, data) => set(s => ({
-        contracts: s.contracts.map(c => c.id === id ? { ...c, ...data } : c)
-      })),
+      updateContract: (id, data) => {
+        set(s => ({
+          contracts: s.contracts.map(c => c.id === id ? { ...c, ...data } : c)
+        }))
+        const updated = get().contracts.find(c => c.id === id)
+        if (updated) upsertContract(updated)
+      },
 
       addContractPoC: (contractId, poc) => {
         const newPoC: ContractPoC = { ...poc, id: `poc${Date.now()}`, contractId }
@@ -413,6 +440,8 @@ export const useStore = create<AppState>()(
             c.id === id ? { ...c, status: nextStatus as any } : c
           )
         }))
+        const advancedContract = get().contracts.find(c => c.id === id)
+        if (advancedContract) upsertContract(advancedContract)
         // If moved to ARCHIVED, auto-create PastPerformance
         if (nextStatus === 'ARCHIVED') {
           const pp: PastPerformance = {
@@ -439,6 +468,7 @@ export const useStore = create<AppState>()(
             createdBy: 'System',
           }
           set(s => ({ pastPerformances: [pp, ...s.pastPerformances] }))
+          upsertPastPerformance(pp)
           get().addNotification({
             type: 'STATUS_CHANGE',
             title: 'Contract Archived',
@@ -460,6 +490,8 @@ export const useStore = create<AppState>()(
               : c
           )
         }))
+        const terminatedContract = get().contracts.find(c => c.id === id)
+        if (terminatedContract) upsertContract(terminatedContract)
         // 2. Create PastPerformance entry
         const pp: PastPerformance = {
           id: `pp${Date.now()}`,
@@ -541,11 +573,15 @@ export const useStore = create<AppState>()(
       },
 
       // ── Fresh Awards ────────────────────────────────────────────────
-      assignFreshAward: (id, assignments) => set(s => ({
-        freshAwards: s.freshAwards.map(fa =>
-          fa.id === id ? { ...fa, ...assignments, status: 'ASSIGNED' } : fa
-        )
-      })),
+      assignFreshAward: (id, assignments) => {
+        set(s => ({
+          freshAwards: s.freshAwards.map(fa =>
+            fa.id === id ? { ...fa, ...assignments, status: 'ASSIGNED' } : fa
+          )
+        }))
+        const updatedFa = get().freshAwards.find(f => f.id === id)
+        if (updatedFa) upsertFreshAward(updatedFa)
+      },
 
       moveFreshAwardToActive: (id) => {
         const fa = get().freshAwards.find(f => f.id === id)
@@ -581,6 +617,8 @@ export const useStore = create<AppState>()(
               : f
           )
         }))
+        const movedFa = get().freshAwards.find(f => f.id === id)
+        if (movedFa) upsertFreshAward(movedFa)
         get().logActivity({
           action: `Moved Fresh Award to Active Contract: ${fa.solicitation}`,
           user: get().currentUser?.name || 'System',
@@ -592,13 +630,15 @@ export const useStore = create<AppState>()(
       },
 
       // ── Past Performances ───────────────────────────────────────────
-      addPastPerformance: (pp) => set(s => ({
-        pastPerformances: [{
+      addPastPerformance: (pp) => {
+        const newPP: PastPerformance = {
           ...pp,
           id: `pp${Date.now()}`,
           createdAt: new Date().toISOString(),
-        }, ...s.pastPerformances]
-      })),
+        }
+        set(s => ({ pastPerformances: [newPP, ...s.pastPerformances] }))
+        upsertPastPerformance(newPP)
+      },
 
       updatePastPerformance: (id, data) => set(s => ({
         pastPerformances: s.pastPerformances.map(p => p.id === id ? { ...p, ...data } : p)
@@ -755,6 +795,7 @@ export const useStore = create<AppState>()(
         }))
         const emp = get().employees.find(e => e.id === employeeId)
         const opp = get().opportunities.find(o => o.id === opportunityId)
+        if (opp) upsertOpportunity(opp)
         if (emp && opp) {
           get().addNotification({
             type: 'ASSIGNMENT',
@@ -774,6 +815,7 @@ export const useStore = create<AppState>()(
         }))
         const emp = get().employees.find(e => e.id === employeeId)
         const contract = get().contracts.find(c => c.id === contractId)
+        if (contract) upsertContract(contract)
         if (emp && contract) {
           get().addNotification({
             type: 'ASSIGNMENT',
@@ -782,6 +824,36 @@ export const useStore = create<AppState>()(
             read: false,
             relatedId: contractId,
           })
+        }
+      },
+
+      // ── DB ──────────────────────────────────────────────────────────
+      initializeStore: async () => {
+        if (!isSupabaseConnected) return
+        if (get().dbReady) return
+
+        try {
+          await seedIfEmpty({
+            opportunities: MOCK_OPPORTUNITIES,
+            contracts: MOCK_CONTRACTS,
+            freshAwards: MOCK_FRESH_AWARDS,
+            pastPerformances: MOCK_PAST_PERFORMANCES,
+          })
+
+          const data = await loadAllData()
+          if (data) {
+            set({
+              employees: data.employees.length > 0 ? data.employees : get().employees,
+              opportunities: data.opportunities.length > 0 ? data.opportunities : get().opportunities,
+              contracts: data.contracts.length > 0 ? data.contracts : get().contracts,
+              freshAwards: data.freshAwards.length > 0 ? data.freshAwards : get().freshAwards,
+              pastPerformances: data.pastPerformances.length > 0 ? data.pastPerformances : get().pastPerformances,
+              dbReady: true,
+            })
+          }
+        } catch (err) {
+          console.error('[Store] Supabase init failed, using mock data', err)
+          set({ dbReady: true })
         }
       },
 

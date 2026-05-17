@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { useStore } from './store/useStore'
 import Layout from './components/layout/Layout'
@@ -28,6 +29,9 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
 
 export default function App() {
   const { isAuthenticated } = useStore()
+  const initializeStore = useStore(s => s.initializeStore)
+
+  useEffect(() => { initializeStore() }, [])
 
   return (
     <HashRouter>
