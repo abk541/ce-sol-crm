@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 138" fill="none">
+  <!-- White background -->
+  <rect width="840" height="138" fill="white"/>
+
+  <!-- ================================================================
+       CE CALLIGRAPHIC MONOGRAM
+       Ornate high-contrast serif C with E in the counter
+  ================================================================ -->
+
+  <!-- Decorative entry swirl above C — the signature flourish -->
+  <path d="
+    M 36 30
+    C 28 16, 12 10, 8 18
+    C 5 25, 12 32, 24 28
+    C 30 26, 34 22, 30 18
+    C 27 15, 20 17, 22 22
+  " stroke="#0A0A0A" stroke-width="1.8" fill="none" stroke-linecap="round"/>
+
+  <!-- The large italic C -->
+  <text
+    x="3" y="118"
+    font-family="'Palatino Linotype', Palatino, 'Book Antiqua', Georgia, 'Times New Roman', serif"
+    font-size="112"
+    font-style="italic"
+    font-weight="700"
+    fill="#0A0A0A"
+  >C</text>
+
+  <!-- The E sitting inside the C's counter, slightly smaller & higher -->
+  <text
+    x="53" y="108"
+    font-family="'Palatino Linotype', Palatino, 'Book Antiqua', Georgia, serif"
+    font-size="86"
+    font-style="italic"
+    font-weight="700"
+    fill="#0A0A0A"
+  >E</text>
+
+  <!-- Bottom tail swirl of C -->
+  <path d="
+    M 22 122
+    C 32 132, 52 132, 58 124
+    C 52 129, 36 130, 28 122
+  " stroke="#0A0A0A" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+
+  <!-- ================================================================
+       THIN VERTICAL SEPARATOR
+  ================================================================ -->
+  <line x1="166" y1="10" x2="166" y2="126" stroke="#0A0A0A" stroke-width="1.2"/>
+
+  <!-- ================================================================
+       SOLUTION PLUS — large bold high-contrast serif
+  ================================================================ -->
+  <text
+    x="183" y="96"
+    font-family="'Palatino Linotype', Palatino, 'Times New Roman', Georgia, serif"
+    font-size="70"
+    font-weight="700"
+    letter-spacing="2"
+    fill="#0A0A0A"
+  >SOLUTION PLUS</text>
+
+  <!-- ================================================================
+       TAGLINE — small, widely tracked
+  ================================================================ -->
+  <text
+    x="184" y="122"
+    font-family="'Times New Roman', Arial, Helvetica, sans-serif"
+    font-size="12.5"
+    font-weight="400"
+    letter-spacing="4.5"
+    fill="#0A0A0A"
+  >YOU HAVE A NEED, WE HAVE A SOLUTION</text>
+</svg>
