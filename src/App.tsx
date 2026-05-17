@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { useStore } from './store/useStore'
+import toast from 'react-hot-toast'
 import Layout from './components/layout/Layout'
 import LoginPage from './pages/auth/LoginPage'
 import FirstLoginPage from './pages/auth/FirstLoginPage'
@@ -32,6 +33,22 @@ export default function App() {
   const initializeStore = useStore(s => s.initializeStore)
 
   useEffect(() => { initializeStore() }, [])
+
+  useEffect(() => {
+    const checkSession = () => {
+      const state = useStore.getState()
+      if (state.isAuthenticated && state.loginTimestamp) {
+        const elapsed = Date.now() - state.loginTimestamp
+        if (elapsed > 24 * 60 * 60 * 1000) {
+          state.logout()
+          toast.error('Session expired. Please log in again.')
+        }
+      }
+    }
+    checkSession()
+    const timer = setInterval(checkSession, 60_000)
+    return () => clearInterval(timer)
+  }, [])
 
   return (
     <HashRouter>

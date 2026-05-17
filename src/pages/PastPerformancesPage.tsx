@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
-  History, Plus, Search, Download, FileText,
+  History, Search, Download, FileText,
   Building2, DollarSign, Calendar, MapPin,
   ChevronDown, X, Save, Eye, Tag, MoreHorizontal,
 } from 'lucide-react'
@@ -19,7 +19,74 @@ const PRIME_COLORS: Record<Prime, string> = {
   'TECH-OR': '#6366F1', 'AYJ-S': '#10B981', 'SANFORD': '#F59E0B', 'SAUDI': '#EF4444',
 }
 
-function DetailDrawerPP({ pp, onClose }: { pp: PastPerformance; onClose: () => void }) {
+function ExportModal({ pp, onClose }: { pp: PastPerformance; onClose: () => void }) {
+  const [desc, setDesc] = useState(pp.description)
+  const [touched, setTouched] = useState(false)
+  const invalid = touched && !desc.trim()
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(8px)' }}>
+      <motion.div
+        initial={{ opacity: 0, scale: 0.96 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.96 }}
+        className="rounded-2xl w-full max-w-lg"
+        style={{ background: '#FFFFFF', border: '1px solid rgba(0,0,0,0.10)' }}
+      >
+        <div className="border-b p-5 flex items-center gap-3" style={{ borderColor: 'rgba(0,0,0,0.08)' }}>
+          <div className="w-9 h-9 rounded-xl bg-indigo-50 flex items-center justify-center">
+            <Download size={16} className="text-indigo-600" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <h2 className="text-sm font-bold text-slate-800">Export to PDF</h2>
+            <p className="text-xs text-slate-400 truncate">{pp.title}</p>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X size={16} /></button>
+        </div>
+
+        <div className="p-5 space-y-4">
+          <div>
+            <label className="block text-xs font-semibold text-slate-600 mb-1">
+              Project Description <span className="text-rose-500">*</span>
+            </label>
+            <textarea
+              rows={5}
+              value={desc}
+              onChange={e => setDesc(e.target.value)}
+              onBlur={() => setTouched(true)}
+              className="input-field text-xs py-2 w-full resize-none"
+              placeholder="Enter project description…"
+            />
+            {invalid && (
+              <p className="text-xs text-rose-500 mt-1">Description is required</p>
+            )}
+          </div>
+          <p className="text-xs text-slate-400">
+            Review and confirm the project description before exporting. This text will appear in the PDF template.
+          </p>
+        </div>
+
+        <div className="flex gap-2 p-5 border-t" style={{ borderColor: 'rgba(0,0,0,0.08)' }}>
+          <button onClick={onClose} className="btn-secondary flex-1 text-xs">Cancel</button>
+          <button
+            disabled={!desc.trim()}
+            onClick={() => {
+              if (!desc.trim()) { setTouched(true); return }
+              toast.success('PDF exported successfully')
+              onClose()
+            }}
+            className="btn-primary flex-1 text-xs gap-1.5 disabled:opacity-40"
+          >
+            <Download size={12} /> Export PDF
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  )
+}
+
+function DetailDrawerPP({ pp, onClose, onExport }: { pp: PastPerformance; onClose: () => void; onExport: (pp: PastPerformance) => void }) {
   return (
     <motion.div
       initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }}
@@ -43,7 +110,7 @@ function DetailDrawerPP({ pp, onClose }: { pp: PastPerformance; onClose: () => v
         <div className="grid grid-cols-2 gap-3">
           {[
             { label: 'Client', value: pp.client },
-            { label: 'Prime', value: pp.prime, color: PRIME_COLORS[pp.prime] },
+            { label: 'Prime', value: pp.prime, color: pp.prime ? PRIME_COLORS[pp.prime] : undefined },
             { label: 'Type', value: pp.type },
             { label: 'Finance', value: pp.financeType || '—' },
             { label: 'NAICS', value: pp.naicsCode },
@@ -118,7 +185,10 @@ function DetailDrawerPP({ pp, onClose }: { pp: PastPerformance; onClose: () => v
         </div>
 
         {/* Export button */}
-        <button className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 transition-colors">
+        <button
+          onClick={() => onExport(pp)}
+          className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 transition-colors"
+        >
           <Download size={14} /> Export to PDF Template
         </button>
       </div>
@@ -126,137 +196,12 @@ function DetailDrawerPP({ pp, onClose }: { pp: PastPerformance; onClose: () => v
   )
 }
 
-function CreateModal({ onClose, onSave }: { onClose: () => void; onSave: (pp: Omit<PastPerformance, 'id' | 'createdAt'>) => void }) {
-  const [form, setForm] = useState({
-    contractNumber: '', title: '', client: '', prime: 'TECH-OR' as Prime,
-    type: 'OTJ' as ContractType, financeType: 'FFP' as ContractFinanceType,
-    naicsCode: '', setAside: 'SB' as SetAside, value: '',
-    popStart: '', popEnd: '', location: '', description: '',
-    relevance: '', keyPersonnel: '', challenges: '',
-    bdm: '', bds: '',
-  })
-
-  const set = (k: string, v: string) => setForm(p => ({ ...p, [k]: v }))
-  const valid = form.contractNumber && form.title && form.client && form.description && form.relevance && form.bdm && form.bds
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(8px)' }}>
-      <motion.div
-        initial={{ opacity: 0, scale: 0.96 }}
-        animate={{ opacity: 1, scale: 1 }}
-        exit={{ opacity: 0, scale: 0.96 }}
-        className="rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto"
-        style={{ background: '#FFFFFF', border: '1px solid rgba(0,0,0,0.10)' }}
-      >
-        <div className="sticky top-0 border-b p-5 flex items-center gap-3 z-10" style={{ background: '#F8FAFC', borderColor: 'rgba(0,0,0,0.08)' }}>
-          <div className="w-9 h-9 rounded-xl bg-indigo-50 flex items-center justify-center">
-            <Plus size={16} className="text-indigo-600" />
-          </div>
-          <h2 className="text-sm font-bold text-slate-800">Add Past Performance</h2>
-          <button onClick={onClose} className="ml-auto text-slate-400 hover:text-slate-600"><X size={16} /></button>
-        </div>
-
-        <div className="p-5 space-y-4">
-          <div className="grid grid-cols-2 gap-3">
-            {[
-              { label: 'Contract Number *', key: 'contractNumber' },
-              { label: 'Title *', key: 'title' },
-              { label: 'Client *', key: 'client' },
-              { label: 'NAICS Code', key: 'naicsCode' },
-              { label: 'PoP Start', key: 'popStart', type: 'date' },
-              { label: 'PoP End', key: 'popEnd', type: 'date' },
-              { label: 'Location', key: 'location' },
-              { label: 'Contract Value', key: 'value', type: 'number' },
-              { label: 'BDM *', key: 'bdm' },
-              { label: 'BDS *', key: 'bds' },
-            ].map(f => (
-              <div key={f.key}>
-                <label className="block text-xs font-semibold text-slate-600 mb-1">{f.label}</label>
-                <input type={f.type || 'text'} value={(form as any)[f.key]}
-                  onChange={e => set(f.key, e.target.value)}
-                  className="input-field text-xs py-2 w-full" />
-              </div>
-            ))}
-          </div>
-
-          {/* Dropdowns row */}
-          <div className="grid grid-cols-4 gap-3">
-            {[
-              { label: 'Prime', key: 'prime', opts: PRIME_OPTIONS },
-              { label: 'Type', key: 'type', opts: TYPE_OPTIONS },
-              { label: 'Finance', key: 'financeType', opts: FINANCE_OPTIONS },
-              { label: 'Set-Aside', key: 'setAside', opts: SETASIDE_OPTIONS },
-            ].map(f => (
-              <div key={f.key}>
-                <label className="block text-xs font-semibold text-slate-600 mb-1">{f.label}</label>
-                <select value={(form as any)[f.key]} onChange={e => set(f.key, e.target.value)} className="input-field text-xs py-2 w-full">
-                  {f.opts.map(o => <option key={o} value={o}>{o}</option>)}
-                </select>
-              </div>
-            ))}
-          </div>
-
-          {/* Textareas */}
-          {[
-            { label: 'Project Description *', key: 'description', rows: 3 },
-            { label: 'Relevance *', key: 'relevance', rows: 2 },
-            { label: 'Key Personnel', key: 'keyPersonnel', rows: 1 },
-            { label: 'Challenges & Solutions', key: 'challenges', rows: 2 },
-          ].map(f => (
-            <div key={f.key}>
-              <label className="block text-xs font-semibold text-slate-600 mb-1">{f.label}</label>
-              <textarea rows={f.rows} value={(form as any)[f.key]}
-                onChange={e => set(f.key, e.target.value)}
-                className="input-field text-xs py-2 w-full resize-none" />
-            </div>
-          ))}
-        </div>
-
-        <div className="flex gap-2 p-5 border-t" style={{ borderColor: 'rgba(0,0,0,0.08)' }}>
-          <button onClick={onClose} className="btn-secondary flex-1 text-xs">Cancel</button>
-          <button
-            disabled={!valid}
-            onClick={() => {
-              onSave({
-                contractNumber: form.contractNumber,
-                title: form.title,
-                client: form.client,
-                prime: form.prime,
-                type: form.type,
-                financeType: form.financeType,
-                naicsCode: form.naicsCode,
-                setAside: form.setAside,
-                value: parseFloat(form.value) || 0,
-                popStart: form.popStart,
-                popEnd: form.popEnd,
-                location: form.location,
-                description: form.description,
-                relevance: form.relevance,
-                keyPersonnel: form.keyPersonnel || undefined,
-                challenges: form.challenges || undefined,
-                bdm: form.bdm,
-                bds: form.bds,
-                createdBy: 'current_user',
-              })
-              onClose()
-            }}
-            className="btn-primary flex-1 text-xs gap-1.5 disabled:opacity-40"
-          >
-            <Save size={12} /> Save Record
-          </button>
-        </div>
-      </motion.div>
-    </div>
-  )
-}
-
 export default function PastPerformancesPage() {
-  const { pastPerformances, addPastPerformance } = useStore()
+  const { pastPerformances } = useStore()
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<PastPerformance | null>(null)
-  const [showCreate, setShowCreate] = useState(false)
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
+  const [exportTarget, setExportTarget] = useState<PastPerformance | null>(null)
 
   const filtered = useMemo(() => {
     if (!search) return pastPerformances
@@ -282,9 +227,6 @@ export default function PastPerformancesPage() {
           </h1>
           <p className="text-slate-500 text-sm mt-0.5">{pastPerformances.length} records · {formatCurrency(totalValue)} total value</p>
         </div>
-        <button onClick={() => setShowCreate(true)} className="btn-primary gap-2">
-          <Plus size={14} /> Add Record
-        </button>
       </div>
 
       {/* Search */}
@@ -336,10 +278,12 @@ export default function PastPerformancesPage() {
                     <p className="truncate">{pp.client}</p>
                   </td>
                   <td>
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full text-white"
-                      style={{ background: PRIME_COLORS[pp.prime] }}>
-                      {pp.prime}
-                    </span>
+                    {pp.prime && (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full text-white"
+                        style={{ background: PRIME_COLORS[pp.prime] }}>
+                        {pp.prime}
+                      </span>
+                    )}
                   </td>
                   <td>
                     <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-slate-100 text-slate-600">{pp.type}</span>
@@ -389,7 +333,7 @@ export default function PastPerformancesPage() {
                               Copy Contract #
                             </button>
                             <button
-                              onClick={() => { toast.success('Exporting PDF…'); setMenuOpen(null) }}
+                              onClick={() => { setExportTarget(pp); setMenuOpen(null) }}
                               className="block w-full text-left px-3 py-2 text-xs font-medium transition-colors"
                               style={{ color: '#475569' }}
                               onMouseEnter={e => { e.currentTarget.style.background = 'rgba(0,0,0,0.04)'; e.currentTarget.style.color = '#0F172A' }}
@@ -425,15 +369,19 @@ export default function PastPerformancesPage() {
           <>
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
               className="fixed inset-0 z-40 bg-black/20" onClick={() => setSelected(null)} />
-            <DetailDrawerPP pp={selected} onClose={() => setSelected(null)} />
+            <DetailDrawerPP
+              pp={selected}
+              onClose={() => setSelected(null)}
+              onExport={(pp) => { setSelected(null); setExportTarget(pp) }}
+            />
           </>
         )}
       </AnimatePresence>
 
-      {/* Create modal */}
+      {/* Export modal */}
       <AnimatePresence>
-        {showCreate && (
-          <CreateModal onClose={() => setShowCreate(false)} onSave={pp => { addPastPerformance(pp); setShowCreate(false) }} />
+        {exportTarget && (
+          <ExportModal pp={exportTarget} onClose={() => setExportTarget(null)} />
         )}
       </AnimatePresence>
     </div>

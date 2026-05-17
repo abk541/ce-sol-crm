@@ -5,12 +5,14 @@ import type {
   NonSubmissionReport, DeletionRequest, FreshAward,
   PastPerformance, SubkDatabaseEntry, ActivityLog,
   ContractPoC, LockedSubcontractor, GovernmentWarning, Employee,
+  BDSubmission,
 } from '../types'
 import {
   MOCK_USERS, MOCK_OPPORTUNITIES, MOCK_NOTIFICATIONS,
   MOCK_SUBCONTRACTORS, MOCK_NON_SUB_REPORTS, MOCK_DELETION_REQUESTS,
   MOCK_CONTRACTS, MOCK_FRESH_AWARDS, MOCK_PAST_PERFORMANCES,
   MOCK_SUBK_DATABASE, MOCK_ACTIVITY_LOGS, MOCK_EMPLOYEES,
+  MOCK_BD_SUBMISSIONS,
 } from '../data/mock'
 import { isSupabaseConnected } from '../lib/supabase'
 import {
@@ -28,6 +30,7 @@ interface AppState {
   isAuthenticated: boolean
   needsFirstLogin: boolean
   needsMFASetup: boolean
+  loginTimestamp: number | null
 
   // Data
   users: User[]
@@ -42,6 +45,7 @@ interface AppState {
   subkDatabase: SubkDatabaseEntry[]
   activityLogs: ActivityLog[]
   employees: Employee[]
+  bdSubmissions: BDSubmission[]
 
   // UI
   sidebarCollapsed: boolean
@@ -61,7 +65,7 @@ interface AppState {
   createOpportunity: (o: Omit<Opportunity, 'id'>) => void
   updateOpportunity: (id: string, data: Partial<Opportunity>) => void
   assignOpportunity: (id: string, bdm: string, bds: string) => void
-  submitOpportunity: (id: string) => void
+  submitOpportunity: (id: string, values?: { contractAmount?: number; baseAmount?: number; monthlyPayment?: number }) => void
   markOpportunityWon: (id: string) => void
   terminateContract: (id: string, type: 'T4C' | 'T4D' | 'CANCELED', reason: string) => void
 
@@ -81,6 +85,9 @@ interface AppState {
   addSubcontractor: (data: Omit<Subcontractor, 'id' | 'createdAt'>) => void
   updateSubcontractor: (id: string, data: Partial<Subcontractor>) => void
   deleteSubcontractor: (id: string) => void
+
+  // ── BD Submissions ─────────────────────────────────────────────────
+  updateBDSubmission: (id: number, status: BDSubmission['status']) => void
 
   // ── Fresh Awards ───────────────────────────────────────────────────
   assignFreshAward: (id: string, assignments: Partial<FreshAward>) => void
@@ -141,6 +148,7 @@ export const useStore = create<AppState>()(
       isAuthenticated: false,
       needsFirstLogin: false,
       needsMFASetup: false,
+      loginTimestamp: null,
       users: MOCK_USERS,
       opportunities: MOCK_OPPORTUNITIES,
       contracts: MOCK_CONTRACTS,
@@ -153,6 +161,7 @@ export const useStore = create<AppState>()(
       subkDatabase: MOCK_SUBK_DATABASE,
       activityLogs: MOCK_ACTIVITY_LOGS,
       employees: MOCK_EMPLOYEES,
+      bdSubmissions: MOCK_BD_SUBMISSIONS,
       sidebarCollapsed: false,
       dbReady: false,
 
@@ -171,11 +180,11 @@ export const useStore = create<AppState>()(
           set({ currentUser: user, needsMFASetup: true })
           return { ok: true, needsMFA: true }
         }
-        set({ currentUser: user, isAuthenticated: true })
+        set({ currentUser: user, isAuthenticated: true, loginTimestamp: Date.now() })
         return { ok: true }
       },
 
-      logout: () => set({ currentUser: null, isAuthenticated: false, needsFirstLogin: false, needsMFASetup: false }),
+      logout: () => set({ currentUser: null, isAuthenticated: false, needsFirstLogin: false, needsMFASetup: false, loginTimestamp: null }),
 
       completeFirstLogin: (_password) => {
         const u = get().currentUser
@@ -256,10 +265,10 @@ export const useStore = create<AppState>()(
         }
       },
 
-      submitOpportunity: (id) => {
+      submitOpportunity: (id, values) => {
         set(s => ({
           opportunities: s.opportunities.map(o =>
-            o.id === id ? { ...o, status: 'SUBMITTED', submittedAt: new Date().toISOString() } : o
+            o.id === id ? { ...o, status: 'SUBMITTED', submittedAt: new Date().toISOString(), ...values } : o
           )
         }))
         const opp = get().opportunities.find(o => o.id === id)
@@ -277,6 +286,17 @@ export const useStore = create<AppState>()(
       markOpportunityWon: (id) => {
         const opp = get().opportunities.find(o => o.id === id)
         if (!opp) return
+        // Guard: never create a duplicate FreshAward for the same opportunity
+        const existingAward = get().freshAwards.find(fa => fa.opportunityId === id)
+        if (existingAward) {
+          // Already awarded — just ensure status is WON
+          set(s => ({
+            opportunities: s.opportunities.map(o =>
+              o.id === id ? { ...o, status: 'WON' } : o
+            )
+          }))
+          return
+        }
         // 1. Update opportunity status to WON
         set(s => ({
           opportunities: s.opportunities.map(o =>
@@ -663,6 +683,11 @@ export const useStore = create<AppState>()(
 
       deleteSubkDatabaseEntry: (id) => set(s => ({
         subkDatabase: s.subkDatabase.filter(e => e.id !== id)
+      })),
+
+      // ── BD Submissions ──────────────────────────────────────────────
+      updateBDSubmission: (id, status) => set(s => ({
+        bdSubmissions: s.bdSubmissions.map(b => b.id === id ? { ...b, status } : b)
       })),
 
       // ── Activity Logs ───────────────────────────────────────────────

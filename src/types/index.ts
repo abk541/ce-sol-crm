@@ -170,7 +170,7 @@ export interface Opportunity {
   solicitation: string
   solicitationId: string
   client: string
-  prime: Prime
+  prime?: Prime
   type: ContractType
   naicsCode: string
   setAside: SetAside

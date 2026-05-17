@@ -1,8 +1,8 @@
-﻿import { useState, useMemo } from 'react'
+import { useState, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   ClipboardList, CheckCircle2, XCircle, Clock, AlertTriangle,
-  PenLine, Search, MoreHorizontal,
+  PenLine, Search, MoreHorizontal, Trash2,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import toast from 'react-hot-toast'
@@ -19,7 +19,7 @@ const STATUS_META = {
   DECLINED: { color: '#DC2626', bg: '#FEE2E2', border: '#FECACA', icon: XCircle },
 } as const
 
-// â”€â”€ Submit Report Modal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Submit Report Modal ────────────────────────────────────────────────
 function SubmitReportModal({ oppId, oppName, onClose }: { oppId: string; oppName: string; onClose: () => void }) {
   const [reason, setReason] = useState('')
   const { submitNonSubReport, currentUser } = useStore()
@@ -54,7 +54,7 @@ function SubmitReportModal({ oppId, oppName, onClose }: { oppId: string; oppName
             <textarea
               value={reason} onChange={e => setReason(e.target.value)} rows={5}
               className="input-field w-full resize-none text-sm leading-relaxed"
-              placeholder="Explain why this opportunity was not submitted â€” amendments, disqualifying factors, resource constraints, etcâ€¦"
+              placeholder="Explain why this opportunity was not submitted — amendments, disqualifying factors, resource constraints, etc…"
             />
             <div className="flex justify-between mt-1">
               <p className="text-[10px] text-slate-400">Minimum 20 characters</p>
@@ -73,7 +73,7 @@ function SubmitReportModal({ oppId, oppName, onClose }: { oppId: string; oppName
   )
 }
 
-// â”€â”€ Review Modal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Review Modal ───────────────────────────────────────────────────────
 function ReviewModal({ reportId, onClose }: { reportId: string; onClose: () => void }) {
   const [note, setNote] = useState('')
   const { reviewNonSubReport, nonSubReports, opportunities, currentUser } = useStore()
@@ -82,7 +82,7 @@ function ReviewModal({ reportId, onClose }: { reportId: string; onClose: () => v
 
   const review = (action: 'APPROVED' | 'DECLINED') => {
     reviewNonSubReport(reportId, action, note, currentUser?.username ?? '')
-    toast.success(action === 'APPROVED' ? 'Report approved â†’ NOT_SUBMITTED' : 'Report declined â†’ DROPPED')
+    toast.success(action === 'APPROVED' ? 'Report approved → NOT_SUBMITTED' : 'Report declined → DROPPED')
     onClose()
   }
 
@@ -102,7 +102,7 @@ function ReviewModal({ reportId, onClose }: { reportId: string; onClose: () => v
         <div className="px-6 py-5 border-b border-slate-100">
           <h2 className="text-base font-bold text-slate-900">Review Non-Submission Report</h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            {opp?.solicitation ?? report.opportunityId} Â· By {report.agentUsername}
+            {opp?.solicitation ?? report.opportunityId} · By {report.agentUsername}
           </p>
         </div>
         <div className="p-6 space-y-4">
@@ -114,11 +114,11 @@ function ReviewModal({ reportId, onClose }: { reportId: string; onClose: () => v
             <label className="block text-xs font-semibold text-slate-600 mb-1.5">Review note <span className="text-slate-400">(optional)</span></label>
             <textarea value={note} onChange={e => setNote(e.target.value)} rows={3}
               className="input-field w-full resize-none text-sm"
-              placeholder="Add context for your decisionâ€¦" />
+              placeholder="Add context for your decision…" />
           </div>
           <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
             <p className="text-xs text-amber-700">
-              <strong>Approve</strong> â†’ opportunity set to NOT_SUBMITTED &nbsp;Â·&nbsp; <strong>Decline</strong> â†’ opportunity set to DROPPED
+              <strong>Approve</strong> → opportunity set to NOT_SUBMITTED &nbsp;·&nbsp; <strong>Decline</strong> → opportunity set to DROPPED
             </p>
           </div>
           <div className="flex gap-3 pt-1">
@@ -138,7 +138,7 @@ function ReviewModal({ reportId, onClose }: { reportId: string; onClose: () => v
   )
 }
 
-// â”€â”€ Report Card with "..." menu â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Report Card with "..." menu ─────────────────────────────────────────
 function ReportCard({
   r,
   opp,
@@ -226,7 +226,7 @@ function ReportCard({
             <div>
               <p className="text-sm font-bold text-slate-900">{opp?.solicitation ?? r.opportunityId}</p>
               <p className="text-[11px] text-slate-500 mt-0.5">
-                {opp?.solicitationId} Â· By <span className="font-semibold text-slate-600">{r.agentUsername}</span> Â· {new Date(r.submittedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                {opp?.solicitationId} · By <span className="font-semibold text-slate-600">{r.agentUsername}</span> · {new Date(r.submittedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
               </p>
             </div>
             <span className="flex-shrink-0 text-[10px] font-black px-2 py-0.5 rounded-full border"
@@ -262,9 +262,110 @@ function ReportCard({
   )
 }
 
-// â”€â”€ Main Page â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Dropped Opportunities Table ────────────────────────────────────────
+function DroppedOpportunitiesTab() {
+  const { opportunities, nonSubReports } = useStore()
+  const dropped = useMemo(
+    () => opportunities.filter(o => o.status === 'DROPPED' && !o.isDeleted),
+    [opportunities]
+  )
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2">
+        <Trash2 size={14} className="text-red-500" />
+        <p className="text-sm font-bold text-slate-700">Dropped Opportunities</p>
+        <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-red-100 text-red-600">{dropped.length}</span>
+      </div>
+
+      {dropped.length === 0 ? (
+        <div className="glass rounded-2xl py-16 text-center text-slate-400 text-sm">
+          No dropped opportunities
+        </div>
+      ) : (
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Priority</th>
+                  <th>Type</th>
+                  <th>ID</th>
+                  <th>Solicitation</th>
+                  <th>Client</th>
+                  <th>Due Date</th>
+                  <th>Location</th>
+                  <th>BDM</th>
+                  <th>BDS</th>
+                  <th>Non-Sub Report</th>
+                </tr>
+              </thead>
+              <tbody>
+                {dropped.map((o, i) => {
+                  const report = nonSubReports.find(r => r.opportunityId === o.id)
+                  return (
+                    <motion.tr key={o.id}
+                      initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: i * 0.03 }}>
+                      <td>
+                        {o.priority && (
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                            o.priority === 'HIGH' ? 'bg-red-100 text-red-600' :
+                            o.priority === 'MEDIUM' ? 'bg-amber-100 text-amber-600' :
+                            'bg-slate-100 text-slate-500'
+                          }`}>
+                            {o.priority}
+                          </span>
+                        )}
+                      </td>
+                      <td>
+                        <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-600">
+                          {o.type}
+                        </span>
+                      </td>
+                      <td className="text-indigo-600 text-xs font-mono font-semibold">{o.solicitationId}</td>
+                      <td className="max-w-[200px]">
+                        <p className="truncate text-xs font-medium text-slate-800">{o.solicitation}</p>
+                      </td>
+                      <td className="text-xs text-slate-500">{o.client || '—'}</td>
+                      <td className="text-xs text-slate-500 whitespace-nowrap">
+                        {new Date(o.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                      </td>
+                      <td className="text-xs text-slate-500 max-w-[100px]">
+                        <p className="truncate">{o.location || '—'}</p>
+                      </td>
+                      <td>
+                        <span className="text-xs font-medium px-2 py-0.5 rounded-md bg-slate-100 text-slate-700">{o.bdm || '—'}</span>
+                      </td>
+                      <td>
+                        <span className="text-xs font-medium px-2 py-0.5 rounded-md bg-slate-100 text-slate-700">{o.bds || '—'}</span>
+                      </td>
+                      <td>
+                        {report ? (
+                          <div className="max-w-[160px]">
+                            <p className="text-[10px] text-slate-500 truncate italic">{report.reason}</p>
+                            <p className="text-[9px] text-slate-400 mt-0.5">by {report.agentUsername}</p>
+                          </div>
+                        ) : (
+                          <span className="text-slate-400 text-xs">—</span>
+                        )}
+                      </td>
+                    </motion.tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Main Page ──────────────────────────────────────────────────────────
 export default function NonSubmissionsPage() {
   const { nonSubReports, opportunities, currentUser, reviewNonSubReport } = useStore()
+  const [pageTab, setPageTab] = useState<'reports' | 'dropped'>('reports')
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<'ALL' | 'PENDING' | 'APPROVED' | 'DECLINED'>('ALL')
   const [submitFor, setSubmitFor] = useState<{ id: string; name: string } | null>(null)
@@ -272,6 +373,11 @@ export default function NonSubmissionsPage() {
 
   const isManager = ['ADMIN', 'BDM', 'SPM'].includes(currentUser?.role ?? '')
   const isAgent = !isManager
+
+  const droppedCount = useMemo(
+    () => opportunities.filter(o => o.status === 'DROPPED' && !o.isDeleted).length,
+    [opportunities]
+  )
 
   const reports = useMemo(() => {
     let list = isAgent
@@ -322,81 +428,121 @@ export default function NonSubmissionsPage() {
         </p>
       </motion.div>
 
-      {/* Agent: eligible opps */}
-      {isAgent && agentOpps.length > 0 && (
-        <motion.div variants={fadeUp} initial="initial" animate="animate"
-          className="glass rounded-2xl overflow-hidden border-l-4 border-amber-400">
-          <div className="px-5 py-3.5 border-b border-slate-100 flex items-center gap-2">
-            <AlertTriangle size={13} className="text-amber-500" />
-            <p className="text-xs font-bold text-amber-700">Opportunities requiring a non-submission report</p>
-            <span className="ml-auto text-[10px] font-black px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">{agentOpps.length}</span>
-          </div>
-          <div className="divide-y divide-slate-50">
-            {agentOpps.map((o, i) => (
-              <motion.div key={o.id}
-                initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-                transition={{ delay: i * 0.04 }}
-                className="px-5 py-3 flex items-center gap-3 hover:bg-slate-50 transition-colors">
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-slate-800 truncate">{o.solicitation}</p>
-                  <p className="text-[10px] text-slate-500">{o.solicitationId} Â· Due: {new Date(o.dueDate).toLocaleDateString()}</p>
-                </div>
-                <button
-                  onClick={() => setSubmitFor({ id: o.id, name: o.solicitation })}
-                  className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-indigo-600 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 transition-colors">
-                  <PenLine size={11} /> Write Report
+      {/* Top-level page tab switcher */}
+      <div className="flex gap-1 p-1 bg-slate-100 rounded-xl border border-slate-200">
+        <button
+          onClick={() => setPageTab('reports')}
+          className={`px-4 py-2 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${
+            pageTab === 'reports'
+              ? 'bg-white text-indigo-600 shadow-sm border border-slate-200'
+              : 'text-slate-500 hover:text-slate-700'
+          }`}>
+          <ClipboardList size={12} />
+          Non-Submission Reports
+          <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-full ${pageTab === 'reports' ? 'bg-indigo-500 text-white' : 'bg-slate-200 text-slate-500'}`}>
+            {nonSubReports.length}
+          </span>
+        </button>
+        <button
+          onClick={() => setPageTab('dropped')}
+          className={`px-4 py-2 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${
+            pageTab === 'dropped'
+              ? 'bg-white text-red-600 shadow-sm border border-slate-200'
+              : 'text-slate-500 hover:text-slate-700'
+          }`}>
+          <Trash2 size={12} />
+          Dropped Submissions
+          {droppedCount > 0 && (
+            <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-full ${pageTab === 'dropped' ? 'bg-red-500 text-white' : 'bg-slate-200 text-slate-500'}`}>
+              {droppedCount}
+            </span>
+          )}
+        </button>
+      </div>
+
+      {/* ── Reports Tab ── */}
+      {pageTab === 'reports' && (
+        <>
+          {/* Agent: eligible opps */}
+          {isAgent && agentOpps.length > 0 && (
+            <motion.div variants={fadeUp} initial="initial" animate="animate"
+              className="glass rounded-2xl overflow-hidden border-l-4 border-amber-400">
+              <div className="px-5 py-3.5 border-b border-slate-100 flex items-center gap-2">
+                <AlertTriangle size={13} className="text-amber-500" />
+                <p className="text-xs font-bold text-amber-700">Opportunities requiring a non-submission report</p>
+                <span className="ml-auto text-[10px] font-black px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">{agentOpps.length}</span>
+              </div>
+              <div className="divide-y divide-slate-50">
+                {agentOpps.map((o, i) => (
+                  <motion.div key={o.id}
+                    initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+                    transition={{ delay: i * 0.04 }}
+                    className="px-5 py-3 flex items-center gap-3 hover:bg-slate-50 transition-colors">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-slate-800 truncate">{o.solicitation}</p>
+                      <p className="text-[10px] text-slate-500">{o.solicitationId} · Due: {new Date(o.dueDate).toLocaleDateString()}</p>
+                    </div>
+                    <button
+                      onClick={() => setSubmitFor({ id: o.id, name: o.solicitation })}
+                      className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-indigo-600 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 transition-colors">
+                      <PenLine size={11} /> Write Report
+                    </button>
+                  </motion.div>
+                ))}
+              </div>
+            </motion.div>
+          )}
+
+          {/* Filters */}
+          <motion.div variants={fadeUp} initial="initial" animate="animate"
+            className="flex items-center justify-between gap-4 flex-wrap">
+            <div className="flex gap-0.5 p-1 bg-slate-100 rounded-xl border border-slate-200">
+              {filterCounts.map(({ id: f, count }) => (
+                <button key={f} onClick={() => setFilter(f)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${
+                    filter === f
+                      ? 'bg-white text-indigo-600 shadow-sm border border-slate-200'
+                      : 'text-slate-500 hover:text-slate-700'}`}>
+                  {f}
+                  <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-full ${filter === f ? 'bg-indigo-500 text-white' : 'bg-slate-200 text-slate-600'}`}>
+                    {count}
+                  </span>
                 </button>
-              </motion.div>
-            ))}
-          </div>
-        </motion.div>
+              ))}
+            </div>
+            <div className="relative">
+              <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input value={search} onChange={e => setSearch(e.target.value)}
+                className="input-field pl-9 w-60 text-xs" placeholder="Search reports…" />
+            </div>
+          </motion.div>
+
+          {/* Reports list */}
+          <motion.div variants={stagger} initial="initial" animate="animate" className="space-y-3">
+            {reports.length === 0 ? (
+              <div className="glass rounded-2xl py-16 text-center text-slate-400 text-sm">No reports found</div>
+            ) : (
+              reports.map((r) => {
+                const opp = opportunities.find(o => o.id === r.opportunityId)
+                return (
+                  <ReportCard
+                    key={r.id}
+                    r={r}
+                    opp={opp}
+                    isManager={isManager}
+                    onReview={() => setReviewId(r.id)}
+                    onApprove={() => { reviewNonSubReport(r.id, 'APPROVED', 'Approved', currentUser?.username ?? ''); toast.success('Report approved → NOT_SUBMITTED') }}
+                    onDecline={() => { reviewNonSubReport(r.id, 'DECLINED', 'Declined', currentUser?.username ?? ''); toast.success('Report declined → DROPPED') }}
+                  />
+                )
+              })
+            )}
+          </motion.div>
+        </>
       )}
 
-      {/* Filters */}
-      <motion.div variants={fadeUp} initial="initial" animate="animate"
-        className="flex items-center justify-between gap-4 flex-wrap">
-        <div className="flex gap-0.5 p-1 bg-slate-100 rounded-xl border border-slate-200">
-          {filterCounts.map(({ id: f, count }) => (
-            <button key={f} onClick={() => setFilter(f)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${
-                filter === f
-                  ? 'bg-white text-indigo-600 shadow-sm border border-slate-200'
-                  : 'text-slate-500 hover:text-slate-700'}`}>
-              {f}
-              <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-full ${filter === f ? 'bg-indigo-500 text-white' : 'bg-slate-200 text-slate-600'}`}>
-                {count}
-              </span>
-            </button>
-          ))}
-        </div>
-        <div className="relative">
-          <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-          <input value={search} onChange={e => setSearch(e.target.value)}
-            className="input-field pl-9 w-60 text-xs" placeholder="Search reportsâ€¦" />
-        </div>
-      </motion.div>
-
-      {/* Reports list */}
-      <motion.div variants={stagger} initial="initial" animate="animate" className="space-y-3">
-        {reports.length === 0 ? (
-          <div className="glass rounded-2xl py-16 text-center text-slate-400 text-sm">No reports found</div>
-        ) : (
-          reports.map((r) => {
-            const opp = opportunities.find(o => o.id === r.opportunityId)
-            return (
-              <ReportCard
-                key={r.id}
-                r={r}
-                opp={opp}
-                isManager={isManager}
-                onReview={() => setReviewId(r.id)}
-                onApprove={() => { reviewNonSubReport(r.id, 'APPROVED', 'Approved', currentUser?.username ?? ''); toast.success('Report approved â†’ NOT_SUBMITTED') }}
-                onDecline={() => { reviewNonSubReport(r.id, 'DECLINED', 'Declined', currentUser?.username ?? ''); toast.success('Report declined â†’ DROPPED') }}
-              />
-            )
-          })
-        )}
-      </motion.div>
+      {/* ── Dropped Tab ── */}
+      {pageTab === 'dropped' && <DroppedOpportunitiesTab />}
 
       {/* Modals */}
       <AnimatePresence>

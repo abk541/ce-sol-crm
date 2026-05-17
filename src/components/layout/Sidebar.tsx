@@ -24,20 +24,20 @@ const NAV = [
     label: 'Business Dev',
     items: [
       { to: '/pipeline',          icon: GitBranch,     label: 'Contract Opportunities' },
-      { to: '/proposals',         icon: FileText,      label: 'Assigned Opportunities' },
+      { to: '/proposals',         icon: FileText,      label: 'Assign Opportunities' },
       { to: '/bd-tracker',        icon: TrendingUp,    label: 'BD Tracker' },
       { to: '/tracker',           icon: ListChecks,    label: 'Tracker' },
-      { to: '/non-submissions',   icon: ClipboardList, label: 'Non-Submissions' },
+      { to: '/non-submissions',   icon: ClipboardList, label: 'Non-Submissions Report' },
       { to: '/past-performances', icon: History,       label: 'Past Performances' },
-      { to: '/fresh-award',       icon: Trophy,        label: 'Fresh Award' },
     ],
   },
   {
     label: 'Contract Admin',
     items: [
-      { to: '/contracts', icon: FileCheck2, label: 'Active Contracts' },
-      { to: '/idiq',      icon: Briefcase,  label: 'IDIQ' },
-      { to: '/bpas',      icon: Shield,     label: 'BPAs' },
+      { to: '/contracts',   icon: FileCheck2, label: 'Active Contracts' },
+      { to: '/fresh-award', icon: Trophy,     label: 'Fresh Award' },
+      { to: '/idiq',        icon: Briefcase,  label: 'IDIQ' },
+      { to: '/bpas',        icon: Shield,     label: 'BPAs' },
     ],
   },
   {

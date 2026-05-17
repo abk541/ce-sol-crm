@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   ListChecks, Send, Trash2, CheckCircle2, XCircle,
   ChevronDown, AlertTriangle, Search, Clock, RotateCcw, MoreHorizontal,
+  ChevronLeft, ChevronRight,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { formatCurrency } from '../lib/utils'
@@ -17,7 +18,10 @@ const fadeUp = {
   animate: { opacity: 1, y: 0, transition: { duration: 0.35, ease: [0.16, 1, 0.3, 1] } },
 }
 
-const EDITABLE_STATUSES: OppStatus[] = ['SUBMITTED', 'WON', 'LOST', 'DISCUSSION', 'CANCELED', 'NOT_SUBMITTED', 'DROPPED', 'TERMINATED']
+// Only statuses reachable via normal submission workflow.
+// NOT_SUBMITTED and DROPPED are set exclusively by the non-sub-report review flow.
+// WON is handled specially below (calls markOpportunityWon to create the FreshAward).
+const EDITABLE_STATUSES: OppStatus[] = ['SUBMITTED', 'DISCUSSION', 'WON', 'LOST', 'CANCELED']
 
 const STATUS_META: Record<string, { color: string; bg: string; border: string }> = {
   SUBMITTED:     { color: '#0891B2', bg: '#ECFEFF', border: '#A5F3FC' },
@@ -43,22 +47,41 @@ function StatusBadge({ status }: { status: string }) {
 
 function StatusDropdown({ oppId, current, canEdit }: { oppId: string; current: OppStatus; canEdit: boolean }) {
   const [open, setOpen] = useState(false)
-  const { updateOpportunity, currentUser } = useStore()
-  const isAdmin = ['ADMIN', 'BDM'].includes(currentUser?.role ?? '')
+  const { updateOpportunity, markOpportunityWon, freshAwards, currentUser } = useStore()
+  const isAdmin = [‘ADMIN’, ‘BDM’].includes(currentUser?.role ?? ‘’)
 
   if (!isAdmin || !canEdit) return <StatusBadge status={current} />
+
+  // Only show statuses that differ from current and are valid submission-workflow transitions
+  const options = EDITABLE_STATUSES.filter(s => s !== current)
+
+  const handleChange = (s: OppStatus) => {
+    if (s === ‘WON’) {
+      // Guard: create a FreshAward only if one doesn’t already exist for this opportunity
+      const alreadyAwarded = freshAwards.some(fa => fa.opportunityId === oppId)
+      if (alreadyAwarded) {
+        updateOpportunity(oppId, { status: ‘WON’ })
+      } else {
+        markOpportunityWon(oppId)  // sets status WON + creates FreshAward
+      }
+    } else {
+      updateOpportunity(oppId, { status: s })
+    }
+    setOpen(false)
+    toast.success(`Status updated to ${s}`)
+  }
 
   return (
     <div className="relative">
       <button onClick={e => { e.stopPropagation(); setOpen(o => !o) }}
         className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full transition-all"
         style={{
-          color: STATUS_META[current]?.color ?? '#64748B',
-          background: STATUS_META[current]?.bg ?? '#F8FAFC',
-          border: `1px solid ${STATUS_META[current]?.border ?? '#E2E8F0'}`,
+          color: STATUS_META[current]?.color ?? ‘#64748B’,
+          background: STATUS_META[current]?.bg ?? ‘#F8FAFC’,
+          border: `1px solid ${STATUS_META[current]?.border ?? ‘#E2E8F0’}`,
         }}>
         {current}
-        <ChevronDown size={9} className={open ? 'rotate-180' : ''} />
+        <ChevronDown size={9} className={open ? ‘rotate-180’ : ‘’} />
       </button>
       <AnimatePresence>
         {open && (
@@ -68,18 +91,55 @@ function StatusDropdown({ oppId, current, canEdit }: { oppId: string; current: O
             exit={{ opacity: 0, y: -4, scale: 0.96 }}
             transition={{ duration: 0.12 }}
             className="absolute right-0 top-full mt-1 z-50 rounded-xl overflow-hidden min-w-[150px]"
-            style={{ background: '#FFFFFF', border: '1px solid rgba(0,0,0,0.10)', boxShadow: '0 8px 24px rgba(0,0,0,0.10)' }}>
-            {EDITABLE_STATUSES.map(s => (
+            style={{ background: ‘#FFFFFF’, border: ‘1px solid rgba(0,0,0,0.10)’, boxShadow: ‘0 8px 24px rgba(0,0,0,0.10)’ }}>
+            {options.map(s => (
               <button key={s}
-                onClick={e => { e.stopPropagation(); updateOpportunity(oppId, { status: s }); setOpen(false); toast.success(`Status â†’ ${s}`) }}
-                className="block w-full text-left px-3 py-2 text-[10px] font-bold transition-colors"
-                style={{ color: STATUS_META[s]?.color ?? '#64748B' }}>
-                {s}
+                onClick={e => { e.stopPropagation(); handleChange(s) }}
+                className="block w-full text-left px-3 py-2 text-[10px] font-bold transition-colors hover:bg-slate-50"
+                style={{ color: STATUS_META[s]?.color ?? ‘#64748B’ }}>
+                {s === ‘WON’ ? ‘🏆 ‘ : ‘’}{s}
               </button>
             ))}
           </motion.div>
         )}
       </AnimatePresence>
+    </div>
+  )
+}
+
+type PerPage = number | 'all'
+const PER_PAGE_OPTS: PerPage[] = [10, 25, 50, 100, 'all']
+
+function Paginator({ total, perPage, page, onPage, onPerPage }: {
+  total: number; perPage: PerPage; page: number
+  onPage: (p: number) => void; onPerPage: (pp: PerPage) => void
+}) {
+  const totalPages = perPage === 'all' ? 1 : Math.ceil(total / (perPage as number))
+  return (
+    <div className="flex items-center justify-between px-5 py-3 border-t border-slate-100 bg-white">
+      <div className="flex items-center gap-2 text-xs text-slate-500">
+        Rows per page:
+        <select value={String(perPage)}
+          onChange={e => { const v = e.target.value === 'all' ? 'all' : Number(e.target.value) as PerPage; onPerPage(v); onPage(1) }}
+          className="border border-slate-200 rounded-lg px-2 py-0.5 text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-300">
+          {PER_PAGE_OPTS.map(o => <option key={String(o)} value={String(o)}>{o === 'all' ? 'All' : o}</option>)}
+        </select>
+      </div>
+      <div className="flex items-center gap-3 text-xs text-slate-500">
+        {perPage === 'all'
+          ? `All ${total} rows`
+          : `${Math.min((page - 1) * (perPage as number) + 1, total)}–${Math.min(page * (perPage as number), total)} of ${total}`}
+        <div className="flex gap-1">
+          <button onClick={() => onPage(page - 1)} disabled={page <= 1}
+            className="w-6 h-6 rounded flex items-center justify-center hover:bg-slate-100 disabled:opacity-30 transition-colors">
+            <ChevronLeft size={12} />
+          </button>
+          <button onClick={() => onPage(page + 1)} disabled={page >= totalPages}
+            className="w-6 h-6 rounded flex items-center justify-center hover:bg-slate-100 disabled:opacity-30 transition-colors">
+            <ChevronRight size={12} />
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
@@ -90,6 +150,8 @@ export default function TrackerPage() {
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<Opportunity | null>(null)
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
+  const [page, setPage] = useState(1)
+  const [perPage, setPerPage] = useState<PerPage>(25)
 
   const isAdmin = currentUser?.role === 'ADMIN'
   const isManager = ['ADMIN', 'BDM'].includes(currentUser?.role ?? '')
@@ -102,6 +164,12 @@ export default function TrackerPage() {
     ).sort((a, b) => new Date(b.submittedAt || b.dueDate).getTime() - new Date(a.submittedAt || a.dueDate).getTime()),
     [opportunities, search]
   )
+
+  const paginatedSubmitted = useMemo(() => {
+    if (perPage === 'all') return submitted
+    const start = (page - 1) * (perPage as number)
+    return submitted.slice(start, start + (perPage as number))
+  }, [submitted, page, perPage])
 
   const deleted = useMemo(() =>
     opportunities.filter(o =>
@@ -190,7 +258,7 @@ export default function TrackerPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {submitted.map((o, i) => (
+                  {paginatedSubmitted.map((o, i) => (
                     <motion.tr key={o.id}
                       initial={{ opacity: 0 }} animate={{ opacity: 1 }}
                       transition={{ delay: i * 0.03 }}
@@ -267,6 +335,15 @@ export default function TrackerPage() {
                 </tbody>
               </table>
             </div>
+          )}
+          {submitted.length > 0 && (
+            <Paginator
+              total={submitted.length}
+              perPage={perPage}
+              page={page}
+              onPage={p => setPage(p)}
+              onPerPage={pp => { setPerPage(pp); setPage(1) }}
+            />
           )}
         </motion.div>
       )}

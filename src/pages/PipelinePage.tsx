@@ -5,9 +5,10 @@ import {
   ChevronUp, ChevronDown, ChevronsUpDown,
   Edit2, Users2, Send, Trash2, Clock,
   FileText, PlusCircle, Download, Filter, MoreHorizontal, Trophy,
+  Ban, ChevronLeft, ChevronRight, SlidersHorizontal,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
-import type { Opportunity, Priority, OppStatus } from '../types'
+import type { Opportunity, Priority, OppStatus, Comment } from '../types'
 import { TIMEZONES } from '../data/mock'
 import { formatCurrency } from '../lib/utils'
 import toast from 'react-hot-toast'
@@ -16,10 +17,31 @@ import PeriodFilter, { type Period, filterByPeriod } from '../components/shared/
 import HierarchyAssignPicker from '../components/shared/HierarchyAssignPicker'
 
 // ── Constants ─────────────────────────────────────────────────────────
-const PRIMES   = ['All', 'TECH-OR', 'AYJ-S', 'SANFORD', 'SAUDI']
-const TYPES    = ['All', 'OTJ', 'RECURRING', 'BPA', 'IDIQ', 'S&D', 'SUPPLY']
-const STATUSES: OppStatus[] = ['ACTIVE','SUBMITTED','WON','LOST','DISCUSSION','CANCELED','NOT_SUBMITTED','NEW_ASSIGNMENT','TERMINATED','DROPPED']
+const TYPES_DISPLAY: { value: string; label: string }[] = [
+  { value: 'All',       label: 'All' },
+  { value: 'OTJ',       label: 'OTJ' },
+  { value: 'RECURRING', label: 'RECURRING' },
+  { value: 'BPA',       label: 'BPA' },
+  { value: 'IDIQ',      label: 'IDIQ' },
+  { value: 'S&D',       label: 'Delivery' },
+  { value: 'SUPPLY',    label: 'SUPPLY' },
+]
+const SET_ASIDES = ['SB', 'SDVOSB', 'WOSB', 'HUBZone', 'VOSB', '8(a)', 'UNRES']
+
+// Pre-submission view statuses only
+const OPP_VIEW_STATUSES: OppStatus[] = ['ACTIVE', 'NEW_ASSIGNMENT', 'DISCUSSION']
+
+// Only pre-submission statuses are manually settable in forms
+const MANUAL_STATUSES: OppStatus[] = ['ACTIVE', 'NEW_ASSIGNMENT', 'DISCUSSION']
+
 const TZ_ABBREVS = Object.keys(TIMEZONES)
+
+const PAGE_SIZE_OPTIONS = [10, 25, 50, 100, 0] // 0 = All
+
+function typeLabel(val: string) {
+  if (val === 'S&D') return 'Delivery'
+  return val
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────
 function convertTime(time: string, sourceTzAbbrev: string): string {
@@ -57,12 +79,6 @@ const STATUS_META: Record<string, { color: string; bg: string; border: string }>
   TERMINATED:     { color: '#DC2626', bg: '#FEE2E2', border: '#FECACA' },
   DROPPED:        { color: '#EA580C', bg: '#FFF7ED', border: '#FED7AA' },
 }
-const PRIME_META: Record<string, { color: string; bg: string; border: string }> = {
-  'TECH-OR': { color: '#D97706', bg: '#FFFBEB', border: '#FDE68A' },
-  'AYJ-S':   { color: '#16A34A', bg: '#DCFCE7', border: '#86EFAC' },
-  'SANFORD': { color: '#4F46E5', bg: '#EEF2FF', border: '#C7D2FE' },
-  'SAUDI':   { color: '#0891B2', bg: '#ECFEFF', border: '#A5F3FC' },
-}
 
 function PriorityBadge({ p }: { p: Priority }) {
   const m = PRIORITY_META[p]
@@ -71,10 +87,6 @@ function PriorityBadge({ p }: { p: Priority }) {
 function StatusBadge({ s }: { s: OppStatus }) {
   const m = STATUS_META[s] ?? STATUS_META.CANCELED
   return <span className="text-[10px] font-bold px-2 py-0.5 rounded-full border" style={{ color: m.color, background: m.bg, borderColor: m.border }}>{s}</span>
-}
-function PrimeBadge({ p }: { p: string }) {
-  const m = PRIME_META[p] ?? { color: '#64748B', bg: '#F1F5F9', border: '#E2E8F0' }
-  return <span className="text-[10px] font-bold px-2 py-0.5 rounded-full border" style={{ color: m.color, background: m.bg, borderColor: m.border }}>{p}</span>
 }
 function dueDateColor(d: string) {
   const diff = new Date(d).getTime() - Date.now()
@@ -115,12 +127,13 @@ function ModalWrap({ onClose, title, subtitle, children, maxW = 'max-w-2xl' }: {
 }
 
 // ── Shared: tabbed opportunity modal shell ────────────────────────────
-type OppFormTab = 'details' | 'schedule' | 'team' | 'assign'
+type OppFormTab = 'details' | 'schedule' | 'team' | 'assign' | 'comments'
 const OPP_FORM_TABS: { id: OppFormTab; label: string }[] = [
   { id: 'details',  label: 'Opportunity' },
   { id: 'schedule', label: 'Schedule' },
   { id: 'team',     label: 'Team & Finance' },
   { id: 'assign',   label: 'Assignment' },
+  { id: 'comments', label: 'Comments' },
 ]
 
 function OppModalShell({ title, subtitle, tab, setTab, onClose, extraHeader, footer, children }: {
@@ -201,6 +214,7 @@ function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) 
   const [form, setForm] = useState<Partial<Opportunity>>({ ...opp })
   const [showDeleteReq, setShowDeleteReq] = useState(false)
   const [deleteReason, setDeleteReason] = useState('')
+  const [newComment, setNewComment] = useState('')
 
   const isManager = ['ADMIN', 'BDM'].includes(currentUser?.role ?? '')
   const hasPendingDelete = deletionRequests.some(r => r.opportunityId === opp.id && r.status === 'PENDING')
@@ -210,7 +224,16 @@ function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) 
   const handleSave = () => {
     if (!form.solicitation?.trim()) { toast.error('Solicitation title is required'); setTab('details'); return }
     if (!form.dueDate) { toast.error('Due date is required'); setTab('schedule'); return }
-    updateOpportunity(opp.id, form)
+    const updatedComments = [...(form.comments ?? [])]
+    if (newComment.trim()) {
+      updatedComments.push({
+        id: crypto.randomUUID(),
+        text: newComment.trim(),
+        author: currentUser?.username ?? 'unknown',
+        createdAt: new Date().toISOString(),
+      })
+    }
+    updateOpportunity(opp.id, { ...form, comments: updatedComments })
     toast.success('Opportunity updated')
     onClose()
   }
@@ -265,19 +288,21 @@ function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) 
               <input value={form.client ?? ''} onChange={e => set('client', e.target.value)} className="input-field" />
             </div>
           </div>
-          <div className="grid grid-cols-4 gap-3">
-            {([
-              { label: 'Contract Type', key: 'type',     opts: ['OTJ','RECURRING','BPA','IDIQ','S&D','SUPPLY'] },
-              { label: 'Prime',         key: 'prime',    opts: ['TECH-OR','AYJ-S','SANFORD','SAUDI'] },
-              { label: 'Set Aside',     key: 'setAside', opts: ['SB','SDVOSB','WOSB','HUBZone','VOSB','8(a)','UNRES'] },
-            ] as const).map(f => (
-              <div key={f.key}>
-                <label className={lbl}>{f.label}</label>
-                <select value={(form as any)[f.key] ?? f.opts[0]} onChange={e => set(f.key as keyof Opportunity, e.target.value)} className="select-field">
-                  {f.opts.map(o => <option key={o}>{o}</option>)}
-                </select>
-              </div>
-            ))}
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <label className={lbl}>Contract Type</label>
+              <select value={form.type ?? 'OTJ'} onChange={e => set('type', e.target.value as any)} className="select-field">
+                {TYPES_DISPLAY.filter(t => t.value !== 'All').map(t => (
+                  <option key={t.value} value={t.value}>{t.label}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className={lbl}>Set Aside</label>
+              <select value={form.setAside ?? 'SB'} onChange={e => set('setAside', e.target.value as any)} className="select-field">
+                {SET_ASIDES.map(o => <option key={o}>{o}</option>)}
+              </select>
+            </div>
             <div>
               <label className={lbl}>NAICS Code</label>
               <input value={form.naicsCode ?? ''} onChange={e => set('naicsCode', e.target.value)} className="input-field" />
@@ -287,8 +312,9 @@ function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) 
             <div>
               <label className={lbl}>Status</label>
               <select value={form.status ?? 'ACTIVE'} onChange={e => set('status', e.target.value as OppStatus)} className="select-field">
-                {STATUSES.map(s => <option key={s}>{s}</option>)}
+                {MANUAL_STATUSES.map(s => <option key={s}>{s}</option>)}
               </select>
+              <p className="text-[10px] text-slate-400 mt-1">Use "Mark as WON" to award.</p>
             </div>
             <div>
               <label className={lbl}>Priority</label>
@@ -329,10 +355,6 @@ function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) 
             </p>
           )}
           <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className={lbl}>Period of Performance</label>
-              <input value={form.pop ?? ''} onChange={e => set('pop', e.target.value)} className="input-field" placeholder="1 base yr + 4 option yrs" />
-            </div>
             <div>
               <label className={lbl}>SAM.gov Link</label>
               <input value={form.link ?? ''} onChange={e => set('link', e.target.value)} className="input-field" placeholder="https://sam.gov/opp/…" />
@@ -397,6 +419,38 @@ function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) 
         </div>
       )}
 
+      {/* ── Comments tab ── */}
+      {tab === 'comments' && (
+        <div className="space-y-4">
+          <p className="text-sm font-semibold text-slate-700">Comments</p>
+          {(form.comments ?? []).length === 0 && (
+            <p className="text-xs text-slate-400">No comments yet.</p>
+          )}
+          <div className="space-y-3">
+            {(form.comments ?? []).map((c: Comment) => (
+              <div key={c.id} className="p-3 rounded-xl bg-slate-50 border border-slate-100">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-semibold text-slate-700">{c.author}</span>
+                  <span className="text-[10px] text-slate-400">{new Date(c.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+                </div>
+                <p className="text-xs text-slate-600">{c.text}</p>
+              </div>
+            ))}
+          </div>
+          <div className="border-t border-slate-100 pt-4">
+            <label className={lbl}>Add a Comment</label>
+            <textarea
+              value={newComment}
+              onChange={e => setNewComment(e.target.value)}
+              rows={3}
+              className="input-field w-full resize-none"
+              placeholder="Type your comment here…"
+            />
+            <p className="text-[10px] text-slate-400 mt-1">Comment will be saved when you click "Save Changes".</p>
+          </div>
+        </div>
+      )}
+
       {/* Delete request panel */}
       <AnimatePresence>
         {showDeleteReq && (
@@ -419,31 +473,51 @@ function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) 
   )
 }
 
-// ── Subcontractor Modal ───────────────────────────────────────────────
-function SubcontractorModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) {
-  const { subcontractors, addSubcontractor, deleteSubcontractor, currentUser } = useStore()
+// ── Sourcing Modal ────────────────────────────────────────────────────
+function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) {
+  const { subcontractors, addSubcontractor, updateSubcontractor, deleteSubcontractor, currentUser } = useStore()
   const [tab, setTab] = useState<'list' | 'add'>('list')
-  const [form, setForm] = useState({ companyName: '', contactName: '', email: '', phone: '', naicsCode: '', setAside: 'SB', notes: '' })
+  const [form, setForm] = useState({ companyName: '', contactName: '', email: '', phone: '', notes: '', quoteFile: '' })
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editForm, setEditForm] = useState({ companyName: '', contactName: '', email: '', phone: '', notes: '', quoteFile: '' })
 
   const oppSubs = subcontractors.filter(s => s.opportunityId === opp.id)
   const setF = (k: string, v: string) => setForm(p => ({ ...p, [k]: v }))
+  const setEF = (k: string, v: string) => setEditForm(p => ({ ...p, [k]: v }))
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault()
     if (!form.companyName) return
-    addSubcontractor({ ...form, opportunityId: opp.id, createdBy: currentUser?.username ?? '' })
-    toast.success('Subcontractor added')
-    setForm({ companyName: '', contactName: '', email: '', phone: '', naicsCode: '', setAside: 'SB', notes: '' })
+    addSubcontractor({
+      ...form,
+      naicsCode: '',
+      setAside: 'SB',
+      opportunityId: opp.id,
+      createdBy: currentUser?.username ?? '',
+    })
+    toast.success('Sourcing entry added')
+    setForm({ companyName: '', contactName: '', email: '', phone: '', notes: '', quoteFile: '' })
     setTab('list')
   }
 
+  const startEdit = (s: any) => {
+    setEditingId(s.id)
+    setEditForm({ companyName: s.companyName, contactName: s.contactName, email: s.email, phone: s.phone, notes: s.notes, quoteFile: s.quoteFile ?? '' })
+  }
+
+  const saveEdit = (id: string) => {
+    updateSubcontractor(id, editForm)
+    toast.success('Sourcing entry updated')
+    setEditingId(null)
+  }
+
   return (
-    <ModalWrap onClose={onClose} title="Subcontractors" subtitle={opp.solicitation}>
+    <ModalWrap onClose={onClose} title="Sourcing" subtitle={opp.solicitation}>
       <div className="px-6 pt-4 pb-2">
         <div className="flex gap-0.5 p-1 bg-slate-100 rounded-xl border border-slate-200 inline-flex">
           <button onClick={() => setTab('list')}
             className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${tab === 'list' ? 'bg-white text-indigo-600 shadow-sm border border-slate-200' : 'text-slate-500 hover:text-slate-700'}`}>
-            Registered ({oppSubs.length})
+            Sourcing ({oppSubs.length})
           </button>
           <button onClick={() => setTab('add')}
             className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1 ${tab === 'add' ? 'bg-white text-indigo-600 shadow-sm border border-slate-200' : 'text-slate-500 hover:text-slate-700'}`}>
@@ -455,28 +529,79 @@ function SubcontractorModal({ opp, onClose }: { opp: Opportunity; onClose: () =>
       <div className="px-6 pb-6">
         {tab === 'list' && (
           oppSubs.length === 0 ? (
-            <div className="py-10 text-center text-slate-400 text-sm">No subcontractors registered yet</div>
+            <div className="py-10 text-center text-slate-400 text-sm">No sourcing entries registered yet</div>
           ) : (
             <div className="space-y-3 mt-2">
               {oppSubs.map(s => (
                 <motion.div key={s.id} layout
                   className="p-4 rounded-xl border border-slate-100 bg-slate-50 hover:bg-white hover:border-slate-200 transition-all">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-semibold text-slate-800">{s.companyName}</p>
-                      <p className="text-xs text-slate-500 mt-0.5">{s.contactName} · {s.email} · {s.phone}</p>
-                      <div className="flex gap-2 mt-1.5 flex-wrap">
-                        <span className="text-[10px] font-semibold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">NAICS {s.naicsCode}</span>
-                        <span className="text-[10px] font-semibold text-indigo-600 bg-indigo-50 border border-indigo-100 px-1.5 py-0.5 rounded">{s.setAside}</span>
+                  {editingId === s.id ? (
+                    <div className="space-y-3">
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="col-span-2">
+                          <label className="block text-xs font-semibold text-slate-500 mb-1">Company Name *</label>
+                          <input value={editForm.companyName} onChange={e => setEF('companyName', e.target.value)} className="input-field" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-500 mb-1">Contact Name</label>
+                          <input value={editForm.contactName} onChange={e => setEF('contactName', e.target.value)} className="input-field" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-500 mb-1">Email</label>
+                          <input value={editForm.email} onChange={e => setEF('email', e.target.value)} className="input-field" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-500 mb-1">Phone</label>
+                          <input value={editForm.phone} onChange={e => setEF('phone', e.target.value)} className="input-field" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-500 mb-1">Quote File</label>
+                          <div className="flex gap-2">
+                            <input value={editForm.quoteFile} onChange={e => setEF('quoteFile', e.target.value)} className="input-field flex-1" placeholder="filename.pdf" />
+                            <button type="button" className="btn-secondary text-xs px-2" onClick={() => {
+                              const name = prompt('Enter file name:')
+                              if (name) setEF('quoteFile', name)
+                            }}>
+                              <FileText size={11} />
+                            </button>
+                          </div>
+                        </div>
+                        <div className="col-span-2">
+                          <label className="block text-xs font-semibold text-slate-500 mb-1">Notes</label>
+                          <textarea value={editForm.notes} onChange={e => setEF('notes', e.target.value)} rows={2} className="input-field w-full resize-none" />
+                        </div>
                       </div>
-                      {s.notes && <p className="text-xs mt-1.5 italic text-slate-500">"{s.notes}"</p>}
-                      <p className="text-[10px] mt-1.5 text-slate-400">Added by {s.createdBy} · {new Date(s.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</p>
+                      <div className="flex gap-2">
+                        <button type="button" onClick={() => setEditingId(null)} className="btn-secondary text-xs">Cancel</button>
+                        <button type="button" onClick={() => saveEdit(s.id)} className="btn-primary text-xs">Save</button>
+                      </div>
                     </div>
-                    <button onClick={() => { deleteSubcontractor(s.id); toast.success('Subcontractor removed') }}
-                      className="flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-red-500 hover:bg-red-50 transition-all">
-                      <X size={12} />
-                    </button>
-                  </div>
+                  ) : (
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-slate-800">{s.companyName}</p>
+                        <p className="text-xs text-slate-500 mt-0.5">{s.contactName} · {s.email} · {s.phone}</p>
+                        {s.quoteFile && (
+                          <div className="flex items-center gap-1 mt-1.5">
+                            <FileText size={10} className="text-slate-400" />
+                            <span className="text-[10px] text-indigo-600 font-semibold">{s.quoteFile}</span>
+                          </div>
+                        )}
+                        {s.notes && <p className="text-xs mt-1.5 italic text-slate-500">"{s.notes}"</p>}
+                        <p className="text-[10px] mt-1.5 text-slate-400">Added by {s.createdBy} · {new Date(s.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</p>
+                      </div>
+                      <div className="flex gap-1 flex-shrink-0">
+                        <button onClick={() => startEdit(s)}
+                          className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition-all">
+                          <Edit2 size={12} />
+                        </button>
+                        <button onClick={() => { deleteSubcontractor(s.id); toast.success('Sourcing entry removed') }}
+                          className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-red-500 hover:bg-red-50 transition-all">
+                          <X size={12} />
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </motion.div>
               ))}
             </div>
@@ -503,14 +628,16 @@ function SubcontractorModal({ opp, onClose }: { opp: Opportunity; onClose: () =>
                 <input value={form.phone} onChange={e => setF('phone', e.target.value)} className="input-field" />
               </div>
               <div>
-                <label className="block text-xs font-semibold text-slate-500 mb-1.5">NAICS Code</label>
-                <input value={form.naicsCode} onChange={e => setF('naicsCode', e.target.value)} className="input-field" />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-500 mb-1.5">Set Aside</label>
-                <select value={form.setAside} onChange={e => setF('setAside', e.target.value)} className="select-field">
-                  {['SB','SDVOSB','WOSB','HUBZone','VOSB','8(a)','UNRES'].map(s => <option key={s}>{s}</option>)}
-                </select>
+                <label className="block text-xs font-semibold text-slate-500 mb-1.5">Quote File</label>
+                <div className="flex gap-2">
+                  <input value={form.quoteFile} onChange={e => setF('quoteFile', e.target.value)} className="input-field flex-1" placeholder="filename.pdf" />
+                  <button type="button" className="btn-secondary text-xs px-2" onClick={() => {
+                    const name = prompt('Enter file name:')
+                    if (name) setF('quoteFile', name)
+                  }}>
+                    <FileText size={11} />
+                  </button>
+                </div>
               </div>
               <div className="col-span-2">
                 <label className="block text-xs font-semibold text-slate-500 mb-1.5">Notes</label>
@@ -519,7 +646,7 @@ function SubcontractorModal({ opp, onClose }: { opp: Opportunity; onClose: () =>
             </div>
             <div className="flex gap-3 pt-1">
               <button type="button" onClick={() => setTab('list')} className="btn-secondary">Cancel</button>
-              <button type="submit" className="btn-primary"><PlusCircle size={13} /> Add Subcontractor</button>
+              <button type="submit" className="btn-primary"><PlusCircle size={13} /> Add Sourcing</button>
             </div>
           </form>
         )}
@@ -534,8 +661,34 @@ function SubmitModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }
   const [proposals, setProposals] = useState<string[]>(opp.proposals ?? [])
   const [newFile, setNewFile] = useState('')
 
+  // Financial fields — behavior varies by contract type
+  const isOTJ       = opp.type === 'OTJ'
+  const isRecurring = opp.type === 'RECURRING'
+
+  const [contractAmount, setContractAmount] = useState<string>(opp.contractAmount ? String(opp.contractAmount) : '')
+  const [yearlyValue, setYearlyValue]       = useState<string>(opp.baseAmount ? String(opp.baseAmount) : '')
+  const [monthlyValue, setMonthlyValue]     = useState<string>(opp.monthlyPayment ? String(opp.monthlyPayment) : '')
+  const [monthlyOverridden, setMonthlyOverridden] = useState(false)
+
+  const handleYearlyChange = (val: string) => {
+    setYearlyValue(val)
+    if (!monthlyOverridden) {
+      const n = parseFloat(val)
+      setMonthlyValue(isNaN(n) ? '' : String(Math.round(n / 12)))
+    }
+  }
+
   const addFile = () => { if (!newFile.trim()) return; setProposals(p => [...p, newFile.trim()]); setNewFile('') }
-  const confirm = () => { submitOpportunity(opp.id); toast.success('Proposal submitted! Status updated.'); onClose() }
+
+  const confirm = () => {
+    const vals: { contractAmount?: number; baseAmount?: number; monthlyPayment?: number } = {}
+    if (contractAmount) vals.contractAmount = parseFloat(contractAmount)
+    if (yearlyValue)    vals.baseAmount     = parseFloat(yearlyValue)
+    if (monthlyValue)   vals.monthlyPayment = parseFloat(monthlyValue)
+    submitOpportunity(opp.id, vals)
+    toast.success('Proposal submitted! Status updated.')
+    onClose()
+  }
 
   return (
     <ModalWrap onClose={onClose} title="Submit Proposal" subtitle={opp.solicitation} maxW="max-w-md">
@@ -544,7 +697,68 @@ function SubmitModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }
           <p className="text-xs font-semibold text-indigo-500 mb-1.5">Opportunity details</p>
           <p className="text-sm font-semibold text-slate-800">{opp.solicitation}</p>
           <p className="text-xs text-slate-500 mt-0.5">{opp.solicitationId} · Due: {new Date(opp.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} {opp.localTime && `at ${opp.localTime} ${opp.timezone ?? ''}`}</p>
-          {opp.contractAmount && <p className="text-xs text-emerald-600 mt-1 font-semibold">{formatCurrency(opp.contractAmount)}</p>}
+          <p className="text-xs text-indigo-600 font-semibold mt-1">{typeLabel(opp.type)}</p>
+        </div>
+
+        {/* Financial fields — conditional on contract type */}
+        <div className="space-y-3">
+          <p className="text-xs font-bold text-slate-600 uppercase tracking-wide">Contract Value</p>
+
+          {/* OTJ: only Total Contract Amount */}
+          {isOTJ && (
+            <div>
+              <label className="block text-xs font-semibold text-slate-500 mb-1.5">Total Contract Amount ($)</label>
+              <input type="number" value={contractAmount} onChange={e => setContractAmount(e.target.value)} className="input-field" placeholder="0.00" />
+            </div>
+          )}
+
+          {/* RECURRING: Yearly + Monthly (monthly auto-computes) */}
+          {isRecurring && (
+            <>
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 mb-1.5">Yearly Value ($)</label>
+                <input type="number" value={yearlyValue} onChange={e => handleYearlyChange(e.target.value)} className="input-field" placeholder="0.00" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 mb-1.5">
+                  Monthly Value ($) <span className="text-slate-400 font-normal">(auto = yearly / 12)</span>
+                </label>
+                <input
+                  type="number"
+                  value={monthlyValue}
+                  onChange={e => { setMonthlyOverridden(true); setMonthlyValue(e.target.value) }}
+                  className="input-field"
+                  placeholder="0.00"
+                />
+              </div>
+            </>
+          )}
+
+          {/* BPA / IDIQ / S&D / SUPPLY: all three fields */}
+          {!isOTJ && !isRecurring && (
+            <>
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 mb-1.5">Total Contract Amount ($)</label>
+                <input type="number" value={contractAmount} onChange={e => setContractAmount(e.target.value)} className="input-field" placeholder="0.00" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 mb-1.5">Yearly Value ($)</label>
+                <input type="number" value={yearlyValue} onChange={e => handleYearlyChange(e.target.value)} className="input-field" placeholder="0.00" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 mb-1.5">
+                  Monthly Value ($) <span className="text-slate-400 font-normal">(auto = yearly / 12)</span>
+                </label>
+                <input
+                  type="number"
+                  value={monthlyValue}
+                  onChange={e => { setMonthlyOverridden(true); setMonthlyValue(e.target.value) }}
+                  className="input-field"
+                  placeholder="0.00"
+                />
+              </div>
+            </>
+          )}
         </div>
 
         <div>
@@ -580,13 +794,13 @@ function SubmitModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }
 
 // ── Create Modal ──────────────────────────────────────────────────────
 function CreateModal({ onClose }: { onClose: () => void }) {
-  const { createOpportunity } = useStore()
+  const { createOpportunity, currentUser } = useStore()
   const [tab, setTab] = useState<OppFormTab>('details')
   const [samUrl, setSamUrl] = useState('')
   const [importing, setImporting] = useState(false)
+  const [initialComment, setInitialComment] = useState('')
   const [form, setForm] = useState<Partial<Opportunity>>({
     priority: 'MEDIUM', status: 'ACTIVE', type: 'OTJ', setAside: 'SB',
-    prime: 'TECH-OR',
     period: new Date().toLocaleString('en-US', { month: 'short' }).toUpperCase() + ' ' + new Date().getFullYear(),
     capturedOn: new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }),
     bdm: '', bds: '', naicsCode: '', solicitationId: '', solicitation: '',
@@ -606,7 +820,6 @@ function CreateModal({ onClose }: { onClose: () => void }) {
     set('naicsCode', '238220'); set('setAside', 'SB'); set('type', 'RECURRING')
     set('location', 'Camp Springs, MD'); set('dueDate', '2026-06-15')
     set('localTime', '16:00'); set('timezone', 'EST')
-    set('pop', '1 base year + 4 option years')
     setImporting(false)
     toast.success('Details imported from SAM.gov!')
     setTab('details')
@@ -615,7 +828,16 @@ function CreateModal({ onClose }: { onClose: () => void }) {
   const handleCreate = () => {
     if (!form.solicitation?.trim()) { toast.error('Solicitation title is required'); setTab('details'); return }
     if (!form.dueDate) { toast.error('Due date is required'); setTab('schedule'); return }
-    createOpportunity(form as Omit<Opportunity, 'id'>)
+    const comments: Comment[] = []
+    if (initialComment.trim()) {
+      comments.push({
+        id: crypto.randomUUID(),
+        text: initialComment.trim(),
+        author: currentUser?.username ?? 'unknown',
+        createdAt: new Date().toISOString(),
+      })
+    }
+    createOpportunity({ ...form, comments } as Omit<Opportunity, 'id'>)
     toast.success('Opportunity created!')
     onClose()
   }
@@ -674,23 +896,19 @@ function CreateModal({ onClose }: { onClose: () => void }) {
               <input value={form.client ?? ''} onChange={e => set('client', e.target.value)} className="input-field" placeholder="Agency name" />
             </div>
           </div>
-          <div className="grid grid-cols-4 gap-3">
+          <div className="grid grid-cols-3 gap-3">
             <div>
               <label className={lbl}>Contract Type</label>
               <select value={form.type ?? 'OTJ'} onChange={e => set('type', e.target.value as any)} className="select-field">
-                {['OTJ','RECURRING','BPA','IDIQ','S&D','SUPPLY'].map(o => <option key={o}>{o}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className={lbl}>Prime</label>
-              <select value={form.prime ?? 'TECH-OR'} onChange={e => set('prime', e.target.value as any)} className="select-field">
-                {['TECH-OR','AYJ-S','SANFORD','SAUDI'].map(o => <option key={o}>{o}</option>)}
+                {TYPES_DISPLAY.filter(t => t.value !== 'All').map(t => (
+                  <option key={t.value} value={t.value}>{t.label}</option>
+                ))}
               </select>
             </div>
             <div>
               <label className={lbl}>Set Aside</label>
               <select value={form.setAside ?? 'SB'} onChange={e => set('setAside', e.target.value as any)} className="select-field">
-                {['SB','SDVOSB','WOSB','HUBZone','VOSB','8(a)','UNRES'].map(o => <option key={o}>{o}</option>)}
+                {SET_ASIDES.map(o => <option key={o}>{o}</option>)}
               </select>
             </div>
             <div>
@@ -708,7 +926,7 @@ function CreateModal({ onClose }: { onClose: () => void }) {
             <div>
               <label className={lbl}>Status</label>
               <select value={form.status ?? 'ACTIVE'} onChange={e => set('status', e.target.value as OppStatus)} className="select-field">
-                {STATUSES.map(s => <option key={s}>{s}</option>)}
+                {MANUAL_STATUSES.map(s => <option key={s}>{s}</option>)}
               </select>
             </div>
             <div>
@@ -744,10 +962,6 @@ function CreateModal({ onClose }: { onClose: () => void }) {
             </p>
           )}
           <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className={lbl}>Period of Performance</label>
-              <input value={form.pop ?? ''} onChange={e => set('pop', e.target.value)} className="input-field" placeholder="1 base yr + 4 option yrs" />
-            </div>
             <div>
               <label className={lbl}>SAM.gov Link</label>
               <input value={form.link ?? ''} onChange={e => set('link', e.target.value)} className="input-field" placeholder="https://sam.gov/opp/…" />
@@ -812,6 +1026,21 @@ function CreateModal({ onClose }: { onClose: () => void }) {
           />
         </div>
       )}
+
+      {/* ── Comments tab ── */}
+      {tab === 'comments' && (
+        <div className="space-y-4">
+          <p className="text-sm font-semibold text-slate-700">Initial Comment</p>
+          <p className="text-xs text-slate-400">Optionally add a comment when creating this opportunity.</p>
+          <textarea
+            value={initialComment}
+            onChange={e => setInitialComment(e.target.value)}
+            rows={5}
+            className="input-field w-full resize-none"
+            placeholder="Add an initial comment or note about this opportunity…"
+          />
+        </div>
+      )}
     </OppModalShell>
   )
 }
@@ -822,22 +1051,24 @@ function RowMenu({
   canSubmit,
   onViewDetails,
   onEdit,
-  onSubk,
+  onSourcing,
   onSubmit,
   onRequestDeletion,
   onMarkWon,
+  onCancel,
 }: {
   o: Opportunity
   canSubmit: boolean
   onViewDetails: () => void
   onEdit: () => void
-  onSubk: () => void
+  onSourcing: () => void
   onSubmit: () => void
   onRequestDeletion: () => void
   onMarkWon: () => void
+  onCancel: () => void
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
-  const submittable = ['ACTIVE', 'DISCUSSION', 'NEW_ASSIGNMENT'].includes(o.status)
+  const submittable = OPP_VIEW_STATUSES.includes(o.status as any)
 
   return (
     <div className="relative inline-block">
@@ -884,12 +1115,12 @@ function RowMenu({
               <Edit2 size={12} /> Edit
             </button>
             <button
-              onClick={e => { e.stopPropagation(); setMenuOpen(false); onSubk() }}
+              onClick={e => { e.stopPropagation(); setMenuOpen(false); onSourcing() }}
               className="w-full text-left px-3 py-2 text-xs font-semibold flex items-center gap-2 transition-colors"
               style={{ color: '#475569' }}
               onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(0,0,0,0.04)'; (e.currentTarget as HTMLButtonElement).style.color = '#0F172A' }}
               onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = ''; (e.currentTarget as HTMLButtonElement).style.color = '#475569' }}>
-              <Users2 size={12} /> Subcontractors
+              <Users2 size={12} /> Sourcing
             </button>
             {canSubmit && submittable && (
               <button
@@ -903,6 +1134,14 @@ function RowMenu({
             )}
             <div className="my-1 border-t border-slate-100" />
             <button
+              onClick={e => { e.stopPropagation(); setMenuOpen(false); onCancel() }}
+              className="w-full text-left px-3 py-2 text-xs font-semibold flex items-center gap-2 transition-colors"
+              style={{ color: '#DC2626' }}
+              onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(220,38,38,0.06)'; (e.currentTarget as HTMLButtonElement).style.color = '#DC2626' }}
+              onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = ''; (e.currentTarget as HTMLButtonElement).style.color = '#DC2626' }}>
+              <Ban size={12} /> Cancel
+            </button>
+            <button
               onClick={e => { e.stopPropagation(); setMenuOpen(false); onRequestDeletion() }}
               className="w-full text-left px-3 py-2 text-xs font-semibold flex items-center gap-2 transition-colors"
               style={{ color: '#DC2626' }}
@@ -913,6 +1152,74 @@ function RowMenu({
           </motion.div>
         )}
       </AnimatePresence>
+    </div>
+  )
+}
+
+// ── Paginator ─────────────────────────────────────────────────────────
+function Paginator({
+  total, page, pageSize, onPage, onPageSize,
+}: {
+  total: number; page: number; pageSize: number
+  onPage: (p: number) => void; onPageSize: (s: number) => void
+}) {
+  const totalPages = pageSize === 0 ? 1 : Math.ceil(total / pageSize)
+  const start = pageSize === 0 ? 1 : (page - 1) * pageSize + 1
+  const end   = pageSize === 0 ? total : Math.min(page * pageSize, total)
+
+  return (
+    <div className="flex items-center justify-between px-5 py-3 border-t border-slate-100 bg-slate-50/60">
+      <div className="flex items-center gap-2 text-xs text-slate-500">
+        <span>Rows per page:</span>
+        <select
+          value={pageSize}
+          onChange={e => { onPageSize(Number(e.target.value)); onPage(1) }}
+          className="select-field py-1 text-xs w-auto min-w-[64px]">
+          {PAGE_SIZE_OPTIONS.map(s => (
+            <option key={s} value={s}>{s === 0 ? 'All' : s}</option>
+          ))}
+        </select>
+        <span className="ml-2 font-medium text-slate-600">
+          {total === 0 ? '0' : `${start}–${end}`} of {total}
+        </span>
+      </div>
+      <div className="flex items-center gap-1">
+        <button
+          disabled={page <= 1}
+          onClick={() => onPage(page - 1)}
+          className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed transition-all">
+          <ChevronLeft size={13} />
+        </button>
+        {Array.from({ length: totalPages }, (_, i) => i + 1)
+          .filter(p => p === 1 || p === totalPages || Math.abs(p - page) <= 1)
+          .reduce<(number | '...')[]>((acc, p, i, arr) => {
+            if (i > 0 && p - (arr[i - 1] as number) > 1) acc.push('...')
+            acc.push(p)
+            return acc
+          }, [])
+          .map((p, i) =>
+            p === '...'
+              ? <span key={`ellipsis-${i}`} className="px-1 text-xs text-slate-400">…</span>
+              : (
+                <button
+                  key={p}
+                  onClick={() => onPage(p as number)}
+                  className={`w-7 h-7 rounded-lg text-xs font-semibold transition-all ${
+                    page === p
+                      ? 'bg-indigo-500 text-white shadow-sm'
+                      : 'text-slate-500 hover:text-slate-700 hover:bg-slate-100'
+                  }`}>
+                  {p}
+                </button>
+              )
+          )}
+        <button
+          disabled={page >= totalPages}
+          onClick={() => onPage(page + 1)}
+          className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed transition-all">
+          <ChevronRight size={13} />
+        </button>
+      </div>
     </div>
   )
 }
@@ -935,23 +1242,49 @@ const ROLE_COLOR: Record<string, { color: string; bg: string; border: string }> 
 }
 
 export default function PipelinePage() {
-  const { opportunities, employees, currentUser, markOpportunityWon } = useStore()
+  const { opportunities, employees, currentUser, markOpportunityWon, updateOpportunity } = useStore()
+
+  // ── Filter state ──
   const [search, setSearch]           = useState('')
-  const [primeFilter, setPrimeFilter] = useState('All')
+  const [priorityFilter, setPriorityFilter] = useState('All')
   const [typeFilter, setTypeFilter]   = useState('All')
-  const [statusFilter, setStatusFilter] = useState('All')
+  const [setAsideFilter, setSetAsideFilter] = useState('All')
   const [period, setPeriod]           = useState<Period | null>(null)
+
+  // More filters
+  const [showMoreFilters, setShowMoreFilters] = useState(false)
+  const [bdmFilter, setBdmFilter]           = useState('')
+  const [bdsFilter, setBdsFilter]           = useState('')
+  const [supportFilter, setSupportFilter]   = useState('')
+  const [locationFilter, setLocationFilter] = useState('')
+  const [naicsFilter, setNaicsFilter]       = useState('')
+  const [dueDateFrom, setDueDateFrom]       = useState('')
+  const [dueDateTo, setDueDateTo]           = useState('')
+
+  // ── Modal state ──
   const [showCreate, setShowCreate]   = useState(false)
   const [editOpp, setEditOpp]         = useState<Opportunity | null>(null)
-  const [subOpp, setSubOpp]           = useState<Opportunity | null>(null)
+  const [sourcingOpp, setSourcingOpp] = useState<Opportunity | null>(null)
   const [submitOpp, setSubmitOpp]     = useState<Opportunity | null>(null)
   const [selectedOpp, setSelectedOpp] = useState<Opportunity | null>(null)
-  const [sort, setSort]               = useState<{ key: SortKey; dir: SortDir }>({ key: 'dueDate', dir: 'asc' })
+
+  // ── Sort state ──
+  const [sort, setSort] = useState<{ key: SortKey; dir: SortDir }>({ key: 'dueDate', dir: 'asc' })
+
+  // ── Pagination state ──
+  const [page, setPage]         = useState(1)
+  const [pageSize, setPageSize] = useState(25)
 
   const canSubmit = ['ADMIN', 'BDM', 'BDS'].includes(currentUser?.role ?? '')
 
+  // Unique BDM / BDS / Support lists for dropdowns
+  const bdmList     = useMemo(() => Array.from(new Set(opportunities.map(o => o.bdm).filter(Boolean))), [opportunities])
+  const bdsList     = useMemo(() => Array.from(new Set(opportunities.map(o => o.bds).filter(Boolean))), [opportunities])
+  const supportList = useMemo(() => Array.from(new Set(opportunities.map(o => o.supportAgent).filter(Boolean))), [opportunities])
+
   const filtered = useMemo(() => {
-    let list = opportunities.filter(o => !o.isDeleted)
+    // Pre-submission only
+    let list = opportunities.filter(o => !o.isDeleted && OPP_VIEW_STATUSES.includes(o.status as any))
 
     // Period filter (by dueDate)
     if (period) list = list.filter(o => filterByPeriod(o.dueDate, period))
@@ -961,31 +1294,68 @@ export default function PipelinePage() {
       list = list.filter(o =>
         o.solicitation.toLowerCase().includes(q) ||
         o.solicitationId.toLowerCase().includes(q) ||
-        o.location.toLowerCase().includes(q) ||
-        o.client.toLowerCase().includes(q) ||
-        o.naicsCode.includes(q)
+        (o.location ?? '').toLowerCase().includes(q) ||
+        (o.client ?? '').toLowerCase().includes(q) ||
+        (o.naicsCode ?? '').includes(q)
       )
     }
-    if (primeFilter !== 'All') list = list.filter(o => o.prime === primeFilter)
-    if (typeFilter !== 'All') list = list.filter(o => o.type === typeFilter)
-    if (statusFilter !== 'All') list = list.filter(o => o.status === statusFilter)
+
+    if (priorityFilter !== 'All') list = list.filter(o => o.priority === priorityFilter)
+    if (typeFilter !== 'All')     list = list.filter(o => o.type === typeFilter)
+    if (setAsideFilter !== 'All') list = list.filter(o => o.setAside === setAsideFilter)
+
+    // More filters
+    if (bdmFilter)      list = list.filter(o => (o.bdm ?? '').toLowerCase().includes(bdmFilter.toLowerCase()))
+    if (bdsFilter)      list = list.filter(o => (o.bds ?? '').toLowerCase().includes(bdsFilter.toLowerCase()))
+    if (supportFilter)  list = list.filter(o => (o.supportAgent ?? '').toLowerCase().includes(supportFilter.toLowerCase()))
+    if (locationFilter) list = list.filter(o => (o.location ?? '').toLowerCase().includes(locationFilter.toLowerCase()))
+    if (naicsFilter)    list = list.filter(o => (o.naicsCode ?? '').includes(naicsFilter))
+    if (dueDateFrom)    list = list.filter(o => o.dueDate >= dueDateFrom)
+    if (dueDateTo)      list = list.filter(o => o.dueDate <= dueDateTo)
+
     list.sort((a, b) => {
       const av = a[sort.key] ?? ''; const bv = b[sort.key] ?? ''
       const r = String(av).localeCompare(String(bv))
       return sort.dir === 'asc' ? r : -r
     })
     return list
-  }, [opportunities, search, primeFilter, typeFilter, statusFilter, sort, period])
+  }, [opportunities, search, priorityFilter, typeFilter, setAsideFilter, sort, period,
+      bdmFilter, bdsFilter, supportFilter, locationFilter, naicsFilter, dueDateFrom, dueDateTo])
 
-  const toggleSort = (key: SortKey) =>
+  // Paginated slice
+  const paginated = useMemo(() => {
+    if (pageSize === 0) return filtered
+    const start = (page - 1) * pageSize
+    return filtered.slice(start, start + pageSize)
+  }, [filtered, page, pageSize])
+
+  // Reset page when filters change
+  const resetPage = () => setPage(1)
+
+  const toggleSort = (key: SortKey) => {
     setSort(p => p.key === key ? { key, dir: p.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' })
+    resetPage()
+  }
 
   const SortIcon = ({ k }: { k: SortKey }) => {
     if (sort.key !== k) return <ChevronsUpDown size={9} className="text-slate-400" />
     return sort.dir === 'asc' ? <ChevronUp size={9} className="text-indigo-500" /> : <ChevronDown size={9} className="text-indigo-500" />
   }
 
-  const hasFilters = search || primeFilter !== 'All' || typeFilter !== 'All' || statusFilter !== 'All'
+  const hasMoreFilters = bdmFilter || bdsFilter || supportFilter || locationFilter || naicsFilter || dueDateFrom || dueDateTo
+
+  const clearAll = () => {
+    setSearch(''); setPriorityFilter('All'); setTypeFilter('All'); setSetAsideFilter('All')
+    setBdmFilter(''); setBdsFilter(''); setSupportFilter(''); setLocationFilter(''); setNaicsFilter('')
+    setDueDateFrom(''); setDueDateTo(''); resetPage()
+  }
+
+  const hasFilters = search || priorityFilter !== 'All' || typeFilter !== 'All' || setAsideFilter !== 'All' || hasMoreFilters
+
+  const handleCancel = (o: Opportunity) => {
+    updateOpportunity(o.id, { status: 'CANCELED' })
+    toast.success(`"${o.solicitation}" canceled.`)
+  }
 
   return (
     <div className="p-6 page-enter">
@@ -993,7 +1363,7 @@ export default function PipelinePage() {
       <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
         <div>
           <p className="text-[10px] font-bold text-slate-400 tracking-[0.2em] mb-1">CES · PIPELINE</p>
-          <h1 className="text-2xl font-black text-slate-900">General Pipeline</h1>
+          <h1 className="text-2xl font-black text-slate-900">Contract Opportunities</h1>
           <p className="text-slate-500 text-sm mt-0.5">{filtered.length} opportunities</p>
         </div>
         <div className="flex items-center gap-3">
@@ -1005,53 +1375,116 @@ export default function PipelinePage() {
       </div>
 
       {/* Filters bar */}
-      <div className="glass rounded-2xl p-4 mb-4 flex flex-wrap gap-3 items-center">
-        <div className="relative min-w-[200px] flex-1">
-          <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-          <input value={search} onChange={e => setSearch(e.target.value)}
-            className="input-field pl-9 text-xs" placeholder="Search solicitation, ID, client, NAICS…" />
-        </div>
+      <div className="glass rounded-2xl p-4 mb-4 space-y-3">
+        <div className="flex flex-wrap gap-3 items-center">
+          {/* Search */}
+          <div className="relative min-w-[200px] flex-1">
+            <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input value={search} onChange={e => { setSearch(e.target.value); resetPage() }}
+              className="input-field pl-9 text-xs" placeholder="Search solicitation, ID, client, NAICS…" />
+          </div>
 
-        {/* Prime pills */}
-        <div className="flex gap-1 flex-wrap">
-          {PRIMES.map(p => (
-            <button key={p} onClick={() => setPrimeFilter(p)}
-              className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all border ${primeFilter === p
-                ? 'bg-amber-50 text-amber-700 border-amber-200'
-                : 'text-slate-500 border-slate-200 bg-white hover:text-slate-700'}`}>
-              {p}
-            </button>
-          ))}
-        </div>
+          {/* Priority pills */}
+          <div className="flex gap-1 flex-wrap">
+            {['All', 'HIGH', 'MEDIUM', 'LOW'].map(p => (
+              <button key={p} onClick={() => { setPriorityFilter(p); resetPage() }}
+                className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all border ${priorityFilter === p
+                  ? 'bg-rose-50 text-rose-700 border-rose-200'
+                  : 'text-slate-500 border-slate-200 bg-white hover:text-slate-700'}`}>
+                {p}
+              </button>
+            ))}
+          </div>
 
-        {/* Type pills */}
-        <div className="flex gap-1 flex-wrap">
-          {TYPES.map(t => (
-            <button key={t} onClick={() => setTypeFilter(t)}
-              className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all border ${typeFilter === t
-                ? 'bg-cyan-50 text-cyan-700 border-cyan-200'
-                : 'text-slate-500 border-slate-200 bg-white hover:text-slate-700'}`}>
-              {t}
-            </button>
-          ))}
-        </div>
+          {/* Type dropdown */}
+          <select value={typeFilter} onChange={e => { setTypeFilter(e.target.value); resetPage() }}
+            className="select-field text-xs py-1.5 w-auto min-w-[130px]">
+            {TYPES_DISPLAY.map(t => (
+              <option key={t.value} value={t.value}>{t.label}</option>
+            ))}
+          </select>
 
-        <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
-          className="select-field text-xs py-1.5 w-auto min-w-[130px]">
-          <option value="All">All Status</option>
-          {STATUSES.map(s => <option key={s}>{s}</option>)}
-        </select>
+          {/* Set Aside dropdown */}
+          <select value={setAsideFilter} onChange={e => { setSetAsideFilter(e.target.value); resetPage() }}
+            className="select-field text-xs py-1.5 w-auto min-w-[110px]">
+            <option value="All">All Set Aside</option>
+            {SET_ASIDES.map(s => <option key={s}>{s}</option>)}
+          </select>
 
-        {hasFilters && (
-          <button onClick={() => { setSearch(''); setPrimeFilter('All'); setTypeFilter('All'); setStatusFilter('All') }}
-            className="btn-ghost text-xs flex items-center gap-1 text-slate-500">
-            <X size={11} /> Clear filters
+          {/* More Filters toggle */}
+          <button onClick={() => setShowMoreFilters(v => !v)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
+              showMoreFilters || hasMoreFilters
+                ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                : 'text-slate-500 border-slate-200 bg-white hover:text-slate-700'
+            }`}>
+            <SlidersHorizontal size={11} />
+            More Filters
+            {hasMoreFilters ? <span className="w-4 h-4 rounded-full bg-indigo-500 text-white text-[9px] font-black flex items-center justify-center">!</span> : null}
           </button>
-        )}
 
-        <button className="btn-secondary ml-auto text-xs flex items-center gap-1.5">
-          <Download size={12} /> Export
-        </button>
+          {hasFilters && (
+            <button onClick={clearAll}
+              className="btn-ghost text-xs flex items-center gap-1 text-slate-500">
+              <X size={11} /> Clear all
+            </button>
+          )}
+
+          <button className="btn-secondary ml-auto text-xs flex items-center gap-1.5">
+            <Download size={12} /> Export
+          </button>
+        </div>
+
+        {/* More Filters panel */}
+        <AnimatePresence>
+          {showMoreFilters && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              className="overflow-hidden">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 pt-2 border-t border-slate-100">
+                <div>
+                  <label className="block text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1">BDM</label>
+                  <select value={bdmFilter} onChange={e => { setBdmFilter(e.target.value); resetPage() }} className="select-field text-xs py-1.5 w-full">
+                    <option value="">All BDMs</option>
+                    {bdmList.map(b => <option key={b}>{b}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1">BDS</label>
+                  <select value={bdsFilter} onChange={e => { setBdsFilter(e.target.value); resetPage() }} className="select-field text-xs py-1.5 w-full">
+                    <option value="">All BDS</option>
+                    {bdsList.map(b => <option key={b}>{b}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1">Support Agent</label>
+                  <select value={supportFilter} onChange={e => { setSupportFilter(e.target.value); resetPage() }} className="select-field text-xs py-1.5 w-full">
+                    <option value="">All Agents</option>
+                    {supportList.map(s => <option key={s}>{s}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1">Location</label>
+                  <input value={locationFilter} onChange={e => { setLocationFilter(e.target.value); resetPage() }} className="input-field text-xs py-1.5 w-full" placeholder="City, State" />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1">NAICS</label>
+                  <input value={naicsFilter} onChange={e => { setNaicsFilter(e.target.value); resetPage() }} className="input-field text-xs py-1.5 w-full" placeholder="e.g. 238220" />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1">Due Date From</label>
+                  <input type="date" value={dueDateFrom} onChange={e => { setDueDateFrom(e.target.value); resetPage() }} className="input-field text-xs py-1.5 w-full" />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1">Due Date To</label>
+                  <input type="date" value={dueDateTo} onChange={e => { setDueDateTo(e.target.value); resetPage() }} className="input-field text-xs py-1.5 w-full" />
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       {/* Table */}
@@ -1065,15 +1498,21 @@ export default function PipelinePage() {
             <thead>
               <tr>
                 {[
-                  { label: 'Prime', k: 'prime' }, { label: 'Priority', k: 'priority' },
-                  { label: 'Period', k: 'period' }, { label: 'Captured', k: 'capturedOn' },
-                  { label: 'Type', k: 'type' }, { label: 'NAICS', k: 'naicsCode' },
-                  { label: 'ID', k: 'solicitationId' }, { label: 'Solicitation', k: 'solicitation' },
-                  { label: 'Set Aside', k: 'setAside' }, { label: 'Due Date', k: 'dueDate' },
-                  { label: 'Time / TZ', k: 'localTime' }, { label: 'Location', k: 'location' },
-                  { label: 'Assigned', k: 'assignedTo' },
-                  { label: 'Value', k: 'contractAmount' }, { label: 'Status', k: 'status' },
-                  { label: 'Actions', k: '' },
+                  { label: 'Priority',    k: 'priority' },
+                  { label: 'Period',      k: 'period' },
+                  { label: 'Captured On', k: 'capturedOn' },
+                  { label: 'Type',        k: 'type' },
+                  { label: 'NAICS',       k: 'naicsCode' },
+                  { label: 'ID',          k: 'solicitationId' },
+                  { label: 'Solicitation', k: 'solicitation' },
+                  { label: 'Set Aside',   k: 'setAside' },
+                  { label: 'Due Date',    k: 'dueDate' },
+                  { label: 'Time / TZ',   k: 'localTime' },
+                  { label: 'Location',    k: 'location' },
+                  { label: 'BDM',         k: 'bdm' },
+                  { label: 'BDS',         k: 'bds' },
+                  { label: 'Assigned',    k: 'assignedTo' },
+                  { label: 'Actions',     k: '' },
                 ].map(col => (
                   <th key={col.k || col.label}>
                     {col.k ? (
@@ -1088,7 +1527,7 @@ export default function PipelinePage() {
             </thead>
             <tbody>
               <AnimatePresence>
-                {filtered.map((o, i) => (
+                {paginated.map((o, i) => (
                   <motion.tr key={o.id}
                     initial={{ opacity: 0, y: 4 }}
                     animate={{ opacity: 1, y: 0 }}
@@ -1096,12 +1535,11 @@ export default function PipelinePage() {
                     transition={{ delay: i * 0.015, duration: 0.2 }}
                     onClick={() => setSelectedOpp(o)}
                     className={`cursor-pointer ${o.deletionRequested ? 'opacity-50' : ''}`}>
-                    <td><PrimeBadge p={o.prime} /></td>
                     <td><PriorityBadge p={o.priority} /></td>
                     <td className="text-slate-500 text-xs">{o.period}</td>
                     <td className="text-slate-500 text-xs whitespace-nowrap">{o.capturedOn}</td>
                     <td>
-                      <span className="text-[10px] font-semibold text-indigo-600 bg-indigo-50 border border-indigo-100 px-1.5 py-0.5 rounded">{o.type}</span>
+                      <span className="text-[10px] font-semibold text-indigo-600 bg-indigo-50 border border-indigo-100 px-1.5 py-0.5 rounded">{typeLabel(o.type)}</span>
                     </td>
                     <td><span className="text-slate-500 text-xs font-mono">{o.naicsCode}</span></td>
                     <td><span className="text-indigo-600 text-xs font-mono font-semibold">{o.solicitationId}</span></td>
@@ -1126,6 +1564,8 @@ export default function PipelinePage() {
                       )}
                     </td>
                     <td><span className="text-slate-500 text-xs">{o.location}</span></td>
+                    <td><span className="text-slate-600 text-xs">{o.bdm || '—'}</span></td>
+                    <td><span className="text-slate-600 text-xs">{o.bds || '—'}</span></td>
                     <td>
                       {(() => {
                         const emp = o.assignedTo ? employees.find(e => e.id === o.assignedTo) : null
@@ -1142,38 +1582,36 @@ export default function PipelinePage() {
                         )
                       })()}
                     </td>
-                    <td>
-                      <span className="text-slate-700 text-xs font-semibold whitespace-nowrap">
-                        {o.contractAmount ? formatCurrency(o.contractAmount) : '—'}
-                        {o.monthlyPayment ? <span className="block text-[10px] text-slate-400">{formatCurrency(o.monthlyPayment)}/mo</span> : null}
-                      </span>
-                    </td>
-                    <td><StatusBadge s={o.status} /></td>
                     <td onClick={e => e.stopPropagation()}>
                       <div className="flex items-center gap-1">
                         <button title="Edit" onClick={() => setEditOpp(o)}
                           className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition-all">
                           <Edit2 size={12} />
                         </button>
-                        <button title="Subcontractors" onClick={() => setSubOpp(o)}
+                        <button title="Sourcing" onClick={() => setSourcingOpp(o)}
                           className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-cyan-600 hover:bg-cyan-50 transition-all">
                           <Users2 size={12} />
                         </button>
-                        {canSubmit && ['ACTIVE', 'DISCUSSION', 'NEW_ASSIGNMENT'].includes(o.status) && (
+                        {canSubmit && OPP_VIEW_STATUSES.includes(o.status as any) && (
                           <button title="Submit proposal" onClick={() => setSubmitOpp(o)}
                             className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 transition-all">
                             <Send size={12} />
                           </button>
                         )}
+                        <button title="Cancel opportunity" onClick={() => handleCancel(o)}
+                          className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-red-600 hover:bg-red-50 transition-all">
+                          <Ban size={12} />
+                        </button>
                         <RowMenu
                           o={o}
                           canSubmit={canSubmit}
                           onViewDetails={() => setSelectedOpp(o)}
                           onEdit={() => setEditOpp(o)}
-                          onSubk={() => setSubOpp(o)}
+                          onSourcing={() => setSourcingOpp(o)}
                           onSubmit={() => setSubmitOpp(o)}
                           onRequestDeletion={() => setEditOpp(o)}
                           onMarkWon={() => { markOpportunityWon(o.id); toast.success('Marked as WON → moved to Fresh Awards!') }}
+                          onCancel={() => handleCancel(o)}
                         />
                       </div>
                     </td>
@@ -1185,6 +1623,16 @@ export default function PipelinePage() {
         </div>
         {filtered.length === 0 && (
           <div className="py-16 text-center text-slate-400 text-sm">No opportunities match the current filters</div>
+        )}
+        {/* Paginator */}
+        {filtered.length > 0 && (
+          <Paginator
+            total={filtered.length}
+            page={page}
+            pageSize={pageSize}
+            onPage={setPage}
+            onPageSize={s => { setPageSize(s); setPage(1) }}
+          />
         )}
       </div>
 
@@ -1201,21 +1649,23 @@ export default function PipelinePage() {
             <div className="flex gap-2 flex-wrap mb-5">
               <StatusBadge s={selectedOpp.status} />
               <PriorityBadge p={selectedOpp.priority} />
-              <PrimeBadge p={selectedOpp.prime} />
+              <span className="text-[10px] font-semibold text-indigo-600 bg-indigo-50 border border-indigo-100 px-1.5 py-0.5 rounded">{typeLabel(selectedOpp.type)}</span>
             </div>
 
             <DrawerSection title="Overview">
-              <DrawerField label="Client"      value={selectedOpp.client} />
-              <DrawerField label="Type"        value={selectedOpp.type} />
-              <DrawerField label="Set-Aside"   value={selectedOpp.setAside} />
-              <DrawerField label="NAICS"       value={selectedOpp.naicsCode} />
-              <DrawerField label="Location"    value={selectedOpp.location} />
-              <DrawerField label="Period"      value={selectedOpp.period} />
+              <DrawerField label="Client"    value={selectedOpp.client} />
+              <DrawerField label="Type"      value={typeLabel(selectedOpp.type)} />
+              <DrawerField label="Set-Aside" value={selectedOpp.setAside} />
+              <DrawerField label="NAICS"     value={selectedOpp.naicsCode} />
+              <DrawerField label="Location"  value={selectedOpp.location} />
+              <DrawerField label="Period"    value={selectedOpp.period} />
             </DrawerSection>
 
             <DrawerSection title="Team">
+              <DrawerField label="BDM"          value={selectedOpp.bdm || '—'} />
+              <DrawerField label="BDS"          value={selectedOpp.bds || '—'} />
               <DrawerField label="Support Agent" value={selectedOpp.supportAgent ?? '—'} />
-              <DrawerField label="Assigned To"   value={(() => {
+              <DrawerField label="Assigned To"  value={(() => {
                 const emp = selectedOpp.assignedTo ? employees.find(e => e.id === selectedOpp.assignedTo) : null
                 if (!emp) return '—'
                 const rc = ROLE_COLOR[emp.role] ?? ROLE_COLOR.ASSOCIATE
@@ -1239,22 +1689,40 @@ export default function PipelinePage() {
                   <span className="text-indigo-600 font-semibold">{convertTime(selectedOpp.localTime, selectedOpp.timezone)}</span>
                 } />
               )}
-              <DrawerField label="Captured"  value={selectedOpp.capturedOn} />
+              <DrawerField label="Captured On" value={selectedOpp.capturedOn} />
             </DrawerSection>
 
             <DrawerSection title="Financials">
               <DrawerField label="Contract Amount"  value={selectedOpp.contractAmount ? formatCurrency(selectedOpp.contractAmount) : '—'} />
               <DrawerField label="Base Amount"      value={selectedOpp.baseAmount ? formatCurrency(selectedOpp.baseAmount) : '—'} />
               <DrawerField label="Monthly Payment"  value={selectedOpp.monthlyPayment ? formatCurrency(selectedOpp.monthlyPayment) + '/mo' : '—'} />
-              <DrawerField label="Period of Perf."  value={selectedOpp.pop ?? '—'} />
             </DrawerSection>
 
+            {selectedOpp.comments && selectedOpp.comments.length > 0 && (
+              <DrawerSection title={`Comments (${selectedOpp.comments.length})`}>
+                {selectedOpp.comments.map((c: Comment) => (
+                  <div key={c.id} className="py-2.5 border-b border-slate-50 last:border-0">
+                    <div className="flex items-center justify-between mb-0.5">
+                      <span className="text-xs font-semibold text-slate-700">{c.author}</span>
+                      <span className="text-[10px] text-slate-400">{new Date(c.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+                    </div>
+                    <p className="text-xs text-slate-600">{c.text}</p>
+                  </div>
+                ))}
+              </DrawerSection>
+            )}
+
             {selectedOpp.subcontractors && selectedOpp.subcontractors.length > 0 && (
-              <DrawerSection title={`Subcontractors (${selectedOpp.subcontractors.length})`}>
+              <DrawerSection title={`Sourcing (${selectedOpp.subcontractors.length})`}>
                 {selectedOpp.subcontractors.map(s => (
                   <div key={s.id} className="py-2.5 border-b border-slate-50 last:border-0">
                     <p className="text-sm font-semibold text-slate-800">{s.companyName}</p>
-                    <p className="text-xs text-slate-500">{s.contactName} · {s.setAside}</p>
+                    <p className="text-xs text-slate-500">{s.contactName}</p>
+                    {s.quoteFile && (
+                      <p className="text-[10px] text-indigo-600 mt-0.5 flex items-center gap-1">
+                        <FileText size={9} /> {s.quoteFile}
+                      </p>
+                    )}
                   </div>
                 ))}
               </DrawerSection>
@@ -1264,14 +1732,17 @@ export default function PipelinePage() {
               <button className="btn-secondary text-xs gap-1.5" onClick={() => { setSelectedOpp(null); setEditOpp(selectedOpp) }}>
                 <Edit2 size={12} /> Edit
               </button>
-              <button className="btn-secondary text-xs gap-1.5" onClick={() => { setSelectedOpp(null); setSubOpp(selectedOpp) }}>
-                <Users2 size={12} /> Subcontractors
+              <button className="btn-secondary text-xs gap-1.5" onClick={() => { setSelectedOpp(null); setSourcingOpp(selectedOpp) }}>
+                <Users2 size={12} /> Sourcing
               </button>
-              {canSubmit && ['ACTIVE', 'DISCUSSION', 'NEW_ASSIGNMENT'].includes(selectedOpp.status) && (
+              {canSubmit && OPP_VIEW_STATUSES.includes(selectedOpp.status as any) && (
                 <button className="btn-primary text-xs gap-1.5" onClick={() => { setSelectedOpp(null); setSubmitOpp(selectedOpp) }}>
                   <Send size={12} /> Submit Proposal
                 </button>
               )}
+              <button className="btn-secondary text-xs gap-1.5 text-red-600 border-red-200 hover:bg-red-50" onClick={() => { setSelectedOpp(null); handleCancel(selectedOpp) }}>
+                <Ban size={12} /> Cancel
+              </button>
             </div>
           </>
         )}
@@ -1279,10 +1750,10 @@ export default function PipelinePage() {
 
       {/* Modals */}
       <AnimatePresence>
-        {showCreate && <CreateModal onClose={() => setShowCreate(false)} />}
-        {editOpp && <EditModal opp={editOpp} onClose={() => setEditOpp(null)} />}
-        {subOpp && <SubcontractorModal opp={subOpp} onClose={() => setSubOpp(null)} />}
-        {submitOpp && <SubmitModal opp={submitOpp} onClose={() => setSubmitOpp(null)} />}
+        {showCreate    && <CreateModal onClose={() => setShowCreate(false)} />}
+        {editOpp       && <EditModal opp={editOpp} onClose={() => setEditOpp(null)} />}
+        {sourcingOpp   && <SourcingModal opp={sourcingOpp} onClose={() => setSourcingOpp(null)} />}
+        {submitOpp     && <SubmitModal opp={submitOpp} onClose={() => setSubmitOpp(null)} />}
       </AnimatePresence>
     </div>
   )

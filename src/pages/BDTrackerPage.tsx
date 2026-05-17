@@ -1,8 +1,9 @@
 import { useState, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { TEAM_STATS, MOCK_BD_SUBMISSIONS } from '../data/mock'
-import { Check, TrendingUp, MoreHorizontal } from 'lucide-react'
+import { TEAM_STATS } from '../data/mock'
+import { TrendingUp, MoreHorizontal, ChevronLeft, ChevronRight } from 'lucide-react'
 import type { BDSubmission } from '../types'
+import { useStore } from '../store/useStore'
 import toast from 'react-hot-toast'
 
 type BDTab = 'SUBMITTED' | 'DISCUSSING' | 'AWARDED' | 'LOST' | 'CANCELED' | 'NOT_SUBMITTED'
@@ -29,6 +30,9 @@ const PRIME_COLORS: Record<string, string> = {
   'TECH-OR': '#6366F1', 'AYJ-S': '#10B981', 'SANFORD': '#F59E0B', 'SAUDI': '#EF4444',
 }
 
+const PER_PAGE_OPTIONS = [10, 25, 50, 100, 'All'] as const
+type PerPageOption = typeof PER_PAGE_OPTIONS[number]
+
 function CircleProgress({ value, color }: { value: number; color: string }) {
   const r = 20
   const circ = 2 * Math.PI * r
@@ -48,20 +52,39 @@ function CircleProgress({ value, color }: { value: number; color: string }) {
 }
 
 export default function BDTrackerPage() {
+  const { bdSubmissions, updateBDSubmission } = useStore()
   const [tab, setTab] = useState<BDTab>('SUBMITTED')
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
+  const [periodFrom, setPeriodFrom] = useState('')
+  const [periodTo, setPeriodTo] = useState('')
+  const [page, setPage] = useState(1)
+  const [perPage, setPerPage] = useState<PerPageOption>(25)
 
-  const filtered = useMemo(() =>
-    MOCK_BD_SUBMISSIONS.filter(s => s.status === tab),
-    [tab]
-  )
+  const filtered = useMemo(() => {
+    let list = bdSubmissions.filter(s => s.status === tab)
+    if (periodFrom && periodTo) {
+      const from = new Date(periodFrom)
+      const to = new Date(periodTo)
+      list = list.filter(s => {
+        const d = new Date(s.submittedOn)
+        return d >= from && d <= to
+      })
+    }
+    return list
+  }, [bdSubmissions, tab, periodFrom, periodTo])
+
+  const totalRows = filtered.length
+  const perPageNum = perPage === 'All' ? totalRows : (perPage as number)
+  const totalPages = perPage === 'All' ? 1 : Math.max(1, Math.ceil(totalRows / perPageNum))
+  const safePage = Math.min(page, totalPages)
+  const pageStart = (safePage - 1) * perPageNum
+  const pageEnd = perPage === 'All' ? totalRows : Math.min(pageStart + perPageNum, totalRows)
+  const pageRows = filtered.slice(pageStart, pageEnd)
 
   const stats = {
     totalUsers: TEAM_STATS.length,
-    submissions: MOCK_BD_SUBMISSIONS.filter(s => s.status === 'SUBMITTED').length + 40,
-    nonSubs: MOCK_BD_SUBMISSIONS.filter(s => s.status === 'NOT_SUBMITTED').length + 50,
-    goalsAchieved: TEAM_STATS.filter(s => s.goalAchieved).length,
-    total: TEAM_STATS.length,
+    submissions: bdSubmissions.filter(s => s.status === 'SUBMITTED').length + 40,
+    nonSubs: bdSubmissions.filter(s => s.status === 'NOT_SUBMITTED').length + 50,
   }
 
   return (
@@ -83,13 +106,12 @@ export default function BDTrackerPage() {
           <span className="text-xs text-slate-400 ml-1">(Apr 04 – May 03)</span>
         </div>
 
-        {/* Top stats */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+        {/* Top stats — 3 cards, no Goals Achieved */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
           {[
-            { label: 'Total Users',     value: stats.totalUsers,   color: '#4338CA', bg: '#EEF2FF'  },
-            { label: 'Submissions',     value: stats.submissions,  color: '#15803D', bg: '#DCFCE7'  },
-            { label: 'Non-Submissions', value: stats.nonSubs,      color: '#DC2626', bg: '#FEE2E2'  },
-            { label: 'Goals Achieved',  value: `${stats.goalsAchieved}/${stats.total}`, color: '#D97706', bg: '#FEF3C7' },
+            { label: 'Total Users',     value: stats.totalUsers,  color: '#4338CA', bg: '#EEF2FF' },
+            { label: 'Submissions',     value: stats.submissions, color: '#15803D', bg: '#DCFCE7' },
+            { label: 'Non-Submissions', value: stats.nonSubs,     color: '#DC2626', bg: '#FEE2E2' },
           ].map(s => (
             <div key={s.label} className="text-center p-4 rounded-xl border"
               style={{ background: s.bg, borderColor: s.color + '40' }}>
@@ -99,7 +121,7 @@ export default function BDTrackerPage() {
           ))}
         </div>
 
-        {/* Per-agent cards */}
+        {/* Per-agent cards — no Goal Achieved badge */}
         <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Team Performance</h3>
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
           {TEAM_STATS.map((agent, i) => {
@@ -133,18 +155,40 @@ export default function BDTrackerPage() {
                   <span className="text-slate-400">Success</span>
                   <span className="text-right font-semibold" style={{ color }}>{agent.successRate}%</span>
                 </div>
-
-                <div className={`mt-3 py-1.5 rounded-lg text-center text-[10px] font-semibold ${
-                  agent.goalAchieved ? 'bg-emerald-50 text-emerald-600 border border-emerald-200' : 'bg-indigo-50 text-indigo-600 border border-indigo-200'
-                }`}>
-                  {agent.goalAchieved
-                    ? <span className="flex items-center justify-center gap-1"><Check size={9} />Goal Achieved</span>
-                    : 'In Progress'}
-                </div>
               </motion.div>
             )
           })}
         </div>
+      </div>
+
+      {/* Period filter */}
+      <div className="flex items-center gap-3 flex-wrap bg-white rounded-xl border border-slate-200 shadow-sm px-4 py-3">
+        <span className="text-xs font-semibold text-slate-500">Filter by Submitted On:</span>
+        <div className="flex items-center gap-2">
+          <label className="text-[10px] text-slate-400 font-medium">From</label>
+          <input
+            type="date"
+            value={periodFrom}
+            onChange={e => { setPeriodFrom(e.target.value); setPage(1) }}
+            className="input-field text-xs py-1.5 w-36"
+          />
+        </div>
+        <div className="flex items-center gap-2">
+          <label className="text-[10px] text-slate-400 font-medium">To</label>
+          <input
+            type="date"
+            value={periodTo}
+            onChange={e => { setPeriodTo(e.target.value); setPage(1) }}
+            className="input-field text-xs py-1.5 w-36"
+          />
+        </div>
+        {(periodFrom || periodTo) && (
+          <button
+            onClick={() => { setPeriodFrom(''); setPeriodTo(''); setPage(1) }}
+            className="text-[10px] font-semibold text-slate-400 hover:text-red-500 transition-colors px-2 py-1 rounded-lg hover:bg-red-50">
+            Clear
+          </button>
+        )}
       </div>
 
       {/* Submissions table */}
@@ -152,10 +196,10 @@ export default function BDTrackerPage() {
         {/* Tabs */}
         <div className="flex gap-1 p-1 bg-slate-100 rounded-xl mb-3 border border-slate-200 flex-wrap">
           {BD_TABS.map(t => {
-            const cnt = MOCK_BD_SUBMISSIONS.filter(s => s.status === t.key).length
+            const cnt = bdSubmissions.filter(s => s.status === t.key).length
             const meta = STATUS_META[t.key]
             return (
-              <button key={t.key} onClick={() => setTab(t.key)}
+              <button key={t.key} onClick={() => { setTab(t.key); setPage(1) }}
                 className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all flex items-center gap-1.5 flex-shrink-0 ${
                   tab === t.key
                     ? 'bg-white text-slate-800 shadow-sm border border-slate-200'
@@ -188,14 +232,14 @@ export default function BDTrackerPage() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.length === 0 && (
+                {pageRows.length === 0 && (
                   <tr>
                     <td colSpan={16} className="text-center py-12 text-slate-400 text-sm">
                       No submissions in this category.
                     </td>
                   </tr>
                 )}
-                {filtered.map((s: BDSubmission, i: number) => {
+                {pageRows.map((s: BDSubmission, i: number) => {
                   const statusMeta = STATUS_META[s.status as BDTab] || STATUS_META.SUBMITTED
                   const primeBg = PRIME_COLORS[s.prime] || '#6366F1'
                   return (
@@ -252,7 +296,7 @@ export default function BDTrackerPage() {
                                 animate={{ opacity: 1, scale: 1, y: 0 }}
                                 exit={{ opacity: 0, scale: 0.95, y: -4 }}
                                 transition={{ duration: 0.12 }}
-                                className="absolute right-0 top-8 z-30 rounded-xl py-1 w-40"
+                                className="absolute right-0 top-8 z-30 rounded-xl py-1 w-44"
                                 style={{ background: '#FFFFFF', border: '1px solid rgba(0,0,0,0.10)', boxShadow: '0 8px 24px rgba(0,0,0,0.10)' }}>
                                 <button
                                   onClick={() => { toast.success('Details: ' + s.solicitation.slice(0, 30)); setMenuOpen(null) }}
@@ -270,14 +314,28 @@ export default function BDTrackerPage() {
                                   onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = ''; (e.currentTarget as HTMLButtonElement).style.color = '#475569' }}>
                                   Copy ID
                                 </button>
-                                <button
-                                  onClick={() => { toast.success('Marked as Awarded'); setMenuOpen(null) }}
-                                  className="block w-full text-left px-3 py-2 text-xs font-medium transition-colors"
-                                  style={{ color: '#475569' }}
-                                  onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(0,0,0,0.04)'; (e.currentTarget as HTMLButtonElement).style.color = '#0F172A' }}
-                                  onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = ''; (e.currentTarget as HTMLButtonElement).style.color = '#475569' }}>
-                                  Mark Awarded
-                                </button>
+                                {/* Move to... submenu */}
+                                <div className="my-1 border-t" style={{ borderColor: 'rgba(0,0,0,0.08)' }} />
+                                <p className="px-3 py-1 text-[9px] font-bold text-slate-400 uppercase tracking-wider">Move to…</p>
+                                {BD_TABS.filter(t => t.key !== s.status).map(t => {
+                                  const meta = STATUS_META[t.key]
+                                  return (
+                                    <button
+                                      key={t.key}
+                                      onClick={() => {
+                                        updateBDSubmission(s.id, t.key)
+                                        toast.success(`Moved to ${t.label}`)
+                                        setMenuOpen(null)
+                                      }}
+                                      className="flex items-center gap-2 w-full text-left px-3 py-2 text-xs font-medium transition-colors"
+                                      style={{ color: '#475569' }}
+                                      onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(0,0,0,0.04)'; (e.currentTarget as HTMLButtonElement).style.color = '#0F172A' }}
+                                      onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = ''; (e.currentTarget as HTMLButtonElement).style.color = '#475569' }}>
+                                      <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: meta.color }} />
+                                      {t.label}
+                                    </button>
+                                  )
+                                })}
                               </motion.div>
                             </>
                           )}
@@ -288,6 +346,46 @@ export default function BDTrackerPage() {
                 })}
               </tbody>
             </table>
+          </div>
+
+          {/* Paginator */}
+          <div className="flex items-center justify-between px-4 py-3 border-t border-slate-100 flex-wrap gap-2">
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-400">Rows per page:</span>
+              <div className="flex gap-1">
+                {PER_PAGE_OPTIONS.map(opt => (
+                  <button
+                    key={String(opt)}
+                    onClick={() => { setPerPage(opt); setPage(1) }}
+                    className={`px-2 py-0.5 rounded-md text-xs font-semibold transition-colors ${
+                      perPage === opt
+                        ? 'bg-indigo-500 text-white'
+                        : 'text-slate-500 hover:bg-slate-100'
+                    }`}>
+                    {opt}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-slate-500">
+                {totalRows === 0 ? '0 rows' : `${pageStart + 1}–${pageEnd} of ${totalRows} rows`}
+              </span>
+              <div className="flex gap-1">
+                <button
+                  disabled={safePage <= 1}
+                  onClick={() => setPage(p => Math.max(1, p - 1))}
+                  className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
+                  <ChevronLeft size={13} />
+                </button>
+                <button
+                  disabled={safePage >= totalPages}
+                  onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                  className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
+                  <ChevronRight size={13} />
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       </div>

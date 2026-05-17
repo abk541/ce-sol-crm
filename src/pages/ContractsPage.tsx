@@ -12,7 +12,7 @@ import toast from 'react-hot-toast'
 import { useStore } from '../store/useStore'
 import type {
   Contract, ContractStatus, ContractPoC, LockedSubcontractor,
-  GovernmentWarning, GovWarningType,
+  GovernmentWarning, GovWarningType, FreshAward,
 } from '../types'
 import { formatCurrency } from '../lib/utils'
 
@@ -51,7 +51,7 @@ const SEV_COLORS = {
 }
 
 // ── Tab definitions ─────────────────────────────────────────────────────
-type CTab = 'ALL' | 'ACTIVE_GROUP' | 'KICK_OFF' | 'LOCKING_SUB' | 'PERFORMING' | 'PENDING_PAYMENT' | 'ARCHIVED' | 'TERMINATED'
+type CTab = 'ALL' | 'ACTIVE_GROUP' | 'KICK_OFF' | 'LOCKING_SUB' | 'PERFORMING' | 'PENDING_PAYMENT' | 'ARCHIVED' | 'TERMINATED' | 'FRESH_AWARDS'
 
 const C_TABS: { key: CTab; label: string; statuses: ContractStatus[] }[] = [
   { key: 'ALL',           label: 'All',            statuses: ['KICK_OFF','LOCKING_SUB','ACTIVE','ON_GOING','PERFORMING','PENDING_PAYMENT','ARCHIVED','TERMINATED','CANCELED'] },
@@ -62,6 +62,7 @@ const C_TABS: { key: CTab; label: string; statuses: ContractStatus[] }[] = [
   { key: 'PENDING_PAYMENT',label:'Pend. Payment',  statuses: ['PENDING_PAYMENT'] },
   { key: 'ARCHIVED',      label: 'Archived',       statuses: ['ARCHIVED'] },
   { key: 'TERMINATED',    label: 'Terminated',     statuses: ['TERMINATED','CANCELED'] },
+  { key: 'FRESH_AWARDS',  label: 'Fresh Awards',   statuses: [] },
 ]
 
 const POC_ROLE_LABELS = { KO: 'Contracting Officer', COR: 'COR', END_USER: 'End User' }
@@ -649,8 +650,208 @@ function SortHeader({ col, label, currentKey, dir, onSort }: {
   )
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// Fresh Awards Tab
+// ─────────────────────────────────────────────────────────────────────────
+const FA_STATUS_META: Record<FreshAward['status'], { label: string; color: string; bg: string; border: string }> = {
+  PENDING_ASSIGNMENT: { label: 'Pending Assignment', color: '#D97706', bg: '#FEF3C7', border: '#FDE68A' },
+  ASSIGNED:           { label: 'Assigned',           color: '#4338CA', bg: '#EEF2FF', border: '#C7D2FE' },
+  MOVED_TO_ACTIVE:    { label: 'Moved to Active',    color: '#15803D', bg: '#DCFCE7', border: '#86EFAC' },
+}
+
+function AssignModal({ award, onClose }: { award: FreshAward; onClose: () => void }) {
+  const { assignFreshAward } = useStore()
+  const [form, setForm] = useState({
+    assignedBDM: award.assignedBDM ?? '',
+    assignedBDS: award.assignedBDS ?? '',
+    assignedSPM: award.assignedSPM ?? '',
+    assignedPM: award.assignedPM ?? '',
+    assignedSupportAgent: award.assignedSupportAgent ?? '',
+  })
+
+  const handleSave = () => {
+    assignFreshAward(award.id, {
+      assignedBDM: form.assignedBDM || undefined,
+      assignedBDS: form.assignedBDS || undefined,
+      assignedSPM: form.assignedSPM || undefined,
+      assignedPM: form.assignedPM || undefined,
+      assignedSupportAgent: form.assignedSupportAgent || undefined,
+      status: 'ASSIGNED',
+    })
+    toast.success('Team assigned to fresh award')
+    onClose()
+  }
+
+  const fields: { label: string; key: keyof typeof form }[] = [
+    { label: 'BDM', key: 'assignedBDM' },
+    { label: 'BDS', key: 'assignedBDS' },
+    { label: 'SPM', key: 'assignedSPM' },
+    { label: 'PM',  key: 'assignedPM'  },
+    { label: 'Support Agent', key: 'assignedSupportAgent' },
+  ]
+
+  return (
+    <motion.div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+      <div className="absolute inset-0" style={{ background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(8px)' }}
+        onClick={onClose} />
+      <motion.div
+        className="relative w-full max-w-md rounded-2xl shadow-2xl overflow-hidden"
+        style={{ background: '#FFFFFF', border: '1px solid rgba(0,0,0,0.10)' }}
+        initial={{ scale: 0.94, opacity: 0, y: 12 }}
+        animate={{ scale: 1, opacity: 1, y: 0 }}
+        exit={{ scale: 0.94, opacity: 0 }}
+        transition={{ type: 'spring', stiffness: 320, damping: 26 }}>
+        <div className="px-6 py-5 border-b border-slate-100">
+          <h2 className="text-base font-bold text-slate-900">Assign Team</h2>
+          <p className="text-sm text-slate-500 mt-0.5 truncate">{award.solicitation}</p>
+        </div>
+        <div className="p-6 space-y-3">
+          {fields.map(f => (
+            <div key={f.key}>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">{f.label}</label>
+              <input
+                value={form[f.key]}
+                onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))}
+                className="input-field w-full text-xs py-1.5"
+                placeholder={`Assign ${f.label}…`}
+              />
+            </div>
+          ))}
+          <div className="flex gap-3 pt-2">
+            <button onClick={onClose} className="btn-secondary flex-1 justify-center">Cancel</button>
+            <button onClick={handleSave} className="btn-primary flex-1 justify-center">
+              <Save size={13} /> Save Assignment
+            </button>
+          </div>
+        </div>
+      </motion.div>
+    </motion.div>
+  )
+}
+
+function FreshAwardsTab() {
+  const { freshAwards, moveFreshAwardToActive } = useStore()
+  const [assigningId, setAssigningId] = useState<string | null>(null)
+
+  const assigningAward = assigningId ? freshAwards.find(fa => fa.id === assigningId) : null
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2">
+        <FileCheck2 size={14} className="text-emerald-500" />
+        <p className="text-sm font-bold text-slate-700">Fresh Awards</p>
+        <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">{freshAwards.length}</span>
+      </div>
+
+      {freshAwards.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-slate-200 py-16 text-center text-slate-400 text-sm">
+          No fresh awards yet.
+        </div>
+      ) : (
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Solicitation</th>
+                  <th>Client</th>
+                  <th>Type</th>
+                  <th>Amount</th>
+                  <th>Awarded Date</th>
+                  <th>Team</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {freshAwards.map((fa, i) => {
+                  const meta = FA_STATUS_META[fa.status]
+                  return (
+                    <motion.tr key={fa.id}
+                      initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: i * 0.03 }}>
+                      <td className="max-w-[200px]">
+                        <p className="truncate text-xs font-semibold text-slate-800">{fa.solicitation}</p>
+                        <p className="text-[10px] text-slate-400 font-mono mt-0.5">{fa.solicitationId}</p>
+                      </td>
+                      <td className="text-xs text-slate-600">{fa.client || '—'}</td>
+                      <td>
+                        <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-600">
+                          {fa.type}
+                        </span>
+                      </td>
+                      <td className="text-xs font-semibold text-emerald-600 whitespace-nowrap">
+                        {fa.contractAmount != null ? formatCurrency(fa.contractAmount) : '—'}
+                      </td>
+                      <td className="text-xs text-slate-500 whitespace-nowrap">
+                        {fa.awardedDate
+                          ? new Date(fa.awardedDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                          : '—'}
+                      </td>
+                      <td className="text-xs">
+                        <div className="flex flex-col gap-0.5 text-[10px]">
+                          {fa.assignedBDM && <span><span className="text-slate-400">BDM:</span> {fa.assignedBDM}</span>}
+                          {fa.assignedBDS && <span><span className="text-slate-400">BDS:</span> {fa.assignedBDS}</span>}
+                          {fa.assignedSPM && <span><span className="text-slate-400">SPM:</span> {fa.assignedSPM}</span>}
+                          {fa.assignedPM  && <span><span className="text-slate-400">PM:</span>  {fa.assignedPM}</span>}
+                          {!fa.assignedBDM && !fa.assignedBDS && !fa.assignedSPM && !fa.assignedPM && (
+                            <span className="text-slate-400 italic">Unassigned</span>
+                          )}
+                        </div>
+                      </td>
+                      <td>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full"
+                          style={{ background: meta.bg, color: meta.color, border: `1px solid ${meta.border}` }}>
+                          {meta.label}
+                        </span>
+                      </td>
+                      <td>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {fa.status !== 'MOVED_TO_ACTIVE' && (
+                            <button
+                              onClick={() => setAssigningId(fa.id)}
+                              className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-semibold text-indigo-600 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 transition-colors whitespace-nowrap">
+                              <UserPlus size={9} /> Assign Team
+                            </button>
+                          )}
+                          {fa.status === 'ASSIGNED' && (
+                            <button
+                              onClick={() => {
+                                moveFreshAwardToActive(fa.id)
+                                toast.success('Moved to Active Contracts')
+                              }}
+                              className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 transition-colors whitespace-nowrap">
+                              <ArrowRight size={9} /> Move to Active
+                            </button>
+                          )}
+                          {fa.status === 'MOVED_TO_ACTIVE' && (
+                            <span className="text-[10px] text-emerald-600 font-semibold flex items-center gap-1">
+                              <CheckCircle2 size={10} /> In Contracts
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                    </motion.tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      <AnimatePresence>
+        {assigningAward && (
+          <AssignModal award={assigningAward} onClose={() => setAssigningId(null)} />
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
 export default function ContractsPage() {
-  const { contracts, employees } = useStore()
+  const { contracts, employees, freshAwards } = useStore()
   const [tab, setTab] = useState<CTab>('ALL')
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<Contract | null>(null)
@@ -667,6 +868,7 @@ export default function ContractsPage() {
   const tabDef = C_TABS.find(t => t.key === tab)!
 
   const filtered = useMemo(() => {
+    if (tab === 'FRESH_AWARDS') return []
     let list = contracts.filter(c => tabDef.statuses.includes(c.status))
     if (search) {
       const q = search.toLowerCase()
@@ -728,7 +930,9 @@ export default function ContractsPage() {
       <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
         <div className="flex gap-1 p-1 bg-slate-100 rounded-xl border border-slate-200 flex-wrap">
           {C_TABS.map(t => {
-            const cnt = contracts.filter(c => t.statuses.includes(c.status)).length
+            const cnt = t.key === 'FRESH_AWARDS'
+              ? freshAwards.length
+              : contracts.filter(c => t.statuses.includes(c.status)).length
             return (
               <button key={t.key} onClick={() => setTab(t.key)}
                 className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1 ${
@@ -754,8 +958,11 @@ export default function ContractsPage() {
         </div>
       </div>
 
+      {/* Fresh Awards Tab */}
+      {tab === 'FRESH_AWARDS' && <FreshAwardsTab />}
+
       {/* Table */}
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+      {tab !== 'FRESH_AWARDS' && <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
           <table className="data-table">
             <thead>
@@ -894,7 +1101,7 @@ export default function ContractsPage() {
             </tbody>
           </table>
         </div>
-      </div>
+      </div>}
 
       {/* Detail modal */}
       <AnimatePresence>
