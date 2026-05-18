@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo } from 'react'
+import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Plus, Search, X, ExternalLink, Loader,
@@ -99,7 +100,7 @@ function dueDateColor(d: string) {
 function ModalWrap({ onClose, title, subtitle, children, maxW = 'max-w-2xl' }: {
   onClose: () => void; title: string; subtitle?: string; children: React.ReactNode; maxW?: string
 }) {
-  return (
+  return createPortal((
     <motion.div className="fixed inset-0 z-50 flex items-center justify-center p-4"
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
       <div className="absolute inset-0" style={{ background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(6px)' }} onClick={onClose} />
@@ -123,7 +124,7 @@ function ModalWrap({ onClose, title, subtitle, children, maxW = 'max-w-2xl' }: {
         {children}
       </motion.div>
     </motion.div>
-  )
+  ), document.body)
 }
 
 // ── Shared: tabbed opportunity modal shell ────────────────────────────
@@ -144,7 +145,7 @@ function OppModalShell({ title, subtitle, tab, setTab, onClose, extraHeader, foo
   footer: React.ReactNode
   children: React.ReactNode
 }) {
-  return (
+  return createPortal((
     <motion.div className="fixed inset-0 z-50 flex items-center justify-center p-4"
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
       <div className="absolute inset-0" style={{ background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(6px)' }} onClick={onClose} />
@@ -204,7 +205,7 @@ function OppModalShell({ title, subtitle, tab, setTab, onClose, extraHeader, foo
         </div>
       </motion.div>
     </motion.div>
-  )
+  ), document.body)
 }
 
 // ── Edit Modal ────────────────────────────────────────────────────────
