@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import toast from 'react-hot-toast'
 import type {
   User, Opportunity, Contract, Notification, Subcontractor,
   NonSubmissionReport, DeletionRequest, FreshAward,
@@ -18,7 +19,6 @@ import { isSupabaseConnected } from '../lib/supabase'
 import {
   loadAllData,
   seedIfEmpty,
-  clearBusinessData,
   upsertOpportunity,
   upsertSubcontractor,
   deleteSubcontractorRecord,
@@ -72,8 +72,8 @@ interface AppState {
   deleteUser: (id: string) => void
 
   // ── Opportunity management ─────────────────────────────────────────
-  createOpportunity: (o: Omit<Opportunity, 'id'>) => void
-  updateOpportunity: (id: string, data: Partial<Opportunity>) => void
+  createOpportunity: (o: Omit<Opportunity, 'id'>) => Promise<boolean>
+  updateOpportunity: (id: string, data: Partial<Opportunity>) => Promise<boolean>
   assignOpportunity: (id: string, bdm: string, bds: string) => void
   submitOpportunity: (id: string, values?: { contractAmount?: number; baseAmount?: number; monthlyPayment?: number }) => void
   markOpportunityWon: (id: string) => void
@@ -82,8 +82,8 @@ interface AppState {
   terminateContract: (id: string, type: 'T4C' | 'T4D' | 'CANCELED', reason: string) => void
 
   // ── Contract management ────────────────────────────────────────────
-  createContract: (c: Omit<Contract, 'id'>) => void
-  updateContract: (id: string, data: Partial<Contract>) => void
+  createContract: (c: Omit<Contract, 'id'>) => Promise<boolean>
+  updateContract: (id: string, data: Partial<Contract>) => Promise<boolean>
   addContractPoC: (contractId: string, poc: Omit<ContractPoC, 'id' | 'contractId'>) => void
   updateContractPoC: (contractId: string, pocId: string, data: Partial<ContractPoC>) => void
   removeContractPoC: (contractId: string, pocId: string) => void
@@ -198,6 +198,10 @@ function bdSubmissionFromOpportunity(
   }
 }
 
+function showDatabaseSaveError(recordLabel: string) {
+  toast.error(`${recordLabel} was not saved to the database. Check Supabase connection and try again.`)
+}
+
 export const useStore = create<AppState>()(
   persist(
     (set, get) => ({
@@ -286,10 +290,14 @@ export const useStore = create<AppState>()(
       })),
 
       // ── Opportunity management ──────────────────────────────────────
-      createOpportunity: (data) => {
+      createOpportunity: async (data) => {
         const opp: Opportunity = { ...data, id: `o${Date.now()}` }
+        const saved = await upsertOpportunity(opp)
+        if (!saved) {
+          showDatabaseSaveError('Opportunity')
+          return false
+        }
         set(s => ({ opportunities: [opp, ...s.opportunities] }))
-        upsertOpportunity(opp)
         get().addNotification({
           type: 'ASSIGNMENT',
           title: 'New opportunity created',
@@ -297,14 +305,23 @@ export const useStore = create<AppState>()(
           read: false,
           relatedId: opp.id,
         })
+        return true
       },
 
-      updateOpportunity: (id, data) => {
+      updateOpportunity: async (id, data) => {
+        const previous = get().opportunities
         set(s => ({
           opportunities: s.opportunities.map(o => o.id === id ? { ...o, ...data } : o)
         }))
         const updated = get().opportunities.find(o => o.id === id)
-        if (updated) upsertOpportunity(updated)
+        if (!updated) return false
+        const saved = await upsertOpportunity(updated)
+        if (!saved) {
+          set({ opportunities: previous })
+          showDatabaseSaveError('Opportunity update')
+          return false
+        }
+        return true
       },
 
       assignOpportunity: (id, bdm, bds) => {
@@ -477,10 +494,14 @@ export const useStore = create<AppState>()(
         })
       },
 
-      createContract: (data) => {
+      createContract: async (data) => {
         const contract: Contract = { ...data, id: `c${Date.now()}` }
+        const saved = await upsertContract(contract)
+        if (!saved) {
+          showDatabaseSaveError('Contract')
+          return false
+        }
         set(s => ({ contracts: [contract, ...s.contracts] }))
-        upsertContract(contract)
         get().addNotification({
           type: 'CONTRACT_CREATED',
           title: 'New contract created',
@@ -488,14 +509,23 @@ export const useStore = create<AppState>()(
           read: false,
           relatedId: contract.id,
         })
+        return true
       },
 
-      updateContract: (id, data) => {
+      updateContract: async (id, data) => {
+        const previous = get().contracts
         set(s => ({
           contracts: s.contracts.map(c => c.id === id ? { ...c, ...data } : c)
         }))
         const updated = get().contracts.find(c => c.id === id)
-        if (updated) upsertContract(updated)
+        if (!updated) return false
+        const saved = await upsertContract(updated)
+        if (!saved) {
+          set({ contracts: previous })
+          showDatabaseSaveError('Contract update')
+          return false
+        }
+        return true
       },
 
       addContractPoC: (contractId, poc) => {
@@ -1060,13 +1090,6 @@ export const useStore = create<AppState>()(
         if (get().dbReady) return
 
         try {
-          // One-time purge: runs when upgrading from store v0 → v1
-          // clears all old mock data from Supabase so we start fresh
-          if (get().needsPurge) {
-            await clearBusinessData()
-            set({ needsPurge: false })
-          }
-
           // seedIfEmpty is now a no-op (all mock arrays are empty)
           await seedIfEmpty({
             opportunities: MOCK_OPPORTUNITIES,
@@ -1101,8 +1124,8 @@ export const useStore = create<AppState>()(
     }),
     {
       name: 'ces-crm-store',
-      // v4: force a clean business workspace again while keeping local users/employees.
-      version: 4,
+      // v5: persist the 24h app session while still reloading data from Supabase.
+      version: 5,
       migrate: (persistedState: unknown, fromVersion: number) => {
         const s = persistedState as Record<string, unknown>
         if (fromVersion < 4) {
@@ -1126,15 +1149,20 @@ export const useStore = create<AppState>()(
             notifications:   [],
             activityLogs:    [],
             subkDatabase:    [],
-            needsPurge:      true,
+            needsPurge:      false,
             dbReady:         false,
           }
         }
-        return s
+        return { ...s, needsPurge: false, dbReady: false }
       },
       // Persist all business data so changes survive logout/refresh
       // (Supabase sync overrides this when connected; localStorage is the fallback)
       partialize: s => ({
+        currentUser:       s.currentUser,
+        isAuthenticated:  s.isAuthenticated,
+        needsFirstLogin:  s.needsFirstLogin,
+        needsMFASetup:    s.needsMFASetup,
+        loginTimestamp:   s.loginTimestamp,
         sidebarCollapsed:  s.sidebarCollapsed,
         opportunities:     s.opportunities,
         contracts:         s.contracts,
@@ -1145,9 +1173,12 @@ export const useStore = create<AppState>()(
         subcontractors:    s.subcontractors,
         bdSubmissions:     s.bdSubmissions,
         users:             s.users,
+        employees:         s.employees,
+        activityLogs:      s.activityLogs,
         subkDatabase:      s.subkDatabase,
         notifications:     s.notifications,
-        needsPurge:        s.needsPurge,
+        needsPurge:        false,
+        dbReady:           false,
       }),
     }
   )

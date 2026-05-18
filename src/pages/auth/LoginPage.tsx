@@ -46,14 +46,12 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center relative overflow-hidden" style={{ background: '#070B18' }}>
-      {/* Background */}
-      <div className="orb-1" /><div className="orb-2" /><div className="orb-3" />
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(99,102,241,0.06)_0%,transparent_70%)]" />
-
-      {/* Grid lines */}
-      <div className="absolute inset-0 opacity-[0.025]"
-        style={{ backgroundImage: 'linear-gradient(rgba(99,102,241,1) 1px,transparent 1px),linear-gradient(90deg,rgba(99,102,241,1) 1px,transparent 1px)', backgroundSize: '60px 60px' }} />
+    <div
+      className="min-h-screen flex items-center justify-center relative overflow-hidden"
+      style={{ background: 'linear-gradient(135deg, #07131F 0%, #0A1D2B 48%, #102820 100%)' }}
+    >
+      <div className="absolute inset-0 opacity-40"
+        style={{ background: 'linear-gradient(180deg, rgba(215,190,122,0.10) 0%, transparent 38%, rgba(31,122,120,0.10) 100%)' }} />
 
       <motion.div
         initial={{ opacity: 0, y: 20 }}
@@ -71,11 +69,11 @@ export default function LoginPage() {
           >
             <CompanyLogo variant="full" height={52} />
           </motion.div>
-          <p className="text-slate-500 text-sm mt-2">Government Contractor Intelligence Platform</p>
+          <p className="text-stone-300 text-sm mt-2">Government Contractor Intelligence Platform</p>
         </div>
 
-        <div className="gradient-border p-px rounded-2xl" style={{ boxShadow: '0 24px 80px rgba(0,0,0,0.6)' }}>
-          <div className="rounded-2xl p-8" style={{ background: 'rgba(255,255,255,0.97)' }}>
+        <div className="p-px rounded-2xl" style={{ background: 'linear-gradient(135deg, rgba(215,190,122,0.70), rgba(31,122,120,0.45))', boxShadow: '0 24px 80px rgba(0,0,0,0.46)' }}>
+          <div className="rounded-2xl p-8" style={{ background: 'rgba(251,252,248,0.98)' }}>
             <AnimatePresence mode="wait">
               {step === 'credentials' ? (
                 <motion.div key="creds"
@@ -133,9 +131,9 @@ export default function LoginPage() {
                     </button>
                   </form>
 
-                  <div className="mt-6 p-3 rounded-xl border border-indigo-500/15 bg-indigo-500/5">
+                  <div className="mt-6 p-3 rounded-xl" style={{ border: '1px solid rgba(184,145,78,0.24)', background: 'rgba(184,145,78,0.08)' }}>
                     <p className="text-[11px] text-slate-500 font-medium mb-1">Demo credentials</p>
-                    <p className="text-[11px] text-indigo-600">abk@cesolutionplus.com — abk123</p>
+                    <p className="text-[11px]" style={{ color: '#0F4F59' }}>abk@cesolutionplus.com - abk123</p>
                     <p className="text-[11px] text-slate-500">Then enter any 6 digits for MFA</p>
                   </div>
                 </motion.div>
@@ -194,8 +192,8 @@ export default function LoginPage() {
           </div>
         </div>
 
-        <p className="text-center text-xs text-slate-700 mt-6">
-          CE Solution Plus CRM v2.4.1 · Protected by MFA
+        <p className="text-center text-xs text-stone-300 mt-6">
+          CE Solution Plus CRM v2.4.1 - Protected by MFA
         </p>
       </motion.div>
     </div>

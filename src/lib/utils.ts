@@ -33,13 +33,13 @@ export function getInitials(name: string): string {
 
 export function avatarColor(initials: string): string {
   const colors = [
-    'from-indigo-500 to-violet-600',
-    'from-cyan-500 to-blue-600',
-    'from-emerald-500 to-teal-600',
-    'from-amber-500 to-orange-600',
-    'from-rose-500 to-pink-600',
-    'from-fuchsia-500 to-purple-600',
-    'from-sky-500 to-indigo-600',
+    'from-[#0F4F59] to-[#1F7A78]',
+    'from-[#102820] to-[#B8914E]',
+    'from-[#244B4A] to-[#D7BE7A]',
+    'from-[#233647] to-[#1F7A78]',
+    'from-[#5F4A27] to-[#B8914E]',
+    'from-[#123F49] to-[#6C8F85]',
+    'from-[#2D3A34] to-[#D7BE7A]',
   ]
   const idx = (initials.charCodeAt(0) + (initials.charCodeAt(1) || 0)) % colors.length
   return colors[idx]

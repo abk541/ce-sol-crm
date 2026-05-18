@@ -663,20 +663,32 @@ export async function loadAllData(): Promise<{
 
 // ── Upsert helpers ───────────────────────────────────────────────────────────
 
-export async function upsertOpportunity(o: Opportunity): Promise<void> {
-  if (!isSupabaseConnected || !supabase) return
+export async function upsertOpportunity(o: Opportunity): Promise<boolean> {
+  if (!isSupabaseConnected || !supabase) {
+    console.error('[db] upsertOpportunity skipped: Supabase is not configured')
+    return false
+  }
   try {
     const { error } = await supabase.from('opportunities').upsert(oppToDb(o))
-    if (error) console.error('[db] upsertOpportunity error', error)
+    if (error) {
+      console.error('[db] upsertOpportunity error', error)
+      return false
+    }
     if (!error && Array.isArray(o.comments)) {
       const deleteRes = await supabase.from('comments').delete().eq('opportunity_id', o.id)
-      if (deleteRes.error) console.error('[db] sync comments delete error', deleteRes.error)
+      if (deleteRes.error) {
+        console.error('[db] sync comments delete error', deleteRes.error)
+        return false
+      }
       if (o.comments.length > 0) {
-        await insertBatched('comments', o.comments.map(comment => commentToDb(o.id, comment)))
+        const inserted = await insertBatched('comments', o.comments.map(comment => commentToDb(o.id, comment)))
+        if (!inserted) return false
       }
     }
+    return true
   } catch (err) {
     console.error('[db] upsertOpportunity failed', err)
+    return false
   }
 }
 
@@ -700,13 +712,21 @@ export async function deleteSubcontractorRecord(id: string): Promise<void> {
   }
 }
 
-export async function upsertContract(c: Contract): Promise<void> {
-  if (!isSupabaseConnected || !supabase) return
+export async function upsertContract(c: Contract): Promise<boolean> {
+  if (!isSupabaseConnected || !supabase) {
+    console.error('[db] upsertContract skipped: Supabase is not configured')
+    return false
+  }
   try {
     const { error } = await supabase.from('contracts').upsert(contractToDb(c))
-    if (error) console.error('[db] upsertContract error', error)
+    if (error) {
+      console.error('[db] upsertContract error', error)
+      return false
+    }
+    return true
   } catch (err) {
     console.error('[db] upsertContract failed', err)
+    return false
   }
 }
 
@@ -837,13 +857,17 @@ async function insertBatched<T>(
   table: string,
   rows: Record<string, unknown>[],
   batchSize = 20,
-): Promise<void> {
-  if (!supabase) return
+): Promise<boolean> {
+  if (!supabase) return false
   for (let i = 0; i < rows.length; i += batchSize) {
     const batch = rows.slice(i, i + batchSize)
     const { error } = await supabase.from(table).insert(batch).select()
-    if (error) console.error(`[db] insert batch into ${table} error`, error)
+    if (error) {
+      console.error(`[db] insert batch into ${table} error`, error)
+      return false
+    }
   }
+  return true
 }
 
 export async function seedIfEmpty(mockData: {

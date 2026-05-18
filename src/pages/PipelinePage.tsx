@@ -351,13 +351,14 @@ function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) 
   const [showDeleteReq, setShowDeleteReq] = useState(false)
   const [deleteReason, setDeleteReason] = useState('')
   const [newComment, setNewComment] = useState('')
+  const [saving, setSaving] = useState(false)
 
   const isManager = currentUser?.role === 'BD_MANAGER'
   const hasPendingDelete = deletionRequests.some(r => r.opportunityId === opp.id && r.status === 'PENDING')
   const set = (k: keyof Opportunity, v: any) => setForm(p => ({ ...p, [k]: v }))
   const lbl = 'block text-xs font-semibold text-slate-500 mb-1.5'
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!form.solicitation?.trim()) { toast.error('Solicitation title is required'); setTab('details'); return }
     if (!form.type) { toast.error('Contract type is required'); setTab('details'); return }
     if (!form.dueDate) { toast.error('Due date is required'); setTab('schedule'); return }
@@ -370,9 +371,13 @@ function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) 
         createdAt: new Date().toISOString(),
       })
     }
-    updateOpportunity(opp.id, { ...form, comments: updatedComments })
-    toast.success('Opportunity updated')
-    onClose()
+    setSaving(true)
+    const saved = await updateOpportunity(opp.id, { ...form, comments: updatedComments })
+    setSaving(false)
+    if (saved) {
+      toast.success('Opportunity updated')
+      onClose()
+    }
   }
 
   const submitDeleteReq = () => {
@@ -403,7 +408,10 @@ function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) 
           )}
           <div className="ml-auto flex gap-3">
             <button type="button" onClick={onClose} className="btn-secondary">Cancel</button>
-            <button type="button" onClick={handleSave} className="btn-primary">Save Changes</button>
+            <button type="button" onClick={handleSave} disabled={saving} className="btn-primary disabled:opacity-50">
+              {saving && <Loader size={13} className="animate-spin" />}
+              {saving ? 'Saving...' : 'Save Changes'}
+            </button>
           </div>
         </div>
       }
@@ -1000,6 +1008,7 @@ function CreateModal({ onClose }: { onClose: () => void }) {
   const buildSamApiKey = getBuildSamGovApiKey()
   const [samApiKey, setSamApiKey] = useState(() => buildSamApiKey ? '' : getSavedSamGovApiKey())
   const [showSamApiKeyField, setShowSamApiKeyField] = useState(() => !buildSamApiKey && !getSavedSamGovApiKey())
+  const [saving, setSaving] = useState(false)
   const [form, setForm] = useState<Partial<Opportunity>>({
     priority: 'MEDIUM', status: 'ACTIVE', type: undefined, setAside: 'SB',
     period: new Date().toLocaleString('en-US', { month: 'short' }).toUpperCase() + ' ' + new Date().getFullYear(),
@@ -1079,7 +1088,7 @@ function CreateModal({ onClose }: { onClose: () => void }) {
     }
   }
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
     if (!form.solicitation?.trim()) { toast.error('Solicitation title is required'); setTab('details'); return }
     if (!form.type) { toast.error('Contract type is required'); setTab('details'); return }
     if (!form.dueDate) { toast.error('Due date is required'); setTab('schedule'); return }
@@ -1092,9 +1101,13 @@ function CreateModal({ onClose }: { onClose: () => void }) {
         createdAt: new Date().toISOString(),
       })
     }
-    createOpportunity({ ...form, comments } as Omit<Opportunity, 'id'>)
-    toast.success('Opportunity created!')
-    onClose()
+    setSaving(true)
+    const saved = await createOpportunity({ ...form, comments } as Omit<Opportunity, 'id'>)
+    setSaving(false)
+    if (saved) {
+      toast.success('Opportunity created and saved to Supabase.')
+      onClose()
+    }
   }
 
   return (
@@ -1179,8 +1192,9 @@ function CreateModal({ onClose }: { onClose: () => void }) {
           </div>
           <div className="flex gap-3">
             <button type="button" onClick={onClose} className="btn-secondary">Cancel</button>
-            <button type="button" onClick={handleCreate} className="btn-primary">
-              <Plus size={14} /> Create Opportunity
+            <button type="button" onClick={handleCreate} disabled={saving} className="btn-primary disabled:opacity-50">
+              {saving ? <Loader size={14} className="animate-spin" /> : <Plus size={14} />}
+              {saving ? 'Saving...' : 'Create Opportunity'}
             </button>
           </div>
         </div>

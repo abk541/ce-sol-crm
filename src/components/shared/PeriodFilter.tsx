@@ -145,8 +145,8 @@ export default function PeriodFilter({
       <div
         className="flex w-full items-center rounded-xl border transition-all"
         style={isActive
-          ? { background: '#EEF2FF', color: '#4338CA', borderColor: '#C7D2FE' }
-          : { background: '#FFFFFF', color: '#475569', borderColor: '#E2E8F0' }}
+          ? { background: '#F4EBD8', color: '#0F4F59', borderColor: '#D7BE7A' }
+          : { background: '#FFFFFF', color: '#445C62', borderColor: '#C8D3CF' }}
       >
         <button
           type="button"
@@ -161,7 +161,7 @@ export default function PeriodFilter({
           <button
             type="button"
             onClick={clear}
-            className="mr-2 flex h-5 w-5 items-center justify-center rounded-md text-indigo-400 hover:bg-indigo-100 hover:text-indigo-700 transition-colors"
+            className="mr-2 flex h-5 w-5 items-center justify-center rounded-md text-[#B8914E] hover:bg-[#F4EBD8] hover:text-[#0F4F59] transition-colors"
             aria-label="Clear date range"
           >
             <X size={11} />
@@ -223,13 +223,13 @@ export default function PeriodFilter({
                     onClick={() => selectDay(day.value)}
                     className={`h-9 rounded-lg text-xs font-semibold transition-all ${
                       isEdge
-                        ? 'bg-indigo-600 text-white shadow-sm'
+                        ? 'bg-[#0F4F59] text-white shadow-sm'
                         : inRange
-                          ? 'bg-indigo-50 text-indigo-700'
+                          ? 'bg-[#E7F2EF] text-[#0F4F59]'
                           : day.inMonth
                             ? 'text-slate-700 hover:bg-slate-100'
                             : 'text-slate-300 hover:bg-slate-50'
-                    } ${isToday && !isEdge ? 'ring-1 ring-indigo-200' : ''}`}
+                    } ${isToday && !isEdge ? 'ring-1 ring-[#D7BE7A]' : ''}`}
                   >
                     {day.date.getDate()}
                   </button>
@@ -280,7 +280,7 @@ export function PeriodFilterPills({
           onClick={() => onChange(p)}
           className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
             value === p
-              ? 'bg-white text-indigo-600 shadow-sm border border-slate-200'
+              ? 'bg-white text-[#0F4F59] shadow-sm border border-[#D7BE7A]/40'
               : 'text-slate-500 hover:text-slate-700 hover:bg-white/50'
           }`}
         >

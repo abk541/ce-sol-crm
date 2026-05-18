@@ -75,14 +75,14 @@ export default function Sidebar() {
       transition={{ type: 'spring', stiffness: 300, damping: 30 }}
       className="flex-shrink-0 flex flex-col h-screen sticky top-0 z-40 overflow-hidden"
       style={{
-        background: '#FFFFFF',
-        borderRight: '1px solid rgba(0,0,0,0.08)',
-        boxShadow: '2px 0 12px rgba(0,0,0,0.04)',
+        background: 'linear-gradient(180deg, #07131F 0%, #0A1D2B 54%, #102820 100%)',
+        borderRight: '1px solid rgba(215,190,122,0.20)',
+        boxShadow: '10px 0 34px rgba(7,19,31,0.18)',
       }}
     >
       {/* Logo */}
-      <div className="flex items-center gap-3 px-4 py-4 border-b border-black/[0.07]"
-           style={{ minHeight: 65 }}>
+      <div className="flex items-center gap-3 px-4 py-4"
+           style={{ minHeight: 65, borderBottom: '1px solid rgba(215,190,122,0.16)' }}>
         {sidebarCollapsed ? (
           <CompanyLogo variant="icon" />
         ) : (
@@ -103,9 +103,10 @@ export default function Sidebar() {
           onClick={toggleSidebar}
           className={cn(
             'flex-shrink-0 w-6 h-6 rounded-md flex items-center justify-center',
-            'text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-all',
+            'text-stone-300 hover:text-white transition-all',
             sidebarCollapsed ? 'mx-auto' : 'ml-auto'
           )}
+          style={{ background: 'rgba(255,255,255,0.06)' }}
         >
           {sidebarCollapsed ? <ChevronRight size={13} /> : <ChevronLeft size={13} />}
         </button>
@@ -118,7 +119,7 @@ export default function Sidebar() {
             {!sidebarCollapsed && (
               <button
                 onClick={() => toggleGroup(group.label)}
-                className="flex items-center gap-1.5 w-full px-2 py-1 mb-0.5 text-[10px] font-bold uppercase tracking-[0.15em] text-slate-400 hover:text-slate-600 transition-colors"
+                className="flex items-center gap-1.5 w-full px-2 py-1 mb-0.5 text-[10px] font-bold uppercase tracking-[0.15em] text-stone-400 hover:text-stone-200 transition-colors"
               >
                 {group.label}
                 <ChevronDown
@@ -128,7 +129,7 @@ export default function Sidebar() {
               </button>
             )}
             {sidebarCollapsed && (
-              <div className="my-2 mx-2 border-t border-slate-100" />
+              <div className="my-2 mx-2 border-t border-white/10" />
             )}
             <AnimatePresence initial={false}>
               {(sidebarCollapsed || expanded[group.label]) && (
@@ -157,7 +158,7 @@ export default function Sidebar() {
                             size={15}
                             className={cn(
                               'flex-shrink-0 nav-icon',
-                              isActive ? 'text-indigo-600' : 'text-slate-400'
+                              isActive ? 'text-[#D7BE7A]' : 'text-stone-400'
                             )}
                           />
                           {!sidebarCollapsed && (
@@ -166,7 +167,7 @@ export default function Sidebar() {
                           {'badge' in item && item.badge && unread > 0 && (
                             <span className={cn(
                               'flex-shrink-0 min-w-[18px] h-[18px] rounded-full text-[9px] font-bold flex items-center justify-center',
-                              'bg-indigo-500 text-white',
+                              'bg-[#B8914E] text-white',
                               sidebarCollapsed ? 'absolute -top-1 -right-1 w-4 h-4 text-[8px]' : 'ml-auto'
                             )}>
                               {unread > 9 ? '9+' : unread}
@@ -187,9 +188,10 @@ export default function Sidebar() {
       {currentUser && (
         <div
           className={cn(
-            'border-t border-black/[0.07] p-3',
+            'p-3',
             sidebarCollapsed ? 'flex flex-col items-center gap-2' : 'flex items-center gap-2.5'
           )}
+          style={{ borderTop: '1px solid rgba(215,190,122,0.16)' }}
         >
           <div className={cn(
             'flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white bg-gradient-to-br',
@@ -199,14 +201,15 @@ export default function Sidebar() {
           </div>
           {!sidebarCollapsed && (
             <div className="flex-1 min-w-0">
-              <p className="text-[13px] font-semibold text-slate-700 truncate">{currentUser.name}</p>
-              <p className="text-[10px] text-slate-400 font-medium truncate">{currentUser.role}</p>
+              <p className="text-[13px] font-semibold text-stone-100 truncate">{currentUser.name}</p>
+              <p className="text-[10px] text-stone-400 font-medium truncate">{currentUser.role}</p>
             </div>
           )}
           <button
             onClick={logout}
             title="Logout"
-            className="flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-rose-500 hover:bg-rose-50 transition-all"
+            className="flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-stone-400 hover:text-white transition-all"
+            style={{ background: 'rgba(255,255,255,0.05)' }}
           >
             <LogOut size={13} />
           </button>
