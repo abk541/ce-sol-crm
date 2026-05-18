@@ -49,6 +49,44 @@ function getSavedSamGovApiKey() {
   return window.localStorage.getItem(SAM_GOV_API_KEY_STORAGE)?.trim() ?? ''
 }
 
+function formatSamGovDate(d: Date) {
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  const dd = String(d.getDate()).padStart(2, '0')
+  return `${mm}/${dd}/${d.getFullYear()}`
+}
+
+function getSamGovPostedRange() {
+  const postedTo = new Date()
+  const postedFrom = new Date(postedTo)
+  postedFrom.setFullYear(postedTo.getFullYear() - 1)
+  postedFrom.setDate(postedFrom.getDate() + 1)
+  return {
+    postedFrom: formatSamGovDate(postedFrom),
+    postedTo: formatSamGovDate(postedTo),
+  }
+}
+
+async function readSamGovError(res: Response) {
+  try {
+    const body = await res.clone().json()
+    const message =
+      body?.error?.message ??
+      body?.message ??
+      body?.error_description ??
+      body?.errors?.[0]?.message
+    if (message) return String(message)
+  } catch {
+    // Fall back to text below.
+  }
+  try {
+    const text = await res.text()
+    if (text) return text.slice(0, 240)
+  } catch {
+    // Ignore response body parse errors.
+  }
+  return res.statusText
+}
+
 function typeLabel(val: string) {
   if (val === 'S&D') return 'Delivery'
   return val
@@ -810,6 +848,7 @@ function CreateModal({ onClose }: { onClose: () => void }) {
   const [samUrl, setSamUrl] = useState('')
   const [importing, setImporting] = useState(false)
   const [lastImportedUrl, setLastImportedUrl] = useState('')
+  const [lastAttemptedUrl, setLastAttemptedUrl] = useState('')
   const [initialComment, setInitialComment] = useState('')
   const buildSamApiKey = getBuildSamGovApiKey()
   const [samApiKey, setSamApiKey] = useState(() => buildSamApiKey ? '' : getSavedSamGovApiKey())
@@ -828,6 +867,7 @@ function CreateModal({ onClose }: { onClose: () => void }) {
   const handleImport = async () => {
     const url = samUrl.trim()
     if (!url || importing) return
+    setLastAttemptedUrl(url)
 
     const apiKey = buildSamApiKey || samApiKey.trim()
     if (!apiKey) {
@@ -852,12 +892,26 @@ function CreateModal({ onClose }: { onClose: () => void }) {
 
     setImporting(true)
     try {
-      const endpoint = oppIdMatch
-        ? `https://api.sam.gov/opportunities/v2/search?limit=1&opportunityId=${oppIdMatch[1]}&api_key=${encodeURIComponent(apiKey)}`
-        : `https://api.sam.gov/opportunities/v2/search?limit=1&solicitationNumber=${encodeURIComponent(solNumMatch![1])}&api_key=${encodeURIComponent(apiKey)}`
+      const { postedFrom, postedTo } = getSamGovPostedRange()
+      const params = new URLSearchParams({
+        limit: '1',
+        api_key: apiKey,
+        postedFrom,
+        postedTo,
+      })
+      if (oppIdMatch) params.set('noticeid', oppIdMatch[1])
+      else params.set('solnum', solNumMatch![1])
+
+      const endpoint = `https://api.sam.gov/opportunities/v2/search?${params.toString()}`
 
       const res = await fetch(endpoint)
-      if (!res.ok) throw new Error(`SAM.gov returned ${res.status} ${res.statusText}`)
+      if (!res.ok) {
+        const details = await readSamGovError(res)
+        if (res.status === 429) {
+          throw new Error('SAM.gov rate limit reached. Wait a few minutes, then try again.')
+        }
+        throw new Error(`SAM.gov returned ${res.status}: ${details}`)
+      }
 
       const json = await res.json()
       const opp = json.opportunitiesData?.[0]
@@ -918,6 +972,7 @@ function CreateModal({ onClose }: { onClose: () => void }) {
 
       toast.success('Details imported from SAM.gov!')
       setLastImportedUrl(url)
+      setLastAttemptedUrl(url)
       setTab('details')
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Unknown error'
@@ -931,6 +986,7 @@ function CreateModal({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     const url = samUrl.trim()
     if (!url || url === lastImportedUrl || importing) return
+    if (url === lastAttemptedUrl) return
     if (!/sam\.gov/i.test(url)) return
 
     const timer = window.setTimeout(() => {
@@ -938,7 +994,7 @@ function CreateModal({ onClose }: { onClose: () => void }) {
     }, 600)
 
     return () => window.clearTimeout(timer)
-  }, [samUrl, lastImportedUrl, importing])
+  }, [samUrl, lastImportedUrl, lastAttemptedUrl, importing])
 
   const handleCreate = () => {
     if (!form.solicitation?.trim()) { toast.error('Solicitation title is required'); setTab('details'); return }
