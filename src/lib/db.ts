@@ -1,5 +1,14 @@
 import { supabase, isSupabaseConnected } from './supabase'
-import type { Employee, Opportunity, Contract, FreshAward, PastPerformance } from '../types'
+import type {
+  Employee,
+  Opportunity,
+  Contract,
+  ContractPoC,
+  FreshAward,
+  GovernmentWarning,
+  LockedSubcontractor,
+  PastPerformance,
+} from '../types'
 
 // ── Opportunity mappers ──────────────────────────────────────────────────────
 
@@ -156,6 +165,100 @@ function dbToContract(row: Record<string, unknown>): Partial<Contract> {
     pocs: [],
     lockedSubcontractors: [],
     governmentWarnings: [],
+  }
+}
+
+// Contract child mappers
+
+function pocToDb(poc: ContractPoC): Record<string, unknown> {
+  return {
+    id: poc.id,
+    contract_id: poc.contractId,
+    role: poc.role,
+    name: poc.name,
+    email: poc.email ?? null,
+    phone: poc.phone ?? null,
+    notes: poc.notes ?? null,
+    contacted_at: poc.contactedAt ?? null,
+  }
+}
+
+function dbToPoc(row: Record<string, unknown>): ContractPoC {
+  return {
+    id: row.id as string,
+    contractId: row.contract_id as string,
+    role: row.role as ContractPoC['role'],
+    name: row.name as string,
+    email: row.email as string | undefined,
+    phone: row.phone as string | undefined,
+    notes: row.notes as string | undefined,
+    contactedAt: row.contacted_at as string | undefined,
+  }
+}
+
+function lockedSubToDb(sub: LockedSubcontractor): Record<string, unknown> {
+  return {
+    id: sub.id,
+    contract_id: sub.contractId,
+    company_name: sub.companyName,
+    contact_name: sub.contactName,
+    email: sub.email ?? null,
+    phone: sub.phone ?? null,
+    set_aside: sub.setAside ?? null,
+    naics_code: sub.naicsCode ?? null,
+    subk_database_id: sub.subkDatabaseId ?? null,
+    invoices: sub.invoices ?? null,
+    sub_agreements: sub.subAgreements ?? null,
+    quotes: sub.quotes ?? null,
+    notes: sub.notes ?? null,
+    created_at: sub.createdAt,
+    created_by: sub.createdBy,
+  }
+}
+
+function dbToLockedSub(row: Record<string, unknown>): LockedSubcontractor {
+  return {
+    id: row.id as string,
+    contractId: row.contract_id as string,
+    companyName: row.company_name as string,
+    contactName: row.contact_name as string,
+    email: row.email as string | undefined,
+    phone: row.phone as string | undefined,
+    setAside: row.set_aside as string | undefined,
+    naicsCode: row.naics_code as string | undefined,
+    subkDatabaseId: row.subk_database_id as string | undefined,
+    invoices: row.invoices as string[] | undefined,
+    subAgreements: row.sub_agreements as string[] | undefined,
+    quotes: row.quotes as string[] | undefined,
+    notes: row.notes as string | undefined,
+    createdAt: row.created_at as string,
+    createdBy: row.created_by as string,
+  }
+}
+
+function warningToDb(warning: GovernmentWarning): Record<string, unknown> {
+  return {
+    id: warning.id,
+    contract_id: warning.contractId,
+    type: warning.type,
+    issued_date: warning.issuedDate,
+    description: warning.description,
+    severity: warning.severity,
+    resolved_at: warning.resolvedAt ?? null,
+    resolved_note: warning.resolvedNote ?? null,
+  }
+}
+
+function dbToWarning(row: Record<string, unknown>): GovernmentWarning {
+  return {
+    id: row.id as string,
+    contractId: row.contract_id as string,
+    type: row.type as GovernmentWarning['type'],
+    issuedDate: row.issued_date as string,
+    description: row.description as string,
+    severity: row.severity as GovernmentWarning['severity'],
+    resolvedAt: row.resolved_at as string | undefined,
+    resolvedNote: row.resolved_note as string | undefined,
   }
 }
 
@@ -317,10 +420,13 @@ export async function loadAllData(): Promise<{
   if (!isSupabaseConnected || !supabase) return null
 
   try {
-    const [empRes, oppRes, conRes, faRes, ppRes] = await Promise.all([
+    const [empRes, oppRes, conRes, pocRes, lockedSubRes, warningRes, faRes, ppRes] = await Promise.all([
       supabase.from('employees').select('*'),
       supabase.from('opportunities').select('*'),
       supabase.from('contracts').select('*'),
+      supabase.from('contract_pocs').select('*'),
+      supabase.from('locked_subcontractors').select('*'),
+      supabase.from('government_warnings').select('*'),
       supabase.from('fresh_awards').select('*'),
       supabase.from('past_performances').select('*'),
     ])
@@ -328,12 +434,24 @@ export async function loadAllData(): Promise<{
     if (empRes.error) console.error('[db] employees load error', empRes.error)
     if (oppRes.error) console.error('[db] opportunities load error', oppRes.error)
     if (conRes.error) console.error('[db] contracts load error', conRes.error)
+    if (pocRes.error) console.error('[db] contract_pocs load error', pocRes.error)
+    if (lockedSubRes.error) console.error('[db] locked_subcontractors load error', lockedSubRes.error)
+    if (warningRes.error) console.error('[db] government_warnings load error', warningRes.error)
     if (faRes.error) console.error('[db] fresh_awards load error', faRes.error)
     if (ppRes.error) console.error('[db] past_performances load error', ppRes.error)
 
     const employees: Employee[] = (empRes.data ?? []).map(r => dbToEmp(r as Record<string, unknown>))
     const opportunities: Opportunity[] = (oppRes.data ?? []).map(r => dbToOpp(r as Record<string, unknown>) as Opportunity)
-    const contracts: Contract[] = (conRes.data ?? []).map(r => dbToContract(r as Record<string, unknown>) as Contract)
+    const pocs: ContractPoC[] = (pocRes.data ?? []).map(r => dbToPoc(r as Record<string, unknown>))
+    const lockedSubs: LockedSubcontractor[] = (lockedSubRes.data ?? []).map(r => dbToLockedSub(r as Record<string, unknown>))
+    const warnings: GovernmentWarning[] = (warningRes.data ?? []).map(r => dbToWarning(r as Record<string, unknown>))
+    const contracts: Contract[] = (conRes.data ?? []).map(r => {
+      const contract = dbToContract(r as Record<string, unknown>) as Contract
+      contract.pocs = pocs.filter(p => p.contractId === contract.id)
+      contract.lockedSubcontractors = lockedSubs.filter(s => s.contractId === contract.id)
+      contract.governmentWarnings = warnings.filter(w => w.contractId === contract.id)
+      return contract
+    })
     const freshAwards: FreshAward[] = (faRes.data ?? []).map(r => dbToFreshAward(r as Record<string, unknown>) as FreshAward)
     const pastPerformances: PastPerformance[] = (ppRes.data ?? []).map(r => dbToPP(r as Record<string, unknown>) as PastPerformance)
 
@@ -366,6 +484,46 @@ export async function upsertContract(c: Contract): Promise<void> {
   }
 }
 
+export async function upsertContractPoC(poc: ContractPoC): Promise<void> {
+  if (!isSupabaseConnected || !supabase) return
+  try {
+    const { error } = await supabase.from('contract_pocs').upsert(pocToDb(poc))
+    if (error) console.error('[db] upsertContractPoC error', error)
+  } catch (err) {
+    console.error('[db] upsertContractPoC failed', err)
+  }
+}
+
+export async function deleteContractPoC(id: string): Promise<void> {
+  if (!isSupabaseConnected || !supabase) return
+  try {
+    const { error } = await supabase.from('contract_pocs').delete().eq('id', id)
+    if (error) console.error('[db] deleteContractPoC error', error)
+  } catch (err) {
+    console.error('[db] deleteContractPoC failed', err)
+  }
+}
+
+export async function upsertLockedSubcontractor(sub: LockedSubcontractor): Promise<void> {
+  if (!isSupabaseConnected || !supabase) return
+  try {
+    const { error } = await supabase.from('locked_subcontractors').upsert(lockedSubToDb(sub))
+    if (error) console.error('[db] upsertLockedSubcontractor error', error)
+  } catch (err) {
+    console.error('[db] upsertLockedSubcontractor failed', err)
+  }
+}
+
+export async function upsertGovernmentWarning(warning: GovernmentWarning): Promise<void> {
+  if (!isSupabaseConnected || !supabase) return
+  try {
+    const { error } = await supabase.from('government_warnings').upsert(warningToDb(warning))
+    if (error) console.error('[db] upsertGovernmentWarning error', error)
+  } catch (err) {
+    console.error('[db] upsertGovernmentWarning failed', err)
+  }
+}
+
 export async function upsertFreshAward(fa: FreshAward): Promise<void> {
   if (!isSupabaseConnected || !supabase) return
   try {
@@ -392,6 +550,9 @@ export async function clearBusinessData(): Promise<void> {
   if (!isSupabaseConnected || !supabase) return
   try {
     await Promise.all([
+      supabase.from('contract_pocs').delete().neq('id', ''),
+      supabase.from('locked_subcontractors').delete().neq('id', ''),
+      supabase.from('government_warnings').delete().neq('id', ''),
       supabase.from('opportunities').delete().neq('id', ''),
       supabase.from('contracts').delete().neq('id', ''),
       supabase.from('fresh_awards').delete().neq('id', ''),

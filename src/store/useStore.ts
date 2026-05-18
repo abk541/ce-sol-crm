@@ -21,6 +21,10 @@ import {
   clearBusinessData,
   upsertOpportunity,
   upsertContract,
+  upsertContractPoC,
+  deleteContractPoC,
+  upsertLockedSubcontractor,
+  upsertGovernmentWarning,
   upsertFreshAward,
   upsertPastPerformance,
 } from '../lib/db'
@@ -383,23 +387,31 @@ export const useStore = create<AppState>()(
               : c
           )
         }))
+        upsertContractPoC(newPoC)
       },
 
-      updateContractPoC: (contractId, pocId, data) => set(s => ({
-        contracts: s.contracts.map(c =>
-          c.id === contractId
-            ? { ...c, pocs: (c.pocs || []).map(p => p.id === pocId ? { ...p, ...data } : p) }
-            : c
-        )
-      })),
+      updateContractPoC: (contractId, pocId, data) => {
+        set(s => ({
+          contracts: s.contracts.map(c =>
+            c.id === contractId
+              ? { ...c, pocs: (c.pocs || []).map(p => p.id === pocId ? { ...p, ...data } : p) }
+              : c
+          )
+        }))
+        const updated = get().contracts.find(c => c.id === contractId)?.pocs?.find(p => p.id === pocId)
+        if (updated) upsertContractPoC(updated)
+      },
 
-      removeContractPoC: (contractId, pocId) => set(s => ({
-        contracts: s.contracts.map(c =>
-          c.id === contractId
-            ? { ...c, pocs: (c.pocs || []).filter(p => p.id !== pocId) }
-            : c
-        )
-      })),
+      removeContractPoC: (contractId, pocId) => {
+        set(s => ({
+          contracts: s.contracts.map(c =>
+            c.id === contractId
+              ? { ...c, pocs: (c.pocs || []).filter(p => p.id !== pocId) }
+              : c
+          )
+        }))
+        deleteContractPoC(pocId)
+      },
 
       addLockedSubcontractor: (contractId, sub) => {
         const newSub: LockedSubcontractor = { ...sub, id: `lsub${Date.now()}`, contractId }
@@ -410,15 +422,20 @@ export const useStore = create<AppState>()(
               : c
           )
         }))
+        upsertLockedSubcontractor(newSub)
       },
 
-      updateLockedSubcontractor: (contractId, subId, data) => set(s => ({
-        contracts: s.contracts.map(c =>
-          c.id === contractId
-            ? { ...c, lockedSubcontractors: (c.lockedSubcontractors || []).map(s => s.id === subId ? { ...s, ...data } : s) }
-            : c
-        )
-      })),
+      updateLockedSubcontractor: (contractId, subId, data) => {
+        set(s => ({
+          contracts: s.contracts.map(c =>
+            c.id === contractId
+              ? { ...c, lockedSubcontractors: (c.lockedSubcontractors || []).map(s => s.id === subId ? { ...s, ...data } : s) }
+              : c
+          )
+        }))
+        const updated = get().contracts.find(c => c.id === contractId)?.lockedSubcontractors?.find(s => s.id === subId)
+        if (updated) upsertLockedSubcontractor(updated)
+      },
 
       addGovernmentWarning: (contractId, warning) => {
         const newWarning: GovernmentWarning = { ...warning, id: `gw${Date.now()}`, contractId }
@@ -429,6 +446,7 @@ export const useStore = create<AppState>()(
               : c
           )
         }))
+        upsertGovernmentWarning(newWarning)
         get().addNotification({
           type: 'GOVERNMENT_WARNING',
           title: `Government Warning: ${warning.type.replace(/_/g, ' ')}`,
@@ -439,20 +457,24 @@ export const useStore = create<AppState>()(
         })
       },
 
-      resolveGovernmentWarning: (contractId, warningId, note) => set(s => ({
-        contracts: s.contracts.map(c =>
-          c.id === contractId
-            ? {
-                ...c,
-                governmentWarnings: (c.governmentWarnings || []).map(w =>
-                  w.id === warningId
-                    ? { ...w, resolvedAt: new Date().toISOString(), resolvedNote: note }
-                    : w
-                )
-              }
-            : c
-        )
-      })),
+      resolveGovernmentWarning: (contractId, warningId, note) => {
+        set(s => ({
+          contracts: s.contracts.map(c =>
+            c.id === contractId
+              ? {
+                  ...c,
+                  governmentWarnings: (c.governmentWarnings || []).map(w =>
+                    w.id === warningId
+                      ? { ...w, resolvedAt: new Date().toISOString(), resolvedNote: note }
+                      : w
+                  )
+                }
+              : c
+          )
+        }))
+        const updated = get().contracts.find(c => c.id === contractId)?.governmentWarnings?.find(w => w.id === warningId)
+        if (updated) upsertGovernmentWarning(updated)
+      },
 
       advanceContractStatus: (id) => {
         const contract = get().contracts.find(c => c.id === id)

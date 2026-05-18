@@ -23,6 +23,10 @@ vi.mock('../lib/db', () => ({
   seedIfEmpty: vi.fn().mockResolvedValue(null),
   upsertOpportunity: vi.fn().mockResolvedValue(null),
   upsertContract: vi.fn().mockResolvedValue(null),
+  upsertContractPoC: vi.fn().mockResolvedValue(null),
+  deleteContractPoC: vi.fn().mockResolvedValue(null),
+  upsertLockedSubcontractor: vi.fn().mockResolvedValue(null),
+  upsertGovernmentWarning: vi.fn().mockResolvedValue(null),
   upsertFreshAward: vi.fn().mockResolvedValue(null),
   upsertPastPerformance: vi.fn().mockResolvedValue(null),
 }))
