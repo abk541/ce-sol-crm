@@ -18,6 +18,7 @@ import { isSupabaseConnected } from '../lib/supabase'
 import {
   loadAllData,
   seedIfEmpty,
+  clearBusinessData,
   upsertOpportunity,
   upsertContract,
   upsertFreshAward,
@@ -128,6 +129,7 @@ interface AppState {
 
   // ── DB ─────────────────────────────────────────────────────────────
   dbReady: boolean
+  needsPurge: boolean
   initializeStore: () => Promise<void>
 }
 
@@ -164,6 +166,7 @@ export const useStore = create<AppState>()(
       bdSubmissions: MOCK_BD_SUBMISSIONS,
       sidebarCollapsed: false,
       dbReady: false,
+      needsPurge: false,
 
       // ── Auth ────────────────────────────────────────────────────────
       login: (email, password) => {
@@ -884,6 +887,14 @@ export const useStore = create<AppState>()(
         if (get().dbReady) return
 
         try {
+          // One-time purge: runs when upgrading from store v0 → v1
+          // clears all old mock data from Supabase so we start fresh
+          if (get().needsPurge) {
+            await clearBusinessData()
+            set({ needsPurge: false })
+          }
+
+          // seedIfEmpty is now a no-op (all mock arrays are empty)
           await seedIfEmpty({
             opportunities: MOCK_OPPORTUNITIES,
             contracts: MOCK_CONTRACTS,
@@ -895,15 +906,15 @@ export const useStore = create<AppState>()(
           if (data) {
             set({
               employees: data.employees.length > 0 ? data.employees : get().employees,
-              opportunities: data.opportunities.length > 0 ? data.opportunities : get().opportunities,
-              contracts: data.contracts.length > 0 ? data.contracts : get().contracts,
-              freshAwards: data.freshAwards.length > 0 ? data.freshAwards : get().freshAwards,
-              pastPerformances: data.pastPerformances.length > 0 ? data.pastPerformances : get().pastPerformances,
+              opportunities: data.opportunities,
+              contracts: data.contracts,
+              freshAwards: data.freshAwards,
+              pastPerformances: data.pastPerformances,
               dbReady: true,
             })
           }
         } catch (err) {
-          console.error('[Store] Supabase init failed, using mock data', err)
+          console.error('[Store] Supabase init failed, using local data', err)
           set({ dbReady: true })
         }
       },
@@ -913,6 +924,31 @@ export const useStore = create<AppState>()(
     }),
     {
       name: 'ces-crm-store',
+      // v1: cleared all mock business data; needsPurge triggers one-time Supabase wipe
+      version: 1,
+      migrate: (persistedState: unknown, fromVersion: number) => {
+        const s = persistedState as Record<string, unknown>
+        if (fromVersion === 0) {
+          // Upgrade from v0: wipe local business data and flag Supabase purge
+          return {
+            ...s,
+            opportunities:   [],
+            contracts:       [],
+            freshAwards:     [],
+            pastPerformances:[],
+            nonSubReports:   [],
+            deletionRequests:[],
+            subcontractors:  [],
+            bdSubmissions:   [],
+            notifications:   [],
+            activityLogs:    [],
+            subkDatabase:    [],
+            needsPurge:      true,
+            dbReady:         false,
+          }
+        }
+        return s
+      },
       // Persist all business data so changes survive logout/refresh
       // (Supabase sync overrides this when connected; localStorage is the fallback)
       partialize: s => ({
@@ -928,6 +964,7 @@ export const useStore = create<AppState>()(
         users:             s.users,
         subkDatabase:      s.subkDatabase,
         notifications:     s.notifications,
+        needsPurge:        s.needsPurge,
       }),
     }
   )

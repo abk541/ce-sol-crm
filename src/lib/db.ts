@@ -386,6 +386,23 @@ export async function upsertPastPerformance(pp: PastPerformance): Promise<void> 
   }
 }
 
+// ── Clear all business data ──────────────────────────────────────────────────
+
+export async function clearBusinessData(): Promise<void> {
+  if (!isSupabaseConnected || !supabase) return
+  try {
+    await Promise.all([
+      supabase.from('opportunities').delete().neq('id', ''),
+      supabase.from('contracts').delete().neq('id', ''),
+      supabase.from('fresh_awards').delete().neq('id', ''),
+      supabase.from('past_performances').delete().neq('id', ''),
+    ])
+    console.log('[db] All business data cleared from Supabase.')
+  } catch (err) {
+    console.error('[db] clearBusinessData failed', err)
+  }
+}
+
 // ── Seed if empty ────────────────────────────────────────────────────────────
 
 async function insertBatched<T>(

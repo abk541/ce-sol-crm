@@ -811,18 +811,101 @@ function CreateModal({ onClose }: { onClose: () => void }) {
   const lbl = 'block text-xs font-semibold text-slate-500 mb-1.5'
 
   const handleImport = async () => {
-    if (!samUrl.trim()) return
+    const url = samUrl.trim()
+    if (!url) return
+
+    const apiKey = import.meta.env.VITE_SAM_GOV_API_KEY as string | undefined
+    if (!apiKey) {
+      toast.error('SAM.gov API key not configured. Add VITE_SAM_GOV_API_KEY to your .env file.')
+      return
+    }
+
+    // Parse the 32-char hex opportunity ID from the SAM.gov URL
+    // e.g. https://sam.gov/opp/7f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c/view
+    const oppIdMatch = url.match(/\/opp\/([a-f0-9]{32})/i)
+    // Fallback: solicitation number from search URL or path segment
+    const solNumMatch = url.match(/[?&]q=([^&]+)/) || url.match(/\/([A-Z0-9\-]{6,})\/?(?:view)?$/i)
+
+    if (!oppIdMatch && !solNumMatch) {
+      toast.error('Could not parse the SAM.gov URL. Paste the full URL from the opportunity page.')
+      return
+    }
+
     setImporting(true)
-    await new Promise(r => setTimeout(r, 1300))
-    set('solicitation', 'Boiler Room HVAC Maintenance Service')
-    set('solicitationId', 'FA' + Math.random().toString(36).slice(2, 10).toUpperCase())
-    set('client', 'Andrews Air Force Base')
-    set('naicsCode', '238220'); set('setAside', 'SB'); set('type', 'RECURRING')
-    set('location', 'Camp Springs, MD'); set('dueDate', '2026-06-15')
-    set('localTime', '16:00'); set('timezone', 'EST')
-    setImporting(false)
-    toast.success('Details imported from SAM.gov!')
-    setTab('details')
+    try {
+      const endpoint = oppIdMatch
+        ? `https://api.sam.gov/opportunities/v2/search?limit=1&opportunityId=${oppIdMatch[1]}&api_key=${apiKey}`
+        : `https://api.sam.gov/opportunities/v2/search?limit=1&solicitationNumber=${encodeURIComponent(solNumMatch![1])}&api_key=${apiKey}`
+
+      const res = await fetch(endpoint)
+      if (!res.ok) throw new Error(`SAM.gov returned ${res.status} ${res.statusText}`)
+
+      const json = await res.json()
+      const opp = json.opportunitiesData?.[0]
+      if (!opp) {
+        toast.error('Opportunity not found on SAM.gov. Check the URL.')
+        return
+      }
+
+      // Map SAM.gov set-aside codes → our internal codes
+      const setAsideMap: Record<string, string> = {
+        SBA:     'SB',
+        SDVOSBC: 'SDVOSB',
+        WOSB:    'WOSB',
+        HZC:     'HUBZone',
+        VOSB:    'VOSB',
+        '8AN':   '8(a)',
+        NONE:    'UNRES',
+      }
+      const mappedSetAside = setAsideMap[opp.typeOfSetAside ?? ''] ?? 'UNRES'
+
+      // Place of performance → location string
+      const pop = opp.placeOfPerformance
+      const locationParts = [pop?.city?.name, pop?.state?.code].filter(Boolean)
+      const locationStr = locationParts.join(', ')
+
+      // Response deadline → date + time
+      let dueDate = ''
+      let localTime = ''
+      if (opp.responseDeadLine) {
+        const dl = new Date(opp.responseDeadLine)
+        dueDate    = dl.toISOString().split('T')[0]
+        localTime  = `${String(dl.getHours()).padStart(2, '0')}:${String(dl.getMinutes()).padStart(2, '0')}`
+      }
+
+      // Infer contract type from title/description keywords
+      const text = ((opp.title ?? '') + ' ' + (opp.description ?? '')).toLowerCase()
+      let contractType: Opportunity['type'] = 'OTJ'
+      if (text.includes('recurring') || text.includes('reoccurring') || text.includes('agreement') || text.includes('annual') || text.includes('base year')) {
+        contractType = 'RECURRING'
+      } else if (text.includes('supply') || text.includes('supplies') || text.includes('parts')) {
+        contractType = 'SUPPLY'
+      }
+
+      // Batch all form updates in a single setForm call to avoid stale-closure issues
+      setForm(prev => ({
+        ...prev,
+        solicitation:  opp.title              ?? prev.solicitation,
+        solicitationId: opp.solicitationNumber ?? prev.solicitationId,
+        client:        opp.subtierName ?? opp.departmentName ?? prev.client,
+        naicsCode:     opp.naicsCode           ?? prev.naicsCode,
+        setAside:      mappedSetAside as Opportunity['setAside'],
+        type:          contractType,
+        location:      locationStr             || prev.location,
+        dueDate:       dueDate                 || prev.dueDate,
+        localTime:     localTime               || prev.localTime,
+        link:          url,
+      }))
+
+      toast.success('Details imported from SAM.gov!')
+      setTab('details')
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Unknown error'
+      console.error('[SAM.gov import]', err)
+      toast.error(`Import failed: ${msg}`)
+    } finally {
+      setImporting(false)
+    }
   }
 
   const handleCreate = () => {
