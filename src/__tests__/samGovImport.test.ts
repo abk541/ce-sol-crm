@@ -1,0 +1,67 @@
+import { describe, expect, it } from 'vitest'
+import {
+  buildSamGovOpportunityEndpoint,
+  getSamGovPostedRange,
+  shouldAutoImportSamGovUrl,
+} from '../pages/PipelinePage'
+
+const NOW = new Date('2026-05-18T12:00:00Z')
+
+function params(endpoint: string) {
+  return new URL(endpoint).searchParams
+}
+
+describe('SAM.gov import API calls', () => {
+  it('builds a documented notice ID lookup for SAM.gov opportunity URLs', () => {
+    const noticeId = '7f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c'
+    const endpoint = buildSamGovOpportunityEndpoint(
+      `https://sam.gov/opp/${noticeId}/view`,
+      'test key',
+      NOW,
+    )
+    const p = params(endpoint)
+
+    expect(endpoint.startsWith('https://api.sam.gov/opportunities/v2/search?')).toBe(true)
+    expect(p.get('noticeid')).toBe(noticeId)
+    expect(p.get('solnum')).toBeNull()
+    expect(p.get('limit')).toBe('1')
+    expect(p.get('api_key')).toBe('test key')
+    expect(p.get('postedFrom')).toBe('05/19/2025')
+    expect(p.get('postedTo')).toBe('05/18/2026')
+  })
+
+  it('builds a documented solicitation-number lookup from SAM.gov search URLs', () => {
+    const endpoint = buildSamGovOpportunityEndpoint(
+      'https://sam.gov/search/?q=W912EP-26-R-0001',
+      'abc123',
+      NOW,
+    )
+    const p = params(endpoint)
+
+    expect(p.get('solnum')).toBe('W912EP-26-R-0001')
+    expect(p.get('noticeid')).toBeNull()
+    expect(p.get('postedFrom')).toBe('05/19/2025')
+    expect(p.get('postedTo')).toBe('05/18/2026')
+  })
+
+  it('keeps the mandatory posted-date range inside SAM.gov one-year limit', () => {
+    expect(getSamGovPostedRange(NOW)).toEqual({
+      postedFrom: '05/19/2025',
+      postedTo: '05/18/2026',
+    })
+  })
+
+  it('rejects unparseable URLs before making an API call', () => {
+    expect(() => buildSamGovOpportunityEndpoint('https://sam.gov/opportunities', 'abc123', NOW))
+      .toThrow('Could not parse the SAM.gov URL')
+  })
+
+  it('does not auto-import the same failed or successful URL again', () => {
+    const url = 'https://sam.gov/opp/7f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c/view'
+
+    expect(shouldAutoImportSamGovUrl({ url, lastImportedUrl: '', lastAttemptedUrl: '', importing: false })).toBe(true)
+    expect(shouldAutoImportSamGovUrl({ url, lastImportedUrl: url, lastAttemptedUrl: '', importing: false })).toBe(false)
+    expect(shouldAutoImportSamGovUrl({ url, lastImportedUrl: '', lastAttemptedUrl: url, importing: false })).toBe(false)
+    expect(shouldAutoImportSamGovUrl({ url, lastImportedUrl: '', lastAttemptedUrl: '', importing: true })).toBe(false)
+  })
+})

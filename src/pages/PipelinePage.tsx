@@ -49,14 +49,14 @@ function getSavedSamGovApiKey() {
   return window.localStorage.getItem(SAM_GOV_API_KEY_STORAGE)?.trim() ?? ''
 }
 
-function formatSamGovDate(d: Date) {
+export function formatSamGovDate(d: Date) {
   const mm = String(d.getMonth() + 1).padStart(2, '0')
   const dd = String(d.getDate()).padStart(2, '0')
   return `${mm}/${dd}/${d.getFullYear()}`
 }
 
-function getSamGovPostedRange() {
-  const postedTo = new Date()
+export function getSamGovPostedRange(now = new Date()) {
+  const postedTo = new Date(now)
   const postedFrom = new Date(postedTo)
   postedFrom.setFullYear(postedTo.getFullYear() - 1)
   postedFrom.setDate(postedFrom.getDate() + 1)
@@ -64,6 +64,49 @@ function getSamGovPostedRange() {
     postedFrom: formatSamGovDate(postedFrom),
     postedTo: formatSamGovDate(postedTo),
   }
+}
+
+export function buildSamGovOpportunityEndpoint(url: string, apiKey: string, now = new Date()) {
+  const trimmedUrl = url.trim()
+  const trimmedKey = apiKey.trim()
+  if (!trimmedUrl) throw new Error('SAM.gov URL is required.')
+  if (!trimmedKey) throw new Error('SAM.gov API key is required.')
+
+  const oppIdMatch = trimmedUrl.match(/\/opp\/([a-f0-9]{32})/i)
+  const solNumMatch = trimmedUrl.match(/[?&]q=([^&]+)/) || trimmedUrl.match(/\/([A-Z0-9\-]{6,})\/?(?:view)?$/i)
+  const solNum = solNumMatch ? decodeURIComponent(solNumMatch[1]).trim() : ''
+  if (!oppIdMatch && (!solNum || !/\d/.test(solNum))) {
+    throw new Error('Could not parse the SAM.gov URL. Paste the full URL from the opportunity page.')
+  }
+
+  const { postedFrom, postedTo } = getSamGovPostedRange(now)
+  const params = new URLSearchParams({
+    limit: '1',
+    api_key: trimmedKey,
+    postedFrom,
+    postedTo,
+  })
+  if (oppIdMatch) params.set('noticeid', oppIdMatch[1])
+  else params.set('solnum', solNum)
+
+  return `https://api.sam.gov/opportunities/v2/search?${params.toString()}`
+}
+
+export function shouldAutoImportSamGovUrl({
+  url,
+  lastImportedUrl,
+  lastAttemptedUrl,
+  importing,
+}: {
+  url: string
+  lastImportedUrl: string
+  lastAttemptedUrl: string
+  importing: boolean
+}) {
+  const trimmed = url.trim()
+  if (!trimmed || importing) return false
+  if (trimmed === lastImportedUrl || trimmed === lastAttemptedUrl) return false
+  return /sam\.gov/i.test(trimmed)
 }
 
 async function readSamGovError(res: Response) {
@@ -879,31 +922,16 @@ function CreateModal({ onClose }: { onClose: () => void }) {
       window.localStorage.setItem(SAM_GOV_API_KEY_STORAGE, samApiKey.trim())
     }
 
-    // Parse the 32-char hex opportunity ID from the SAM.gov URL
-    // e.g. https://sam.gov/opp/7f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c/view
-    const oppIdMatch = url.match(/\/opp\/([a-f0-9]{32})/i)
-    // Fallback: solicitation number from search URL or path segment
-    const solNumMatch = url.match(/[?&]q=([^&]+)/) || url.match(/\/([A-Z0-9\-]{6,})\/?(?:view)?$/i)
-
-    if (!oppIdMatch && !solNumMatch) {
-      toast.error('Could not parse the SAM.gov URL. Paste the full URL from the opportunity page.')
+    let endpoint = ''
+    try {
+      endpoint = buildSamGovOpportunityEndpoint(url, apiKey)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not parse the SAM.gov URL.')
       return
     }
 
     setImporting(true)
     try {
-      const { postedFrom, postedTo } = getSamGovPostedRange()
-      const params = new URLSearchParams({
-        limit: '1',
-        api_key: apiKey,
-        postedFrom,
-        postedTo,
-      })
-      if (oppIdMatch) params.set('noticeid', oppIdMatch[1])
-      else params.set('solnum', solNumMatch![1])
-
-      const endpoint = `https://api.sam.gov/opportunities/v2/search?${params.toString()}`
-
       const res = await fetch(endpoint)
       if (!res.ok) {
         const details = await readSamGovError(res)
@@ -985,9 +1013,7 @@ function CreateModal({ onClose }: { onClose: () => void }) {
 
   useEffect(() => {
     const url = samUrl.trim()
-    if (!url || url === lastImportedUrl || importing) return
-    if (url === lastAttemptedUrl) return
-    if (!/sam\.gov/i.test(url)) return
+    if (!shouldAutoImportSamGovUrl({ url, lastImportedUrl, lastAttemptedUrl, importing })) return
 
     const timer = window.setTimeout(() => {
       void handleImport()
