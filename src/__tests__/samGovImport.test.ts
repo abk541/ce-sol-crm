@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest'
 import {
   buildSamGovOpportunityEndpoint,
   getSamGovPostedRange,
-  shouldAutoImportSamGovUrl,
 } from '../pages/PipelinePage'
 
 const NOW = new Date('2026-05-18T12:00:00Z')
@@ -56,12 +55,14 @@ describe('SAM.gov import API calls', () => {
       .toThrow('Could not parse the SAM.gov URL')
   })
 
-  it('does not auto-import the same failed or successful URL again', () => {
-    const url = 'https://sam.gov/opp/7f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c/view'
+  it('keeps API calls explicit by only exposing endpoint construction', () => {
+    const endpoint = buildSamGovOpportunityEndpoint(
+      'https://sam.gov/search/?q=W912EP-26-R-0001',
+      'abc123',
+      NOW,
+    )
 
-    expect(shouldAutoImportSamGovUrl({ url, lastImportedUrl: '', lastAttemptedUrl: '', importing: false })).toBe(true)
-    expect(shouldAutoImportSamGovUrl({ url, lastImportedUrl: url, lastAttemptedUrl: '', importing: false })).toBe(false)
-    expect(shouldAutoImportSamGovUrl({ url, lastImportedUrl: '', lastAttemptedUrl: url, importing: false })).toBe(false)
-    expect(shouldAutoImportSamGovUrl({ url, lastImportedUrl: '', lastAttemptedUrl: '', importing: true })).toBe(false)
+    expect(endpoint).toContain('/opportunities/v2/search?')
+    expect(endpoint).toContain('solnum=W912EP-26-R-0001')
   })
 })

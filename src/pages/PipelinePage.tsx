@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react'
+import { useState, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
@@ -90,23 +90,6 @@ export function buildSamGovOpportunityEndpoint(url: string, apiKey: string, now 
   else params.set('solnum', solNum)
 
   return `https://api.sam.gov/opportunities/v2/search?${params.toString()}`
-}
-
-export function shouldAutoImportSamGovUrl({
-  url,
-  lastImportedUrl,
-  lastAttemptedUrl,
-  importing,
-}: {
-  url: string
-  lastImportedUrl: string
-  lastAttemptedUrl: string
-  importing: boolean
-}) {
-  const trimmed = url.trim()
-  if (!trimmed || importing) return false
-  if (trimmed === lastImportedUrl || trimmed === lastAttemptedUrl) return false
-  return /sam\.gov/i.test(trimmed)
 }
 
 async function readSamGovError(res: Response) {
@@ -890,8 +873,6 @@ function CreateModal({ onClose }: { onClose: () => void }) {
   const [tab, setTab] = useState<OppFormTab>('details')
   const [samUrl, setSamUrl] = useState('')
   const [importing, setImporting] = useState(false)
-  const [lastImportedUrl, setLastImportedUrl] = useState('')
-  const [lastAttemptedUrl, setLastAttemptedUrl] = useState('')
   const [initialComment, setInitialComment] = useState('')
   const buildSamApiKey = getBuildSamGovApiKey()
   const [samApiKey, setSamApiKey] = useState(() => buildSamApiKey ? '' : getSavedSamGovApiKey())
@@ -910,7 +891,6 @@ function CreateModal({ onClose }: { onClose: () => void }) {
   const handleImport = async () => {
     const url = samUrl.trim()
     if (!url || importing) return
-    setLastAttemptedUrl(url)
 
     const apiKey = buildSamApiKey || samApiKey.trim()
     if (!apiKey) {
@@ -999,8 +979,6 @@ function CreateModal({ onClose }: { onClose: () => void }) {
       }))
 
       toast.success('Details imported from SAM.gov!')
-      setLastImportedUrl(url)
-      setLastAttemptedUrl(url)
       setTab('details')
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Unknown error'
@@ -1010,17 +988,6 @@ function CreateModal({ onClose }: { onClose: () => void }) {
       setImporting(false)
     }
   }
-
-  useEffect(() => {
-    const url = samUrl.trim()
-    if (!shouldAutoImportSamGovUrl({ url, lastImportedUrl, lastAttemptedUrl, importing })) return
-
-    const timer = window.setTimeout(() => {
-      void handleImport()
-    }, 600)
-
-    return () => window.clearTimeout(timer)
-  }, [samUrl, lastImportedUrl, lastAttemptedUrl, importing])
 
   const handleCreate = () => {
     if (!form.solicitation?.trim()) { toast.error('Solicitation title is required'); setTab('details'); return }
