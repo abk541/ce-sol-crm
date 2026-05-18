@@ -73,7 +73,7 @@ export default function LoginPage() {
         </div>
 
         <div className="p-px rounded-2xl" style={{ background: 'linear-gradient(135deg, rgba(215,190,122,0.70), rgba(31,122,120,0.45))', boxShadow: '0 24px 80px rgba(0,0,0,0.46)' }}>
-          <div className="rounded-2xl p-8" style={{ background: 'rgba(251,252,248,0.98)' }}>
+          <div className="rounded-2xl p-8" style={{ background: 'linear-gradient(180deg, rgba(16,40,32,0.96), rgba(10,29,43,0.98))' }}>
             <AnimatePresence mode="wait">
               {step === 'credentials' ? (
                 <motion.div key="creds"
@@ -127,13 +127,13 @@ export default function LoginPage() {
 
                     <button type="submit" disabled={loading} className="btn-primary w-full justify-center mt-2">
                       {loading ? <Loader size={14} className="animate-spin" /> : <ArrowRight size={14} />}
-                      {loading ? 'Signing in…' : 'Continue'}
+                      {loading ? 'Signing in...' : 'Continue'}
                     </button>
                   </form>
 
                   <div className="mt-6 p-3 rounded-xl" style={{ border: '1px solid rgba(184,145,78,0.24)', background: 'rgba(184,145,78,0.08)' }}>
                     <p className="text-[11px] text-slate-500 font-medium mb-1">Demo credentials</p>
-                    <p className="text-[11px]" style={{ color: '#0F4F59' }}>abk@cesolutionplus.com - abk123</p>
+                    <p className="text-[11px]" style={{ color: '#D7BE7A' }}>abk@cesolutionplus.com - abk123</p>
                     <p className="text-[11px] text-slate-500">Then enter any 6 digits for MFA</p>
                   </div>
                 </motion.div>
@@ -178,12 +178,12 @@ export default function LoginPage() {
                     <button type="submit" disabled={loading || mfaCode.length !== 6}
                       className="btn-primary w-full justify-center">
                       {loading ? <Loader size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
-                      {loading ? 'Verifying…' : 'Verify & Sign in'}
+                      {loading ? 'Verifying...' : 'Verify & Sign in'}
                     </button>
 
                     <button type="button" onClick={() => { setStep('credentials'); setError('') }}
                       className="btn-ghost w-full justify-center text-slate-500">
-                      ← Back to credentials
+                      Back to credentials
                     </button>
                   </form>
                 </motion.div>

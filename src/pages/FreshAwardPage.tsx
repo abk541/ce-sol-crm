@@ -45,10 +45,10 @@ function AssignModal({ award, onClose, onAssign, onMove }: AssignModalProps) {
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.96, y: 12 }}
         className="rounded-2xl w-full max-w-lg overflow-hidden"
-        style={{ background: '#FFFFFF', border: '1px solid rgba(0,0,0,0.10)', boxShadow: '0 24px 80px rgba(0,0,0,0.15)' }}
+        style={{ background: 'var(--bg-card)', border: '1px solid var(--border-default)', boxShadow: '0 24px 80px rgba(0,0,0,0.15)' }}
       >
         {/* Header */}
-        <div className="flex items-center gap-3 p-5 border-b" style={{ borderColor: 'rgba(0,0,0,0.08)' }}>
+        <div className="flex items-center gap-3 p-5 border-b" style={{ borderColor: 'var(--border-default)' }}>
           <div className="w-9 h-9 rounded-xl bg-indigo-50 flex items-center justify-center">
             <UserPlus size={16} className="text-indigo-600" />
           </div>
@@ -97,7 +97,7 @@ function AssignModal({ award, onClose, onAssign, onMove }: AssignModalProps) {
         </div>
 
         {/* Footer */}
-        <div className="flex gap-2 p-5 border-t" style={{ borderColor: 'rgba(0,0,0,0.08)' }}>
+        <div className="flex gap-2 p-5 border-t" style={{ borderColor: 'var(--border-default)' }}>
           <button onClick={onClose} className="btn-secondary flex-1 text-xs">Cancel</button>
           <button
             disabled={!allAssigned}
@@ -220,7 +220,7 @@ export default function FreshAwardPage() {
                               exit={{ opacity: 0, scale: 0.95, y: -4 }}
                               transition={{ duration: 0.12 }}
                               className="absolute right-0 top-7 z-30 rounded-xl py-1 w-44"
-                              style={{ background: '#FFFFFF', border: '1px solid rgba(0,0,0,0.10)', boxShadow: '0 8px 24px rgba(0,0,0,0.10)' }}
+                              style={{ background: 'var(--bg-card)', border: '1px solid var(--border-default)', boxShadow: '0 8px 24px rgba(0,0,0,0.10)' }}
                             >
                               <button
                                 onClick={() => { setSelected(fa); setMenuOpen(null) }}

@@ -19,10 +19,10 @@ export default function Layout() {
         position="bottom-right"
         toastOptions={{
           style: {
-            background: '#FBFCF8',
-            color: '#10202A',
-            border: '1px solid rgba(31,53,66,0.14)',
-            boxShadow: '0 14px 34px rgba(7,19,31,0.14), 0 2px 8px rgba(184,145,78,0.10)',
+            background: '#0A1D2B',
+            color: '#F8FBF7',
+            border: '1px solid rgba(215,190,122,0.18)',
+            boxShadow: '0 18px 44px rgba(0,0,0,0.34), 0 2px 10px rgba(184,145,78,0.12)',
             borderRadius: '10px',
             fontSize: '13px',
             fontWeight: 500,

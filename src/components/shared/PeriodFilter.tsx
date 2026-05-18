@@ -145,8 +145,8 @@ export default function PeriodFilter({
       <div
         className="flex w-full items-center rounded-xl border transition-all"
         style={isActive
-          ? { background: '#F4EBD8', color: '#0F4F59', borderColor: '#D7BE7A' }
-          : { background: '#FFFFFF', color: '#445C62', borderColor: '#C8D3CF' }}
+          ? { background: 'rgba(184,145,78,0.18)', color: '#F8FBF7', borderColor: '#D7BE7A' }
+          : { background: 'rgba(255,255,255,0.065)', color: '#C7D7D3', borderColor: 'rgba(215,190,122,0.22)' }}
       >
         <button
           type="button"
@@ -161,7 +161,7 @@ export default function PeriodFilter({
           <button
             type="button"
             onClick={clear}
-            className="mr-2 flex h-5 w-5 items-center justify-center rounded-md text-[#B8914E] hover:bg-[#F4EBD8] hover:text-[#0F4F59] transition-colors"
+            className="mr-2 flex h-5 w-5 items-center justify-center rounded-md text-[#D7BE7A] hover:bg-white/10 hover:text-white transition-colors"
             aria-label="Clear date range"
           >
             <X size={11} />
@@ -178,23 +178,23 @@ export default function PeriodFilter({
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.96, y: -6 }}
             transition={{ type: 'spring', stiffness: 380, damping: 28 }}
-            className="fixed z-[9999] w-[320px] rounded-2xl border border-slate-200 bg-white p-4 shadow-xl"
-            style={{ top: panelPos.top, left: panelPos.left, boxShadow: '0 12px 40px rgba(0,0,0,0.12)' }}
+            className="fixed z-[9999] w-[320px] rounded-2xl border p-4 shadow-xl"
+            style={{ top: panelPos.top, left: panelPos.left, background: '#0A1D2B', borderColor: 'rgba(215,190,122,0.22)', boxShadow: '0 18px 52px rgba(0,0,0,0.38)' }}
           >
             <div className="flex items-center justify-between mb-3">
               <button
                 type="button"
                 onClick={() => changeMonth(-1)}
-                className="h-8 w-8 rounded-lg flex items-center justify-center text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition-colors"
+                className="h-8 w-8 rounded-lg flex items-center justify-center text-stone-400 hover:bg-white/10 hover:text-stone-100 transition-colors"
                 aria-label="Previous month"
               >
                 <ChevronLeft size={15} />
               </button>
-              <div className="text-sm font-bold text-slate-800">{monthLabel}</div>
+              <div className="text-sm font-bold text-stone-100">{monthLabel}</div>
               <button
                 type="button"
                 onClick={() => changeMonth(1)}
-                className="h-8 w-8 rounded-lg flex items-center justify-center text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition-colors"
+                className="h-8 w-8 rounded-lg flex items-center justify-center text-stone-400 hover:bg-white/10 hover:text-stone-100 transition-colors"
                 aria-label="Next month"
               >
                 <ChevronRight size={15} />
@@ -203,7 +203,7 @@ export default function PeriodFilter({
 
             <div className="grid grid-cols-7 gap-1 mb-1">
               {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, i) => (
-                <div key={`${d}-${i}`} className="h-7 flex items-center justify-center text-[10px] font-bold text-slate-400">
+                <div key={`${d}-${i}`} className="h-7 flex items-center justify-center text-[10px] font-bold text-stone-500">
                   {d}
                 </div>
               ))}
@@ -225,10 +225,10 @@ export default function PeriodFilter({
                       isEdge
                         ? 'bg-[#0F4F59] text-white shadow-sm'
                         : inRange
-                          ? 'bg-[#E7F2EF] text-[#0F4F59]'
+                          ? 'bg-[#D7BE7A]/20 text-[#F8FBF7]'
                           : day.inMonth
-                            ? 'text-slate-700 hover:bg-slate-100'
-                            : 'text-slate-300 hover:bg-slate-50'
+                            ? 'text-stone-200 hover:bg-white/10'
+                            : 'text-stone-600 hover:bg-white/5'
                     } ${isToday && !isEdge ? 'ring-1 ring-[#D7BE7A]' : ''}`}
                   >
                     {day.date.getDate()}
@@ -237,17 +237,18 @@ export default function PeriodFilter({
               })}
             </div>
 
-            <div className="mt-4 flex items-center justify-between gap-3 border-t border-slate-100 pt-3">
+            <div className="mt-4 flex items-center justify-between gap-3 border-t pt-3" style={{ borderColor: 'rgba(215,190,122,0.14)' }}>
               <div className="min-w-0">
-                <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Selected range</p>
-                <p className="truncate text-xs font-semibold text-slate-700">
+                <p className="text-[10px] font-bold uppercase tracking-wide text-stone-500">Selected range</p>
+                <p className="truncate text-xs font-semibold text-stone-200">
                   {draftFrom && draftTo ? rangeLabel(draftFrom, draftTo) : draftFrom ? `${formatDate(draftFrom)} - choose end date` : 'All dates'}
                 </p>
               </div>
               <button
                 type="button"
                 onClick={clear}
-                className="flex-shrink-0 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-500 hover:bg-slate-50 hover:text-slate-800 transition-colors"
+                className="flex-shrink-0 rounded-lg border px-3 py-1.5 text-xs font-semibold text-stone-400 hover:bg-white/10 hover:text-stone-100 transition-colors"
+                style={{ borderColor: 'rgba(215,190,122,0.18)' }}
               >
                 Clear
               </button>
@@ -273,15 +274,15 @@ export function PeriodFilterPills({
   className?: string
 }) {
   return (
-    <div className={`flex gap-0.5 p-0.5 bg-slate-100 rounded-xl border border-slate-200 ${className}`}>
+    <div className={`flex gap-0.5 p-0.5 rounded-xl border ${className}`} style={{ background: 'rgba(255,255,255,0.045)', borderColor: 'rgba(215,190,122,0.16)' }}>
       {PERIODS.map(p => (
         <button
           key={p}
           onClick={() => onChange(p)}
           className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
             value === p
-              ? 'bg-white text-[#0F4F59] shadow-sm border border-[#D7BE7A]/40'
-              : 'text-slate-500 hover:text-slate-700 hover:bg-white/50'
+              ? 'text-white shadow-sm border border-[#D7BE7A]/40 bg-[#B8914E]/20'
+              : 'text-stone-400 hover:text-stone-100 hover:bg-white/10'
           }`}
         >
           {p}

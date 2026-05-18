@@ -241,12 +241,16 @@ function ModalWrap({ onClose, title, subtitle, children, maxW = 'max-w-2xl' }: {
       <div className="absolute inset-0" style={{ background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(6px)' }} onClick={onClose} />
       <motion.div
         className={`relative z-10 w-full ${maxW} max-h-[90vh] overflow-y-auto rounded-2xl`}
-        style={{ background: '#FFFFFF', border: '1px solid rgba(0,0,0,0.10)' }}
+        style={{
+          background: 'linear-gradient(180deg, rgba(16,40,32,0.98), rgba(10,29,43,0.98))',
+          border: '1px solid rgba(215,190,122,0.18)',
+          boxShadow: '0 30px 90px rgba(0,0,0,0.46)',
+        }}
         initial={{ opacity: 0, scale: 0.95, y: 12 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.95, y: 12 }}
         transition={{ type: 'spring', stiffness: 320, damping: 26 }}>
-        <div className="sticky top-0 flex items-center justify-between px-6 py-4 z-10" style={{ background: '#FFFFFF', borderBottom: '1px solid rgba(0,0,0,0.08)' }}>
+        <div className="sticky top-0 flex items-center justify-between px-6 py-4 z-10" style={{ background: 'rgba(7,19,31,0.96)', borderBottom: '1px solid rgba(215,190,122,0.16)' }}>
           <div>
             <h2 className="text-base font-bold text-slate-900">{title}</h2>
             {subtitle && <p className="text-xs text-slate-500 mt-0.5 truncate max-w-xs">{subtitle}</p>}
@@ -285,8 +289,12 @@ function OppModalShell({ title, subtitle, tab, setTab, onClose, extraHeader, foo
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
       <div className="absolute inset-0" style={{ background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(6px)' }} onClick={onClose} />
       <motion.div
-        className="relative z-10 w-full max-w-4xl bg-white rounded-2xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden"
-        style={{ height: 'min(88vh, 760px)' }}
+        className="relative z-10 w-full max-w-4xl rounded-2xl shadow-2xl border flex flex-col overflow-hidden"
+        style={{
+          height: 'min(88vh, 760px)',
+          background: 'linear-gradient(180deg, rgba(16,40,32,0.98), rgba(10,29,43,0.98))',
+          borderColor: 'rgba(215,190,122,0.18)',
+        }}
         initial={{ opacity: 0, scale: 0.96, y: 10 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.96, y: 10 }}
@@ -335,7 +343,10 @@ function OppModalShell({ title, subtitle, tab, setTab, onClose, extraHeader, foo
         </div>
 
         {/* ── Footer ── */}
-        <div className="flex-shrink-0 px-7 py-4 bg-slate-50/80 border-t border-slate-200">
+        <div
+          className="flex-shrink-0 px-7 py-4 border-t"
+          style={{ background: 'rgba(7,19,31,0.88)', borderColor: 'rgba(215,190,122,0.16)' }}
+        >
           {footer}
         </div>
       </motion.div>
@@ -1130,11 +1141,11 @@ function CreateModal({ onClose }: { onClose: () => void }) {
             </button>
           </div>
           {!buildSamApiKey && (
-            <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+            <div className="rounded-xl border p-3" style={{ background: 'rgba(184,145,78,0.10)', borderColor: 'rgba(215,190,122,0.32)' }}>
               {showSamApiKeyField ? (
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                   <div className="min-w-0 flex-1">
-                    <label className="block text-[10px] font-bold uppercase tracking-wide text-amber-700 mb-1">
+                    <label className="block text-[10px] font-bold uppercase tracking-wide text-[#D7BE7A] mb-1">
                       SAM.gov API key
                     </label>
                     <input
@@ -1161,7 +1172,7 @@ function CreateModal({ onClose }: { onClose: () => void }) {
                 </div>
               ) : (
                 <div className="flex items-center justify-between gap-3">
-                  <p className="text-xs font-medium text-amber-800">
+                  <p className="text-xs font-medium text-[#F8FBF7]">
                     Using a SAM.gov API key saved in this browser.
                   </p>
                   <button
@@ -1171,7 +1182,7 @@ function CreateModal({ onClose }: { onClose: () => void }) {
                       setSamApiKey('')
                       setShowSamApiKeyField(true)
                     }}
-                    className="text-xs font-semibold text-amber-700 hover:text-amber-900"
+                    className="text-xs font-semibold text-[#D7BE7A] hover:text-white"
                   >
                     Change key
                   </button>
@@ -1405,7 +1416,7 @@ function RowMenu({
             exit={{ opacity: 0, scale: 0.95, y: -4 }}
             transition={{ type: 'spring', stiffness: 400, damping: 28 }}
             className="absolute right-0 top-8 z-30 rounded-xl py-1 w-44"
-            style={{ background: '#FFFFFF', border: '1px solid rgba(0,0,0,0.10)', boxShadow: '0 8px 24px rgba(0,0,0,0.10)' }}>
+            style={{ background: 'var(--bg-card)', border: '1px solid var(--border-default)', boxShadow: '0 8px 24px rgba(0,0,0,0.10)' }}>
             <button
               onClick={e => { e.stopPropagation(); setMenuOpen(false); onViewDetails() }}
               className="w-full text-left px-3 py-2 text-xs font-semibold flex items-center gap-2 transition-colors"
@@ -1846,7 +1857,7 @@ export default function PipelinePage() {
                     <td className="text-slate-500 text-xs whitespace-nowrap group relative">
                       <span className="cursor-help">{o.localTime} {o.timezone}</span>
                       {o.localTime && o.timezone && (
-                        <div className="hidden group-hover:block absolute bottom-full left-0 mb-1 z-30 rounded-lg px-2.5 py-1.5 text-[10px] whitespace-nowrap shadow-lg font-medium" style={{ background: '#FFFFFF', border: '1px solid rgba(0,0,0,0.10)', color: '#6366F1', boxShadow: '0 4px 12px rgba(0,0,0,0.10)' }}>
+                        <div className="hidden group-hover:block absolute bottom-full left-0 mb-1 z-30 rounded-lg px-2.5 py-1.5 text-[10px] whitespace-nowrap shadow-lg font-medium" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-default)', color: '#6366F1', boxShadow: '0 4px 12px rgba(0,0,0,0.10)' }}>
                           <Clock size={9} className="inline mr-1" />{convertTime(o.localTime, o.timezone)}
                         </div>
                       )}

@@ -1,4 +1,4 @@
-﻿import { useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   DollarSign, Target, Send, FileCheck2,
@@ -307,9 +307,9 @@ function KpiDetailDrawer({
       initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }}
       transition={{ type: 'spring', stiffness: 280, damping: 30 }}
       className="fixed right-0 top-0 h-screen w-full max-w-sm z-50 flex flex-col"
-      style={{ background: '#FFFFFF', borderLeft: '1px solid rgba(0,0,0,0.10)', boxShadow: '0 0 80px rgba(0,0,0,0.15)' }}
+      style={{ background: 'var(--bg-card)', borderLeft: '1px solid var(--border-default)', boxShadow: '0 0 80px rgba(0,0,0,0.15)' }}
     >
-      <div className="flex-shrink-0 flex items-center gap-3 p-5" style={{ background: '#FFFFFF', borderBottom: '1px solid rgba(0,0,0,0.08)' }}>
+      <div className="flex-shrink-0 flex items-center gap-3 p-5" style={{ background: 'var(--bg-card)', borderBottom: '1px solid var(--border-default)' }}>
         <div className="w-9 h-9 rounded-xl flex items-center justify-center"
           style={{ background: kpi.color + '15' }}>
           <div className="w-2.5 h-2.5 rounded-full" style={{ background: kpi.color }} />
@@ -951,8 +951,8 @@ function AdminDashboard() {
                 <div key={item.label}
                   className="flex items-center justify-between p-3 rounded-xl transition-all hover:scale-[1.01] cursor-pointer"
                   style={{
-                    background: item.count > 0 ? `${item.color}0A` : '#F8FAFC',
-                    border: `1px solid ${item.count > 0 ? item.color + '30' : '#E2E8F0'}`,
+                    background: item.count > 0 ? `${item.color}18` : 'rgba(255,255,255,0.045)',
+                    border: `1px solid ${item.count > 0 ? item.color + '45' : 'rgba(215,190,122,0.14)'}`,
                   }}
                   onClick={() => navigate(item.nav)}>
                   <div>

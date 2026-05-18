@@ -23,9 +23,9 @@ function ExportModal({ pp, onClose }: { pp: PastPerformance; onClose: () => void
         animate={{ opacity: 1, scale: 1 }}
         exit={{ opacity: 0, scale: 0.96 }}
         className="rounded-2xl w-full max-w-lg"
-        style={{ background: '#FFFFFF', border: '1px solid rgba(0,0,0,0.10)' }}
+        style={{ background: 'var(--bg-card)', border: '1px solid var(--border-default)' }}
       >
-        <div className="border-b p-5 flex items-center gap-3" style={{ borderColor: 'rgba(0,0,0,0.08)' }}>
+        <div className="border-b p-5 flex items-center gap-3" style={{ borderColor: 'var(--border-default)' }}>
           <div className="w-9 h-9 rounded-xl bg-indigo-50 flex items-center justify-center">
             <Download size={16} className="text-indigo-600" />
           </div>
@@ -58,7 +58,7 @@ function ExportModal({ pp, onClose }: { pp: PastPerformance; onClose: () => void
           </p>
         </div>
 
-        <div className="flex gap-2 p-5 border-t" style={{ borderColor: 'rgba(0,0,0,0.08)' }}>
+        <div className="flex gap-2 p-5 border-t" style={{ borderColor: 'var(--border-default)' }}>
           <button onClick={onClose} className="btn-secondary flex-1 text-xs">Cancel</button>
           <button
             disabled={!desc.trim()}
@@ -83,9 +83,9 @@ function DetailDrawerPP({ pp, onClose, onExport }: { pp: PastPerformance; onClos
       initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }}
       transition={{ type: 'spring', stiffness: 280, damping: 30 }}
       className="fixed right-0 top-0 h-screen w-full max-w-lg z-50 overflow-y-auto"
-      style={{ background: '#FFFFFF', borderLeft: '1px solid rgba(0,0,0,0.10)', boxShadow: '0 0 80px rgba(0,0,0,0.15)' }}
+      style={{ background: 'var(--bg-card)', borderLeft: '1px solid var(--border-default)', boxShadow: '0 0 80px rgba(0,0,0,0.15)' }}
     >
-      <div className="sticky top-0 border-b p-5 flex items-center gap-3 z-10" style={{ background: '#F8FAFC', borderColor: 'rgba(0,0,0,0.08)' }}>
+      <div className="sticky top-0 border-b p-5 flex items-center gap-3 z-10" style={{ background: 'var(--bg-raised)', borderColor: 'var(--border-default)' }}>
         <div className="w-9 h-9 rounded-xl bg-indigo-50 flex items-center justify-center">
           <History size={16} className="text-indigo-600" />
         </div>
@@ -356,7 +356,7 @@ export default function PastPerformancesPage() {
                             exit={{ opacity: 0, scale: 0.95, y: -4 }}
                             transition={{ duration: 0.12 }}
                             className="absolute right-0 top-8 z-30 rounded-xl py-1 w-44"
-                            style={{ background: '#FFFFFF', border: '1px solid rgba(0,0,0,0.10)', boxShadow: '0 8px 24px rgba(0,0,0,0.10)' }}
+                            style={{ background: 'var(--bg-card)', border: '1px solid var(--border-default)', boxShadow: '0 8px 24px rgba(0,0,0,0.10)' }}
                           >
                             <button
                               onClick={() => { setSelected(pp); setMenuOpen(null) }}
@@ -385,7 +385,7 @@ export default function PastPerformancesPage() {
                             >
                               Export to PDF
                             </button>
-                            <div className="my-1 border-t" style={{ borderColor: 'rgba(0,0,0,0.08)' }} />
+                            <div className="my-1 border-t" style={{ borderColor: 'var(--border-default)' }} />
                             <button
                               onClick={() => { toast.error('Delete not yet implemented'); setMenuOpen(null) }}
                               className="block w-full text-left px-3 py-2 text-xs font-medium transition-colors"

@@ -18,6 +18,8 @@ export default function CompanyLogo({ variant = 'full', className = '', height =
         objectFit: 'contain',
         display: 'block',
         flexShrink: 0,
+        filter: 'brightness(0) invert(1)',
+        opacity: 0.94,
       }}
     />
   )

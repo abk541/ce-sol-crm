@@ -37,7 +37,7 @@ function SubmitReportModal({ oppId, oppName, onClose }: { oppId: string; oppName
       <div className="absolute inset-0" style={{ background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(8px)' }} onClick={onClose} />
       <motion.div
         className="relative w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden"
-        style={{ background: '#FFFFFF', border: '1px solid rgba(0,0,0,0.10)' }}
+        style={{ background: 'var(--bg-card)', border: '1px solid var(--border-default)' }}
         initial={{ scale: 0.94, opacity: 0, y: 12 }}
         animate={{ scale: 1, opacity: 1, y: 0 }}
         exit={{ scale: 0.94, opacity: 0 }}
@@ -94,7 +94,7 @@ function ReviewModal({ reportId, onClose }: { reportId: string; onClose: () => v
       <div className="absolute inset-0" style={{ background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(8px)' }} onClick={onClose} />
       <motion.div
         className="relative w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden"
-        style={{ background: '#FFFFFF', border: '1px solid rgba(0,0,0,0.10)' }}
+        style={{ background: 'var(--bg-card)', border: '1px solid var(--border-default)' }}
         initial={{ scale: 0.94, opacity: 0, y: 12 }}
         animate={{ scale: 1, opacity: 1, y: 0 }}
         exit={{ scale: 0.94, opacity: 0 }}
@@ -161,7 +161,7 @@ function ReportCard({
   return (
     <motion.div variants={fadeUp}
       className="relative rounded-2xl p-5 border shadow-sm hover:shadow-md transition-shadow"
-      style={{ background: '#FFFFFF', borderColor: meta.border, borderLeftWidth: 3, borderLeftColor: meta.color }}>
+      style={{ background: 'var(--bg-card)', borderColor: meta.border, borderLeftWidth: 3, borderLeftColor: meta.color }}>
 
       {/* "..." menu button */}
       <div className="absolute top-3 right-3">
@@ -181,7 +181,7 @@ function ReportCard({
               exit={{ opacity: 0, scale: 0.95, y: -4 }}
               transition={{ type: 'spring', stiffness: 400, damping: 28 }}
               className="absolute right-0 top-8 z-30 rounded-xl py-1 w-44"
-              style={{ background: '#FFFFFF', border: '1px solid rgba(0,0,0,0.10)', boxShadow: '0 8px 24px rgba(0,0,0,0.10)' }}>
+              style={{ background: 'var(--bg-card)', border: '1px solid var(--border-default)', boxShadow: '0 8px 24px rgba(0,0,0,0.10)' }}>
               {isManager && r.status === 'PENDING' && (
                 <>
                   <button
@@ -200,7 +200,7 @@ function ReportCard({
                     onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = ''; (e.currentTarget as HTMLButtonElement).style.color = '#DC2626' }}>
                     <XCircle size={12} /> Decline
                   </button>
-                  <div className="my-1 border-t" style={{ borderColor: 'rgba(0,0,0,0.08)' }} />
+                  <div className="my-1 border-t" style={{ borderColor: 'var(--border-default)' }} />
                 </>
               )}
               <button

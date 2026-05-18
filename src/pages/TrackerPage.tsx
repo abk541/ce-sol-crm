@@ -1,4 +1,4 @@
-ï»¿import { useState, useMemo } from 'react'
+import { useState, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   ListChecks, Send, Trash2, CheckCircle2, XCircle,
@@ -57,7 +57,7 @@ function StatusDropdown({ oppId, current, canEdit }: { oppId: string; current: O
 
   const handleChange = (s: OppStatus) => {
     if (s === 'WON') {
-      // Guard: create a FreshAward only if one doesnâ€™t already exist for this opportunity
+      // Guard: create a FreshAward only if one doesn’t already exist for this opportunity
       const alreadyAwarded = freshAwards.some(fa => fa.opportunityId === oppId)
       if (alreadyAwarded) {
         updateOpportunity(oppId, { status: 'WON' })
@@ -91,7 +91,7 @@ function StatusDropdown({ oppId, current, canEdit }: { oppId: string; current: O
             exit={{ opacity: 0, y: -4, scale: 0.96 }}
             transition={{ duration: 0.12 }}
             className="absolute right-0 top-full mt-1 z-50 rounded-xl overflow-hidden min-w-[150px]"
-            style={{ background: '#FFFFFF', border: '1px solid rgba(0,0,0,0.10)', boxShadow: '0 8px 24px rgba(0,0,0,0.10)' }}>
+            style={{ background: 'var(--bg-card)', border: '1px solid var(--border-default)', boxShadow: '0 8px 24px rgba(0,0,0,0.10)' }}>
             {options.map(s => (
               <button key={s}
                 onClick={e => { e.stopPropagation(); handleChange(s) }}
@@ -128,7 +128,7 @@ function Paginator({ total, perPage, page, onPage, onPerPage }: {
       <div className="flex items-center gap-3 text-xs text-slate-500">
         {perPage === 'all'
           ? `All ${total} rows`
-          : `${Math.min((page - 1) * (perPage as number) + 1, total)}â€“${Math.min(page * (perPage as number), total)} of ${total}`}
+          : `${Math.min((page - 1) * (perPage as number) + 1, total)}–${Math.min(page * (perPage as number), total)} of ${total}`}
         <div className="flex gap-1">
           <button onClick={() => onPage(page - 1)} disabled={page <= 1}
             className="w-6 h-6 rounded flex items-center justify-center hover:bg-slate-100 disabled:opacity-30 transition-colors">
@@ -300,7 +300,7 @@ export default function TrackerPage() {
                                 exit={{ opacity: 0, scale: 0.95, y: -4 }}
                                 transition={{ duration: 0.12 }}
                                 className="absolute right-0 top-8 z-30 rounded-xl py-1 w-40"
-                                style={{ background: '#FFFFFF', border: '1px solid rgba(0,0,0,0.10)', boxShadow: '0 8px 24px rgba(0,0,0,0.10)' }}>
+                                style={{ background: 'var(--bg-card)', border: '1px solid var(--border-default)', boxShadow: '0 8px 24px rgba(0,0,0,0.10)' }}>
                                 <button
                                   onClick={() => { setSelected(o); setMenuOpen(null) }}
                                   className="block w-full text-left px-3 py-2 text-xs font-medium transition-colors"

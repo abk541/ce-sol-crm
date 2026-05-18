@@ -121,14 +121,14 @@ function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClo
         transition={{ type: 'spring', stiffness: 300, damping: 28 }}
         className="w-full max-w-2xl max-h-[90vh] flex flex-col rounded-2xl overflow-hidden"
         style={{
-          background: '#FFFFFF',
-          border: '1px solid rgba(0,0,0,0.10)',
+          background: 'var(--bg-card)',
+          border: '1px solid var(--border-default)',
           boxShadow: '0 20px 48px rgba(0,0,0,0.12), 0 8px 20px rgba(0,0,0,0.08)',
           pointerEvents: 'all',
         }}
       >
       {/* Header */}
-      <div className="flex-shrink-0 p-5 flex items-start gap-3" style={{ borderBottom: '1px solid rgba(0,0,0,0.08)' }}>
+      <div className="flex-shrink-0 p-5 flex items-start gap-3" style={{ borderBottom: '1px solid var(--border-default)' }}>
         <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
           style={{ background: meta.bg, border: `1px solid ${meta.border}` }}>
           <FileCheck2 size={16} style={{ color: meta.color }} />
@@ -148,7 +148,7 @@ function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClo
       </div>
 
       {/* Tab bar */}
-      <div className="flex-shrink-0 flex gap-0.5 px-3 py-2 overflow-x-auto" style={{ borderBottom: '1px solid rgba(0,0,0,0.08)' }}>
+      <div className="flex-shrink-0 flex gap-0.5 px-3 py-2 overflow-x-auto" style={{ borderBottom: '1px solid var(--border-default)' }}>
         {[
           { key: 'overview', label: 'Overview', icon: Info },
           { key: 'poc', label: `PoC (${(contract.pocs || []).length})`, icon: UserPlus },
@@ -588,7 +588,7 @@ function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClo
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.96, y: 12 }}
               className="relative z-10 w-full max-w-md rounded-2xl bg-white shadow-2xl"
-              style={{ border: '1px solid rgba(0,0,0,0.10)' }}
+              style={{ border: '1px solid var(--border-default)' }}
             >
               <div className="px-6 py-4 border-b border-slate-100">
                 <h3 className="text-base font-bold text-slate-900">Terminate Contract</h3>
@@ -643,7 +643,7 @@ function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClo
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.96, y: 12 }}
               className="relative z-10 w-full max-w-lg rounded-2xl bg-white shadow-2xl"
-              style={{ border: '1px solid rgba(0,0,0,0.10)' }}
+              style={{ border: '1px solid var(--border-default)' }}
             >
               <div className="px-6 py-4 border-b border-slate-100">
                 <h3 className="text-base font-bold text-slate-900">Generate Past Performance</h3>
@@ -759,7 +759,7 @@ function AssignModal({ award, onClose }: { award: FreshAward; onClose: () => voi
         onClick={onClose} />
       <motion.div
         className="relative w-full max-w-md rounded-2xl shadow-2xl overflow-hidden"
-        style={{ background: '#FFFFFF', border: '1px solid rgba(0,0,0,0.10)' }}
+        style={{ background: 'var(--bg-card)', border: '1px solid var(--border-default)' }}
         initial={{ scale: 0.94, opacity: 0, y: 12 }}
         animate={{ scale: 1, opacity: 1, y: 0 }}
         exit={{ scale: 0.94, opacity: 0 }}
@@ -1127,7 +1127,7 @@ export default function ContractsPage() {
                               animate={{ opacity: 1, scale: 1, y: 0 }}
                               exit={{ opacity: 0, scale: 0.95, y: -5 }}
                               className="absolute right-0 top-8 z-30 rounded-xl py-1 w-44"
-                            style={{ background: '#FFFFFF', border: '1px solid rgba(0,0,0,0.10)', boxShadow: '0 8px 24px rgba(0,0,0,0.10)' }}
+                            style={{ background: 'var(--bg-card)', border: '1px solid var(--border-default)', boxShadow: '0 8px 24px rgba(0,0,0,0.10)' }}
                             >
                               {[
                                 { label: 'View Details', icon: ChevronRight, action: () => { setSelected(c); setMenuOpen(null) } },
