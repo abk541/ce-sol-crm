@@ -184,7 +184,7 @@ export const useStore = create<AppState>()(
         return { ok: true }
       },
 
-      logout: () => set({ currentUser: null, isAuthenticated: false, needsFirstLogin: false, needsMFASetup: false, loginTimestamp: null }),
+      logout: () => set({ currentUser: null, isAuthenticated: false, needsFirstLogin: false, needsMFASetup: false, loginTimestamp: null, dbReady: false }),
 
       completeFirstLogin: (_password) => {
         const u = get().currentUser
@@ -273,6 +273,7 @@ export const useStore = create<AppState>()(
         }))
         const opp = get().opportunities.find(o => o.id === id)
         if (opp) {
+          upsertOpportunity(opp)
           get().addNotification({
             type: 'CONTRACT_SUBMITTED',
             title: 'Proposal submitted',
@@ -606,8 +607,12 @@ export const useStore = create<AppState>()(
       moveFreshAwardToActive: (id) => {
         const fa = get().freshAwards.find(f => f.id === id)
         if (!fa) return
+
+        // Generate the contract ID once so it stays consistent on both the
+        // contract record AND the fresh award's contractId field.
+        const newContractId = `c${Date.now()}`
         const contract: Contract = {
-          id: `c${Date.now()}`,
+          id: newContractId,
           contractId: fa.solicitationId,
           title: fa.solicitation,
           prime: fa.prime,
@@ -629,16 +634,29 @@ export const useStore = create<AppState>()(
           supportAgent: fa.assignedSupportAgent,
           opportunityId: fa.opportunityId,
         }
-        get().createContract(contract)
+
+        // Write contract + updated award in a single set() call to keep state consistent
         set(s => ({
+          contracts: [contract, ...s.contracts],
           freshAwards: s.freshAwards.map(f =>
             f.id === id
-              ? { ...f, status: 'MOVED_TO_ACTIVE', contractId: contract.id, movedAt: new Date().toISOString() }
+              ? { ...f, status: 'MOVED_TO_ACTIVE', contractId: newContractId, movedAt: new Date().toISOString() }
               : f
-          )
+          ),
         }))
+
+        // Persist both to Supabase
+        upsertContract(contract)
         const movedFa = get().freshAwards.find(f => f.id === id)
         if (movedFa) upsertFreshAward(movedFa)
+
+        get().addNotification({
+          type: 'CONTRACT_CREATED',
+          title: 'Contract activated',
+          message: `${fa.solicitation} has been moved to active contracts.`,
+          read: false,
+          relatedId: newContractId,
+        })
         get().logActivity({
           action: `Moved Fresh Award to Active Contract: ${fa.solicitation}`,
           user: get().currentUser?.name || 'System',
@@ -739,6 +757,8 @@ export const useStore = create<AppState>()(
               o.id === report.opportunityId ? { ...o, status: newStatus } : o
             )
           }))
+          const updatedOpp = get().opportunities.find(o => o.id === report.opportunityId)
+          if (updatedOpp) upsertOpportunity(updatedOpp)
         }
       },
 
@@ -758,6 +778,8 @@ export const useStore = create<AppState>()(
             o.id === opportunityId ? { ...o, deletionRequested: true } : o
           )
         }))
+        const markedOpp = get().opportunities.find(o => o.id === opportunityId)
+        if (markedOpp) upsertOpportunity(markedOpp)
         get().addNotification({
           type: 'DELETION_REQUEST',
           title: 'Deletion request submitted',
@@ -785,12 +807,16 @@ export const useStore = create<AppState>()(
                 : o
             )
           }))
+          const deletedOpp = get().opportunities.find(o => o.id === req.opportunityId)
+          if (deletedOpp) upsertOpportunity(deletedOpp)
         } else if (req && action === 'DECLINED') {
           set(s => ({
             opportunities: s.opportunities.map(o =>
               o.id === req.opportunityId ? { ...o, deletionRequested: false } : o
             )
           }))
+          const reinstatedOpp = get().opportunities.find(o => o.id === req.opportunityId)
+          if (reinstatedOpp) upsertOpportunity(reinstatedOpp)
         }
       },
 
@@ -885,6 +911,24 @@ export const useStore = create<AppState>()(
       // ── UI ──────────────────────────────────────────────────────────
       toggleSidebar: () => set(s => ({ sidebarCollapsed: !s.sidebarCollapsed })),
     }),
-    { name: 'ces-crm-store', partialize: s => ({ sidebarCollapsed: s.sidebarCollapsed }) }
+    {
+      name: 'ces-crm-store',
+      // Persist all business data so changes survive logout/refresh
+      // (Supabase sync overrides this when connected; localStorage is the fallback)
+      partialize: s => ({
+        sidebarCollapsed:  s.sidebarCollapsed,
+        opportunities:     s.opportunities,
+        contracts:         s.contracts,
+        freshAwards:       s.freshAwards,
+        pastPerformances:  s.pastPerformances,
+        nonSubReports:     s.nonSubReports,
+        deletionRequests:  s.deletionRequests,
+        subcontractors:    s.subcontractors,
+        bdSubmissions:     s.bdSubmissions,
+        users:             s.users,
+        subkDatabase:      s.subkDatabase,
+        notifications:     s.notifications,
+      }),
+    }
   )
 )

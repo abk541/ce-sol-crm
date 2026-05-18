@@ -32,7 +32,10 @@ export default function App() {
   const { isAuthenticated } = useStore()
   const initializeStore = useStore(s => s.initializeStore)
 
-  useEffect(() => { initializeStore() }, [])
+  // Re-run every time the user logs in so Supabase data always wins over stale localStorage
+  useEffect(() => {
+    if (isAuthenticated) initializeStore()
+  }, [isAuthenticated])
 
   useEffect(() => {
     const checkSession = () => {
