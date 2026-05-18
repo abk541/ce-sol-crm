@@ -821,8 +821,6 @@ export async function clearBusinessData(): Promise<void> {
       'fresh_awards',
       'contracts',
       'opportunities',
-      'users',
-      'employees',
     ]) {
       const { error } = await supabase.from(table).delete().not('id', 'is', null)
       if (error) console.error(`[db] clear ${table} error`, error)

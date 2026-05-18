@@ -15,6 +15,7 @@ import type {
   GovernmentWarning, GovWarningType, FreshAward,
 } from '../types'
 import { formatCurrency } from '../lib/utils'
+import { generatePastPerformancePdf } from '../lib/pastPerformancePdf'
 
 // ── Status config ───────────────────────────────────────────────────────
 const STATUS_META: Record<ContractStatus, { label: string; color: string; bg: string; border: string }> = {
@@ -71,7 +72,7 @@ const POC_ROLE_LABELS = { KO: 'Contracting Officer', COR: 'COR', END_USER: 'End 
 // Detail Drawer
 // ─────────────────────────────────────────────────────────────────────────
 const ROLE_LABEL_C: Record<string, string> = {
-  BD_MANAGER: 'BD Manager',
+  BD_MANAGER: 'Manager',
   TEAM_LEAD: 'Team Lead',
   ASSOCIATE: 'Associate',
 }
@@ -82,8 +83,10 @@ const ROLE_COLOR_C: Record<string, { color: string; bg: string; border: string }
 }
 
 function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClose: () => void }) {
-  const { updateContract, addContractPoC, removeContractPoC, addLockedSubcontractor, addGovernmentWarning, resolveGovernmentWarning, advanceContractStatus, terminateContract, currentUser, employees } = useStore()
+  const { updateContract, addContractPoC, removeContractPoC, addLockedSubcontractor, addGovernmentWarning, resolveGovernmentWarning, advanceContractStatus, terminateContract, currentUser, employees, opportunities } = useStore()
   const [tab, setTab] = useState<'overview' | 'poc' | 'subk' | 'warnings' | 'deliverables'>('overview')
+  const [showPastPerformance, setShowPastPerformance] = useState(false)
+  const [pastPerformanceDescription, setPastPerformanceDescription] = useState('')
 
   // Terminate form
   const [showTerminate, setShowTerminate] = useState(false)
@@ -107,6 +110,7 @@ function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClo
 
   const nextStatus = STATUS_FLOW[contract.status]
   const meta = STATUS_META[contract.status]
+  const sourceOpportunity = contract.opportunityId ? opportunities.find(o => o.id === contract.opportunityId) : undefined
 
   return (
     <div className="fixed inset-0 z-[51] flex items-center justify-center p-4 sm:p-6" style={{ pointerEvents: 'none' }}>
@@ -214,7 +218,7 @@ function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClo
               <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Team</p>
               <div className="grid grid-cols-2 gap-2">
                 {[
-                  { label: 'Support', value: contract.supportAgent },
+                  { label: 'Associate', value: contract.supportAgent },
                 ].filter(t => t.value).map(t => (
                   <div key={t.label} className="flex items-center gap-2 p-2 rounded-lg bg-slate-50">
                     <span className="text-[10px] text-slate-400 w-10 flex-shrink-0">{t.label}</span>
@@ -280,6 +284,14 @@ function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClo
                 Advance to {STATUS_META[nextStatus].label}
               </button>
             )}
+
+            <button
+              onClick={() => setShowPastPerformance(true)}
+              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 transition-colors"
+            >
+              <FileText size={12} />
+              Generate Past Performance
+            </button>
 
             {/* Terminate button */}
             {!['TERMINATED','ARCHIVED','CANCELED'].includes(contract.status) && (
@@ -621,6 +633,62 @@ function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClo
           </div>
         )}
       </AnimatePresence>
+
+      <AnimatePresence>
+        {showPastPerformance && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+            <div className="absolute inset-0" style={{ background: 'rgba(15,23,42,0.55)', backdropFilter: 'blur(6px)' }} onClick={() => setShowPastPerformance(false)} />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96, y: 12 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: 12 }}
+              className="relative z-10 w-full max-w-lg rounded-2xl bg-white shadow-2xl"
+              style={{ border: '1px solid rgba(0,0,0,0.10)' }}
+            >
+              <div className="px-6 py-4 border-b border-slate-100">
+                <h3 className="text-base font-bold text-slate-900">Generate Past Performance</h3>
+                <p className="text-xs text-slate-500 mt-0.5">{contract.title}</p>
+              </div>
+              <div className="p-6 space-y-3">
+                <label className="block text-xs font-semibold text-slate-600">
+                  Project Description <span className="text-rose-500">*</span>
+                </label>
+                <textarea
+                  value={pastPerformanceDescription}
+                  onChange={e => setPastPerformanceDescription(e.target.value)}
+                  rows={6}
+                  className="input-field resize-none"
+                  placeholder="Enter the project description to place into the PDF template..."
+                />
+                <div className="rounded-xl bg-slate-50 border border-slate-100 px-3 py-2 text-xs text-slate-500">
+                  Date of contract and contract ID are filled from the awarded opportunity and active contract details.
+                </div>
+              </div>
+              <div className="flex gap-3 px-6 pb-6">
+                <button onClick={() => setShowPastPerformance(false)} className="btn-secondary flex-1 justify-center">Cancel</button>
+                <button
+                  onClick={async () => {
+                    if (!pastPerformanceDescription.trim()) {
+                      toast.error('Project description is required.')
+                      return
+                    }
+                    await generatePastPerformancePdf({
+                      contract,
+                      opportunity: sourceOpportunity,
+                      description: pastPerformanceDescription.trim(),
+                    })
+                    toast.success('Past performance PDF generated')
+                    setShowPastPerformance(false)
+                  }}
+                  className="btn-primary flex-1 justify-center gap-1.5"
+                >
+                  <FileText size={13} /> Generate PDF
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }
@@ -677,11 +745,11 @@ function AssignModal({ award, onClose }: { award: FreshAward; onClose: () => voi
   }
 
   const fields: { label: string; key: keyof typeof form }[] = [
-    { label: 'BDM', key: 'assignedBDM' },
-    { label: 'BDS', key: 'assignedBDS' },
+    { label: 'Manager', key: 'assignedBDM' },
+    { label: 'Team Lead', key: 'assignedBDS' },
     { label: 'SPM', key: 'assignedSPM' },
     { label: 'PM',  key: 'assignedPM'  },
-    { label: 'Support Agent', key: 'assignedSupportAgent' },
+    { label: 'Associate', key: 'assignedSupportAgent' },
   ]
 
   return (
@@ -785,8 +853,8 @@ function FreshAwardsTab() {
                       </td>
                       <td className="text-xs">
                         <div className="flex flex-col gap-0.5 text-[10px]">
-                          {fa.assignedBDM && <span><span className="text-slate-400">BDM:</span> {fa.assignedBDM}</span>}
-                          {fa.assignedBDS && <span><span className="text-slate-400">BDS:</span> {fa.assignedBDS}</span>}
+                          {fa.assignedBDM && <span><span className="text-slate-400">Manager:</span> {fa.assignedBDM}</span>}
+                          {fa.assignedBDS && <span><span className="text-slate-400">Team Lead:</span> {fa.assignedBDS}</span>}
                           {fa.assignedSPM && <span><span className="text-slate-400">SPM:</span> {fa.assignedSPM}</span>}
                           {fa.assignedPM  && <span><span className="text-slate-400">PM:</span>  {fa.assignedPM}</span>}
                           {!fa.assignedBDM && !fa.assignedBDS && !fa.assignedSPM && !fa.assignedPM && (

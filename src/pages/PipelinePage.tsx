@@ -5,13 +5,14 @@ import {
   Plus, X, ExternalLink, Loader,
   ChevronUp, ChevronDown, ChevronsUpDown,
   Edit2, Users2, Send, Trash2, Clock,
-  FileText, PlusCircle, Download, Filter, MoreHorizontal, Trophy,
+  FileText, PlusCircle, Download, Filter, MoreHorizontal,
   Ban, ChevronLeft, ChevronRight,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import type { Opportunity, Priority, OppStatus, Comment } from '../types'
 import { TIMEZONES } from '../data/mock'
 import { formatCurrency } from '../lib/utils'
+import { getAssignmentChain, isAssignedToAssociate, ROLE_DISPLAY_LABELS } from '../lib/team'
 import toast from 'react-hot-toast'
 import DetailDrawer, { DrawerSection, DrawerField } from '../components/shared/DetailDrawer'
 import PeriodFilter, { type Period, filterByPeriod } from '../components/shared/PeriodFilter'
@@ -28,12 +29,10 @@ const TYPES_DISPLAY: { value: string; label: string }[] = [
   { value: 'SUPPLY',    label: 'SUPPLY' },
 ]
 const SET_ASIDES = ['SB', 'SDVOSB', 'WOSB', 'HUBZone', 'VOSB', '8(a)', 'UNRES']
+const PRIORITIES: Priority[] = ['MEDIUM', 'HIGH', 'VERY_HIGH']
 
 // Pre-submission view statuses only
 const OPP_VIEW_STATUSES: OppStatus[] = ['ACTIVE', 'NEW_ASSIGNMENT', 'DISCUSSION']
-
-// Only pre-submission statuses are manually settable in forms
-const MANUAL_STATUSES: OppStatus[] = ['ACTIVE', 'NEW_ASSIGNMENT', 'DISCUSSION']
 
 const TZ_ABBREVS = Object.keys(TIMEZONES)
 
@@ -118,6 +117,67 @@ function typeLabel(val: string) {
   return val
 }
 
+function formatDateTime(value: string) {
+  return new Date(value).toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+export function parseSamGovDeadline(raw: string | undefined) {
+  if (!raw) return { dueDate: '', localTime: '', timezone: 'EST' }
+  const exact = raw.match(/^(\d{4}-\d{2}-\d{2})[T\s](\d{2}:\d{2})(?::\d{2})?(?:\.\d+)?(Z|[+-]\d{2}:?\d{2})?/)
+  if (exact) {
+    const offset = exact[3] ?? ''
+    const timezone =
+      offset === 'Z' ? 'GMT' :
+      /^-0[45]/.test(offset) ? 'EST' :
+      /^-0[56]/.test(offset) ? 'CST' :
+      /^-0[67]/.test(offset) ? 'MST' :
+      /^-0[78]/.test(offset) ? 'PST' :
+      'EST'
+    return { dueDate: exact[1], localTime: exact[2], timezone }
+  }
+  const parsed = new Date(raw)
+  if (!Number.isFinite(parsed.getTime())) return { dueDate: '', localTime: '', timezone: 'EST' }
+  return {
+    dueDate: parsed.toISOString().slice(0, 10),
+    localTime: `${String(parsed.getUTCHours()).padStart(2, '0')}:${String(parsed.getUTCMinutes()).padStart(2, '0')}`,
+    timezone: 'GMT',
+  }
+}
+
+export function mapSamGovOpportunityToForm(opp: any, url: string) {
+  const setAsideMap: Record<string, string> = {
+    SBA: 'SB',
+    SDVOSBC: 'SDVOSB',
+    WOSB: 'WOSB',
+    HZC: 'HUBZone',
+    VOSB: 'VOSB',
+    '8AN': '8(a)',
+    NONE: 'UNRES',
+  }
+  const pop = opp.placeOfPerformance
+  const locationParts = [pop?.city?.name, pop?.state?.code].filter(Boolean)
+  const deadline = parseSamGovDeadline(opp.responseDeadLine)
+  return {
+    solicitation: opp.title ?? '',
+    solicitationId: opp.solicitationNumber ?? '',
+    client: opp.subtierName ?? opp.departmentName ?? opp.agencyName ?? opp.organizationName ?? 'Unknown agency',
+    naicsCode: opp.naicsCode ?? '',
+    setAside: (setAsideMap[opp.typeOfSetAside ?? ''] ?? 'UNRES') as Opportunity['setAside'],
+    type: undefined,
+    location: locationParts.join(', '),
+    dueDate: deadline.dueDate,
+    localTime: deadline.localTime,
+    timezone: deadline.timezone,
+    link: url,
+  }
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────
 function convertTime(time: string, sourceTzAbbrev: string): string {
   const ianaSource = TIMEZONES[sourceTzAbbrev]
@@ -138,9 +198,9 @@ function convertTime(time: string, sourceTzAbbrev: string): string {
 
 // ── Badges ────────────────────────────────────────────────────────────
 const PRIORITY_META: Record<Priority, { color: string; bg: string; border: string }> = {
-  HIGH:   { color: '#DC2626', bg: '#FEE2E2', border: '#FECACA' },
-  MEDIUM: { color: '#D97706', bg: '#FEF3C7', border: '#FDE68A' },
-  LOW:    { color: '#16A34A', bg: '#DCFCE7', border: '#86EFAC' },
+  VERY_HIGH: { color: '#991B1B', bg: '#FEE2E2', border: '#FCA5A5' },
+  HIGH:      { color: '#DC2626', bg: '#FFF1F2', border: '#FECDD3' },
+  MEDIUM:    { color: '#D97706', bg: '#FEF3C7', border: '#FDE68A' },
 }
 const STATUS_META: Record<string, { color: string; bg: string; border: string }> = {
   ACTIVE:         { color: '#4F46E5', bg: '#EEF2FF', border: '#C7D2FE' },
@@ -156,8 +216,9 @@ const STATUS_META: Record<string, { color: string; bg: string; border: string }>
 }
 
 function PriorityBadge({ p }: { p: Priority }) {
-  const m = PRIORITY_META[p]
-  return <span className="text-[10px] font-bold px-2 py-0.5 rounded-full border" style={{ color: m.color, background: m.bg, borderColor: m.border }}>{p}</span>
+  const safePriority = p === ('LOW' as Priority) ? 'MEDIUM' : p
+  const m = PRIORITY_META[safePriority] ?? PRIORITY_META.MEDIUM
+  return <span className="text-[10px] font-bold px-2 py-0.5 rounded-full border" style={{ color: m.color, background: m.bg, borderColor: m.border }}>{safePriority.replace('_', ' ')}</span>
 }
 function StatusBadge({ s }: { s: OppStatus }) {
   const m = STATUS_META[s] ?? STATUS_META.CANCELED
@@ -298,6 +359,7 @@ function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) 
 
   const handleSave = () => {
     if (!form.solicitation?.trim()) { toast.error('Solicitation title is required'); setTab('details'); return }
+    if (!form.type) { toast.error('Contract type is required'); setTab('details'); return }
     if (!form.dueDate) { toast.error('Due date is required'); setTab('schedule'); return }
     const updatedComments = [...(form.comments ?? [])]
     if (newComment.trim()) {
@@ -366,7 +428,8 @@ function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) 
           <div className="grid grid-cols-3 gap-3">
             <div>
               <label className={lbl}>Contract Type</label>
-              <select value={form.type ?? 'OTJ'} onChange={e => set('type', e.target.value as any)} className="select-field">
+              <select value={form.type ?? ''} onChange={e => set('type', e.target.value || undefined)} className="select-field">
+                <option value="">Select type...</option>
                 {TYPES_DISPLAY.filter(t => t.value !== 'All').map(t => (
                   <option key={t.value} value={t.value}>{t.label}</option>
                 ))}
@@ -385,16 +448,9 @@ function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) 
           </div>
           <div className="grid grid-cols-3 gap-4">
             <div>
-              <label className={lbl}>Status</label>
-              <select value={form.status ?? 'ACTIVE'} onChange={e => set('status', e.target.value as OppStatus)} className="select-field">
-                {MANUAL_STATUSES.map(s => <option key={s}>{s}</option>)}
-              </select>
-              <p className="text-[10px] text-slate-400 mt-1">Use "Mark as WON" to award.</p>
-            </div>
-            <div>
               <label className={lbl}>Priority</label>
               <select value={form.priority ?? 'MEDIUM'} onChange={e => set('priority', e.target.value as Priority)} className="select-field">
-                {['HIGH','MEDIUM','LOW'].map(p => <option key={p}>{p}</option>)}
+                {PRIORITIES.map(p => <option key={p} value={p}>{p.replace('_', ' ')}</option>)}
               </select>
             </div>
             <div>
@@ -434,14 +490,6 @@ function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) 
               <label className={lbl}>SAM.gov Link</label>
               <input value={form.link ?? ''} onChange={e => set('link', e.target.value)} className="input-field" placeholder="https://sam.gov/opp/..." />
             </div>
-            <div>
-              <label className={lbl}>POC</label>
-              <input value={form.poc ?? ''} onChange={e => set('poc', e.target.value)} className="input-field" />
-            </div>
-            <div>
-              <label className={lbl}>Mandatory Events</label>
-              <input value={form.mandatoryEvents ?? ''} onChange={e => set('mandatoryEvents', e.target.value)} className="input-field" />
-            </div>
           </div>
         </div>
       )}
@@ -452,9 +500,9 @@ function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) 
           <div>
             <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4">Team Members</p>
             <div className="grid grid-cols-3 gap-4">
-              <div><label className={lbl}>BDM</label><input value={form.bdm ?? ''} onChange={e => set('bdm', e.target.value)} className="input-field" /></div>
-              <div><label className={lbl}>BDS</label><input value={form.bds ?? ''} onChange={e => set('bds', e.target.value)} className="input-field" /></div>
-              <div><label className={lbl}>Support Agent</label><input value={form.supportAgent ?? ''} onChange={e => set('supportAgent', e.target.value)} className="input-field" /></div>
+              <div><label className={lbl}>Manager</label><input value={form.bdm ?? ''} onChange={e => set('bdm', e.target.value)} className="input-field" /></div>
+              <div><label className={lbl}>Team Lead</label><input value={form.bds ?? ''} onChange={e => set('bds', e.target.value)} className="input-field" /></div>
+              <div><label className={lbl}>Associate</label><input value={form.supportAgent ?? ''} onChange={e => set('supportAgent', e.target.value)} className="input-field" /></div>
             </div>
           </div>
           <div className="border-t border-slate-100 pt-5">
@@ -497,6 +545,10 @@ function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) 
       {/* ── Comments tab ── */}
       {tab === 'comments' && (
         <div className="space-y-4">
+          <div>
+            <label className={lbl}>Mandatory Events</label>
+            <textarea value={form.mandatoryEvents ?? ''} onChange={e => set('mandatoryEvents', e.target.value)} rows={3} className="input-field w-full resize-none" placeholder="Site visit, pre-bid meeting, Q&A deadline..." />
+          </div>
           <p className="text-sm font-semibold text-slate-700">Comments</p>
           {(form.comments ?? []).length === 0 && (
             <p className="text-xs text-slate-400">No comments yet.</p>
@@ -506,7 +558,7 @@ function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) 
               <div key={c.id} className="p-3 rounded-xl bg-slate-50 border border-slate-100">
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-xs font-semibold text-slate-700">{c.author}</span>
-                  <span className="text-[10px] text-slate-400">{new Date(c.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+                  <span className="text-[10px] text-slate-400">{formatDateTime(c.createdAt)}</span>
                 </div>
                 <p className="text-xs text-slate-600">{c.text}</p>
               </div>
@@ -549,12 +601,27 @@ function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) 
 }
 
 // ── Sourcing Modal ────────────────────────────────────────────────────
+function parseSourcingComments(notes: string | undefined): Comment[] {
+  if (!notes) return []
+  try {
+    const parsed = JSON.parse(notes)
+    if (Array.isArray(parsed)) return parsed.filter(c => c?.text && c?.createdAt)
+  } catch {
+    // Legacy notes were stored as one plain text field.
+  }
+  return [{ id: 'legacy-note', text: notes, author: 'legacy', createdAt: new Date().toISOString() }]
+}
+
+function serializeSourcingComments(comments: Comment[]) {
+  return JSON.stringify(comments)
+}
+
 function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) {
   const { subcontractors, addSubcontractor, updateSubcontractor, deleteSubcontractor, currentUser } = useStore()
   const [tab, setTab] = useState<'list' | 'add'>('list')
-  const [form, setForm] = useState({ companyName: '', contactName: '', email: '', phone: '', notes: '', quoteFile: '' })
+  const [form, setForm] = useState({ companyName: '', contactName: '', email: '', phone: '', comment: '', quoteFile: '' })
   const [editingId, setEditingId] = useState<string | null>(null)
-  const [editForm, setEditForm] = useState({ companyName: '', contactName: '', email: '', phone: '', notes: '', quoteFile: '' })
+  const [editForm, setEditForm] = useState({ companyName: '', contactName: '', email: '', phone: '', newComment: '', quoteFile: '', comments: [] as Comment[] })
 
   const oppSubs = subcontractors.filter(s => s.opportunityId === opp.id)
   const setF = (k: string, v: string) => setForm(p => ({ ...p, [k]: v }))
@@ -564,30 +631,58 @@ function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () => void
     e.preventDefault()
     if (!form.companyName) return
     addSubcontractor({
-      ...form,
+      companyName: form.companyName,
+      contactName: form.contactName,
+      email: form.email,
+      phone: form.phone,
+      quoteFile: form.quoteFile,
+      notes: form.comment.trim()
+        ? serializeSourcingComments([{
+            id: crypto.randomUUID(),
+            text: form.comment.trim(),
+            author: currentUser?.username ?? '',
+            createdAt: new Date().toISOString(),
+          }])
+        : '',
       naicsCode: '',
       setAside: 'SB',
       opportunityId: opp.id,
       createdBy: currentUser?.username ?? '',
     })
     toast.success('Sourcing entry added')
-    setForm({ companyName: '', contactName: '', email: '', phone: '', notes: '', quoteFile: '' })
+    setForm({ companyName: '', contactName: '', email: '', phone: '', comment: '', quoteFile: '' })
     setTab('list')
   }
 
   const startEdit = (s: any) => {
     setEditingId(s.id)
-    setEditForm({ companyName: s.companyName, contactName: s.contactName, email: s.email, phone: s.phone, notes: s.notes, quoteFile: s.quoteFile ?? '' })
+    setEditForm({ companyName: s.companyName, contactName: s.contactName, email: s.email, phone: s.phone, newComment: '', quoteFile: s.quoteFile ?? '', comments: parseSourcingComments(s.notes) })
   }
 
   const saveEdit = (id: string) => {
-    updateSubcontractor(id, editForm)
+    const comments = [...editForm.comments]
+    if (editForm.newComment.trim()) {
+      comments.push({
+        id: crypto.randomUUID(),
+        text: editForm.newComment.trim(),
+        author: currentUser?.username ?? '',
+        createdAt: new Date().toISOString(),
+      })
+    }
+    updateSubcontractor(id, {
+      companyName: editForm.companyName,
+      contactName: editForm.contactName,
+      email: editForm.email,
+      phone: editForm.phone,
+      quoteFile: editForm.quoteFile,
+      notes: serializeSourcingComments(comments),
+    })
     toast.success('Sourcing entry updated')
     setEditingId(null)
   }
 
   return (
-    <ModalWrap onClose={onClose} title="Sourcing" subtitle={opp.solicitation}>
+    <ModalWrap onClose={onClose} title="Sourcing" subtitle={opp.solicitation} maxW="max-w-5xl">
       <div className="px-6 pt-4 pb-2">
         <div className="flex gap-0.5 p-1 bg-slate-100 rounded-xl border border-slate-200 inline-flex">
           <button onClick={() => setTab('list')}
@@ -642,8 +737,20 @@ function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () => void
                           </div>
                         </div>
                         <div className="col-span-2">
-                          <label className="block text-xs font-semibold text-slate-500 mb-1">Notes</label>
-                          <textarea value={editForm.notes} onChange={e => setEF('notes', e.target.value)} rows={2} className="input-field w-full resize-none" />
+                          <label className="block text-xs font-semibold text-slate-500 mb-1">Comments</label>
+                          <div className="space-y-2 rounded-xl border border-slate-100 bg-white p-3">
+                            {editForm.comments.length === 0 && <p className="text-xs text-slate-400">No comments yet.</p>}
+                            {editForm.comments.map(c => (
+                              <div key={c.id} className="rounded-lg bg-slate-50 px-3 py-2">
+                                <div className="mb-1 flex items-center justify-between gap-3">
+                                  <span className="text-xs font-semibold text-slate-700">{c.author}</span>
+                                  <span className="text-[10px] text-slate-400">{formatDateTime(c.createdAt)}</span>
+                                </div>
+                                <p className="text-xs text-slate-600">{c.text}</p>
+                              </div>
+                            ))}
+                            <textarea value={editForm.newComment} onChange={e => setEF('newComment', e.target.value)} rows={3} className="input-field w-full resize-none" placeholder="Add a timestamped sourcing comment..." />
+                          </div>
                         </div>
                       </div>
                       <div className="flex gap-2">
@@ -662,8 +769,20 @@ function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () => void
                             <span className="text-[10px] text-indigo-600 font-semibold">{s.quoteFile}</span>
                           </div>
                         )}
-                        {s.notes && <p className="text-xs mt-1.5 italic text-slate-500">"{s.notes}"</p>}
-                        <p className="text-[10px] mt-1.5 text-slate-400">Added by {s.createdBy} - {new Date(s.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</p>
+                        {parseSourcingComments(s.notes).length > 0 && (
+                          <div className="mt-2 space-y-1.5">
+                            {parseSourcingComments(s.notes).map(c => (
+                              <div key={c.id} className="rounded-lg bg-white/80 px-3 py-2 border border-slate-100">
+                                <div className="flex items-center justify-between gap-3">
+                                  <span className="text-[10px] font-semibold text-slate-600">{c.author}</span>
+                                  <span className="text-[10px] text-slate-400">{formatDateTime(c.createdAt)}</span>
+                                </div>
+                                <p className="text-xs text-slate-600 mt-0.5">{c.text}</p>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        <p className="text-[10px] mt-1.5 text-slate-400">Added by {s.createdBy} - {formatDateTime(s.createdAt)}</p>
                       </div>
                       <div className="flex gap-1 flex-shrink-0">
                         <button onClick={() => startEdit(s)}
@@ -715,8 +834,8 @@ function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () => void
                 </div>
               </div>
               <div className="col-span-2">
-                <label className="block text-xs font-semibold text-slate-500 mb-1.5">Notes</label>
-                <textarea value={form.notes} onChange={e => setF('notes', e.target.value)} rows={2} className="input-field w-full resize-none" />
+                <label className="block text-xs font-semibold text-slate-500 mb-1.5">Initial Comment</label>
+                <textarea value={form.comment} onChange={e => setF('comment', e.target.value)} rows={4} className="input-field w-full resize-none" placeholder="Add the first sourcing comment..." />
               </div>
             </div>
             <div className="flex gap-3 pt-1">
@@ -790,6 +909,10 @@ function SubmitModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }
           {/* RECURRING: Yearly + Monthly (monthly auto-computes) */}
           {isRecurring && (
             <>
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 mb-1.5">Total Contract Amount ($)</label>
+                <input type="number" value={contractAmount} onChange={e => setContractAmount(e.target.value)} className="input-field" placeholder="0.00" />
+              </div>
               <div>
                 <label className="block text-xs font-semibold text-slate-500 mb-1.5">Yearly Value ($)</label>
                 <input type="number" value={yearlyValue} onChange={e => handleYearlyChange(e.target.value)} className="input-field" placeholder="0.00" />
@@ -878,7 +1001,7 @@ function CreateModal({ onClose }: { onClose: () => void }) {
   const [samApiKey, setSamApiKey] = useState(() => buildSamApiKey ? '' : getSavedSamGovApiKey())
   const [showSamApiKeyField, setShowSamApiKeyField] = useState(() => !buildSamApiKey && !getSavedSamGovApiKey())
   const [form, setForm] = useState<Partial<Opportunity>>({
-    priority: 'MEDIUM', status: 'ACTIVE', type: 'OTJ', setAside: 'SB',
+    priority: 'MEDIUM', status: 'ACTIVE', type: undefined, setAside: 'SB',
     period: new Date().toLocaleString('en-US', { month: 'short' }).toUpperCase() + ' ' + new Date().getFullYear(),
     capturedOn: new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }),
     bdm: '', bds: '', naicsCode: '', solicitationId: '', solicitation: '',
@@ -928,53 +1051,20 @@ function CreateModal({ onClose }: { onClose: () => void }) {
         return
       }
 
-      // Map SAM.gov set-aside codes to our internal codes
-      const setAsideMap: Record<string, string> = {
-        SBA:     'SB',
-        SDVOSBC: 'SDVOSB',
-        WOSB:    'WOSB',
-        HZC:     'HUBZone',
-        VOSB:    'VOSB',
-        '8AN':   '8(a)',
-        NONE:    'UNRES',
-      }
-      const mappedSetAside = setAsideMap[opp.typeOfSetAside ?? ''] ?? 'UNRES'
-
-      // Place of performance to location string
-      const pop = opp.placeOfPerformance
-      const locationParts = [pop?.city?.name, pop?.state?.code].filter(Boolean)
-      const locationStr = locationParts.join(', ')
-
-      // Response deadline to date and time
-      let dueDate = ''
-      let localTime = ''
-      if (opp.responseDeadLine) {
-        const dl = new Date(opp.responseDeadLine)
-        dueDate    = dl.toISOString().split('T')[0]
-        localTime  = `${String(dl.getHours()).padStart(2, '0')}:${String(dl.getMinutes()).padStart(2, '0')}`
-      }
-
-      // Infer contract type from title/description keywords
-      const text = ((opp.title ?? '') + ' ' + (opp.description ?? '')).toLowerCase()
-      let contractType: Opportunity['type'] = 'OTJ'
-      if (text.includes('recurring') || text.includes('reoccurring') || text.includes('agreement') || text.includes('annual') || text.includes('base year')) {
-        contractType = 'RECURRING'
-      } else if (text.includes('supply') || text.includes('supplies') || text.includes('parts')) {
-        contractType = 'SUPPLY'
-      }
-
+      const mapped = mapSamGovOpportunityToForm(opp, url)
       // Batch all form updates in a single setForm call to avoid stale-closure issues
       setForm(prev => ({
         ...prev,
-        solicitation:  opp.title              ?? prev.solicitation,
-        solicitationId: opp.solicitationNumber ?? prev.solicitationId,
-        client:        opp.subtierName ?? opp.departmentName ?? prev.client,
-        naicsCode:     opp.naicsCode           ?? prev.naicsCode,
-        setAside:      mappedSetAside as Opportunity['setAside'],
-        type:          contractType,
-        location:      locationStr             || prev.location,
-        dueDate:       dueDate                 || prev.dueDate,
-        localTime:     localTime               || prev.localTime,
+        solicitation:  mapped.solicitation || prev.solicitation,
+        solicitationId: mapped.solicitationId || prev.solicitationId,
+        client:        mapped.client || prev.client || 'Unknown agency',
+        naicsCode:     mapped.naicsCode || prev.naicsCode,
+        setAside:      mapped.setAside,
+        type:          undefined,
+        location:      mapped.location || prev.location,
+        dueDate:       mapped.dueDate || prev.dueDate,
+        localTime:     mapped.localTime || prev.localTime,
+        timezone:      mapped.timezone || prev.timezone,
         link:          url,
       }))
 
@@ -991,6 +1081,7 @@ function CreateModal({ onClose }: { onClose: () => void }) {
 
   const handleCreate = () => {
     if (!form.solicitation?.trim()) { toast.error('Solicitation title is required'); setTab('details'); return }
+    if (!form.type) { toast.error('Contract type is required'); setTab('details'); return }
     if (!form.dueDate) { toast.error('Due date is required'); setTab('schedule'); return }
     const comments: Comment[] = []
     if (initialComment.trim()) {
@@ -1115,7 +1206,8 @@ function CreateModal({ onClose }: { onClose: () => void }) {
           <div className="grid grid-cols-3 gap-3">
             <div>
               <label className={lbl}>Contract Type</label>
-              <select value={form.type ?? 'OTJ'} onChange={e => set('type', e.target.value as any)} className="select-field">
+              <select value={form.type ?? ''} onChange={e => set('type', e.target.value || undefined)} className="select-field">
+                <option value="">Select type...</option>
                 {TYPES_DISPLAY.filter(t => t.value !== 'All').map(t => (
                   <option key={t.value} value={t.value}>{t.label}</option>
                 ))}
@@ -1136,13 +1228,7 @@ function CreateModal({ onClose }: { onClose: () => void }) {
             <div>
               <label className={lbl}>Priority</label>
               <select value={form.priority ?? 'MEDIUM'} onChange={e => set('priority', e.target.value as any)} className="select-field">
-                {['HIGH','MEDIUM','LOW'].map(p => <option key={p}>{p}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className={lbl}>Status</label>
-              <select value={form.status ?? 'ACTIVE'} onChange={e => set('status', e.target.value as OppStatus)} className="select-field">
-                {MANUAL_STATUSES.map(s => <option key={s}>{s}</option>)}
+                {PRIORITIES.map(p => <option key={p} value={p}>{p.replace('_', ' ')}</option>)}
               </select>
             </div>
             <div>
@@ -1182,14 +1268,6 @@ function CreateModal({ onClose }: { onClose: () => void }) {
               <label className={lbl}>SAM.gov Link</label>
               <input value={form.link ?? ''} onChange={e => set('link', e.target.value)} className="input-field" placeholder="https://sam.gov/opp/..." />
             </div>
-            <div>
-              <label className={lbl}>POC</label>
-              <input value={form.poc ?? ''} onChange={e => set('poc', e.target.value)} className="input-field" />
-            </div>
-            <div>
-              <label className={lbl}>Mandatory Events</label>
-              <input value={form.mandatoryEvents ?? ''} onChange={e => set('mandatoryEvents', e.target.value)} className="input-field" />
-            </div>
           </div>
         </div>
       )}
@@ -1200,9 +1278,9 @@ function CreateModal({ onClose }: { onClose: () => void }) {
           <div>
             <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4">Team Members</p>
             <div className="grid grid-cols-3 gap-4">
-              <div><label className={lbl}>BDM *</label><input value={form.bdm ?? ''} onChange={e => set('bdm', e.target.value)} className="input-field" /></div>
-              <div><label className={lbl}>BDS</label><input value={form.bds ?? ''} onChange={e => set('bds', e.target.value)} className="input-field" /></div>
-              <div><label className={lbl}>Support Agent</label><input value={form.supportAgent ?? ''} onChange={e => set('supportAgent', e.target.value)} className="input-field" /></div>
+              <div><label className={lbl}>Manager</label><input value={form.bdm ?? ''} onChange={e => set('bdm', e.target.value)} className="input-field" /></div>
+              <div><label className={lbl}>Team Lead</label><input value={form.bds ?? ''} onChange={e => set('bds', e.target.value)} className="input-field" /></div>
+              <div><label className={lbl}>Associate</label><input value={form.supportAgent ?? ''} onChange={e => set('supportAgent', e.target.value)} className="input-field" /></div>
             </div>
           </div>
           <div className="border-t border-slate-100 pt-5">
@@ -1246,6 +1324,16 @@ function CreateModal({ onClose }: { onClose: () => void }) {
       {/* ── Comments tab ── */}
       {tab === 'comments' && (
         <div className="space-y-4">
+          <div>
+            <label className={lbl}>Mandatory Events</label>
+            <textarea
+              value={form.mandatoryEvents ?? ''}
+              onChange={e => set('mandatoryEvents', e.target.value)}
+              rows={3}
+              className="input-field w-full resize-none"
+              placeholder="Site visit, pre-bid meeting, Q&A deadline..."
+            />
+          </div>
           <p className="text-sm font-semibold text-slate-700">Initial Comment</p>
           <p className="text-xs text-slate-400">Optionally add a comment when creating this opportunity.</p>
           <textarea
@@ -1270,7 +1358,6 @@ function RowMenu({
   onSourcing,
   onSubmit,
   onRequestDeletion,
-  onMarkWon,
   onCancel,
 }: {
   o: Opportunity
@@ -1280,7 +1367,6 @@ function RowMenu({
   onSourcing: () => void
   onSubmit: () => void
   onRequestDeletion: () => void
-  onMarkWon: () => void
   onCancel: () => void
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
@@ -1313,14 +1399,6 @@ function RowMenu({
               onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(0,0,0,0.04)'; (e.currentTarget as HTMLButtonElement).style.color = '#0F172A' }}
               onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = ''; (e.currentTarget as HTMLButtonElement).style.color = '#475569' }}>
               <ExternalLink size={12} /> View Details
-            </button>
-            <button
-              onClick={e => { e.stopPropagation(); setMenuOpen(false); onMarkWon() }}
-              className="w-full text-left px-3 py-2 text-xs font-semibold flex items-center gap-2 transition-colors"
-              style={{ color: '#475569' }}
-              onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(0,0,0,0.04)'; (e.currentTarget as HTMLButtonElement).style.color = '#0F172A' }}
-              onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = ''; (e.currentTarget as HTMLButtonElement).style.color = '#475569' }}>
-              <Trophy size={12} /> Mark as WON
             </button>
             <button
               onClick={e => { e.stopPropagation(); setMenuOpen(false); onEdit() }}
@@ -1445,7 +1523,7 @@ type SortKey = keyof Opportunity
 type SortDir = 'asc' | 'desc'
 
 const ROLE_LABEL: Record<string, string> = {
-  BD_MANAGER: 'BD Manager',
+  BD_MANAGER: 'Manager',
   TEAM_LEAD: 'Team Lead',
   ASSOCIATE: 'Associate',
 }
@@ -1466,9 +1544,9 @@ const COLUMN_FILTERS = [
   { key: 'setAside',       label: 'Set Aside',    placeholder: 'Any set aside' },
   { key: 'localTime',      label: 'Time / TZ',    placeholder: 'Any time' },
   { key: 'location',       label: 'Location',     placeholder: 'Any location' },
-  { key: 'bdm',            label: 'BDM',          placeholder: 'Any BDM' },
-  { key: 'bds',            label: 'BDS',          placeholder: 'Any BDS' },
-  { key: 'assignedTo',     label: 'Assigned',     placeholder: 'Any assignee' },
+  { key: 'manager',        label: 'Manager',      placeholder: 'Any manager' },
+  { key: 'teamLead',       label: 'Team Lead',    placeholder: 'Any team lead' },
+  { key: 'associate',      label: 'Associate',    placeholder: 'Any associate' },
 ] as const
 
 type ColumnFilterKey = typeof COLUMN_FILTERS[number]['key']
@@ -1479,14 +1557,19 @@ const EMPTY_COLUMN_FILTERS: ColumnFilters = COLUMN_FILTERS.reduce((acc, col) => 
   return acc
 }, {} as ColumnFilters)
 
-function getColumnFilterValue(o: Opportunity, key: ColumnFilterKey, employeeNameById: Map<string, string>) {
+function getColumnFilterValue(o: Opportunity, key: ColumnFilterKey, employees: ReturnType<typeof useStore.getState>['employees']) {
+  const chain = getAssignmentChain(employees, o.assignedTo)
   switch (key) {
     case 'type':
       return typeLabel(o.type)
     case 'localTime':
       return `${o.localTime ?? ''} ${o.timezone ?? ''}`.trim()
-    case 'assignedTo':
-      return o.assignedTo ? employeeNameById.get(o.assignedTo) ?? '' : ''
+    case 'manager':
+      return chain.manager?.name ?? ''
+    case 'teamLead':
+      return chain.teamLead?.name ?? ''
+    case 'associate':
+      return chain.associate?.name ?? ''
     default:
       return String(o[key] ?? '')
   }
@@ -1525,7 +1608,7 @@ function ColumnFilterInput({
 }
 
 export default function PipelinePage() {
-  const { opportunities, employees, currentUser, markOpportunityWon, updateOpportunity } = useStore()
+  const { opportunities, employees, currentUser, moveOpportunityToBDTracker } = useStore()
 
   // ── Filter state ──
   const [columnFilters, setColumnFilters] = useState<ColumnFilters>(() => ({ ...EMPTY_COLUMN_FILTERS }))
@@ -1547,29 +1630,27 @@ export default function PipelinePage() {
 
   const canSubmit = ['BD_MANAGER', 'TEAM_LEAD', 'ASSOCIATE'].includes(currentUser?.role ?? '')
 
-  const employeeNameById = useMemo(() => new Map(employees.map(e => [e.id, e.name])), [employees])
-
   const filterOptions = useMemo(() => {
-    const visibleOpps = opportunities.filter(o => !o.isDeleted && OPP_VIEW_STATUSES.includes(o.status as any))
+    const visibleOpps = opportunities.filter(o => !o.isDeleted && OPP_VIEW_STATUSES.includes(o.status as any) && isAssignedToAssociate(employees, o.assignedTo))
     return COLUMN_FILTERS.reduce((acc, col) => {
       const values = visibleOpps
-        .map(o => getColumnFilterValue(o, col.key, employeeNameById))
+        .map(o => getColumnFilterValue(o, col.key, employees))
         .map(v => v.trim())
         .filter(Boolean)
       acc[col.key] = Array.from(new Set(values)).sort((a, b) => a.localeCompare(b))
       return acc
     }, {} as Record<ColumnFilterKey, string[]>)
-  }, [opportunities, employeeNameById])
+  }, [opportunities, employees])
 
   const filtered = useMemo(() => {
-    let list = opportunities.filter(o => !o.isDeleted && OPP_VIEW_STATUSES.includes(o.status as any))
+    let list = opportunities.filter(o => !o.isDeleted && OPP_VIEW_STATUSES.includes(o.status as any) && isAssignedToAssociate(employees, o.assignedTo))
 
     if (dueDateRange) list = list.filter(o => filterByPeriod(o.dueDate, dueDateRange))
 
     COLUMN_FILTERS.forEach(col => {
       const q = columnFilters[col.key].trim().toLowerCase()
       if (!q) return
-      list = list.filter(o => getColumnFilterValue(o, col.key, employeeNameById).toLowerCase().includes(q))
+      list = list.filter(o => getColumnFilterValue(o, col.key, employees).toLowerCase().includes(q))
     })
 
     list.sort((a, b) => {
@@ -1578,7 +1659,7 @@ export default function PipelinePage() {
       return sort.dir === 'asc' ? r : -r
     })
     return list
-  }, [opportunities, sort, dueDateRange, columnFilters, employeeNameById])
+  }, [opportunities, employees, sort, dueDateRange, columnFilters])
 
   // Paginated slice
   const paginated = useMemo(() => {
@@ -1609,7 +1690,7 @@ export default function PipelinePage() {
   const hasFilters = !!dueDateRange || Object.values(columnFilters).some(v => v.trim())
 
   const handleCancel = (o: Opportunity) => {
-    updateOpportunity(o.id, { status: 'CANCELED' })
+    moveOpportunityToBDTracker(o.id, 'CANCELED', 'Canceled from Contract Opportunities')
     toast.success(`"${o.solicitation}" canceled.`)
   }
 
@@ -1702,9 +1783,9 @@ export default function PipelinePage() {
                   { label: 'Due Date',    k: 'dueDate' },
                   { label: 'Time / TZ',   k: 'localTime' },
                   { label: 'Location',    k: 'location' },
-                  { label: 'BDM',         k: 'bdm' },
-                  { label: 'BDS',         k: 'bds' },
-                  { label: 'Assigned',    k: 'assignedTo' },
+                  { label: 'Manager',     k: '' },
+                  { label: 'Team Lead',   k: '' },
+                  { label: 'Associate',   k: '' },
                   { label: 'Actions',     k: '' },
                 ].map(col => (
                   <th key={col.k || col.label}>
@@ -1757,24 +1838,26 @@ export default function PipelinePage() {
                       )}
                     </td>
                     <td><span className="text-slate-500 text-xs">{o.location}</span></td>
-                    <td><span className="text-slate-600 text-xs">{o.bdm || '-'}</span></td>
-                    <td><span className="text-slate-600 text-xs">{o.bds || '-'}</span></td>
-                    <td>
-                      {(() => {
-                        const emp = o.assignedTo ? employees.find(e => e.id === o.assignedTo) : null
-                        if (!emp) return <span className="text-slate-400 text-xs">-</span>
-                        const rc = ROLE_COLOR[emp.role] ?? ROLE_COLOR.ASSOCIATE
-                        return (
-                          <div className="flex flex-col gap-0.5">
-                            <span className="text-xs text-slate-700 font-medium whitespace-nowrap">{emp.name}</span>
-                            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full w-fit"
-                              style={{ color: rc.color, background: rc.bg, border: `1px solid ${rc.border}` }}>
-                              {ROLE_LABEL[emp.role] ?? emp.role}
-                            </span>
-                          </div>
-                        )
-                      })()}
-                    </td>
+                    {(() => {
+                      const chain = getAssignmentChain(employees, o.assignedTo)
+                      return (
+                        <>
+                          <td><span className="text-slate-600 text-xs">{chain.manager?.name || '-'}</span></td>
+                          <td><span className="text-slate-600 text-xs">{chain.teamLead?.name || '-'}</span></td>
+                          <td>
+                            {chain.associate ? (
+                              <div className="flex flex-col gap-0.5">
+                                <span className="text-xs text-slate-700 font-medium whitespace-nowrap">{chain.associate.name}</span>
+                                <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full w-fit"
+                                  style={{ color: ROLE_COLOR.ASSOCIATE.color, background: ROLE_COLOR.ASSOCIATE.bg, border: `1px solid ${ROLE_COLOR.ASSOCIATE.border}` }}>
+                                  Associate
+                                </span>
+                              </div>
+                            ) : <span className="text-slate-400 text-xs">-</span>}
+                          </td>
+                        </>
+                      )
+                    })()}
                     <td onClick={e => e.stopPropagation()}>
                       <div className="flex items-center gap-1">
                         <button title="Edit" onClick={() => setEditOpp(o)}
@@ -1795,17 +1878,6 @@ export default function PipelinePage() {
                           className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-red-600 hover:bg-red-50 transition-all">
                           <Ban size={12} />
                         </button>
-                        <RowMenu
-                          o={o}
-                          canSubmit={canSubmit}
-                          onViewDetails={() => setSelectedOpp(o)}
-                          onEdit={() => setEditOpp(o)}
-                          onSourcing={() => setSourcingOpp(o)}
-                          onSubmit={() => setSubmitOpp(o)}
-                          onRequestDeletion={() => setEditOpp(o)}
-                          onMarkWon={() => { markOpportunityWon(o.id); toast.success('Marked as WON and moved to Fresh Awards') }}
-                          onCancel={() => handleCancel(o)}
-                        />
                       </div>
                     </td>
                   </motion.tr>
@@ -1835,12 +1907,12 @@ export default function PipelinePage() {
         onClose={() => setSelectedOpp(null)}
         title={selectedOpp?.solicitation ?? ''}
         subtitle={selectedOpp ? `${selectedOpp.solicitationId} - ${selectedOpp.client}` : ''}
-        width={500}
+        width={420}
+        showBackdrop={false}
       >
         {selectedOpp && (
           <>
             <div className="flex gap-2 flex-wrap mb-5">
-              <StatusBadge s={selectedOpp.status} />
               <PriorityBadge p={selectedOpp.priority} />
               <span className="text-[10px] font-semibold text-indigo-600 bg-indigo-50 border border-indigo-100 px-1.5 py-0.5 rounded">{typeLabel(selectedOpp.type)}</span>
             </div>
@@ -1855,23 +1927,16 @@ export default function PipelinePage() {
             </DrawerSection>
 
             <DrawerSection title="Team">
-              <DrawerField label="BDM"          value={selectedOpp.bdm || '-'} />
-              <DrawerField label="BDS"          value={selectedOpp.bds || '-'} />
-              <DrawerField label="Support Agent" value={selectedOpp.supportAgent ?? '-'} />
-              <DrawerField label="Assigned To"  value={(() => {
-                const emp = selectedOpp.assignedTo ? employees.find(e => e.id === selectedOpp.assignedTo) : null
-                if (!emp) return '-'
-                const rc = ROLE_COLOR[emp.role] ?? ROLE_COLOR.ASSOCIATE
+              {(() => {
+                const chain = getAssignmentChain(employees, selectedOpp.assignedTo)
                 return (
-                  <span className="flex items-center gap-1.5 flex-wrap">
-                    <span className="text-xs font-semibold text-slate-800">{emp.name}</span>
-                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full"
-                      style={{ color: rc.color, background: rc.bg, border: `1px solid ${rc.border}` }}>
-                      {ROLE_LABEL[emp.role] ?? emp.role}
-                    </span>
-                  </span>
+                  <>
+                    <DrawerField label="Manager" value={chain.manager?.name || '-'} />
+                    <DrawerField label="Team Lead" value={chain.teamLead?.name || '-'} />
+                    <DrawerField label="Associate" value={chain.associate?.name || '-'} />
+                  </>
                 )
-              })()} />
+              })()}
             </DrawerSection>
 
             <DrawerSection title="Schedule">
@@ -1885,6 +1950,12 @@ export default function PipelinePage() {
               <DrawerField label="Captured On" value={selectedOpp.capturedOn} />
             </DrawerSection>
 
+            {selectedOpp.mandatoryEvents && (
+              <DrawerSection title="Mandatory Events">
+                <p className="py-2.5 text-xs text-slate-600 leading-relaxed">{selectedOpp.mandatoryEvents}</p>
+              </DrawerSection>
+            )}
+
             <DrawerSection title="Financials">
               <DrawerField label="Contract Amount"  value={selectedOpp.contractAmount ? formatCurrency(selectedOpp.contractAmount) : '-'} />
               <DrawerField label="Base Amount"      value={selectedOpp.baseAmount ? formatCurrency(selectedOpp.baseAmount) : '-'} />
@@ -1897,7 +1968,7 @@ export default function PipelinePage() {
                   <div key={c.id} className="py-2.5 border-b border-slate-50 last:border-0">
                     <div className="flex items-center justify-between mb-0.5">
                       <span className="text-xs font-semibold text-slate-700">{c.author}</span>
-                      <span className="text-[10px] text-slate-400">{new Date(c.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+                      <span className="text-[10px] text-slate-400">{formatDateTime(c.createdAt)}</span>
                     </div>
                     <p className="text-xs text-slate-600">{c.text}</p>
                   </div>

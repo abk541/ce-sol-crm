@@ -165,11 +165,11 @@ function DetailDrawerPP({ pp, onClose, onExport }: { pp: PastPerformance; onClos
         {/* Team */}
         <div className="grid grid-cols-2 gap-3">
           <div className="p-3 rounded-xl bg-slate-50 border border-slate-100">
-            <p className="text-[10px] text-slate-400 uppercase tracking-wider mb-0.5">BDM</p>
+            <p className="text-[10px] text-slate-400 uppercase tracking-wider mb-0.5">Manager</p>
             <p className="text-sm font-semibold text-slate-700">{pp.bdm}</p>
           </div>
           <div className="p-3 rounded-xl bg-slate-50 border border-slate-100">
-            <p className="text-[10px] text-slate-400 uppercase tracking-wider mb-0.5">BDS</p>
+            <p className="text-[10px] text-slate-400 uppercase tracking-wider mb-0.5">Team Lead</p>
             <p className="text-sm font-semibold text-slate-700">{pp.bds}</p>
           </div>
         </div>
@@ -187,24 +187,74 @@ function DetailDrawerPP({ pp, onClose, onExport }: { pp: PastPerformance; onClos
 }
 
 export default function PastPerformancesPage() {
-  const { pastPerformances } = useStore()
+  const { pastPerformances, contracts, freshAwards } = useStore()
   const [search, setSearch] = useState('')
+  const [source, setSource] = useState<'AWARDED' | 'ACTIVE'>('AWARDED')
   const [selected, setSelected] = useState<PastPerformance | null>(null)
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
   const [exportTarget, setExportTarget] = useState<PastPerformance | null>(null)
 
+  const sourceRows = useMemo<PastPerformance[]>(() => {
+    if (source === 'ACTIVE') {
+      return contracts.map(c => ({
+        id: `active-${c.id}`,
+        contractId: c.id,
+        opportunityId: c.opportunityId,
+        contractNumber: c.contractId,
+        title: c.title,
+        client: c.client || '',
+        type: c.type,
+        financeType: c.financeType,
+        naicsCode: c.naicsCode,
+        setAside: c.setAside || 'UNRES',
+        value: c.value,
+        popStart: c.popStart,
+        popEnd: c.popEnd,
+        location: c.location,
+        description: '',
+        relevance: '',
+        bdm: c.bdm || '',
+        bds: c.bds || '',
+        createdAt: c.popStart,
+        createdBy: 'System',
+      }))
+    }
+    const awardRows = freshAwards.map(fa => ({
+      id: `award-${fa.id}`,
+      opportunityId: fa.opportunityId,
+      contractId: fa.contractId,
+      contractNumber: fa.solicitationId,
+      title: fa.solicitation,
+      client: fa.client,
+      type: fa.type,
+      naicsCode: fa.naicsCode,
+      setAside: fa.setAside,
+      value: fa.contractAmount ?? 0,
+      popStart: fa.awardedDate,
+      popEnd: fa.movedAt?.slice(0, 10) ?? '',
+      location: fa.location,
+      description: '',
+      relevance: '',
+      bdm: fa.assignedBDM || '',
+      bds: fa.assignedBDS || '',
+      createdAt: fa.awardedDate,
+      createdBy: 'System',
+    }))
+    return [...awardRows, ...pastPerformances]
+  }, [source, contracts, freshAwards, pastPerformances])
+
   const filtered = useMemo(() => {
-    if (!search) return pastPerformances
+    if (!search) return sourceRows
     const q = search.toLowerCase()
-    return pastPerformances.filter(pp =>
+    return sourceRows.filter(pp =>
       pp.title.toLowerCase().includes(q) ||
       pp.client.toLowerCase().includes(q) ||
       pp.contractNumber.toLowerCase().includes(q) ||
       pp.naicsCode.includes(q)
     )
-  }, [pastPerformances, search])
+  }, [sourceRows, search])
 
-  const totalValue = pastPerformances.reduce((s, p) => s + p.value, 0)
+  const totalValue = sourceRows.reduce((s, p) => s + p.value, 0)
 
   return (
     <div className="p-6 page-enter">
@@ -215,15 +265,28 @@ export default function PastPerformancesPage() {
           <h1 className="text-2xl font-black text-slate-900 flex items-center gap-3">
             <History size={22} className="text-indigo-500" /> Past Performances
           </h1>
-          <p className="text-slate-500 text-sm mt-0.5">{pastPerformances.length} records · {formatCurrency(totalValue)} total value</p>
+          <p className="text-slate-500 text-sm mt-0.5">{sourceRows.length} records - {formatCurrency(totalValue)} total value</p>
         </div>
       </div>
 
       {/* Search */}
-      <div className="relative mb-5 max-w-md">
-        <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-        <input value={search} onChange={e => setSearch(e.target.value)}
-          className="input-field pl-9 text-sm w-full" placeholder="Search by title, client, contract number, NAICS…" />
+      <div className="mb-5 flex flex-wrap items-center gap-3">
+        <div className="flex gap-1 rounded-xl border border-slate-200 bg-slate-100 p-1">
+          {[
+            { key: 'AWARDED' as const, label: 'Awarded' },
+            { key: 'ACTIVE' as const, label: 'Active Contracts' },
+          ].map(item => (
+            <button key={item.key} onClick={() => setSource(item.key)}
+              className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-all ${source === item.key ? 'border border-slate-200 bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
+              {item.label}
+            </button>
+          ))}
+        </div>
+        <div className="relative max-w-md flex-1">
+          <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input value={search} onChange={e => setSearch(e.target.value)}
+            className="input-field pl-9 text-sm w-full" placeholder="Search by title, client, contract number, NAICS..." />
+        </div>
       </div>
 
       {/* Table */}
@@ -240,7 +303,7 @@ export default function PastPerformancesPage() {
                 <th>Set-Aside</th>
                 <th>Value</th>
                 <th>PoP</th>
-                <th>BDM / BDS</th>
+                <th>Manager / Team Lead</th>
                 <th></th>
               </tr>
             </thead>

@@ -8,10 +8,11 @@ interface Props {
   title: string
   subtitle?: string
   width?: number
+  showBackdrop?: boolean
   children: React.ReactNode
 }
 
-export default function DetailDrawer({ isOpen, onClose, title, subtitle, width = 480, children }: Props) {
+export default function DetailDrawer({ isOpen, onClose, title, subtitle, width = 480, showBackdrop = true, children }: Props) {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
     if (isOpen) document.addEventListener('keydown', handler)
@@ -22,16 +23,17 @@ export default function DetailDrawer({ isOpen, onClose, title, subtitle, width =
     <AnimatePresence>
       {isOpen && (
         <>
-          {/* Backdrop */}
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            className="fixed inset-0 z-40"
-            style={{ background: 'rgba(15,23,42,0.25)', backdropFilter: 'blur(2px)' }}
-            onClick={onClose}
-          />
+          {showBackdrop && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className="fixed inset-0 z-40"
+              style={{ background: 'rgba(15,23,42,0.18)', backdropFilter: 'blur(1px)' }}
+              onClick={onClose}
+            />
+          )}
 
           {/* Panel */}
           <motion.div
@@ -39,8 +41,8 @@ export default function DetailDrawer({ isOpen, onClose, title, subtitle, width =
             animate={{ x: 0, opacity: 1 }}
             exit={{ x: width, opacity: 0 }}
             transition={{ type: 'spring', stiffness: 340, damping: 30 }}
-            className="fixed right-0 top-0 h-full z-50 flex flex-col detail-drawer overflow-hidden"
-            style={{ width }}
+            className="fixed right-4 top-20 bottom-4 z-50 flex flex-col detail-drawer overflow-hidden rounded-2xl"
+            style={{ width: `min(${width}px, calc(100vw - 2rem))` }}
           >
             {/* Header */}
             <div className="flex items-start justify-between px-6 py-5 border-b border-slate-100 flex-shrink-0">

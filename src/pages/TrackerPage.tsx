@@ -250,7 +250,7 @@ export default function TrackerPage() {
                     <th>Solicitation</th>
                     <th>Client</th>
                     <th>Type</th>
-                    <th>BDS</th>
+                    <th>Team Lead</th>
                     <th>Value</th>
                     <th>Submitted</th>
                     <th>Status</th>
@@ -463,9 +463,9 @@ export default function TrackerPage() {
               <DrawerField label="NAICS"       value={selected.naicsCode} />
             </DrawerSection>
             <DrawerSection title="Team">
-              <DrawerField label="BDM"           value={selected.bdm} />
-              <DrawerField label="BDS"           value={selected.bds} />
-              <DrawerField label="Support Agent" value={selected.supportAgent ?? '-'} />
+              <DrawerField label="Manager"       value={selected.bdm} />
+              <DrawerField label="Team Lead"     value={selected.bds} />
+              <DrawerField label="Associate"     value={selected.supportAgent ?? '-'} />
             </DrawerSection>
             <DrawerSection title="Financials">
               <DrawerField label="Value"            value={selected.value ? formatCurrency(selected.value) : '-'} />

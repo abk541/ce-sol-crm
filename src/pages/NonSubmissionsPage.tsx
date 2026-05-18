@@ -295,8 +295,8 @@ function DroppedOpportunitiesTab() {
                   <th>Client</th>
                   <th>Due Date</th>
                   <th>Location</th>
-                  <th>BDM</th>
-                  <th>BDS</th>
+                  <th>Manager</th>
+                  <th>Team Lead</th>
                   <th>Non-Sub Report</th>
                 </tr>
               </thead>

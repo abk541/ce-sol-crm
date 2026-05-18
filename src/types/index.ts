@@ -26,7 +26,7 @@ export interface User {
   password?: string
 }
 
-export type Priority = 'HIGH' | 'MEDIUM' | 'LOW'
+export type Priority = 'VERY_HIGH' | 'HIGH' | 'MEDIUM'
 
 export type OppStatus =
   | 'ACTIVE' | 'SUBMITTED' | 'WON' | 'LOST'
@@ -247,7 +247,7 @@ export interface BDSubmission {
   setAside: SetAside
   type: ContractType
   solicitation: string
-  status: 'SUBMITTED' | 'DISCUSSING' | 'AWARDED' | 'LOST' | 'CANCELED' | 'NOT_SUBMITTED'
+  status: 'SUBMITTED' | 'DISCUSSING' | 'AWARDED' | 'LOST' | 'CANCELED' | 'NOT_SUBMITTED' | 'DROPPED'
   dueDate: string
   localTime: string
   location: string

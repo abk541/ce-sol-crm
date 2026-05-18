@@ -73,8 +73,8 @@ function AssignModal({ award, onClose, onAssign, onMove }: AssignModalProps) {
           {/* Assignment dropdowns */}
           <div className="grid grid-cols-2 gap-3">
             {[
-              { label: 'BDM *', value: bdm, setter: setBdm },
-              { label: 'BDS *', value: bds, setter: setBds },
+              { label: 'Manager *', value: bdm, setter: setBdm },
+              { label: 'Team Lead *', value: bds, setter: setBds },
               { label: 'SPM *', value: spm, setter: setSpm },
               { label: 'PM *',  value: pm,  setter: setPm  },
             ].map(f => (
@@ -88,7 +88,7 @@ function AssignModal({ award, onClose, onAssign, onMove }: AssignModalProps) {
             ))}
           </div>
           <div>
-            <label className="block text-xs font-semibold text-slate-600 mb-1">Support Agent (optional)</label>
+            <label className="block text-xs font-semibold text-slate-600 mb-1">Associate (optional)</label>
             <select value={agent} onChange={e => setAgent(e.target.value)} className="input-field text-xs py-2 w-full">
               <option value="">— None —</option>
               {USERS_LIST.map(u => <option key={u} value={u}>{u}</option>)}
@@ -298,8 +298,8 @@ export default function FreshAwardPage() {
                   <div className="mb-4 p-2.5 rounded-lg bg-slate-50 border border-slate-200">
                     <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Team</p>
                     <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
-                      {fa.assignedBDM && <div><span className="text-slate-400">BDM:</span> <span className="font-semibold text-slate-700">{fa.assignedBDM}</span></div>}
-                      {fa.assignedBDS && <div><span className="text-slate-400">BDS:</span> <span className="font-semibold text-slate-700">{fa.assignedBDS}</span></div>}
+                      {fa.assignedBDM && <div><span className="text-slate-400">Manager:</span> <span className="font-semibold text-slate-700">{fa.assignedBDM}</span></div>}
+                      {fa.assignedBDS && <div><span className="text-slate-400">Team Lead:</span> <span className="font-semibold text-slate-700">{fa.assignedBDS}</span></div>}
                       {fa.assignedSPM && <div><span className="text-slate-400">SPM:</span> <span className="font-semibold text-slate-700">{fa.assignedSPM}</span></div>}
                       {fa.assignedPM && <div><span className="text-slate-400">PM:</span> <span className="font-semibold text-slate-700">{fa.assignedPM}</span></div>}
                     </div>

@@ -77,6 +77,7 @@ interface AppState {
   assignOpportunity: (id: string, bdm: string, bds: string) => void
   submitOpportunity: (id: string, values?: { contractAmount?: number; baseAmount?: number; monthlyPayment?: number }) => void
   markOpportunityWon: (id: string) => void
+  moveOpportunityToBDTracker: (id: string, status: BDSubmission['status'], comment?: string) => void
   syncDueOpportunities: () => void
   terminateContract: (id: string, type: 'T4C' | 'T4D' | 'CANCELED', reason: string) => void
 
@@ -160,6 +161,41 @@ function isDeadlineReached(opp: Opportunity, now = new Date()): boolean {
   const time = opp.localTime && /^\d{1,2}:\d{2}$/.test(opp.localTime) ? opp.localTime : '23:59'
   const deadline = new Date(`${opp.dueDate}T${time}`)
   return Number.isFinite(deadline.getTime()) && deadline.getTime() <= now.getTime()
+}
+
+function todayLabel() {
+  return new Date().toISOString().split('T')[0]
+}
+
+function bdStatusToOpportunityStatus(status: BDSubmission['status']): Opportunity['status'] {
+  if (status === 'DISCUSSING') return 'DISCUSSION'
+  if (status === 'AWARDED') return 'WON'
+  return status
+}
+
+function bdSubmissionFromOpportunity(
+  opp: Opportunity,
+  status: BDSubmission['status'],
+  existing?: BDSubmission,
+  comment?: string,
+): BDSubmission {
+  return {
+    id: existing?.id ?? Date.now(),
+    submittedOn: existing?.submittedOn ?? todayLabel(),
+    solicitationId: opp.solicitationId,
+    setAside: opp.setAside,
+    type: opp.type,
+    solicitation: opp.solicitation,
+    status,
+    dueDate: opp.dueDate,
+    localTime: `${opp.localTime ?? ''}${opp.timezone ? ` ${opp.timezone}` : ''}`.trim(),
+    location: opp.location,
+    bdm: opp.bdm,
+    bds: opp.bds,
+    supportAgent: opp.supportAgent,
+    value: opp.contractAmount ?? opp.value ?? opp.baseAmount ?? 0,
+    comment: comment ?? existing?.comment,
+  }
 }
 
 export const useStore = create<AppState>()(
@@ -296,6 +332,14 @@ export const useStore = create<AppState>()(
         }))
         const opp = get().opportunities.find(o => o.id === id)
         if (opp) {
+          const existing = get().bdSubmissions.find(b => b.solicitationId === opp.solicitationId)
+          const trackerRow = bdSubmissionFromOpportunity(opp, 'SUBMITTED', existing)
+          set(s => ({
+            bdSubmissions: existing
+              ? s.bdSubmissions.map(b => b.id === existing.id ? trackerRow : b)
+              : [trackerRow, ...s.bdSubmissions],
+          }))
+          upsertBDSubmission(trackerRow)
           upsertOpportunity(opp)
           get().addNotification({
             type: 'CONTRACT_SUBMITTED',
@@ -305,6 +349,33 @@ export const useStore = create<AppState>()(
             relatedId: id,
           })
         }
+      },
+
+      moveOpportunityToBDTracker: (id, status, comment) => {
+        const opp = get().opportunities.find(o => o.id === id)
+        if (!opp) return
+        const opportunityStatus = bdStatusToOpportunityStatus(status)
+        set(s => ({
+          opportunities: s.opportunities.map(o =>
+            o.id === id
+              ? { ...o, status: opportunityStatus, submittedAt: o.submittedAt ?? new Date().toISOString() }
+              : o
+          )
+        }))
+
+        const updatedOpp = get().opportunities.find(o => o.id === id)
+        if (!updatedOpp) return
+        const existing = get().bdSubmissions.find(b => b.solicitationId === updatedOpp.solicitationId)
+        const trackerRow = bdSubmissionFromOpportunity(updatedOpp, status, existing, comment)
+        set(s => ({
+          bdSubmissions: existing
+            ? s.bdSubmissions.map(b => b.id === existing.id ? trackerRow : b)
+            : [trackerRow, ...s.bdSubmissions],
+        }))
+        upsertOpportunity(updatedOpp)
+        upsertBDSubmission(trackerRow)
+
+        if (status === 'AWARDED') get().markOpportunityWon(id)
       },
 
       markOpportunityWon: (id) => {
@@ -387,6 +458,14 @@ export const useStore = create<AppState>()(
 
         const updated = get().opportunities.filter(opp => dueOpps.some(due => due.id === opp.id))
         updated.forEach(opp => {
+          const existing = get().bdSubmissions.find(b => b.solicitationId === opp.solicitationId)
+          const trackerRow = bdSubmissionFromOpportunity(opp, 'SUBMITTED', existing, 'Deadline reached')
+          set(s => ({
+            bdSubmissions: existing
+              ? s.bdSubmissions.map(b => b.id === existing.id ? trackerRow : b)
+              : [trackerRow, ...s.bdSubmissions],
+          }))
+          upsertBDSubmission(trackerRow)
           upsertOpportunity(opp)
           get().addNotification({
             type: 'CONTRACT_SUBMITTED',
@@ -782,7 +861,21 @@ export const useStore = create<AppState>()(
           bdSubmissions: s.bdSubmissions.map(b => b.id === id ? { ...b, status } : b)
         }))
         const updated = get().bdSubmissions.find(b => b.id === id)
-        if (updated) upsertBDSubmission(updated)
+        if (updated) {
+          upsertBDSubmission(updated)
+          const opp = get().opportunities.find(o => o.solicitationId === updated.solicitationId)
+          if (opp) {
+            const opportunityStatus = bdStatusToOpportunityStatus(status)
+            set(s => ({
+              opportunities: s.opportunities.map(o =>
+                o.id === opp.id ? { ...o, status: opportunityStatus } : o
+              )
+            }))
+            const updatedOpp = get().opportunities.find(o => o.id === opp.id)
+            if (updatedOpp) upsertOpportunity(updatedOpp)
+            if (status === 'AWARDED') get().markOpportunityWon(opp.id)
+          }
+        }
       },
 
       // ── Activity Logs ───────────────────────────────────────────────
@@ -1008,11 +1101,11 @@ export const useStore = create<AppState>()(
     }),
     {
       name: 'ces-crm-store',
-      // v3: start from an empty workspace and purge Supabase business data once.
-      version: 3,
+      // v4: force a clean business workspace again while keeping local users/employees.
+      version: 4,
       migrate: (persistedState: unknown, fromVersion: number) => {
         const s = persistedState as Record<string, unknown>
-        if (fromVersion < 3) {
+        if (fromVersion < 4) {
           return {
             ...s,
             currentUser:     null,

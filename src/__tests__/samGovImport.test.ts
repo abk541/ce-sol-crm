@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   buildSamGovOpportunityEndpoint,
   getSamGovPostedRange,
+  mapSamGovOpportunityToForm,
+  parseSamGovDeadline,
 } from '../pages/PipelinePage'
 
 const NOW = new Date('2026-05-18T12:00:00Z')
@@ -64,5 +66,42 @@ describe('SAM.gov import API calls', () => {
 
     expect(endpoint).toContain('/opportunities/v2/search?')
     expect(endpoint).toContain('solnum=W912EP-26-R-0001')
+  })
+
+  it('maps SAM.gov agency from subtier and leaves contract type empty', () => {
+    const mapped = mapSamGovOpportunityToForm({
+      title: 'Roof Anchor Testing',
+      solicitationNumber: '36C26326Q0724',
+      subtierName: 'Veterans Health Administration',
+      departmentName: 'Department of Veterans Affairs',
+      naicsCode: '541350',
+      typeOfSetAside: 'SBA',
+      responseDeadLine: '2026-05-27T10:00:00-05:00',
+      placeOfPerformance: { city: { name: 'Iowa City' }, state: { code: 'IA' } },
+    }, 'https://sam.gov/opp/example/view')
+
+    expect(mapped.client).toBe('Veterans Health Administration')
+    expect(mapped.type).toBeUndefined()
+    expect(mapped.dueDate).toBe('2026-05-27')
+    expect(mapped.localTime).toBe('10:00')
+    expect(mapped.timezone).toBe('EST')
+  })
+
+  it('falls back to department when subtier is missing', () => {
+    const mapped = mapSamGovOpportunityToForm({
+      title: 'Test',
+      solicitationNumber: 'ABC-123',
+      departmentName: 'Department of Defense',
+    }, 'https://sam.gov/opp/example/view')
+
+    expect(mapped.client).toBe('Department of Defense')
+  })
+
+  it('preserves posted deadline clock time instead of converting through the browser timezone', () => {
+    expect(parseSamGovDeadline('2026-05-27T23:59:00-04:00')).toEqual({
+      dueDate: '2026-05-27',
+      localTime: '23:59',
+      timezone: 'EST',
+    })
   })
 })

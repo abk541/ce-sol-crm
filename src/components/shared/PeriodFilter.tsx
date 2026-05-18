@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Calendar, ChevronDown, ChevronLeft, ChevronRight, X } from 'lucide-react'
 
@@ -66,6 +67,8 @@ export default function PeriodFilter({
   const [draftTo, setDraftTo] = useState('')
   const [viewDate, setViewDate] = useState(() => value?.from ? fromYMD(value.from) : new Date())
   const ref = useRef<HTMLDivElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const [panelPos, setPanelPos] = useState({ top: 0, left: 0 })
 
   const days = useMemo(() => calendarDays(viewDate), [viewDate])
   const monthLabel = viewDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
@@ -81,10 +84,35 @@ export default function PeriodFilter({
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+      const target = e.target as Node
+      if (
+        ref.current &&
+        !ref.current.contains(target) &&
+        panelRef.current &&
+        !panelRef.current.contains(target)
+      ) setOpen(false)
     }
     if (open) document.addEventListener('mousedown', handleClick)
     return () => document.removeEventListener('mousedown', handleClick)
+  }, [open])
+
+  useEffect(() => {
+    if (!open || !ref.current) return
+    const update = () => {
+      const rect = ref.current!.getBoundingClientRect()
+      const width = 320
+      const estimatedHeight = 420
+      const left = Math.max(12, Math.min(window.innerWidth - width - 12, rect.right - width))
+      const top = Math.min(window.innerHeight - estimatedHeight - 12, rect.bottom + 8)
+      setPanelPos({ top: Math.max(12, top), left })
+    }
+    update()
+    window.addEventListener('resize', update)
+    window.addEventListener('scroll', update, true)
+    return () => {
+      window.removeEventListener('resize', update)
+      window.removeEventListener('scroll', update, true)
+    }
   }, [open])
 
   const changeMonth = (delta: number) => {
@@ -141,15 +169,17 @@ export default function PeriodFilter({
         )}
       </div>
 
-      <AnimatePresence>
-        {open && (
+      {createPortal((
+        <AnimatePresence>
+          {open && (
           <motion.div
+            ref={panelRef}
             initial={{ opacity: 0, scale: 0.96, y: -6 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.96, y: -6 }}
             transition={{ type: 'spring', stiffness: 380, damping: 28 }}
-            className="absolute right-0 top-10 z-50 w-[320px] rounded-2xl border border-slate-200 bg-white p-4 shadow-xl"
-            style={{ boxShadow: '0 12px 40px rgba(0,0,0,0.12)' }}
+            className="fixed z-[9999] w-[320px] rounded-2xl border border-slate-200 bg-white p-4 shadow-xl"
+            style={{ top: panelPos.top, left: panelPos.left, boxShadow: '0 12px 40px rgba(0,0,0,0.12)' }}
           >
             <div className="flex items-center justify-between mb-3">
               <button
@@ -223,8 +253,9 @@ export default function PeriodFilter({
               </button>
             </div>
           </motion.div>
-        )}
-      </AnimatePresence>
+          )}
+        </AnimatePresence>
+      ), document.body)}
     </div>
   )
 }

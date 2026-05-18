@@ -11,7 +11,7 @@ interface HierarchyAssignPickerProps {
 
 // Role display helpers
 const ROLE_LABEL: Record<HierarchyRole, string> = {
-  BD_MANAGER: 'BD Manager',
+  BD_MANAGER: 'Manager',
   TEAM_LEAD:  'Team Lead',
   ASSOCIATE:  'Associate',
 }
@@ -26,7 +26,7 @@ const ROLE_AVATAR_CLS: Record<HierarchyRole, string> = {
 const ACTIVE_STATUSES_EXCLUDE = ['ARCHIVED', 'TERMINATED', 'CANCELED']
 
 const COLUMN_DEFS: { role: HierarchyRole; header: string }[] = [
-  { role: 'BD_MANAGER', header: 'BD Managers' },
+  { role: 'BD_MANAGER', header: 'Managers' },
   { role: 'TEAM_LEAD',  header: 'Team Leads' },
   { role: 'ASSOCIATE',  header: 'Associates' },
 ]
