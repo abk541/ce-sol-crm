@@ -11,27 +11,24 @@ interface HierarchyAssignPickerProps {
 
 // Role display helpers
 const ROLE_LABEL: Record<HierarchyRole, string> = {
-  MANAGER:            'Manager',
-  OPERATIONS_MANAGER: 'Ops Manager',
-  TEAM_MANAGER:       'Team Manager',
-  ASSOCIATE:          'Associate',
+  BD_MANAGER: 'BD Manager',
+  TEAM_LEAD:  'Team Lead',
+  ASSOCIATE:  'Associate',
 }
 
 // Avatar bg color by role
 const ROLE_AVATAR_CLS: Record<HierarchyRole, string> = {
-  MANAGER:            'bg-indigo-100 text-indigo-700 border-indigo-200',
-  OPERATIONS_MANAGER: 'bg-violet-100 text-violet-700 border-violet-200',
-  TEAM_MANAGER:       'bg-blue-100 text-blue-700 border-blue-200',
-  ASSOCIATE:          'bg-cyan-100 text-cyan-700 border-cyan-200',
+  BD_MANAGER: 'bg-indigo-100 text-indigo-700 border-indigo-200',
+  TEAM_LEAD:  'bg-blue-100 text-blue-700 border-blue-200',
+  ASSOCIATE:  'bg-cyan-100 text-cyan-700 border-cyan-200',
 }
 
 const ACTIVE_STATUSES_EXCLUDE = ['ARCHIVED', 'TERMINATED', 'CANCELED']
 
 const COLUMN_DEFS: { role: HierarchyRole; header: string }[] = [
-  { role: 'MANAGER',            header: 'Managers' },
-  { role: 'OPERATIONS_MANAGER', header: 'Operations Managers' },
-  { role: 'TEAM_MANAGER',       header: 'Team Managers' },
-  { role: 'ASSOCIATE',          header: 'Associates' },
+  { role: 'BD_MANAGER', header: 'BD Managers' },
+  { role: 'TEAM_LEAD',  header: 'Team Leads' },
+  { role: 'ASSOCIATE',  header: 'Associates' },
 ]
 
 // Given a selected employee id, derive the chain of selected ids at each tier
@@ -39,15 +36,15 @@ function deriveSelectionChain(
   employees: Employee[],
   selectedId: string | undefined
 ): (string | undefined)[] {
-  // Returns [managerId, opsManagerId, teamManagerId, associateId]
+  // Returns [bdManagerId, teamLeadId, associateId]
   // where each entry is the selected employee at that tier, or undefined
-  const chain: (string | undefined)[] = [undefined, undefined, undefined, undefined]
+  const chain: (string | undefined)[] = [undefined, undefined, undefined]
   if (!selectedId) return chain
 
   const emp = employees.find(e => e.id === selectedId)
   if (!emp) return chain
 
-  const roleOrder: HierarchyRole[] = ['MANAGER', 'OPERATIONS_MANAGER', 'TEAM_MANAGER', 'ASSOCIATE']
+  const roleOrder: HierarchyRole[] = ['BD_MANAGER', 'TEAM_LEAD', 'ASSOCIATE']
   const tierIdx = roleOrder.indexOf(emp.role)
   chain[tierIdx] = emp.id
 

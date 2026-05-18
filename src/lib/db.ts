@@ -1,5 +1,8 @@
 import { supabase, isSupabaseConnected } from './supabase'
 import type {
+  BDSubmission,
+  Comment,
+  DeletionRequest,
   Employee,
   Opportunity,
   Contract,
@@ -7,7 +10,9 @@ import type {
   FreshAward,
   GovernmentWarning,
   LockedSubcontractor,
+  NonSubmissionReport,
   PastPerformance,
+  Subcontractor,
 } from '../types'
 
 // ── Opportunity mappers ──────────────────────────────────────────────────────
@@ -18,7 +23,6 @@ function oppToDb(o: Opportunity): Record<string, unknown> {
     solicitation: o.solicitation,
     solicitation_id: o.solicitationId,
     client: o.client,
-    prime: o.prime,
     type: o.type,
     naics_code: o.naicsCode,
     set_aside: o.setAside,
@@ -55,7 +59,6 @@ function dbToOpp(row: Record<string, unknown>): Partial<Opportunity> {
     solicitation: row.solicitation as string,
     solicitationId: row.solicitation_id as string,
     client: row.client as string,
-    prime: row.prime as Opportunity['prime'],
     type: row.type as Opportunity['type'],
     naicsCode: row.naics_code as string,
     setAside: row.set_aside as Opportunity['setAside'],
@@ -92,12 +95,64 @@ function dbToOpp(row: Record<string, unknown>): Partial<Opportunity> {
 
 // ── Contract mappers ─────────────────────────────────────────────────────────
 
+function commentToDb(opportunityId: string, comment: Comment): Record<string, unknown> {
+  return {
+    id: comment.id,
+    opportunity_id: opportunityId,
+    text: comment.text,
+    author: comment.author,
+    created_at: comment.createdAt,
+  }
+}
+
+function dbToComment(row: Record<string, unknown>): Comment {
+  return {
+    id: row.id as string,
+    text: row.text as string,
+    author: row.author as string,
+    createdAt: row.created_at as string,
+  }
+}
+
+function subcontractorToDb(sub: Subcontractor): Record<string, unknown> {
+  return {
+    id: sub.id,
+    opportunity_id: sub.opportunityId,
+    company_name: sub.companyName,
+    contact_name: sub.contactName,
+    email: sub.email,
+    phone: sub.phone,
+    naics_code: sub.naicsCode || null,
+    set_aside: sub.setAside || null,
+    notes: sub.notes,
+    quote_file: sub.quoteFile ?? null,
+    created_at: sub.createdAt,
+    created_by: sub.createdBy,
+  }
+}
+
+function dbToSubcontractor(row: Record<string, unknown>): Subcontractor {
+  return {
+    id: row.id as string,
+    opportunityId: row.opportunity_id as string,
+    companyName: row.company_name as string,
+    contactName: row.contact_name as string,
+    email: row.email as string,
+    phone: row.phone as string,
+    naicsCode: (row.naics_code as string | null) ?? '',
+    setAside: (row.set_aside as string | null) ?? '',
+    notes: (row.notes as string | null) ?? '',
+    quoteFile: row.quote_file as string | undefined,
+    createdAt: row.created_at as string,
+    createdBy: row.created_by as string,
+  }
+}
+
 function contractToDb(c: Contract): Record<string, unknown> {
   return {
     id: c.id,
     contract_id: c.contractId,
     title: c.title,
-    prime: c.prime,
     type: c.type,
     finance_type: c.financeType ?? null,
     naics_code: c.naicsCode,
@@ -133,7 +188,6 @@ function dbToContract(row: Record<string, unknown>): Partial<Contract> {
     id: row.id as string,
     contractId: row.contract_id as string,
     title: row.title as string,
-    prime: row.prime as Contract['prime'],
     type: row.type as Contract['type'],
     financeType: row.finance_type as Contract['financeType'],
     naicsCode: row.naics_code as string,
@@ -272,7 +326,6 @@ function freshAwardToDb(fa: FreshAward): Record<string, unknown> {
     solicitation: fa.solicitation,
     solicitation_id: fa.solicitationId,
     client: fa.client,
-    prime: fa.prime,
     type: fa.type,
     set_aside: fa.setAside,
     naics_code: fa.naicsCode,
@@ -302,7 +355,6 @@ function dbToFreshAward(row: Record<string, unknown>): Partial<FreshAward> {
     solicitation: row.solicitation as string,
     solicitationId: row.solicitation_id as string,
     client: row.client as string,
-    prime: row.prime as FreshAward['prime'],
     type: row.type as FreshAward['type'],
     setAside: row.set_aside as FreshAward['setAside'],
     naicsCode: row.naics_code as string,
@@ -334,7 +386,6 @@ function ppToDb(pp: PastPerformance): Record<string, unknown> {
     contract_number: pp.contractNumber,
     title: pp.title,
     client: pp.client,
-    prime: pp.prime,
     type: pp.type,
     finance_type: pp.financeType ?? null,
     naics_code: pp.naicsCode,
@@ -362,7 +413,6 @@ function dbToPP(row: Record<string, unknown>): Partial<PastPerformance> {
     contractNumber: row.contract_number as string,
     title: row.title as string,
     client: row.client as string,
-    prime: row.prime as PastPerformance['prime'],
     type: row.type as PastPerformance['type'],
     financeType: row.finance_type as PastPerformance['financeType'],
     naicsCode: row.naics_code as string,
@@ -410,38 +460,174 @@ function dbToEmp(row: Record<string, unknown>): Employee {
 
 // ── Load all data ────────────────────────────────────────────────────────────
 
+function nonSubReportToDb(report: NonSubmissionReport): Record<string, unknown> {
+  return {
+    id: report.id,
+    opportunity_id: report.opportunityId,
+    agent_username: report.agentUsername,
+    reason: report.reason,
+    status: report.status,
+    submitted_at: report.submittedAt,
+    reviewed_by: report.reviewedBy ?? null,
+    reviewed_at: report.reviewedAt ?? null,
+    review_note: report.reviewNote ?? null,
+  }
+}
+
+function dbToNonSubReport(row: Record<string, unknown>): NonSubmissionReport {
+  return {
+    id: row.id as string,
+    opportunityId: row.opportunity_id as string,
+    agentUsername: row.agent_username as string,
+    reason: row.reason as string,
+    status: row.status as NonSubmissionReport['status'],
+    submittedAt: row.submitted_at as string,
+    reviewedBy: row.reviewed_by as string | undefined,
+    reviewedAt: row.reviewed_at as string | undefined,
+    reviewNote: row.review_note as string | undefined,
+  }
+}
+
+function deletionRequestToDb(req: DeletionRequest): Record<string, unknown> {
+  return {
+    id: req.id,
+    opportunity_id: req.opportunityId,
+    requested_by: req.requestedBy,
+    reason: req.reason,
+    status: req.status,
+    requested_at: req.requestedAt,
+    reviewed_by: req.reviewedBy ?? null,
+    reviewed_at: req.reviewedAt ?? null,
+  }
+}
+
+function dbToDeletionRequest(row: Record<string, unknown>): DeletionRequest {
+  return {
+    id: row.id as string,
+    opportunityId: row.opportunity_id as string,
+    requestedBy: row.requested_by as string,
+    reason: row.reason as string,
+    status: row.status as DeletionRequest['status'],
+    requestedAt: row.requested_at as string,
+    reviewedBy: row.reviewed_by as string | undefined,
+    reviewedAt: row.reviewed_at as string | undefined,
+  }
+}
+
+function bdSubmissionToDb(submission: BDSubmission): Record<string, unknown> {
+  return {
+    id: submission.id,
+    submitted_on: submission.submittedOn,
+    solicitation_id: submission.solicitationId,
+    set_aside: submission.setAside,
+    type: submission.type,
+    solicitation: submission.solicitation,
+    status: submission.status,
+    due_date: submission.dueDate,
+    local_time: submission.localTime,
+    location: submission.location,
+    bdm: submission.bdm,
+    bds: submission.bds,
+    support_agent: submission.supportAgent ?? null,
+    value: submission.value,
+    comment: submission.comment ?? null,
+  }
+}
+
+function dbToBDSubmission(row: Record<string, unknown>): BDSubmission {
+  return {
+    id: Number(row.id),
+    submittedOn: row.submitted_on as string,
+    solicitationId: row.solicitation_id as string,
+    setAside: row.set_aside as BDSubmission['setAside'],
+    type: row.type as BDSubmission['type'],
+    solicitation: row.solicitation as string,
+    status: row.status as BDSubmission['status'],
+    dueDate: row.due_date as string,
+    localTime: row.local_time as string,
+    location: row.location as string,
+    bdm: row.bdm as string,
+    bds: row.bds as string,
+    supportAgent: row.support_agent as string | undefined,
+    value: Number(row.value ?? 0),
+    comment: row.comment as string | undefined,
+  }
+}
+
 export async function loadAllData(): Promise<{
   employees: Employee[]
   opportunities: Opportunity[]
   contracts: Contract[]
   freshAwards: FreshAward[]
   pastPerformances: PastPerformance[]
+  subcontractors: Subcontractor[]
+  nonSubReports: NonSubmissionReport[]
+  deletionRequests: DeletionRequest[]
+  bdSubmissions: BDSubmission[]
 } | null> {
   if (!isSupabaseConnected || !supabase) return null
 
   try {
-    const [empRes, oppRes, conRes, pocRes, lockedSubRes, warningRes, faRes, ppRes] = await Promise.all([
+    const [
+      empRes,
+      oppRes,
+      commentRes,
+      subRes,
+      conRes,
+      pocRes,
+      lockedSubRes,
+      warningRes,
+      faRes,
+      ppRes,
+      nonSubRes,
+      deletionRes,
+      bdRes,
+    ] = await Promise.all([
       supabase.from('employees').select('*'),
       supabase.from('opportunities').select('*'),
+      supabase.from('comments').select('*'),
+      supabase.from('subcontractors').select('*'),
       supabase.from('contracts').select('*'),
       supabase.from('contract_pocs').select('*'),
       supabase.from('locked_subcontractors').select('*'),
       supabase.from('government_warnings').select('*'),
       supabase.from('fresh_awards').select('*'),
       supabase.from('past_performances').select('*'),
+      supabase.from('non_submission_reports').select('*'),
+      supabase.from('deletion_requests').select('*'),
+      supabase.from('bd_submissions').select('*'),
     ])
 
     if (empRes.error) console.error('[db] employees load error', empRes.error)
     if (oppRes.error) console.error('[db] opportunities load error', oppRes.error)
+    if (commentRes.error) console.error('[db] comments load error', commentRes.error)
+    if (subRes.error) console.error('[db] subcontractors load error', subRes.error)
     if (conRes.error) console.error('[db] contracts load error', conRes.error)
     if (pocRes.error) console.error('[db] contract_pocs load error', pocRes.error)
     if (lockedSubRes.error) console.error('[db] locked_subcontractors load error', lockedSubRes.error)
     if (warningRes.error) console.error('[db] government_warnings load error', warningRes.error)
     if (faRes.error) console.error('[db] fresh_awards load error', faRes.error)
     if (ppRes.error) console.error('[db] past_performances load error', ppRes.error)
+    if (nonSubRes.error) console.error('[db] non_submission_reports load error', nonSubRes.error)
+    if (deletionRes.error) console.error('[db] deletion_requests load error', deletionRes.error)
+    if (bdRes.error) console.error('[db] bd_submissions load error', bdRes.error)
 
     const employees: Employee[] = (empRes.data ?? []).map(r => dbToEmp(r as Record<string, unknown>))
+    const commentsByOpp = new Map<string, Comment[]>()
+    ;(commentRes.data ?? []).forEach(r => {
+      const row = r as Record<string, unknown>
+      const oppId = row.opportunity_id as string
+      const list = commentsByOpp.get(oppId) ?? []
+      list.push(dbToComment(row))
+      commentsByOpp.set(oppId, list)
+    })
+    const subcontractors: Subcontractor[] = (subRes.data ?? []).map(r => dbToSubcontractor(r as Record<string, unknown>))
     const opportunities: Opportunity[] = (oppRes.data ?? []).map(r => dbToOpp(r as Record<string, unknown>) as Opportunity)
+      .map(opp => ({
+        ...opp,
+        comments: commentsByOpp.get(opp.id) ?? [],
+        subcontractors: subcontractors.filter(sub => sub.opportunityId === opp.id),
+      }))
     const pocs: ContractPoC[] = (pocRes.data ?? []).map(r => dbToPoc(r as Record<string, unknown>))
     const lockedSubs: LockedSubcontractor[] = (lockedSubRes.data ?? []).map(r => dbToLockedSub(r as Record<string, unknown>))
     const warnings: GovernmentWarning[] = (warningRes.data ?? []).map(r => dbToWarning(r as Record<string, unknown>))
@@ -454,8 +640,21 @@ export async function loadAllData(): Promise<{
     })
     const freshAwards: FreshAward[] = (faRes.data ?? []).map(r => dbToFreshAward(r as Record<string, unknown>) as FreshAward)
     const pastPerformances: PastPerformance[] = (ppRes.data ?? []).map(r => dbToPP(r as Record<string, unknown>) as PastPerformance)
+    const nonSubReports: NonSubmissionReport[] = (nonSubRes.data ?? []).map(r => dbToNonSubReport(r as Record<string, unknown>))
+    const deletionRequests: DeletionRequest[] = (deletionRes.data ?? []).map(r => dbToDeletionRequest(r as Record<string, unknown>))
+    const bdSubmissions: BDSubmission[] = (bdRes.data ?? []).map(r => dbToBDSubmission(r as Record<string, unknown>))
 
-    return { employees, opportunities, contracts, freshAwards, pastPerformances }
+    return {
+      employees,
+      opportunities,
+      contracts,
+      freshAwards,
+      pastPerformances,
+      subcontractors,
+      nonSubReports,
+      deletionRequests,
+      bdSubmissions,
+    }
   } catch (err) {
     console.error('[db] loadAllData failed', err)
     return null
@@ -469,8 +668,35 @@ export async function upsertOpportunity(o: Opportunity): Promise<void> {
   try {
     const { error } = await supabase.from('opportunities').upsert(oppToDb(o))
     if (error) console.error('[db] upsertOpportunity error', error)
+    if (!error && Array.isArray(o.comments)) {
+      const deleteRes = await supabase.from('comments').delete().eq('opportunity_id', o.id)
+      if (deleteRes.error) console.error('[db] sync comments delete error', deleteRes.error)
+      if (o.comments.length > 0) {
+        await insertBatched('comments', o.comments.map(comment => commentToDb(o.id, comment)))
+      }
+    }
   } catch (err) {
     console.error('[db] upsertOpportunity failed', err)
+  }
+}
+
+export async function upsertSubcontractor(sub: Subcontractor): Promise<void> {
+  if (!isSupabaseConnected || !supabase) return
+  try {
+    const { error } = await supabase.from('subcontractors').upsert(subcontractorToDb(sub))
+    if (error) console.error('[db] upsertSubcontractor error', error)
+  } catch (err) {
+    console.error('[db] upsertSubcontractor failed', err)
+  }
+}
+
+export async function deleteSubcontractorRecord(id: string): Promise<void> {
+  if (!isSupabaseConnected || !supabase) return
+  try {
+    const { error } = await supabase.from('subcontractors').delete().eq('id', id)
+    if (error) console.error('[db] deleteSubcontractorRecord error', error)
+  } catch (err) {
+    console.error('[db] deleteSubcontractorRecord failed', err)
   }
 }
 
@@ -546,18 +772,61 @@ export async function upsertPastPerformance(pp: PastPerformance): Promise<void> 
 
 // ── Clear all business data ──────────────────────────────────────────────────
 
+export async function upsertNonSubReport(report: NonSubmissionReport): Promise<void> {
+  if (!isSupabaseConnected || !supabase) return
+  try {
+    const { error } = await supabase.from('non_submission_reports').upsert(nonSubReportToDb(report))
+    if (error) console.error('[db] upsertNonSubReport error', error)
+  } catch (err) {
+    console.error('[db] upsertNonSubReport failed', err)
+  }
+}
+
+export async function upsertDeletionRequest(req: DeletionRequest): Promise<void> {
+  if (!isSupabaseConnected || !supabase) return
+  try {
+    const { error } = await supabase.from('deletion_requests').upsert(deletionRequestToDb(req))
+    if (error) console.error('[db] upsertDeletionRequest error', error)
+  } catch (err) {
+    console.error('[db] upsertDeletionRequest failed', err)
+  }
+}
+
+export async function upsertBDSubmission(submission: BDSubmission): Promise<void> {
+  if (!isSupabaseConnected || !supabase) return
+  try {
+    const { error } = await supabase.from('bd_submissions').upsert(bdSubmissionToDb(submission))
+    if (error) console.error('[db] upsertBDSubmission error', error)
+  } catch (err) {
+    console.error('[db] upsertBDSubmission failed', err)
+  }
+}
+
 export async function clearBusinessData(): Promise<void> {
   if (!isSupabaseConnected || !supabase) return
   try {
-    await Promise.all([
-      supabase.from('contract_pocs').delete().neq('id', ''),
-      supabase.from('locked_subcontractors').delete().neq('id', ''),
-      supabase.from('government_warnings').delete().neq('id', ''),
-      supabase.from('opportunities').delete().neq('id', ''),
-      supabase.from('contracts').delete().neq('id', ''),
-      supabase.from('fresh_awards').delete().neq('id', ''),
-      supabase.from('past_performances').delete().neq('id', ''),
-    ])
+    for (const table of [
+      'contract_pocs',
+      'locked_subcontractors',
+      'government_warnings',
+      'comments',
+      'subcontractors',
+      'non_submission_reports',
+      'deletion_requests',
+      'notifications',
+      'activity_logs',
+      'bd_submissions',
+      'subk_database',
+      'past_performances',
+      'fresh_awards',
+      'contracts',
+      'opportunities',
+      'users',
+      'employees',
+    ]) {
+      const { error } = await supabase.from(table).delete().not('id', 'is', null)
+      if (error) console.error(`[db] clear ${table} error`, error)
+    }
     console.log('[db] All business data cleared from Supabase.')
   } catch (err) {
     console.error('[db] clearBusinessData failed', err)

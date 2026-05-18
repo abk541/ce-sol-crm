@@ -1,4 +1,4 @@
-export type HierarchyRole = 'MANAGER' | 'OPERATIONS_MANAGER' | 'TEAM_MANAGER' | 'ASSOCIATE'
+export type HierarchyRole = 'BD_MANAGER' | 'TEAM_LEAD' | 'ASSOCIATE'
 
 export interface Employee {
   id: string
@@ -10,7 +10,7 @@ export interface Employee {
   avatar: string             // 2-letter initials
 }
 
-export type Role = 'ADMIN' | 'BDM' | 'BDS' | 'SPM' | 'PM' | 'SUPPORT_AGENT'
+export type Role = 'BD_MANAGER' | 'TEAM_LEAD' | 'ASSOCIATE'
 
 export interface User {
   id: string
@@ -41,7 +41,6 @@ export type ContractStatus =
 export type ContractType = 'OTJ' | 'RECURRING' | 'BPA' | 'IDIQ' | 'S&D' | 'SUPPLY'
 export type ContractFinanceType = 'FFP' | 'T&M' | 'CPFF' | 'OTHER'
 export type SetAside = 'SB' | 'SDVOSB' | 'WOSB' | 'HUBZone' | 'VOSB' | '8(a)' | 'UNRES'
-export type Prime = 'TECH-OR' | 'AYJ-S' | 'SANFORD' | 'SAUDI'
 
 // ── Comments ──────────────────────────────────────────────────────────
 export interface Comment {
@@ -170,7 +169,6 @@ export interface Opportunity {
   solicitation: string
   solicitationId: string
   client: string
-  prime?: Prime
   type: ContractType
   naicsCode: string
   setAside: SetAside
@@ -209,7 +207,6 @@ export interface Contract {
   id: string
   contractId: string
   title: string
-  prime: Prime
   type: ContractType
   financeType?: ContractFinanceType
   naicsCode: string
@@ -245,7 +242,6 @@ export interface Contract {
 // ── BD Submission (BD Tracker) ────────────────────────────────────────
 export interface BDSubmission {
   id: number
-  prime: Prime
   submittedOn: string
   solicitationId: string
   setAside: SetAside
@@ -270,7 +266,6 @@ export interface FreshAward {
   solicitation: string
   solicitationId: string
   client: string
-  prime: Prime
   type: ContractType
   setAside: SetAside
   naicsCode: string
@@ -299,7 +294,6 @@ export interface PastPerformance {
   contractNumber: string
   title: string
   client: string
-  prime: Prime
   type: ContractType
   financeType?: ContractFinanceType
   naicsCode: string

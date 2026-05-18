@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Plus, Search, X, ExternalLink, Loader,
@@ -216,7 +216,7 @@ function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) 
   const [deleteReason, setDeleteReason] = useState('')
   const [newComment, setNewComment] = useState('')
 
-  const isManager = ['ADMIN', 'BDM'].includes(currentUser?.role ?? '')
+  const isManager = currentUser?.role === 'BD_MANAGER'
   const hasPendingDelete = deletionRequests.some(r => r.opportunityId === opp.id && r.status === 'PENDING')
   const set = (k: keyof Opportunity, v: any) => setForm(p => ({ ...p, [k]: v }))
   const lbl = 'block text-xs font-semibold text-slate-500 mb-1.5'
@@ -798,6 +798,7 @@ function CreateModal({ onClose }: { onClose: () => void }) {
   const [tab, setTab] = useState<OppFormTab>('details')
   const [samUrl, setSamUrl] = useState('')
   const [importing, setImporting] = useState(false)
+  const [lastImportedUrl, setLastImportedUrl] = useState('')
   const [initialComment, setInitialComment] = useState('')
   const [form, setForm] = useState<Partial<Opportunity>>({
     priority: 'MEDIUM', status: 'ACTIVE', type: 'OTJ', setAside: 'SB',
@@ -812,7 +813,7 @@ function CreateModal({ onClose }: { onClose: () => void }) {
 
   const handleImport = async () => {
     const url = samUrl.trim()
-    if (!url) return
+    if (!url || importing) return
 
     const apiKey = import.meta.env.VITE_SAM_GOV_API_KEY as string | undefined
     if (!apiKey) {
@@ -898,6 +899,7 @@ function CreateModal({ onClose }: { onClose: () => void }) {
       }))
 
       toast.success('Details imported from SAM.gov!')
+      setLastImportedUrl(url)
       setTab('details')
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Unknown error'
@@ -907,6 +909,18 @@ function CreateModal({ onClose }: { onClose: () => void }) {
       setImporting(false)
     }
   }
+
+  useEffect(() => {
+    const url = samUrl.trim()
+    if (!url || url === lastImportedUrl || importing) return
+    if (!/sam\.gov/i.test(url)) return
+
+    const timer = window.setTimeout(() => {
+      void handleImport()
+    }, 600)
+
+    return () => window.clearTimeout(timer)
+  }, [samUrl, lastImportedUrl, importing])
 
   const handleCreate = () => {
     if (!form.solicitation?.trim()) { toast.error('Solicitation title is required'); setTab('details'); return }
@@ -1312,16 +1326,14 @@ type SortKey = keyof Opportunity
 type SortDir = 'asc' | 'desc'
 
 const ROLE_LABEL: Record<string, string> = {
-  MANAGER: 'Manager',
-  OPERATIONS_MANAGER: 'Ops Manager',
-  TEAM_MANAGER: 'Team Manager',
+  BD_MANAGER: 'BD Manager',
+  TEAM_LEAD: 'Team Lead',
   ASSOCIATE: 'Associate',
 }
 const ROLE_COLOR: Record<string, { color: string; bg: string; border: string }> = {
-  MANAGER:            { color: '#4338CA', bg: '#EEF2FF', border: '#C7D2FE' },
-  OPERATIONS_MANAGER: { color: '#7C3AED', bg: '#F5F3FF', border: '#DDD6FE' },
-  TEAM_MANAGER:       { color: '#1D4ED8', bg: '#EFF6FF', border: '#BFDBFE' },
-  ASSOCIATE:          { color: '#0E7490', bg: '#ECFEFF', border: '#A5F3FC' },
+  BD_MANAGER: { color: '#4338CA', bg: '#EEF2FF', border: '#C7D2FE' },
+  TEAM_LEAD:  { color: '#1D4ED8', bg: '#EFF6FF', border: '#BFDBFE' },
+  ASSOCIATE:  { color: '#0E7490', bg: '#ECFEFF', border: '#A5F3FC' },
 }
 
 export default function PipelinePage() {
@@ -1358,7 +1370,7 @@ export default function PipelinePage() {
   const [page, setPage]         = useState(1)
   const [pageSize, setPageSize] = useState(25)
 
-  const canSubmit = ['ADMIN', 'BDM', 'BDS'].includes(currentUser?.role ?? '')
+  const canSubmit = ['BD_MANAGER', 'TEAM_LEAD', 'ASSOCIATE'].includes(currentUser?.role ?? '')
 
   // Unique BDM / BDS / Support lists for dropdowns
   const bdmList     = useMemo(() => Array.from(new Set(opportunities.map(o => o.bdm).filter(Boolean))), [opportunities])

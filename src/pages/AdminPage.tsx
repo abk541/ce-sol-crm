@@ -6,14 +6,11 @@ import type { User, Role } from '../types'
 import { avatarColor } from '../lib/utils'
 import toast from 'react-hot-toast'
 
-const ROLES: Role[] = ['ADMIN', 'BDM', 'BDS', 'SPM', 'PM', 'SUPPORT_AGENT']
+const ROLES: Role[] = ['BD_MANAGER', 'TEAM_LEAD', 'ASSOCIATE']
 const ROLE_BADGE: Record<Role, string> = {
-  ADMIN:         'bg-rose-500/15 text-rose-400 border-rose-500/25',
-  BDM:           'bg-indigo-500/15 text-indigo-400 border-indigo-500/25',
-  BDS:           'bg-violet-500/15 text-violet-400 border-violet-500/25',
-  SPM:           'bg-amber-500/15 text-amber-400 border-amber-500/25',
-  PM:            'bg-cyan-500/15 text-cyan-400 border-cyan-500/25',
-  SUPPORT_AGENT: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/25',
+  BD_MANAGER: 'bg-indigo-500/15 text-indigo-400 border-indigo-500/25',
+  TEAM_LEAD:  'bg-violet-500/15 text-violet-400 border-violet-500/25',
+  ASSOCIATE:  'bg-emerald-500/15 text-emerald-400 border-emerald-500/25',
 }
 
 type FormState = {
@@ -26,7 +23,7 @@ function UserModal({ user, onClose }: { user: User | null; onClose: () => void }
   const [form, setForm] = useState<FormState>({
     name:   user?.name   ?? '',
     email:  user?.email  ?? '',
-    role:   user?.role   ?? 'BDS',
+    role:   user?.role   ?? 'ASSOCIATE',
     status: user?.status ?? 'active',
   })
 

@@ -371,7 +371,7 @@ export default function NonSubmissionsPage() {
   const [submitFor, setSubmitFor] = useState<{ id: string; name: string } | null>(null)
   const [reviewId, setReviewId] = useState<string | null>(null)
 
-  const isManager = ['ADMIN', 'BDM', 'SPM'].includes(currentUser?.role ?? '')
+  const isManager = ['BD_MANAGER', 'TEAM_LEAD'].includes(currentUser?.role ?? '')
   const isAgent = !isManager
 
   const droppedCount = useMemo(

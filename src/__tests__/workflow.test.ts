@@ -21,7 +21,10 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 vi.mock('../lib/db', () => ({
   loadAllData: vi.fn().mockResolvedValue(null),
   seedIfEmpty: vi.fn().mockResolvedValue(null),
+  clearBusinessData: vi.fn().mockResolvedValue(null),
   upsertOpportunity: vi.fn().mockResolvedValue(null),
+  upsertSubcontractor: vi.fn().mockResolvedValue(null),
+  deleteSubcontractorRecord: vi.fn().mockResolvedValue(null),
   upsertContract: vi.fn().mockResolvedValue(null),
   upsertContractPoC: vi.fn().mockResolvedValue(null),
   deleteContractPoC: vi.fn().mockResolvedValue(null),
@@ -29,6 +32,9 @@ vi.mock('../lib/db', () => ({
   upsertGovernmentWarning: vi.fn().mockResolvedValue(null),
   upsertFreshAward: vi.fn().mockResolvedValue(null),
   upsertPastPerformance: vi.fn().mockResolvedValue(null),
+  upsertNonSubReport: vi.fn().mockResolvedValue(null),
+  upsertDeletionRequest: vi.fn().mockResolvedValue(null),
+  upsertBDSubmission: vi.fn().mockResolvedValue(null),
 }))
 
 vi.mock('../lib/supabase', () => ({
@@ -74,7 +80,6 @@ function makeContract(overrides: Partial<Contract> = {}): Contract {
     id: `c-${Math.random().toString(36).slice(2)}`,
     contractId: 'CONTRACT-TEST-001',
     title: 'HVAC Maintenance Service',
-    prime: 'TECH-OR',
     type: 'OTJ',
     naicsCode: '238220',
     status: 'KICK_OFF',
@@ -89,9 +94,9 @@ function makeContract(overrides: Partial<Contract> = {}): Contract {
 }
 
 // ── Reset store data before every test ───────────────────────────────
-const ADMIN_USER = {
-  id: 'u-admin', name: 'Admin User', email: 'admin@ces.com',
-  username: 'admin', role: 'ADMIN' as const, avatar: 'AU',
+const BD_MANAGER_USER = {
+  id: 'u-bd-manager', name: 'BD Manager', email: 'manager@ces.com',
+  username: 'manager', role: 'BD_MANAGER' as const, avatar: 'BM',
   status: 'active' as const, firstLogin: false, mfaEnabled: true,
   createdAt: '2026-01-01',
 }
@@ -107,7 +112,7 @@ beforeEach(() => {
     deletionRequests: [],
     notifications: [],
     activityLogs: [],
-    currentUser: ADMIN_USER,
+    currentUser: BD_MANAGER_USER,
     isAuthenticated: true,
     loginTimestamp: Date.now(),
   })
@@ -179,6 +184,17 @@ describe('1 · submitOpportunity', () => {
 
     const updated = useStore.getState().opportunities.find(o => o.id === 'opp1')
     expect(updated?.status).toBe('SUBMITTED')
+  })
+
+  it('auto-submits pre-submission opportunities when the deadline is reached', () => {
+    const opp = makeOpp({ id: 'opp-expired', status: 'ACTIVE', dueDate: '2000-01-01', localTime: '09:00' })
+    useStore.setState({ opportunities: [opp] })
+
+    useStore.getState().syncDueOpportunities()
+
+    const updated = useStore.getState().opportunities.find(o => o.id === 'opp-expired')
+    expect(updated?.status).toBe('SUBMITTED')
+    expect(updated?.submittedAt).toBeTruthy()
   })
 })
 
@@ -344,7 +360,6 @@ describe('4 · FreshAward → Active Contract (moveFreshAwardToActive)', () => {
     solicitation: 'HVAC Maintenance Service',
     solicitationId: 'FA4890-26-R-0001',
     client: 'Andrews AFB',
-    prime: 'TECH-OR' as const,
     type: 'OTJ' as const,
     setAside: 'SB' as const,
     naicsCode: '238220',
@@ -360,7 +375,6 @@ describe('4 · FreshAward → Active Contract (moveFreshAwardToActive)', () => {
     const contracts = useStore.getState().contracts
     expect(contracts).toHaveLength(1)
     expect(contracts[0].title).toBe('HVAC Maintenance Service')
-    expect(contracts[0].prime).toBe('TECH-OR')
   })
 
   it('contract starts at KICK_OFF status', () => {
@@ -503,7 +517,7 @@ describe('6 · terminateContract', () => {
 // ═════════════════════════════════════════════════════════════════════
 describe('7 · BD Submission status updates', () => {
   const SAMPLE_BD = {
-    id: 42, prime: 'TECH-OR' as const, submittedOn: '2026-05-01',
+    id: 42, submittedOn: '2026-05-01',
     solicitationId: 'BD-042', setAside: 'SB' as const, type: 'OTJ' as const,
     solicitation: 'Test BD Submission', status: 'SUBMITTED' as const,
     dueDate: '2026-06-01', localTime: '17:00', location: 'DC',

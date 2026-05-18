@@ -145,7 +145,7 @@ function CreateModal({ onClose, onSave }: { onClose: () => void; onSave: (e: Omi
           <div className="w-9 h-9 rounded-xl bg-indigo-50 flex items-center justify-center">
             <Plus size={16} className="text-indigo-600" />
           </div>
-          <h2 className="text-sm font-bold text-slate-800">Add Subcontractor</h2>
+          <h2 className="text-sm font-bold text-slate-800">Add Sourcing</h2>
           <button onClick={onClose} className="ml-auto text-slate-400 hover:text-slate-600"><X size={16} /></button>
         </div>
 
@@ -244,12 +244,12 @@ export default function SubkDatabasePage() {
         <div>
           <p className="text-[10px] font-bold text-slate-400 tracking-[0.2em] mb-1">CES · OPERATIONS</p>
           <h1 className="text-2xl font-black text-slate-900 flex items-center gap-3">
-            <Building2 size={22} className="text-indigo-500" /> Subcontractor Database
+            <Building2 size={22} className="text-indigo-500" /> Sourcing Database
           </h1>
-          <p className="text-slate-500 text-sm mt-0.5">{subkDatabase.length} subcontractors on record</p>
+          <p className="text-slate-500 text-sm mt-0.5">{subkDatabase.length} sourcing entries on record</p>
         </div>
         <button onClick={() => setShowCreate(true)} className="btn-primary gap-2">
-          <Plus size={14} /> Add Subcontractor
+          <Plus size={14} /> Add Sourcing
         </button>
       </div>
 
@@ -278,7 +278,7 @@ export default function SubkDatabasePage() {
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
         {filtered.length === 0 && (
           <div className="col-span-full py-16 text-center text-slate-400 text-sm bg-white rounded-2xl border border-slate-100">
-            No subcontractors found.
+            No sourcing entries found.
           </div>
         )}
         {filtered.map((entry, i) => {

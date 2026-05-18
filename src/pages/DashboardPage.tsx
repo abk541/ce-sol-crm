@@ -191,7 +191,7 @@ function KpiDetailDrawer({
       return (
         <div className="space-y-3">
           <p className="text-xs text-slate-500">Submissions breakdown by agent</p>
-          {AGENT_STATS.filter(a => a.role !== 'ADMIN' && a.submissions > 0).sort((a, b) => b.submissions - a.submissions).map((a, i) => (
+          {AGENT_STATS.filter(a => a.submissions > 0).sort((a, b) => b.submissions - a.submissions).map((a, i) => (
             <div key={a.username} className="flex items-center gap-3 p-2.5 rounded-xl hover:bg-slate-50 transition-colors cursor-pointer">
               <span className="text-xs text-slate-400 w-4">#{i + 1}</span>
               <div className={`w-7 h-7 rounded-lg flex items-center justify-center text-[9px] font-black text-white bg-gradient-to-br ${avatarColor(a.avatar)}`}>
@@ -217,7 +217,7 @@ function KpiDetailDrawer({
       return (
         <div className="space-y-3">
           <p className="text-xs text-slate-500">Win/loss breakdown by agent</p>
-          {AGENT_STATS.filter(a => a.role !== 'ADMIN').sort((a, b) => b.winRate - a.winRate).map((a, i) => (
+          {AGENT_STATS.sort((a, b) => b.winRate - a.winRate).map((a, i) => (
             <div key={a.username} className="p-3 rounded-xl border border-slate-100 hover:border-slate-200 transition-colors">
               <div className="flex items-center gap-2 mb-2">
                 <div className={`w-6 h-6 rounded-md flex items-center justify-center text-[9px] font-black text-white bg-gradient-to-br ${avatarColor(a.avatar)}`}>
@@ -335,7 +335,7 @@ function AgentDashboard() {
   const navigate = useNavigate()
   const myStats = AGENT_STATS.find(s => s.username === currentUser?.username) ?? {
     username: '', name: currentUser?.name ?? '', avatar: currentUser?.avatar ?? '',
-    role: currentUser?.role ?? 'BDS', submissions: 0, wins: 0, losses: 0,
+    role: currentUser?.role ?? 'ASSOCIATE', submissions: 0, wins: 0, losses: 0,
     nonSubs: 0, active: 0, winRate: 0, submissionRate: 0, score: 0, rank: 0, goal: 5, streak: 0,
   }
   const tier = getTier(myStats.score)
@@ -612,7 +612,7 @@ function AdminDashboard() {
   const { opportunities, nonSubReports, deletionRequests, activityLogs, currentUser } = useStore()
   const navigate = useNavigate()
   const [period, setPeriod] = useState<Period>('ALL')
-  const [leaderRole, setLeaderRole] = useState<'ALL' | 'BDM' | 'BDS'>('ALL')
+  const [leaderRole, setLeaderRole] = useState<'ALL' | 'BD_MANAGER' | 'TEAM_LEAD' | 'ASSOCIATE'>('ALL')
   const [activeKpi, setActiveKpi] = useState<KpiDetail | null>(null)
 
   const opps = opportunities.filter(o => !o.isDeleted)
@@ -650,7 +650,7 @@ function AdminDashboard() {
   const TYPE_COLORS = ['#6366F1', '#22C55E', '#F59E0B', '#06B6D4', '#8B5CF6', '#F97316']
 
   const agents = AGENT_STATS
-    .filter(s => s.role !== 'ADMIN' && (leaderRole === 'ALL' || s.role === leaderRole))
+    .filter(s => leaderRole === 'ALL' || s.role === leaderRole)
     .sort((a, b) => b.score - a.score)
 
   const winRateData = agents.slice(0, 5).map(a => ({
@@ -663,9 +663,9 @@ function AdminDashboard() {
     .slice(0, 5)
 
   const kpis = [
-    { key: 'revenue',  icon: DollarSign,   label: 'Period Revenue',    value: revenue,                     display: formatCurrency(revenue), color: '#6366F1', change: '+18%', up: true },
+    { key: 'revenue',  icon: DollarSign,   label: 'Period Revenue',    value: revenue,                     display: formatCurrency(revenue), color: '#6366F1', change: `${filteredOpps.length} records`, up: revenue > 0 },
     { key: 'pipeline', icon: Target,        label: 'Active Pipeline',   value: active,                      display: null, color: '#06B6D4', change: `${submitted} submitted`, up: true },
-    { key: 'submissions', icon: Send,       label: 'Total Submissions', value: totalSubs,                   display: null, color: '#22C55E', change: '+5% MoM', up: true },
+    { key: 'submissions', icon: Send,       label: 'Total Submissions', value: totalSubs,                   display: null, color: '#22C55E', change: `${totalWins} wins`, up: totalSubs > 0 },
     { key: 'winrate',  icon: Percent,       label: 'Win Rate',          value: winRate,                     display: `${winRate}%`, color: '#F59E0B', change: `${totalWins} wins`, up: winRate > 30 },
     { key: 'won',      icon: FileCheck2,    label: 'Won Contracts',     value: won,                         display: null, color: '#8B5CF6', change: `${filteredOpps.length} tracked`, up: true },
     { key: 'reviews',  icon: AlertTriangle, label: 'Pending Reviews',   value: pendingDeletes + pendingReports, display: null,
@@ -747,7 +747,7 @@ function AdminDashboard() {
             </div>
             <span className="text-xs text-emerald-600 font-bold bg-emerald-50 border border-emerald-100 px-2 py-0.5 rounded-md cursor-pointer hover:bg-emerald-100 transition-colors"
               onClick={() => setActiveKpi({ key: 'revenue', label: 'Period Revenue', color: '#6366F1' })}>
-              +18% YoY â†—
+              {revData.length > 0 ? 'Live data' : 'No trend'}
             </span>
           </div>
           <ResponsiveContainer width="100%" height={170}>
@@ -881,7 +881,7 @@ function AdminDashboard() {
               <Trophy size={14} className="text-amber-500" /> Agent Leaderboard
             </h3>
             <div className="flex gap-1 p-0.5 bg-slate-100 rounded-lg">
-              {(['ALL', 'BDM', 'BDS'] as const).map(r => (
+              {(['ALL', 'BD_MANAGER', 'TEAM_LEAD', 'ASSOCIATE'] as const).map(r => (
                 <button key={r} onClick={() => setLeaderRole(r)}
                   className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold transition-all ${
                     leaderRole === r ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
@@ -1058,7 +1058,7 @@ function AdminDashboard() {
             </button>
           </div>
           <ResponsiveContainer width="100%" height={180}>
-            <BarChart data={agents.filter(a => a.role !== 'ADMIN')} barGap={2} barCategoryGap="25%"
+            <BarChart data={agents} barGap={2} barCategoryGap="25%"
               style={{ cursor: 'pointer' }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" vertical={false} />
               <XAxis dataKey="name" tickFormatter={v => v.split(' ')[0]}
@@ -1074,7 +1074,7 @@ function AdminDashboard() {
         </motion.div>
 
         {/* Activity Log (admin only) */}
-        {['ADMIN'].includes(currentUser?.role ?? '') && (
+        {currentUser?.role === 'BD_MANAGER' && (
           <motion.div variants={fadeUp} className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
             <div className="px-4 py-3.5 border-b border-slate-100 flex items-center justify-between">
               <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
@@ -1134,6 +1134,6 @@ function AdminDashboard() {
 
 export default function DashboardPage() {
   const { currentUser } = useStore()
-  const isManager = ['ADMIN', 'BDM', 'SPM'].includes(currentUser?.role ?? '')
+  const isManager = ['BD_MANAGER', 'TEAM_LEAD'].includes(currentUser?.role ?? '')
   return isManager ? <AdminDashboard /> : <AgentDashboard />
 }

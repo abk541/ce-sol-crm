@@ -3,12 +3,12 @@
 -- Run this in your Supabase SQL editor (Dashboard > SQL Editor > New query)
 -- =====================================================================
 
--- Employees (4-tier hierarchy)
+-- Employees (3-tier hierarchy)
 CREATE TABLE IF NOT EXISTS public.employees (
   id            TEXT PRIMARY KEY,
   name          TEXT NOT NULL,
   email         TEXT UNIQUE,
-  role          TEXT NOT NULL CHECK (role IN ('MANAGER','OPERATIONS_MANAGER','TEAM_MANAGER','ASSOCIATE')),
+  role          TEXT NOT NULL CHECK (role IN ('BD_MANAGER','TEAM_LEAD','ASSOCIATE')),
   manager_id    TEXT REFERENCES public.employees(id) ON DELETE SET NULL,
   department    TEXT,
   avatar        TEXT NOT NULL DEFAULT ''
@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS public.users (
   name          TEXT NOT NULL,
   email         TEXT UNIQUE NOT NULL,
   username      TEXT UNIQUE NOT NULL,
-  role          TEXT NOT NULL CHECK (role IN ('ADMIN','BDM','BDS','SPM','PM','SUPPORT_AGENT')),
+  role          TEXT NOT NULL CHECK (role IN ('BD_MANAGER','TEAM_LEAD','ASSOCIATE')),
   avatar        TEXT,
   status        TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','inactive')),
   first_login   BOOLEAN NOT NULL DEFAULT true,
@@ -35,7 +35,6 @@ CREATE TABLE IF NOT EXISTS public.opportunities (
   solicitation            TEXT NOT NULL,
   solicitation_id         TEXT,
   client                  TEXT,
-  prime                   TEXT,
   type                    TEXT,
   naics_code              TEXT,
   set_aside               TEXT,
@@ -80,7 +79,6 @@ CREATE TABLE IF NOT EXISTS public.contracts (
   id                  TEXT PRIMARY KEY,
   contract_id         TEXT NOT NULL,
   title               TEXT NOT NULL,
-  prime               TEXT,
   type                TEXT,
   finance_type        TEXT,
   naics_code          TEXT,
@@ -162,7 +160,6 @@ CREATE TABLE IF NOT EXISTS public.fresh_awards (
   solicitation            TEXT NOT NULL,
   solicitation_id         TEXT,
   client                  TEXT,
-  prime                   TEXT,
   type                    TEXT,
   set_aside               TEXT,
   naics_code              TEXT,
@@ -192,7 +189,6 @@ CREATE TABLE IF NOT EXISTS public.past_performances (
   contract_number  TEXT NOT NULL,
   title            TEXT NOT NULL,
   client           TEXT,
-  prime            TEXT,
   type             TEXT,
   finance_type     TEXT,
   naics_code       TEXT,
@@ -294,7 +290,6 @@ CREATE TABLE IF NOT EXISTS public.activity_logs (
 -- BD Submissions (BD Tracker)
 CREATE TABLE IF NOT EXISTS public.bd_submissions (
   id              BIGSERIAL PRIMARY KEY,
-  prime           TEXT,
   submitted_on    TEXT,
   solicitation_id TEXT,
   set_aside       TEXT,

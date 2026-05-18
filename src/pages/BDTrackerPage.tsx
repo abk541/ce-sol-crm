@@ -26,10 +26,6 @@ const STATUS_META: Record<BDTab, { color: string; bg: string; border: string }> 
   NOT_SUBMITTED: { color: '#D97706', bg: '#FEF3C7', border: '#FDE68A' },
 }
 
-const PRIME_COLORS: Record<string, string> = {
-  'TECH-OR': '#6366F1', 'AYJ-S': '#10B981', 'SANFORD': '#F59E0B', 'SAUDI': '#EF4444',
-}
-
 const PER_PAGE_OPTIONS = [10, 25, 50, 100, 'All'] as const
 type PerPageOption = typeof PER_PAGE_OPTIONS[number]
 
@@ -83,8 +79,8 @@ export default function BDTrackerPage() {
 
   const stats = {
     totalUsers: TEAM_STATS.length,
-    submissions: bdSubmissions.filter(s => s.status === 'SUBMITTED').length + 40,
-    nonSubs: bdSubmissions.filter(s => s.status === 'NOT_SUBMITTED').length + 50,
+    submissions: bdSubmissions.filter(s => s.status === 'SUBMITTED').length,
+    nonSubs: bdSubmissions.filter(s => s.status === 'NOT_SUBMITTED').length,
   }
 
   return (
@@ -106,7 +102,7 @@ export default function BDTrackerPage() {
           <span className="text-xs text-slate-400 ml-1">(Apr 04 – May 03)</span>
         </div>
 
-        {/* Top stats — 3 cards, no Goals Achieved */}
+        {/* Top stats */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
           {[
             { label: 'Total Users',     value: stats.totalUsers,  color: '#4338CA', bg: '#EEF2FF' },
@@ -121,11 +117,11 @@ export default function BDTrackerPage() {
           ))}
         </div>
 
-        {/* Per-agent cards — no Goal Achieved badge */}
+        {/* Per-agent cards */}
         <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Team Performance</h3>
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
           {TEAM_STATS.map((agent, i) => {
-            const color = agent.goalAchieved ? '#10B981' : '#6366F1'
+            const color = '#6366F1'
             return (
               <motion.div key={agent.user}
                 initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
@@ -133,9 +129,7 @@ export default function BDTrackerPage() {
                 className="rounded-xl p-4 bg-white border border-slate-200 hover:shadow-sm transition-shadow"
               >
                 <div className="flex items-start gap-2.5 mb-3">
-                  <div className={`w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold text-white flex-shrink-0 ${
-                    agent.goalAchieved ? 'bg-gradient-to-br from-emerald-500 to-teal-600' : 'bg-gradient-to-br from-indigo-500 to-violet-600'
-                  }`}>
+                  <div className="w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold text-white flex-shrink-0 bg-gradient-to-br from-indigo-500 to-violet-600">
                     {agent.initials}
                   </div>
                   <div className="flex-1 min-w-0">
@@ -225,7 +219,7 @@ export default function BDTrackerPage() {
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>#</th><th>Prime</th><th>Submitted On</th><th>ID</th>
+                  <th>#</th><th>Submitted On</th><th>ID</th>
                   <th>Set Aside</th><th>Type</th><th>Solicitation</th><th>Status</th>
                   <th>Due Date</th><th>Location</th>
                   <th>BDM</th><th>BDS</th><th>Support</th><th>Value</th><th>Comment</th><th></th>
@@ -234,25 +228,18 @@ export default function BDTrackerPage() {
               <tbody>
                 {pageRows.length === 0 && (
                   <tr>
-                    <td colSpan={16} className="text-center py-12 text-slate-400 text-sm">
+                    <td colSpan={15} className="text-center py-12 text-slate-400 text-sm">
                       No submissions in this category.
                     </td>
                   </tr>
                 )}
                 {pageRows.map((s: BDSubmission, i: number) => {
                   const statusMeta = STATUS_META[s.status as BDTab] || STATUS_META.SUBMITTED
-                  const primeBg = PRIME_COLORS[s.prime] || '#6366F1'
                   return (
                     <motion.tr key={s.id}
                       initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: i * 0.03 }}>
                       <td className="text-slate-400 text-xs">{s.id}</td>
-                      <td>
-                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full text-white"
-                          style={{ background: primeBg }}>
-                          {s.prime}
-                        </span>
-                      </td>
                       <td className="text-slate-600 text-xs">{s.submittedOn}</td>
                       <td className="text-indigo-600 text-xs font-mono font-semibold">{s.solicitationId}</td>
                       <td>

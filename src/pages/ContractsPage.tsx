@@ -71,16 +71,14 @@ const POC_ROLE_LABELS = { KO: 'Contracting Officer', COR: 'COR', END_USER: 'End 
 // Detail Drawer
 // ─────────────────────────────────────────────────────────────────────────
 const ROLE_LABEL_C: Record<string, string> = {
-  MANAGER: 'Manager',
-  OPERATIONS_MANAGER: 'Ops Manager',
-  TEAM_MANAGER: 'Team Manager',
+  BD_MANAGER: 'BD Manager',
+  TEAM_LEAD: 'Team Lead',
   ASSOCIATE: 'Associate',
 }
 const ROLE_COLOR_C: Record<string, { color: string; bg: string; border: string }> = {
-  MANAGER:            { color: '#4338CA', bg: '#EEF2FF', border: '#C7D2FE' },
-  OPERATIONS_MANAGER: { color: '#7C3AED', bg: '#F5F3FF', border: '#DDD6FE' },
-  TEAM_MANAGER:       { color: '#1D4ED8', bg: '#EFF6FF', border: '#BFDBFE' },
-  ASSOCIATE:          { color: '#0E7490', bg: '#ECFEFF', border: '#A5F3FC' },
+  BD_MANAGER: { color: '#4338CA', bg: '#EEF2FF', border: '#C7D2FE' },
+  TEAM_LEAD:  { color: '#1D4ED8', bg: '#EFF6FF', border: '#BFDBFE' },
+  ASSOCIATE:  { color: '#0E7490', bg: '#ECFEFF', border: '#A5F3FC' },
 }
 
 function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClose: () => void }) {
@@ -179,10 +177,6 @@ function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClo
               <div className="p-3 rounded-xl bg-slate-50 border border-slate-100">
                 <p className="text-[10px] text-slate-400 uppercase tracking-wider mb-0.5">Contract Value</p>
                 <p className="text-lg font-black text-emerald-600">{formatCurrency(contract.value)}</p>
-              </div>
-              <div className="p-3 rounded-xl bg-slate-50 border border-slate-100">
-                <p className="text-[10px] text-slate-400 uppercase tracking-wider mb-0.5">Prime</p>
-                <p className="text-sm font-bold text-indigo-600">{contract.prime}</p>
               </div>
               {contract.baseAmount && (
                 <div className="p-3 rounded-xl bg-slate-50 border border-slate-100">
@@ -379,7 +373,7 @@ function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClo
         {tab === 'subk' && (
           <div className="space-y-3">
             {(contract.lockedSubcontractors || []).length === 0 && !addingSub && (
-              <p className="text-sm text-slate-400 text-center py-8">No locked subcontractors.</p>
+              <p className="text-sm text-slate-400 text-center py-8">No locked sourcing entries.</p>
             )}
             {(contract.lockedSubcontractors || []).map(sub => (
               <div key={sub.id} className="p-4 rounded-xl bg-slate-50 border border-slate-200">
@@ -412,7 +406,7 @@ function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClo
 
             {addingSub ? (
               <div className="p-4 rounded-xl border border-indigo-200 bg-indigo-50 space-y-3">
-                <p className="text-xs font-bold text-indigo-700">Lock Subcontractor</p>
+                <p className="text-xs font-bold text-indigo-700">Lock Sourcing</p>
                 <div className="grid grid-cols-2 gap-2">
                   {[
                     { label: 'Company Name *', key: 'companyName' },
@@ -456,7 +450,7 @@ function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClo
               </div>
             ) : (
               <button onClick={() => setAddingSub(true)} className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-dashed border-slate-300 text-xs text-slate-500 hover:text-indigo-600 hover:border-indigo-400 transition-colors">
-                <Plus size={12} /> Lock Subcontractor
+                <Plus size={12} /> Lock Sourcing
               </button>
             )}
           </div>
@@ -967,7 +961,6 @@ export default function ContractsPage() {
           <table className="data-table">
             <thead>
               <tr>
-                <SortHeader col="prime" label="Prime" currentKey={sortKey} dir={sortDir} onSort={handleSort} />
                 <SortHeader col="title" label="Title" currentKey={sortKey} dir={sortDir} onSort={handleSort} />
                 <th>Contract ID</th>
                 <th>Type</th>
@@ -983,7 +976,7 @@ export default function ContractsPage() {
             <tbody>
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={11} className="text-center py-12 text-slate-400 text-sm">
+                  <td colSpan={10} className="text-center py-12 text-slate-400 text-sm">
                     No contracts in this category.
                   </td>
                 </tr>
@@ -999,12 +992,6 @@ export default function ContractsPage() {
                     className="cursor-pointer"
                     onClick={() => { setSelected(c); setMenuOpen(null) }}
                   >
-                    <td onClick={e => e.stopPropagation()}>
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full text-white"
-                        style={{ background: '#6366F1' }}>
-                        {c.prime}
-                      </span>
-                    </td>
                     <td className="max-w-[180px]">
                       <p className="truncate text-xs font-semibold text-slate-800" title={c.title}>{c.title}</p>
                     </td>

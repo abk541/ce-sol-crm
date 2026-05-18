@@ -8,10 +8,10 @@ import CompanyLogo from '../shared/CompanyLogo'
 const ROUTE_LABELS: Record<string, string> = {
   '/dashboard':        'Dashboard',
   '/pipeline':         'General Pipeline',
-  '/proposals':        'Assigned Opportunities',
+  '/proposals':        'Assign Opportunities',
   '/bd-tracker':       'BD Tracker',
   '/tracker':          'Tracker',
-  '/non-submissions':  'Non-Submissions',
+  '/non-submissions':  'Non-Submissions Report',
   '/contracts':        'Active Contracts',
   '/idiq':             'IDIQ',
   '/bpas':             'BPAs',

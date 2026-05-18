@@ -48,7 +48,7 @@ function StatusBadge({ status }: { status: string }) {
 function StatusDropdown({ oppId, current, canEdit }: { oppId: string; current: OppStatus; canEdit: boolean }) {
   const [open, setOpen] = useState(false)
   const { updateOpportunity, markOpportunityWon, freshAwards, currentUser } = useStore()
-  const isAdmin = [‘ADMIN’, ‘BDM’].includes(currentUser?.role ?? ‘’)
+  const isAdmin = ['BD_MANAGER', 'TEAM_LEAD'].includes(currentUser?.role ?? '')
 
   if (!isAdmin || !canEdit) return <StatusBadge status={current} />
 
@@ -56,11 +56,11 @@ function StatusDropdown({ oppId, current, canEdit }: { oppId: string; current: O
   const options = EDITABLE_STATUSES.filter(s => s !== current)
 
   const handleChange = (s: OppStatus) => {
-    if (s === ‘WON’) {
+    if (s === 'WON') {
       // Guard: create a FreshAward only if one doesn’t already exist for this opportunity
       const alreadyAwarded = freshAwards.some(fa => fa.opportunityId === oppId)
       if (alreadyAwarded) {
-        updateOpportunity(oppId, { status: ‘WON’ })
+        updateOpportunity(oppId, { status: 'WON' })
       } else {
         markOpportunityWon(oppId)  // sets status WON + creates FreshAward
       }
@@ -76,12 +76,12 @@ function StatusDropdown({ oppId, current, canEdit }: { oppId: string; current: O
       <button onClick={e => { e.stopPropagation(); setOpen(o => !o) }}
         className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full transition-all"
         style={{
-          color: STATUS_META[current]?.color ?? ‘#64748B’,
-          background: STATUS_META[current]?.bg ?? ‘#F8FAFC’,
-          border: `1px solid ${STATUS_META[current]?.border ?? ‘#E2E8F0’}`,
+          color: STATUS_META[current]?.color ?? '#64748B',
+          background: STATUS_META[current]?.bg ?? '#F8FAFC',
+          border: `1px solid ${STATUS_META[current]?.border ?? '#E2E8F0'}`,
         }}>
         {current}
-        <ChevronDown size={9} className={open ? ‘rotate-180’ : ‘’} />
+        <ChevronDown size={9} className={open ? 'rotate-180' : ''} />
       </button>
       <AnimatePresence>
         {open && (
@@ -91,13 +91,13 @@ function StatusDropdown({ oppId, current, canEdit }: { oppId: string; current: O
             exit={{ opacity: 0, y: -4, scale: 0.96 }}
             transition={{ duration: 0.12 }}
             className="absolute right-0 top-full mt-1 z-50 rounded-xl overflow-hidden min-w-[150px]"
-            style={{ background: ‘#FFFFFF’, border: ‘1px solid rgba(0,0,0,0.10)’, boxShadow: ‘0 8px 24px rgba(0,0,0,0.10)’ }}>
+            style={{ background: '#FFFFFF', border: '1px solid rgba(0,0,0,0.10)', boxShadow: '0 8px 24px rgba(0,0,0,0.10)' }}>
             {options.map(s => (
               <button key={s}
                 onClick={e => { e.stopPropagation(); handleChange(s) }}
                 className="block w-full text-left px-3 py-2 text-[10px] font-bold transition-colors hover:bg-slate-50"
-                style={{ color: STATUS_META[s]?.color ?? ‘#64748B’ }}>
-                {s === ‘WON’ ? ‘🏆 ‘ : ‘’}{s}
+                style={{ color: STATUS_META[s]?.color ?? '#64748B' }}>
+                {s === 'WON' ? 'Awarded ' : ''}{s}
               </button>
             ))}
           </motion.div>
@@ -153,8 +153,8 @@ export default function TrackerPage() {
   const [page, setPage] = useState(1)
   const [perPage, setPerPage] = useState<PerPage>(25)
 
-  const isAdmin = currentUser?.role === 'ADMIN'
-  const isManager = ['ADMIN', 'BDM'].includes(currentUser?.role ?? '')
+  const isAdmin = currentUser?.role === 'BD_MANAGER'
+  const isManager = ['BD_MANAGER', 'TEAM_LEAD'].includes(currentUser?.role ?? '')
 
   const submitted = useMemo(() =>
     opportunities.filter(o =>
@@ -478,7 +478,7 @@ export default function TrackerPage() {
               <DrawerField label="Captured On"   value={selected.capturedOn ?? 'â€”'} />
             </DrawerSection>
             {selected.subcontractors && selected.subcontractors.length > 0 && (
-              <DrawerSection title={`Subcontractors (${selected.subcontractors.length})`}>
+              <DrawerSection title={`Sourcing (${selected.subcontractors.length})`}>
                 {selected.subcontractors.map(s => (
                   <div key={s.id} className="py-2.5 border-b border-slate-50 last:border-0">
                     <p className="text-sm font-semibold text-slate-800">{s.companyName}</p>

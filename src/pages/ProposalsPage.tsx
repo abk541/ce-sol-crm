@@ -28,16 +28,14 @@ const STATUS_BADGE: Record<OppStatus, string> = {
 }
 
 const ROLE_LABELS: Record<string, string> = {
-  MANAGER: 'Manager',
-  OPERATIONS_MANAGER: 'Ops Mgr',
-  TEAM_MANAGER: 'Team Mgr',
+  BD_MANAGER: 'BD Manager',
+  TEAM_LEAD: 'Team Lead',
   ASSOCIATE: 'Associate',
 }
 const ROLE_COLORS: Record<string, { color: string; bg: string }> = {
-  MANAGER:            { color: '#4338CA', bg: '#EEF2FF' },
-  OPERATIONS_MANAGER: { color: '#7C3AED', bg: '#F5F3FF' },
-  TEAM_MANAGER:       { color: '#1D4ED8', bg: '#EFF6FF' },
-  ASSOCIATE:          { color: '#0E7490', bg: '#ECFEFF' },
+  BD_MANAGER: { color: '#4338CA', bg: '#EEF2FF' },
+  TEAM_LEAD:  { color: '#1D4ED8', bg: '#EFF6FF' },
+  ASSOCIATE:  { color: '#0E7490', bg: '#ECFEFF' },
 }
 
 function SortHeader({ col, label, currentKey, dir, onSort }: {
@@ -202,7 +200,7 @@ export default function ProposalsPage() {
                 <th>Importance</th>
                 <SortHeader col="solicitation" label="Solicitation" currentKey={sortKey} dir={sortDir} onSort={handleSort} />
                 <SortHeader col="client" label="Client" currentKey={sortKey} dir={sortDir} onSort={handleSort} />
-                <th>Prime</th><th>Type</th>
+                <th>Type</th>
                 <SortHeader col="dueDate" label="Due Date" currentKey={sortKey} dir={sortDir} onSort={handleSort} />
                 <th>Local Time</th><th>POP</th><th>Location</th><th>Set Aside</th>
                 <th>Assigned</th>
@@ -226,11 +224,6 @@ export default function ProposalsPage() {
                       <p className="text-[10px] text-slate-600 font-mono">{o.solicitationId}</p>
                     </td>
                     <td className="max-w-[140px]"><p className="truncate text-xs" title={o.client}>{o.client}</p></td>
-                    <td>
-                      <span className={`badge text-[10px] ${o.prime === 'TECH-OR' ? 'badge-medium' : o.prime === 'AYJ-S' ? 'badge-active' : 'badge-submitted'}`}>
-                        {o.prime}
-                      </span>
-                    </td>
                     <td><span className="badge badge-discussion text-[10px]">{o.type}</span></td>
                     <td>
                       <span className={`text-xs font-medium ${new Date(o.dueDate) < new Date() ? 'text-rose-400' : 'text-slate-300'}`}>

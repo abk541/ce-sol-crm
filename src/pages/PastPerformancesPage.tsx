@@ -6,18 +6,9 @@ import {
   ChevronDown, X, Save, Eye, Tag, MoreHorizontal,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
-import type { PastPerformance, ContractType, ContractFinanceType, SetAside, Prime } from '../types'
+import type { PastPerformance } from '../types'
 import { formatCurrency } from '../lib/utils'
 import toast from 'react-hot-toast'
-
-const PRIME_OPTIONS: Prime[] = ['TECH-OR', 'AYJ-S', 'SANFORD', 'SAUDI']
-const TYPE_OPTIONS: ContractType[] = ['OTJ', 'RECURRING', 'BPA', 'IDIQ', 'S&D', 'SUPPLY']
-const FINANCE_OPTIONS: ContractFinanceType[] = ['FFP', 'T&M', 'CPFF', 'OTHER']
-const SETASIDE_OPTIONS: SetAside[] = ['SB', 'SDVOSB', 'WOSB', 'HUBZone', 'VOSB', '8(a)', 'UNRES']
-
-const PRIME_COLORS: Record<Prime, string> = {
-  'TECH-OR': '#6366F1', 'AYJ-S': '#10B981', 'SANFORD': '#F59E0B', 'SAUDI': '#EF4444',
-}
 
 function ExportModal({ pp, onClose }: { pp: PastPerformance; onClose: () => void }) {
   const [desc, setDesc] = useState(pp.description)
@@ -110,7 +101,6 @@ function DetailDrawerPP({ pp, onClose, onExport }: { pp: PastPerformance; onClos
         <div className="grid grid-cols-2 gap-3">
           {[
             { label: 'Client', value: pp.client },
-            { label: 'Prime', value: pp.prime, color: pp.prime ? PRIME_COLORS[pp.prime] : undefined },
             { label: 'Type', value: pp.type },
             { label: 'Finance', value: pp.financeType || '—' },
             { label: 'NAICS', value: pp.naicsCode },
@@ -118,7 +108,7 @@ function DetailDrawerPP({ pp, onClose, onExport }: { pp: PastPerformance; onClos
           ].map(f => (
             <div key={f.label} className="p-3 rounded-xl bg-slate-50 border border-slate-100">
               <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider mb-0.5">{f.label}</p>
-              <p className="text-sm font-bold" style={f.color ? { color: f.color } : { color: '#1E293B' }}>{f.value}</p>
+              <p className="text-sm font-bold text-slate-800">{f.value}</p>
             </div>
           ))}
         </div>
@@ -245,7 +235,6 @@ export default function PastPerformancesPage() {
                 <th>Contract #</th>
                 <th>Title</th>
                 <th>Client</th>
-                <th>Prime</th>
                 <th>Type</th>
                 <th>NAICS</th>
                 <th>Set-Aside</th>
@@ -258,7 +247,7 @@ export default function PastPerformancesPage() {
             <tbody>
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={11} className="text-center py-12 text-slate-400 text-sm">
+                  <td colSpan={10} className="text-center py-12 text-slate-400 text-sm">
                     No past performance records found.
                   </td>
                 </tr>
@@ -276,14 +265,6 @@ export default function PastPerformancesPage() {
                   </td>
                   <td className="text-xs text-slate-600 max-w-[120px]">
                     <p className="truncate">{pp.client}</p>
-                  </td>
-                  <td>
-                    {pp.prime && (
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full text-white"
-                        style={{ background: PRIME_COLORS[pp.prime] }}>
-                        {pp.prime}
-                      </span>
-                    )}
                   </td>
                   <td>
                     <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-slate-100 text-slate-600">{pp.type}</span>

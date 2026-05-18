@@ -20,6 +20,8 @@ import {
   seedIfEmpty,
   clearBusinessData,
   upsertOpportunity,
+  upsertSubcontractor,
+  deleteSubcontractorRecord,
   upsertContract,
   upsertContractPoC,
   deleteContractPoC,
@@ -27,6 +29,9 @@ import {
   upsertGovernmentWarning,
   upsertFreshAward,
   upsertPastPerformance,
+  upsertNonSubReport,
+  upsertDeletionRequest,
+  upsertBDSubmission,
 } from '../lib/db'
 
 interface AppState {
@@ -72,6 +77,7 @@ interface AppState {
   assignOpportunity: (id: string, bdm: string, bds: string) => void
   submitOpportunity: (id: string, values?: { contractAmount?: number; baseAmount?: number; monthlyPayment?: number }) => void
   markOpportunityWon: (id: string) => void
+  syncDueOpportunities: () => void
   terminateContract: (id: string, type: 'T4C' | 'T4D' | 'CANCELED', reason: string) => void
 
   // ── Contract management ────────────────────────────────────────────
@@ -145,6 +151,15 @@ const STATUS_FLOW: Record<string, string> = {
   PENDING_PAYMENT: 'ARCHIVED',
   ACTIVE: 'ON_GOING',
   ON_GOING: 'PERFORMING',
+}
+
+const PRE_SUBMISSION_STATUSES: Opportunity['status'][] = ['ACTIVE', 'NEW_ASSIGNMENT', 'DISCUSSION']
+
+function isDeadlineReached(opp: Opportunity, now = new Date()): boolean {
+  if (!opp.dueDate || !PRE_SUBMISSION_STATUSES.includes(opp.status)) return false
+  const time = opp.localTime && /^\d{1,2}:\d{2}$/.test(opp.localTime) ? opp.localTime : '23:59'
+  const deadline = new Date(`${opp.dueDate}T${time}`)
+  return Number.isFinite(deadline.getTime()) && deadline.getTime() <= now.getTime()
 }
 
 export const useStore = create<AppState>()(
@@ -262,6 +277,7 @@ export const useStore = create<AppState>()(
         }))
         const opp = get().opportunities.find(o => o.id === id)
         if (opp) {
+          upsertOpportunity(opp)
           get().addNotification({
             type: 'ASSIGNMENT',
             title: 'Opportunity assigned',
@@ -320,7 +336,6 @@ export const useStore = create<AppState>()(
           solicitation: opp.solicitation,
           solicitationId: opp.solicitationId,
           client: opp.client,
-          prime: opp.prime,
           type: opp.type,
           setAside: opp.setAside,
           naicsCode: opp.naicsCode,
@@ -349,7 +364,7 @@ export const useStore = create<AppState>()(
         get().logActivity({
           action: `Opportunity marked WON → Fresh Award created: ${opp.solicitation}`,
           user: get().currentUser?.name || 'System',
-          userRole: get().currentUser?.role || 'ADMIN',
+          userRole: get().currentUser?.role || 'BD_MANAGER',
           entityType: 'opportunity',
           entityId: opp.id,
           entityName: opp.solicitation,
@@ -357,6 +372,32 @@ export const useStore = create<AppState>()(
       },
 
       // ── Contract management ─────────────────────────────────────────
+      syncDueOpportunities: () => {
+        const now = new Date()
+        const dueOpps = get().opportunities.filter(opp => !opp.isDeleted && isDeadlineReached(opp, now))
+        if (dueOpps.length === 0) return
+
+        set(s => ({
+          opportunities: s.opportunities.map(opp =>
+            dueOpps.some(due => due.id === opp.id)
+              ? { ...opp, status: 'SUBMITTED', submittedAt: now.toISOString() }
+              : opp
+          )
+        }))
+
+        const updated = get().opportunities.filter(opp => dueOpps.some(due => due.id === opp.id))
+        updated.forEach(opp => {
+          upsertOpportunity(opp)
+          get().addNotification({
+            type: 'CONTRACT_SUBMITTED',
+            title: 'Deadline reached',
+            message: `${opp.solicitation} reached its deadline and moved to submitted.`,
+            read: false,
+            relatedId: opp.id,
+          })
+        })
+      },
+
       createContract: (data) => {
         const contract: Contract = { ...data, id: `c${Date.now()}` }
         set(s => ({ contracts: [contract, ...s.contracts] }))
@@ -497,7 +538,6 @@ export const useStore = create<AppState>()(
             contractNumber: contract.contractId,
             title: contract.title,
             client: contract.client || '',
-            prime: contract.prime,
             type: contract.type,
             financeType: contract.financeType,
             naicsCode: contract.naicsCode,
@@ -546,7 +586,6 @@ export const useStore = create<AppState>()(
           contractNumber: contract.contractId,
           title: contract.title,
           client: contract.client || '',
-          prime: contract.prime,
           type: contract.type,
           financeType: contract.financeType,
           naicsCode: contract.naicsCode,
@@ -576,7 +615,7 @@ export const useStore = create<AppState>()(
         get().logActivity({
           action: `Contract terminated (${type}) → archived to Past Performances: ${contract.title}`,
           user: get().currentUser?.name || 'System',
-          userRole: get().currentUser?.role || 'ADMIN',
+          userRole: get().currentUser?.role || 'BD_MANAGER',
           entityType: 'contract',
           entityId: contract.id,
           entityName: contract.title,
@@ -598,11 +637,20 @@ export const useStore = create<AppState>()(
               : o
           )
         }))
+        upsertSubcontractor(sub)
       },
 
-      updateSubcontractor: (id, data) => set(s => ({
-        subcontractors: s.subcontractors.map(sc => sc.id === id ? { ...sc, ...data } : sc)
-      })),
+      updateSubcontractor: (id, data) => {
+        set(s => ({
+          subcontractors: s.subcontractors.map(sc => sc.id === id ? { ...sc, ...data } : sc),
+          opportunities: s.opportunities.map(o => ({
+            ...o,
+            subcontractors: (o.subcontractors || []).map(sc => sc.id === id ? { ...sc, ...data } : sc),
+          })),
+        }))
+        const updated = get().subcontractors.find(sc => sc.id === id)
+        if (updated) upsertSubcontractor(updated)
+      },
 
       deleteSubcontractor: (id) => {
         const sub = get().subcontractors.find(sc => sc.id === id)
@@ -615,6 +663,7 @@ export const useStore = create<AppState>()(
                 : o
             )
           }))
+          deleteSubcontractorRecord(id)
         }
       },
 
@@ -640,7 +689,6 @@ export const useStore = create<AppState>()(
           id: newContractId,
           contractId: fa.solicitationId,
           title: fa.solicitation,
-          prime: fa.prime,
           type: fa.type,
           naicsCode: fa.naicsCode,
           setAside: fa.setAside,
@@ -685,7 +733,7 @@ export const useStore = create<AppState>()(
         get().logActivity({
           action: `Moved Fresh Award to Active Contract: ${fa.solicitation}`,
           user: get().currentUser?.name || 'System',
-          userRole: get().currentUser?.role || 'ADMIN',
+          userRole: get().currentUser?.role || 'BD_MANAGER',
           entityType: 'fresh_award',
           entityId: id,
           entityName: fa.solicitation,
@@ -729,9 +777,13 @@ export const useStore = create<AppState>()(
       })),
 
       // ── BD Submissions ──────────────────────────────────────────────
-      updateBDSubmission: (id, status) => set(s => ({
-        bdSubmissions: s.bdSubmissions.map(b => b.id === id ? { ...b, status } : b)
-      })),
+      updateBDSubmission: (id, status) => {
+        set(s => ({
+          bdSubmissions: s.bdSubmissions.map(b => b.id === id ? { ...b, status } : b)
+        }))
+        const updated = get().bdSubmissions.find(b => b.id === id)
+        if (updated) upsertBDSubmission(updated)
+      },
 
       // ── Activity Logs ───────────────────────────────────────────────
       logActivity: (entry) => set(s => ({
@@ -756,13 +808,16 @@ export const useStore = create<AppState>()(
             o.id === data.opportunityId ? { ...o, nonSubmissionReportId: report.id } : o
           )
         }))
+        upsertNonSubReport(report)
+        const updatedOpp = get().opportunities.find(o => o.id === data.opportunityId)
+        if (updatedOpp) upsertOpportunity(updatedOpp)
         get().addNotification({
           type: 'NON_SUB_REVIEW',
           title: 'Non-submission report pending',
           message: `A non-submission report has been submitted for review.`,
           read: false,
           relatedId: data.opportunityId,
-          targetRole: 'ADMIN',
+          targetRole: 'BD_MANAGER',
         })
       },
 
@@ -776,6 +831,7 @@ export const useStore = create<AppState>()(
         }))
         const report = get().nonSubReports.find(r => r.id === id)
         if (report) {
+          upsertNonSubReport(report)
           const newStatus = action === 'APPROVED' ? 'NOT_SUBMITTED' : 'DROPPED'
           set(s => ({
             opportunities: s.opportunities.map(o =>
@@ -803,6 +859,7 @@ export const useStore = create<AppState>()(
             o.id === opportunityId ? { ...o, deletionRequested: true } : o
           )
         }))
+        upsertDeletionRequest(req)
         const markedOpp = get().opportunities.find(o => o.id === opportunityId)
         if (markedOpp) upsertOpportunity(markedOpp)
         get().addNotification({
@@ -811,7 +868,7 @@ export const useStore = create<AppState>()(
           message: `A deletion request has been submitted and is awaiting admin approval.`,
           read: false,
           relatedId: opportunityId,
-          targetRole: 'ADMIN',
+          targetRole: 'BD_MANAGER',
         })
       },
 
@@ -824,6 +881,7 @@ export const useStore = create<AppState>()(
           )
         }))
         const req = get().deletionRequests.find(r => r.id === id)
+        if (req) upsertDeletionRequest(req)
         if (req && action === 'APPROVED') {
           set(s => ({
             opportunities: s.opportunities.map(o =>
@@ -932,6 +990,10 @@ export const useStore = create<AppState>()(
               contracts: data.contracts,
               freshAwards: data.freshAwards,
               pastPerformances: data.pastPerformances,
+              subcontractors: data.subcontractors,
+              nonSubReports: data.nonSubReports,
+              deletionRequests: data.deletionRequests,
+              bdSubmissions: data.bdSubmissions,
               dbReady: true,
             })
           }
@@ -946,14 +1008,20 @@ export const useStore = create<AppState>()(
     }),
     {
       name: 'ces-crm-store',
-      // v1: cleared all mock business data; needsPurge triggers one-time Supabase wipe
-      version: 1,
+      // v3: start from an empty workspace and purge Supabase business data once.
+      version: 3,
       migrate: (persistedState: unknown, fromVersion: number) => {
         const s = persistedState as Record<string, unknown>
-        if (fromVersion === 0) {
-          // Upgrade from v0: wipe local business data and flag Supabase purge
+        if (fromVersion < 3) {
           return {
             ...s,
+            currentUser:     null,
+            isAuthenticated: false,
+            needsFirstLogin: false,
+            needsMFASetup:   false,
+            loginTimestamp:  null,
+            users:           MOCK_USERS,
+            employees:       MOCK_EMPLOYEES,
             opportunities:   [],
             contracts:       [],
             freshAwards:     [],
