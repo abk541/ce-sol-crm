@@ -196,7 +196,7 @@ export default function TrackerPage() {
       <motion.div variants={fadeUp} initial="initial" animate="animate">
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div>
-            <p className="text-[10px] font-bold text-slate-400 tracking-[0.2em] mb-1">CES · TRACKER</p>
+            <p className="text-[10px] font-bold text-slate-400 tracking-[0.2em] mb-1">CES - TRACKER</p>
             <h1 className="text-2xl font-black text-slate-900 flex items-center gap-3">
               <ListChecks size={22} className="text-indigo-500" /> Opportunity Tracker
             </h1>
@@ -229,7 +229,7 @@ export default function TrackerPage() {
         <div className="relative">
           <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <input value={search} onChange={e => setSearch(e.target.value)}
-            className="input-field pl-9 w-64 text-xs" placeholder="Search opportunitiesâ€¦" />
+            className="input-field pl-9 w-64 text-xs" placeholder="Search opportunities..." />
         </div>
       </motion.div>
 
@@ -274,7 +274,7 @@ export default function TrackerPage() {
                       </td>
                       <td className="text-slate-600 text-xs">{o.bds}</td>
                       <td className="text-slate-700 text-xs font-semibold">
-                        {o.value ? formatCurrency(o.value) : 'â€”'}
+                        {o.value ? formatCurrency(o.value) : '-'}
                       </td>
                       <td className="text-slate-500 text-xs">
                         {o.submittedAt
@@ -372,10 +372,10 @@ export default function TrackerPage() {
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-semibold text-slate-800 truncate">{o.solicitation}</p>
-                      <p className="text-[10px] text-slate-500">{o.solicitationId} Â· {o.type} Â· {o.client}</p>
+                      <p className="text-[10px] text-slate-500">{o.solicitationId} - {o.type} - {o.client}</p>
                       {req && (
                         <p className="text-[11px] text-slate-500 mt-1 italic">
-                          "{req.reason.slice(0, 120)}{req.reason.length > 120 ? 'â€¦' : ''}"
+                          "{req.reason.slice(0, 120)}{req.reason.length > 120 ? '...' : ''}"
                         </p>
                       )}
                     </div>
@@ -416,7 +416,7 @@ export default function TrackerPage() {
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-bold text-slate-900">{opp?.solicitation ?? 'Unknown Opportunity'}</p>
-                      <p className="text-[11px] text-slate-500">{opp?.solicitationId} Â· Requested by {req.requestedBy}</p>
+                      <p className="text-[11px] text-slate-500">{opp?.solicitationId} - Requested by {req.requestedBy}</p>
                       <div className="mt-2 p-3 rounded-lg bg-slate-50 border border-slate-100">
                         <p className="text-xs text-slate-700 leading-relaxed">{req.reason}</p>
                       </div>
@@ -450,7 +450,7 @@ export default function TrackerPage() {
         isOpen={!!selected}
         onClose={() => setSelected(null)}
         title={selected?.solicitation ?? ''}
-        subtitle={selected ? `${selected.solicitationId} Â· ${selected.client}` : ''}
+        subtitle={selected ? `${selected.solicitationId} - ${selected.client}` : ''}
         width={480}
       >
         {selected && (
@@ -465,24 +465,24 @@ export default function TrackerPage() {
             <DrawerSection title="Team">
               <DrawerField label="BDM"           value={selected.bdm} />
               <DrawerField label="BDS"           value={selected.bds} />
-              <DrawerField label="Support Agent" value={selected.supportAgent ?? 'â€”'} />
+              <DrawerField label="Support Agent" value={selected.supportAgent ?? '-'} />
             </DrawerSection>
             <DrawerSection title="Financials">
-              <DrawerField label="Value"            value={selected.value ? formatCurrency(selected.value) : 'â€”'} />
-              <DrawerField label="Contract Amount"  value={selected.contractAmount ? formatCurrency(selected.contractAmount) : 'â€”'} />
-              <DrawerField label="Period of Perf."  value={selected.pop ?? 'â€”'} />
+              <DrawerField label="Value"            value={selected.value ? formatCurrency(selected.value) : '-'} />
+              <DrawerField label="Contract Amount"  value={selected.contractAmount ? formatCurrency(selected.contractAmount) : '-'} />
+              <DrawerField label="Period of Perf."  value={selected.pop ?? '-'} />
             </DrawerSection>
             <DrawerSection title="Dates">
               <DrawerField label="Due Date"      value={new Date(selected.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} />
-              <DrawerField label="Submitted"     value={selected.submittedAt ? new Date(selected.submittedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'â€”'} />
-              <DrawerField label="Captured On"   value={selected.capturedOn ?? 'â€”'} />
+              <DrawerField label="Submitted"     value={selected.submittedAt ? new Date(selected.submittedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '-'} />
+              <DrawerField label="Captured On"   value={selected.capturedOn ?? '-'} />
             </DrawerSection>
             {selected.subcontractors && selected.subcontractors.length > 0 && (
               <DrawerSection title={`Sourcing (${selected.subcontractors.length})`}>
                 {selected.subcontractors.map(s => (
                   <div key={s.id} className="py-2.5 border-b border-slate-50 last:border-0">
                     <p className="text-sm font-semibold text-slate-800">{s.companyName}</p>
-                    <p className="text-xs text-slate-500">{s.contactName} Â· {s.setAside}</p>
+                    <p className="text-xs text-slate-500">{s.contactName} - {s.setAside}</p>
                   </div>
                 ))}
               </DrawerSection>

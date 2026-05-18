@@ -30,7 +30,7 @@ function getTier(score: number) {
   if (score >= 70) return { label: 'STRONG',   color: '#22C55E', glow: 'rgba(34,197,94,0.2)',   bg: 'rgba(34,197,94,0.08)',   msg: 'Strong output. Push for elite standing.' }
   if (score >= 55) return { label: 'AVERAGE',  color: '#F59E0B', glow: 'rgba(245,158,11,0.2)',  bg: 'rgba(245,158,11,0.08)',  msg: 'Below target. Increase submission velocity.' }
   if (score >= 40) return { label: 'AT RISK',  color: '#F97316', glow: 'rgba(249,115,22,0.25)', bg: 'rgba(249,115,22,0.08)',  msg: 'Performance at risk. Immediate action required.' }
-  return               { label: 'CRITICAL', color: '#EF4444', glow: 'rgba(239,68,68,0.28)',  bg: 'rgba(239,68,68,0.08)',   msg: 'PERFORMANCE CRITICAL â€” Report to your manager.' }
+  return               { label: 'CRITICAL', color: '#EF4444', glow: 'rgba(239,68,68,0.28)',  bg: 'rgba(239,68,68,0.08)',   msg: 'Performance is below target. Please review with your manager.' }
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -70,7 +70,7 @@ const PieTip = ({ active, payload }: any) => {
   )
 }
 
-// â”€â”€ Score Gauge â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Score Gauge
 function ScoreGauge({ score }: { score: number }) {
   const R = 72
   const C = 2 * Math.PI * R
@@ -118,7 +118,7 @@ function ScoreGauge({ score }: { score: number }) {
   )
 }
 
-// â”€â”€ KPI Detail Drawer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// KPI Detail Drawer
 interface KpiDetail { key: string; label: string; color: string }
 
 function KpiDetailDrawer({
@@ -178,7 +178,7 @@ function KpiDetailDrawer({
               <p className="text-xs font-semibold text-slate-800 truncate">{o.solicitation}</p>
               <div className="flex items-center gap-2 mt-1">
                 <span className="text-[10px] text-slate-500">{o.bds}</span>
-                <span className="text-[10px] text-slate-400">Â·</span>
+                <span className="text-[10px] text-slate-400">-</span>
                 <span className="text-[10px] text-slate-500">{o.dueDate}</span>
                 <span className="ml-auto text-[10px] font-bold text-emerald-600">{formatCurrency(o.contractAmount || 0)}</span>
               </div>
@@ -271,7 +271,7 @@ function KpiDetailDrawer({
               <div key={d.id} className="p-3 rounded-xl border border-red-100 bg-red-50 mb-2 cursor-pointer hover:bg-red-100 transition-colors"
                 onClick={() => { navigate('/pipeline'); onClose() }}>
                 <p className="text-xs font-semibold text-red-800 truncate">{d.reason}</p>
-                <p className="text-[10px] text-red-600 mt-0.5">By {d.requestedBy} Â· {new Date(d.requestedAt).toLocaleDateString()}</p>
+                <p className="text-[10px] text-red-600 mt-0.5">Requested by {d.requestedBy} - {new Date(d.requestedAt).toLocaleDateString()}</p>
               </div>
             ))}
           </div>
@@ -283,7 +283,7 @@ function KpiDetailDrawer({
               <div key={r.id} className="p-3 rounded-xl border border-amber-100 bg-amber-50 mb-2 cursor-pointer hover:bg-amber-100 transition-colors"
                 onClick={() => { navigate('/non-submissions'); onClose() }}>
                 <p className="text-xs font-semibold text-amber-800 truncate">{r.reason}</p>
-                <p className="text-[10px] text-amber-600 mt-0.5">By {r.agentUsername} Â· {new Date(r.submittedAt).toLocaleDateString()}</p>
+                <p className="text-[10px] text-amber-600 mt-0.5">Submitted by {r.agentUsername} - {new Date(r.submittedAt).toLocaleDateString()}</p>
               </div>
             ))}
           </div>
@@ -329,7 +329,7 @@ function KpiDetailDrawer({
   )
 }
 
-// â”€â”€ Agent Dashboard â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Agent Dashboard
 function AgentDashboard() {
   const { currentUser, opportunities, nonSubReports } = useStore()
   const navigate = useNavigate()
@@ -372,11 +372,11 @@ function AgentDashboard() {
       <motion.div variants={fadeUp} initial="initial" animate="animate">
         <div className="flex items-start justify-between flex-wrap gap-3">
           <div>
-            <p className="text-[10px] font-bold text-slate-400 tracking-[0.2em] mb-1">CES · PERFORMANCE COMMAND</p>
+            <p className="text-[10px] font-bold text-slate-400 tracking-[0.2em] mb-1">CES - PERFORMANCE COMMAND</p>
             <h1 className="text-2xl font-black text-slate-900">
               {currentUser?.name.split(' ')[0]}'s Command Center
             </h1>
-            <p className="text-slate-500 text-sm mt-0.5">{currentUser?.role} Â· Mission period: May 2026</p>
+            <p className="text-slate-500 text-sm mt-0.5">{currentUser?.role} - current workload and submission activity</p>
           </div>
           <motion.div
             className="px-3 py-1.5 rounded-lg text-xs font-black tracking-wider"
@@ -384,7 +384,7 @@ function AgentDashboard() {
             animate={myStats.score < 55 ? { opacity: [1, 0.6, 1] } : {}}
             transition={{ duration: 1.5, repeat: Infinity }}
           >
-            â—ˆ {tier.label} OPERATIVE
+            Status: {tier.label}
           </motion.div>
         </div>
         <motion.div className="mt-3 flex items-center gap-2 px-4 py-2.5 rounded-xl"
@@ -438,7 +438,7 @@ function AgentDashboard() {
                   border: `1.5px solid ${RANK_COLORS[myStats.rank - 1] || '#CBD5E1'}40`,
                 }}>
                 <span className="text-2xl font-black" style={{ color: RANK_COLORS[myStats.rank - 1] || '#94A3B8' }}>
-                  {myStats.rank === 1 ? 'â˜…' : myStats.rank === 2 ? 'â–²' : myStats.rank === 3 ? 'â—' : myStats.rank > 0 ? `#${myStats.rank}` : 'â€”'}
+                  {myStats.rank > 0 ? `#${myStats.rank}` : '-'}
                 </span>
                 {myStats.rank > 0 && (
                   <span className="text-[9px] font-bold" style={{ color: RANK_COLORS[myStats.rank - 1] || '#94A3B8' }}>
@@ -522,10 +522,10 @@ function AgentDashboard() {
         <div className="flex items-center justify-between mb-4">
           <div>
             <h3 className="text-sm font-bold text-slate-800">My Submission Activity</h3>
-            <p className="text-xs text-slate-500">Monthly submissions â€” 2025/2026</p>
+            <p className="text-xs text-slate-500">Monthly submissions</p>
           </div>
           <span className="text-xs font-bold px-2 py-0.5 rounded-lg" style={{ color: tier.color, background: tier.bg }}>
-            {myStats.submissions} total this year
+            {myStats.submissions > 0 ? `${myStats.submissions} submissions recorded` : 'No submissions recorded yet'}
           </span>
         </div>
         <ResponsiveContainer width="100%" height={110}>
@@ -588,7 +588,7 @@ function AgentDashboard() {
                   <div className={`w-2 h-2 rounded-full flex-shrink-0 ${isOverdue ? 'bg-red-500' : daysUntil <= 2 ? 'bg-amber-400' : 'bg-indigo-500'}`} />
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-slate-800 truncate">{o.solicitation}</p>
-                    <p className="text-[10px] text-slate-500">{o.solicitationId} Â· {o.type} Â· {o.client}</p>
+                    <p className="text-[10px] text-slate-500">{o.solicitationId} - {o.type} - {o.client}</p>
                   </div>
                   <div className={`flex-shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-md ${
                     isOverdue ? 'text-red-600 bg-red-50 border border-red-200' :
@@ -607,7 +607,7 @@ function AgentDashboard() {
   )
 }
 
-// â”€â”€ Admin / Manager Dashboard â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Admin / Manager Dashboard
 function AdminDashboard() {
   const { opportunities, nonSubReports, deletionRequests, activityLogs, currentUser } = useStore()
   const navigate = useNavigate()
@@ -679,10 +679,10 @@ function AdminDashboard() {
       <motion.div variants={fadeUp} initial="initial" animate="animate">
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div>
-            <p className="text-[10px] font-bold text-slate-400 tracking-[0.2em] mb-1">CES · COMMAND CENTER</p>
+            <p className="text-[10px] font-bold text-slate-400 tracking-[0.2em] mb-1">CES - COMMAND CENTER</p>
             <h1 className="text-2xl font-black text-slate-900">Company Overview</h1>
             <p className="text-slate-500 text-sm mt-0.5">
-              Real-time intelligence Â· {new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+              Metrics from current opportunity and contract data.
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -774,7 +774,7 @@ function AdminDashboard() {
           <h3 className="text-sm font-bold text-slate-800 mb-0.5">Pipeline Status</h3>
           <p className="text-xs text-slate-500 mb-3 cursor-pointer hover:text-indigo-600 transition-colors"
             onClick={() => navigate('/pipeline')}>
-            {opps.length} total â€” view all â†’
+            {opps.length > 0 ? `${opps.length} pipeline records - open pipeline` : 'No pipeline records yet'}
           </p>
           <ResponsiveContainer width="100%" height={140}>
             <PieChart style={{ cursor: 'pointer' }}>
@@ -813,7 +813,7 @@ function AdminDashboard() {
             </div>
             <button onClick={() => setActiveKpi({ key: 'submissions', label: 'Total Submissions', color: '#22C55E' })}
               className="text-[10px] text-indigo-600 hover:text-indigo-800 font-semibold transition-colors">
-              By agent â†’
+              Submission details
             </button>
           </div>
           <ResponsiveContainer width="100%" height={160}>
@@ -901,10 +901,7 @@ function AdminDashboard() {
                   onClick={() => setActiveKpi({ key: 'winrate', label: 'Win Rates Breakdown', color: '#F59E0B' })}
                   className="px-5 py-3 flex items-center gap-3 transition-all cursor-pointer">
                   <div className="w-6 text-center flex-shrink-0">
-                    {i === 0 ? <span className="text-base">ðŸ¥‡</span>
-                      : i === 1 ? <span className="text-base">ðŸ¥ˆ</span>
-                      : i === 2 ? <span className="text-base">ðŸ¥‰</span>
-                      : <span className="text-[11px] text-slate-400 font-bold">#{i + 1}</span>}
+                    <span className="text-[11px] text-slate-400 font-bold">#{i + 1}</span>
                   </div>
                   <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-[10px] font-black text-white bg-gradient-to-br ${avatarColor(a.avatar)}`}>
                     {a.avatar.slice(0, 2)}
@@ -960,7 +957,7 @@ function AdminDashboard() {
                   onClick={() => navigate(item.nav)}>
                   <div>
                     <p className="text-xs font-semibold text-slate-700">{item.label}</p>
-                    <p className="text-[10px] text-slate-400">{item.total} total</p>
+                    <p className="text-[10px] text-slate-400">{item.total > 0 ? `${item.total} total` : 'No records yet'}</p>
                   </div>
                   <div className="text-right">
                     <p className="text-xl font-black leading-none" style={{ color: item.count > 0 ? item.color : '#CBD5E1' }}>{item.count}</p>
@@ -990,7 +987,7 @@ function AdminDashboard() {
                     <div className={`w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0 ${isUrgent ? 'bg-red-500' : 'bg-indigo-500'}`} />
                     <div className="flex-1 min-w-0">
                       <p className="text-[11px] font-medium text-slate-700 truncate">{o.solicitation}</p>
-                      <p className="text-[10px] text-slate-400">{o.bds} Â· {o.type}</p>
+                      <p className="text-[10px] text-slate-400">{o.bds} - {o.type}</p>
                     </div>
                     <span className={`flex-shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded ${
                       isUrgent ? 'text-red-600 bg-red-50' : 'text-slate-500 bg-slate-100'}`}>
@@ -1050,11 +1047,11 @@ function AdminDashboard() {
           <div className="flex items-center justify-between mb-4">
             <div>
               <h3 className="text-sm font-bold text-slate-800">Agent Performance Breakdown</h3>
-              <p className="text-xs text-slate-500">Submissions Â· Wins Â· Non-Submissions per agent</p>
+              <p className="text-xs text-slate-500">Submissions, wins, and non-submissions per agent</p>
             </div>
             <button onClick={() => setActiveKpi({ key: 'submissions', label: 'Submissions Detail', color: '#6366F1' })}
               className="text-[10px] text-indigo-600 hover:text-indigo-800 font-semibold transition-colors">
-              {agents.length} agents â†’
+              {agents.length > 0 ? `${agents.length} team members` : 'No team stats yet'}
             </button>
           </div>
           <ResponsiveContainer width="100%" height={180}>
@@ -1098,7 +1095,7 @@ function AdminDashboard() {
                       <p className="text-[11px] text-slate-700 leading-snug">{log.action}</p>
                       <div className="flex items-center gap-1.5 mt-0.5">
                         <span className="text-[9px] text-slate-400">{log.user}</span>
-                        <span className="text-[9px] text-slate-300">Â·</span>
+                        <span className="text-[9px] text-slate-300">-</span>
                         <span className="text-[9px] text-slate-400">
                           {new Date(log.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
                         </span>

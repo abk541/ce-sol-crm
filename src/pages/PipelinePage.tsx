@@ -2,11 +2,11 @@ import { useEffect, useState, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
-  Plus, Search, X, ExternalLink, Loader,
+  Plus, X, ExternalLink, Loader,
   ChevronUp, ChevronDown, ChevronsUpDown,
   Edit2, Users2, Send, Trash2, Clock,
   FileText, PlusCircle, Download, Filter, MoreHorizontal, Trophy,
-  Ban, ChevronLeft, ChevronRight, SlidersHorizontal,
+  Ban, ChevronLeft, ChevronRight,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import type { Opportunity, Priority, OppStatus, Comment } from '../types'
@@ -358,7 +358,7 @@ function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) 
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className={lbl}>SAM.gov Link</label>
-              <input value={form.link ?? ''} onChange={e => set('link', e.target.value)} className="input-field" placeholder="https://sam.gov/opp/…" />
+              <input value={form.link ?? ''} onChange={e => set('link', e.target.value)} className="input-field" placeholder="https://sam.gov/opp/..." />
             </div>
             <div>
               <label className={lbl}>POC</label>
@@ -445,7 +445,7 @@ function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) 
               onChange={e => setNewComment(e.target.value)}
               rows={3}
               className="input-field w-full resize-none"
-              placeholder="Type your comment here…"
+              placeholder="Type your comment here..."
             />
             <p className="text-[10px] text-slate-400 mt-1">Comment will be saved when you click "Save Changes".</p>
           </div>
@@ -459,7 +459,7 @@ function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) 
             initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}>
             <p className="text-xs font-bold text-red-600 mb-2">Reason for deletion request</p>
             <textarea value={deleteReason} onChange={e => setDeleteReason(e.target.value)} rows={3}
-              className="input-field w-full resize-none text-sm" placeholder="Explain why this opportunity should be deleted…" />
+              className="input-field w-full resize-none text-sm" placeholder="Explain why this opportunity should be deleted..." />
             <div className="flex gap-2 mt-2">
               <button type="button" onClick={() => setShowDeleteReq(false)} className="btn-secondary text-xs">Cancel</button>
               <button type="button" onClick={submitDeleteReq}
@@ -581,7 +581,7 @@ function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () => void
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-semibold text-slate-800">{s.companyName}</p>
-                        <p className="text-xs text-slate-500 mt-0.5">{s.contactName} · {s.email} · {s.phone}</p>
+                        <p className="text-xs text-slate-500 mt-0.5">{s.contactName} - {s.email} - {s.phone}</p>
                         {s.quoteFile && (
                           <div className="flex items-center gap-1 mt-1.5">
                             <FileText size={10} className="text-slate-400" />
@@ -589,7 +589,7 @@ function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () => void
                           </div>
                         )}
                         {s.notes && <p className="text-xs mt-1.5 italic text-slate-500">"{s.notes}"</p>}
-                        <p className="text-[10px] mt-1.5 text-slate-400">Added by {s.createdBy} · {new Date(s.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</p>
+                        <p className="text-[10px] mt-1.5 text-slate-400">Added by {s.createdBy} - {new Date(s.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</p>
                       </div>
                       <div className="flex gap-1 flex-shrink-0">
                         <button onClick={() => startEdit(s)}
@@ -662,7 +662,7 @@ function SubmitModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }
   const [proposals, setProposals] = useState<string[]>(opp.proposals ?? [])
   const [newFile, setNewFile] = useState('')
 
-  // Financial fields — behavior varies by contract type
+  // Financial fields vary by contract type
   const isOTJ       = opp.type === 'OTJ'
   const isRecurring = opp.type === 'RECURRING'
 
@@ -697,11 +697,11 @@ function SubmitModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }
         <div className="p-4 rounded-xl bg-indigo-50 border border-indigo-100">
           <p className="text-xs font-semibold text-indigo-500 mb-1.5">Opportunity details</p>
           <p className="text-sm font-semibold text-slate-800">{opp.solicitation}</p>
-          <p className="text-xs text-slate-500 mt-0.5">{opp.solicitationId} · Due: {new Date(opp.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} {opp.localTime && `at ${opp.localTime} ${opp.timezone ?? ''}`}</p>
+          <p className="text-xs text-slate-500 mt-0.5">{opp.solicitationId} - Due: {new Date(opp.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} {opp.localTime && `at ${opp.localTime} ${opp.timezone ?? ''}`}</p>
           <p className="text-xs text-indigo-600 font-semibold mt-1">{typeLabel(opp.type)}</p>
         </div>
 
-        {/* Financial fields — conditional on contract type */}
+        {/* Financial fields conditional on contract type */}
         <div className="space-y-3">
           <p className="text-xs font-bold text-slate-600 uppercase tracking-wide">Contract Value</p>
 
@@ -849,7 +849,7 @@ function CreateModal({ onClose }: { onClose: () => void }) {
         return
       }
 
-      // Map SAM.gov set-aside codes → our internal codes
+      // Map SAM.gov set-aside codes to our internal codes
       const setAsideMap: Record<string, string> = {
         SBA:     'SB',
         SDVOSBC: 'SDVOSB',
@@ -861,12 +861,12 @@ function CreateModal({ onClose }: { onClose: () => void }) {
       }
       const mappedSetAside = setAsideMap[opp.typeOfSetAside ?? ''] ?? 'UNRES'
 
-      // Place of performance → location string
+      // Place of performance to location string
       const pop = opp.placeOfPerformance
       const locationParts = [pop?.city?.name, pop?.state?.code].filter(Boolean)
       const locationStr = locationParts.join(', ')
 
-      // Response deadline → date + time
+      // Response deadline to date and time
       let dueDate = ''
       let localTime = ''
       if (opp.responseDeadLine) {
@@ -950,12 +950,12 @@ function CreateModal({ onClose }: { onClose: () => void }) {
           <input
             value={samUrl} onChange={e => setSamUrl(e.target.value)}
             className="input-field flex-1 text-sm"
-            placeholder="Paste a SAM.gov URL to auto-fill all fields…"
+            placeholder="Paste a SAM.gov URL to auto-fill all fields..."
           />
           <button type="button" onClick={handleImport} disabled={importing || !samUrl.trim()}
             className="btn-primary flex-shrink-0 disabled:opacity-40">
             {importing ? <Loader size={13} className="animate-spin" /> : <ExternalLink size={13} />}
-            {importing ? 'Importing…' : 'Import'}
+            {importing ? 'Importing...' : 'Import'}
           </button>
         </div>
       }
@@ -1062,7 +1062,7 @@ function CreateModal({ onClose }: { onClose: () => void }) {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className={lbl}>SAM.gov Link</label>
-              <input value={form.link ?? ''} onChange={e => set('link', e.target.value)} className="input-field" placeholder="https://sam.gov/opp/…" />
+              <input value={form.link ?? ''} onChange={e => set('link', e.target.value)} className="input-field" placeholder="https://sam.gov/opp/..." />
             </div>
             <div>
               <label className={lbl}>POC</label>
@@ -1114,7 +1114,7 @@ function CreateModal({ onClose }: { onClose: () => void }) {
             <p className="text-sm font-semibold text-slate-700 mb-1">Assign to a team member</p>
             <p className="text-xs text-slate-400 mb-4">
               Select anyone in the hierarchy. The ⚠ badge appears when they already have a contract ending on the same due date.
-              {!form.dueDate && <span className="text-amber-600 font-medium"> — Set a due date in the Schedule tab to enable conflict detection.</span>}
+              {!form.dueDate && <span className="text-amber-600 font-medium"> - Set a due date in the Schedule tab to enable conflict detection.</span>}
             </p>
           </div>
           <HierarchyAssignPicker
@@ -1135,7 +1135,7 @@ function CreateModal({ onClose }: { onClose: () => void }) {
             onChange={e => setInitialComment(e.target.value)}
             rows={5}
             className="input-field w-full resize-none"
-            placeholder="Add an initial comment or note about this opportunity…"
+            placeholder="Add an initial comment or note about this opportunity..."
           />
         </div>
       )}
@@ -1297,7 +1297,7 @@ function Paginator({
           }, [])
           .map((p, i) =>
             p === '...'
-              ? <span key={`ellipsis-${i}`} className="px-1 text-xs text-slate-400">…</span>
+              ? <span key={`ellipsis-${i}`} className="px-1 text-xs text-slate-400">...</span>
               : (
                 <button
                   key={p}
@@ -1337,25 +1337,81 @@ const ROLE_COLOR: Record<string, { color: string; bg: string; border: string }> 
   ASSOCIATE:  { color: '#0E7490', bg: '#ECFEFF', border: '#A5F3FC' },
 }
 
+const COLUMN_FILTERS = [
+  { key: 'priority',       label: 'Priority',     placeholder: 'Any priority' },
+  { key: 'period',         label: 'Period',       placeholder: 'Any period' },
+  { key: 'capturedOn',     label: 'Captured On',  placeholder: 'Any capture date' },
+  { key: 'type',           label: 'Type',         placeholder: 'Any type' },
+  { key: 'naicsCode',      label: 'NAICS',        placeholder: 'Any NAICS' },
+  { key: 'solicitationId', label: 'ID',           placeholder: 'Any ID' },
+  { key: 'solicitation',   label: 'Solicitation', placeholder: 'Any solicitation' },
+  { key: 'setAside',       label: 'Set Aside',    placeholder: 'Any set aside' },
+  { key: 'localTime',      label: 'Time / TZ',    placeholder: 'Any time' },
+  { key: 'location',       label: 'Location',     placeholder: 'Any location' },
+  { key: 'bdm',            label: 'BDM',          placeholder: 'Any BDM' },
+  { key: 'bds',            label: 'BDS',          placeholder: 'Any BDS' },
+  { key: 'assignedTo',     label: 'Assigned',     placeholder: 'Any assignee' },
+] as const
+
+type ColumnFilterKey = typeof COLUMN_FILTERS[number]['key']
+type ColumnFilters = Record<ColumnFilterKey, string>
+
+const EMPTY_COLUMN_FILTERS: ColumnFilters = COLUMN_FILTERS.reduce((acc, col) => {
+  acc[col.key] = ''
+  return acc
+}, {} as ColumnFilters)
+
+function getColumnFilterValue(o: Opportunity, key: ColumnFilterKey, employeeNameById: Map<string, string>) {
+  switch (key) {
+    case 'type':
+      return typeLabel(o.type)
+    case 'localTime':
+      return `${o.localTime ?? ''} ${o.timezone ?? ''}`.trim()
+    case 'assignedTo':
+      return o.assignedTo ? employeeNameById.get(o.assignedTo) ?? '' : ''
+    default:
+      return String(o[key] ?? '')
+  }
+}
+
+function ColumnFilterInput({
+  id,
+  label,
+  value,
+  placeholder,
+  suggestions,
+  onChange,
+}: {
+  id: string
+  label: string
+  value: string
+  placeholder: string
+  suggestions: string[]
+  onChange: (value: string) => void
+}) {
+  return (
+    <div>
+      <label className="block text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1">{label}</label>
+      <input
+        value={value}
+        list={id}
+        onChange={e => onChange(e.target.value)}
+        className="input-field text-xs py-1.5 w-full"
+        placeholder={placeholder}
+      />
+      <datalist id={id}>
+        {suggestions.map(s => <option key={s} value={s} />)}
+      </datalist>
+    </div>
+  )
+}
+
 export default function PipelinePage() {
   const { opportunities, employees, currentUser, markOpportunityWon, updateOpportunity } = useStore()
 
   // ── Filter state ──
-  const [search, setSearch]           = useState('')
-  const [priorityFilter, setPriorityFilter] = useState('All')
-  const [typeFilter, setTypeFilter]   = useState('All')
-  const [setAsideFilter, setSetAsideFilter] = useState('All')
-  const [period, setPeriod]           = useState<Period | null>(null)
-
-  // More filters
-  const [showMoreFilters, setShowMoreFilters] = useState(false)
-  const [bdmFilter, setBdmFilter]           = useState('')
-  const [bdsFilter, setBdsFilter]           = useState('')
-  const [supportFilter, setSupportFilter]   = useState('')
-  const [locationFilter, setLocationFilter] = useState('')
-  const [naicsFilter, setNaicsFilter]       = useState('')
-  const [dueDateFrom, setDueDateFrom]       = useState('')
-  const [dueDateTo, setDueDateTo]           = useState('')
+  const [columnFilters, setColumnFilters] = useState<ColumnFilters>(() => ({ ...EMPTY_COLUMN_FILTERS }))
+  const [dueDateRange, setDueDateRange] = useState<Period | null>(null)
 
   // ── Modal state ──
   const [showCreate, setShowCreate]   = useState(false)
@@ -1373,41 +1429,30 @@ export default function PipelinePage() {
 
   const canSubmit = ['BD_MANAGER', 'TEAM_LEAD', 'ASSOCIATE'].includes(currentUser?.role ?? '')
 
-  // Unique BDM / BDS / Support lists for dropdowns
-  const bdmList     = useMemo(() => Array.from(new Set(opportunities.map(o => o.bdm).filter(Boolean))), [opportunities])
-  const bdsList     = useMemo(() => Array.from(new Set(opportunities.map(o => o.bds).filter(Boolean))), [opportunities])
-  const supportList = useMemo(() => Array.from(new Set(opportunities.map(o => o.supportAgent).filter(Boolean))), [opportunities])
+  const employeeNameById = useMemo(() => new Map(employees.map(e => [e.id, e.name])), [employees])
+
+  const filterOptions = useMemo(() => {
+    const visibleOpps = opportunities.filter(o => !o.isDeleted && OPP_VIEW_STATUSES.includes(o.status as any))
+    return COLUMN_FILTERS.reduce((acc, col) => {
+      const values = visibleOpps
+        .map(o => getColumnFilterValue(o, col.key, employeeNameById))
+        .map(v => v.trim())
+        .filter(Boolean)
+      acc[col.key] = Array.from(new Set(values)).sort((a, b) => a.localeCompare(b))
+      return acc
+    }, {} as Record<ColumnFilterKey, string[]>)
+  }, [opportunities, employeeNameById])
 
   const filtered = useMemo(() => {
-    // Pre-submission only
     let list = opportunities.filter(o => !o.isDeleted && OPP_VIEW_STATUSES.includes(o.status as any))
 
-    // Period filter (by dueDate)
-    if (period) list = list.filter(o => filterByPeriod(o.dueDate, period))
+    if (dueDateRange) list = list.filter(o => filterByPeriod(o.dueDate, dueDateRange))
 
-    if (search) {
-      const q = search.toLowerCase()
-      list = list.filter(o =>
-        o.solicitation.toLowerCase().includes(q) ||
-        o.solicitationId.toLowerCase().includes(q) ||
-        (o.location ?? '').toLowerCase().includes(q) ||
-        (o.client ?? '').toLowerCase().includes(q) ||
-        (o.naicsCode ?? '').includes(q)
-      )
-    }
-
-    if (priorityFilter !== 'All') list = list.filter(o => o.priority === priorityFilter)
-    if (typeFilter !== 'All')     list = list.filter(o => o.type === typeFilter)
-    if (setAsideFilter !== 'All') list = list.filter(o => o.setAside === setAsideFilter)
-
-    // More filters
-    if (bdmFilter)      list = list.filter(o => (o.bdm ?? '').toLowerCase().includes(bdmFilter.toLowerCase()))
-    if (bdsFilter)      list = list.filter(o => (o.bds ?? '').toLowerCase().includes(bdsFilter.toLowerCase()))
-    if (supportFilter)  list = list.filter(o => (o.supportAgent ?? '').toLowerCase().includes(supportFilter.toLowerCase()))
-    if (locationFilter) list = list.filter(o => (o.location ?? '').toLowerCase().includes(locationFilter.toLowerCase()))
-    if (naicsFilter)    list = list.filter(o => (o.naicsCode ?? '').includes(naicsFilter))
-    if (dueDateFrom)    list = list.filter(o => o.dueDate >= dueDateFrom)
-    if (dueDateTo)      list = list.filter(o => o.dueDate <= dueDateTo)
+    COLUMN_FILTERS.forEach(col => {
+      const q = columnFilters[col.key].trim().toLowerCase()
+      if (!q) return
+      list = list.filter(o => getColumnFilterValue(o, col.key, employeeNameById).toLowerCase().includes(q))
+    })
 
     list.sort((a, b) => {
       const av = a[sort.key] ?? ''; const bv = b[sort.key] ?? ''
@@ -1415,8 +1460,7 @@ export default function PipelinePage() {
       return sort.dir === 'asc' ? r : -r
     })
     return list
-  }, [opportunities, search, priorityFilter, typeFilter, setAsideFilter, sort, period,
-      bdmFilter, bdsFilter, supportFilter, locationFilter, naicsFilter, dueDateFrom, dueDateTo])
+  }, [opportunities, sort, dueDateRange, columnFilters, employeeNameById])
 
   // Paginated slice
   const paginated = useMemo(() => {
@@ -1438,15 +1482,13 @@ export default function PipelinePage() {
     return sort.dir === 'asc' ? <ChevronUp size={9} className="text-indigo-500" /> : <ChevronDown size={9} className="text-indigo-500" />
   }
 
-  const hasMoreFilters = bdmFilter || bdsFilter || supportFilter || locationFilter || naicsFilter || dueDateFrom || dueDateTo
-
   const clearAll = () => {
-    setSearch(''); setPriorityFilter('All'); setTypeFilter('All'); setSetAsideFilter('All')
-    setBdmFilter(''); setBdsFilter(''); setSupportFilter(''); setLocationFilter(''); setNaicsFilter('')
-    setDueDateFrom(''); setDueDateTo(''); resetPage()
+    setColumnFilters({ ...EMPTY_COLUMN_FILTERS })
+    setDueDateRange(null)
+    resetPage()
   }
 
-  const hasFilters = search || priorityFilter !== 'All' || typeFilter !== 'All' || setAsideFilter !== 'All' || hasMoreFilters
+  const hasFilters = !!dueDateRange || Object.values(columnFilters).some(v => v.trim())
 
   const handleCancel = (o: Opportunity) => {
     updateOpportunity(o.id, { status: 'CANCELED' })
@@ -1458,12 +1500,11 @@ export default function PipelinePage() {
       {/* Header */}
       <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
         <div>
-          <p className="text-[10px] font-bold text-slate-400 tracking-[0.2em] mb-1">CES · PIPELINE</p>
+          <p className="text-[10px] font-bold text-slate-400 tracking-[0.2em] mb-1">CES - PIPELINE</p>
           <h1 className="text-2xl font-black text-slate-900">Contract Opportunities</h1>
           <p className="text-slate-500 text-sm mt-0.5">{filtered.length} opportunities</p>
         </div>
         <div className="flex items-center gap-3">
-          <PeriodFilter value={period} onChange={setPeriod} />
           <button onClick={() => setShowCreate(true)} className="btn-primary">
             <Plus size={14} /> New Opportunity
           </button>
@@ -1473,52 +1514,12 @@ export default function PipelinePage() {
       {/* Filters bar */}
       <div className="glass rounded-2xl p-4 mb-4 space-y-3">
         <div className="flex flex-wrap gap-3 items-center">
-          {/* Search */}
-          <div className="relative min-w-[200px] flex-1">
-            <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input value={search} onChange={e => { setSearch(e.target.value); resetPage() }}
-              className="input-field pl-9 text-xs" placeholder="Search solicitation, ID, client, NAICS…" />
+          <div>
+            <p className="text-xs font-bold text-slate-700">Column filters</p>
+            <p className="text-[11px] text-slate-500">Type in any column filter and choose a suggestion from the dropdown.</p>
           </div>
 
-          {/* Priority pills */}
-          <div className="flex gap-1 flex-wrap">
-            {['All', 'HIGH', 'MEDIUM', 'LOW'].map(p => (
-              <button key={p} onClick={() => { setPriorityFilter(p); resetPage() }}
-                className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all border ${priorityFilter === p
-                  ? 'bg-rose-50 text-rose-700 border-rose-200'
-                  : 'text-slate-500 border-slate-200 bg-white hover:text-slate-700'}`}>
-                {p}
-              </button>
-            ))}
-          </div>
-
-          {/* Type dropdown */}
-          <select value={typeFilter} onChange={e => { setTypeFilter(e.target.value); resetPage() }}
-            className="select-field text-xs py-1.5 w-auto min-w-[130px]">
-            {TYPES_DISPLAY.map(t => (
-              <option key={t.value} value={t.value}>{t.label}</option>
-            ))}
-          </select>
-
-          {/* Set Aside dropdown */}
-          <select value={setAsideFilter} onChange={e => { setSetAsideFilter(e.target.value); resetPage() }}
-            className="select-field text-xs py-1.5 w-auto min-w-[110px]">
-            <option value="All">All Set Aside</option>
-            {SET_ASIDES.map(s => <option key={s}>{s}</option>)}
-          </select>
-
-          {/* More Filters toggle */}
-          <button onClick={() => setShowMoreFilters(v => !v)}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
-              showMoreFilters || hasMoreFilters
-                ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
-                : 'text-slate-500 border-slate-200 bg-white hover:text-slate-700'
-            }`}>
-            <SlidersHorizontal size={11} />
-            More Filters
-            {hasMoreFilters ? <span className="w-4 h-4 rounded-full bg-indigo-500 text-white text-[9px] font-black flex items-center justify-center">!</span> : null}
-          </button>
-
+          <div className="flex items-center gap-2 ml-auto">
           {hasFilters && (
             <button onClick={clearAll}
               className="btn-ghost text-xs flex items-center gap-1 text-slate-500">
@@ -1526,68 +1527,46 @@ export default function PipelinePage() {
             </button>
           )}
 
-          <button className="btn-secondary ml-auto text-xs flex items-center gap-1.5">
+          <button className="btn-secondary text-xs flex items-center gap-1.5">
             <Download size={12} /> Export
           </button>
+          </div>
         </div>
 
-        {/* More Filters panel */}
-        <AnimatePresence>
-          {showMoreFilters && (
-            <motion.div
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: 'auto' }}
-              exit={{ opacity: 0, height: 0 }}
-              className="overflow-hidden">
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 pt-2 border-t border-slate-100">
-                <div>
-                  <label className="block text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1">BDM</label>
-                  <select value={bdmFilter} onChange={e => { setBdmFilter(e.target.value); resetPage() }} className="select-field text-xs py-1.5 w-full">
-                    <option value="">All BDMs</option>
-                    {bdmList.map(b => <option key={b}>{b}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1">BDS</label>
-                  <select value={bdsFilter} onChange={e => { setBdsFilter(e.target.value); resetPage() }} className="select-field text-xs py-1.5 w-full">
-                    <option value="">All BDS</option>
-                    {bdsList.map(b => <option key={b}>{b}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1">Support Agent</label>
-                  <select value={supportFilter} onChange={e => { setSupportFilter(e.target.value); resetPage() }} className="select-field text-xs py-1.5 w-full">
-                    <option value="">All Agents</option>
-                    {supportList.map(s => <option key={s}>{s}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1">Location</label>
-                  <input value={locationFilter} onChange={e => { setLocationFilter(e.target.value); resetPage() }} className="input-field text-xs py-1.5 w-full" placeholder="City, State" />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1">NAICS</label>
-                  <input value={naicsFilter} onChange={e => { setNaicsFilter(e.target.value); resetPage() }} className="input-field text-xs py-1.5 w-full" placeholder="e.g. 238220" />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1">Due Date From</label>
-                  <input type="date" value={dueDateFrom} onChange={e => { setDueDateFrom(e.target.value); resetPage() }} className="input-field text-xs py-1.5 w-full" />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1">Due Date To</label>
-                  <input type="date" value={dueDateTo} onChange={e => { setDueDateTo(e.target.value); resetPage() }} className="input-field text-xs py-1.5 w-full" />
-                </div>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-7 gap-3 pt-2 border-t border-slate-100">
+          {COLUMN_FILTERS.map(col => (
+            <ColumnFilterInput
+              key={col.key}
+              id={`pipeline-filter-${col.key}`}
+              label={col.label}
+              value={columnFilters[col.key]}
+              placeholder={col.placeholder}
+              suggestions={filterOptions[col.key] ?? []}
+              onChange={value => {
+                setColumnFilters(prev => ({ ...prev, [col.key]: value }))
+                resetPage()
+              }}
+            />
+          ))}
+          <div>
+            <label className="block text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1">Due Date</label>
+            <PeriodFilter
+              value={dueDateRange}
+              onChange={value => {
+                setDueDateRange(value)
+                resetPage()
+              }}
+              placeholder="All dates"
+            />
+          </div>
+        </div>
       </div>
 
       {/* Table */}
       <div className="glass rounded-2xl overflow-hidden">
         <div className="px-5 py-3 flex items-center gap-2" style={{ borderBottom: '1px solid rgba(0,0,0,0.07)' }}>
           <Filter size={12} className="text-slate-400" />
-          <p className="text-xs font-semibold text-slate-500">{filtered.length} results · Click any row for details</p>
+          <p className="text-xs font-semibold text-slate-500">{filtered.length} results - select a row to see details</p>
         </div>
         <div className="overflow-x-auto">
           <table className="data-table">
@@ -1660,12 +1639,12 @@ export default function PipelinePage() {
                       )}
                     </td>
                     <td><span className="text-slate-500 text-xs">{o.location}</span></td>
-                    <td><span className="text-slate-600 text-xs">{o.bdm || '—'}</span></td>
-                    <td><span className="text-slate-600 text-xs">{o.bds || '—'}</span></td>
+                    <td><span className="text-slate-600 text-xs">{o.bdm || '-'}</span></td>
+                    <td><span className="text-slate-600 text-xs">{o.bds || '-'}</span></td>
                     <td>
                       {(() => {
                         const emp = o.assignedTo ? employees.find(e => e.id === o.assignedTo) : null
-                        if (!emp) return <span className="text-slate-400 text-xs">—</span>
+                        if (!emp) return <span className="text-slate-400 text-xs">-</span>
                         const rc = ROLE_COLOR[emp.role] ?? ROLE_COLOR.ASSOCIATE
                         return (
                           <div className="flex flex-col gap-0.5">
@@ -1706,7 +1685,7 @@ export default function PipelinePage() {
                           onSourcing={() => setSourcingOpp(o)}
                           onSubmit={() => setSubmitOpp(o)}
                           onRequestDeletion={() => setEditOpp(o)}
-                          onMarkWon={() => { markOpportunityWon(o.id); toast.success('Marked as WON → moved to Fresh Awards!') }}
+                          onMarkWon={() => { markOpportunityWon(o.id); toast.success('Marked as WON and moved to Fresh Awards') }}
                           onCancel={() => handleCancel(o)}
                         />
                       </div>
@@ -1737,7 +1716,7 @@ export default function PipelinePage() {
         isOpen={!!selectedOpp}
         onClose={() => setSelectedOpp(null)}
         title={selectedOpp?.solicitation ?? ''}
-        subtitle={selectedOpp ? `${selectedOpp.solicitationId} · ${selectedOpp.client}` : ''}
+        subtitle={selectedOpp ? `${selectedOpp.solicitationId} - ${selectedOpp.client}` : ''}
         width={500}
       >
         {selectedOpp && (
@@ -1758,12 +1737,12 @@ export default function PipelinePage() {
             </DrawerSection>
 
             <DrawerSection title="Team">
-              <DrawerField label="BDM"          value={selectedOpp.bdm || '—'} />
-              <DrawerField label="BDS"          value={selectedOpp.bds || '—'} />
-              <DrawerField label="Support Agent" value={selectedOpp.supportAgent ?? '—'} />
+              <DrawerField label="BDM"          value={selectedOpp.bdm || '-'} />
+              <DrawerField label="BDS"          value={selectedOpp.bds || '-'} />
+              <DrawerField label="Support Agent" value={selectedOpp.supportAgent ?? '-'} />
               <DrawerField label="Assigned To"  value={(() => {
                 const emp = selectedOpp.assignedTo ? employees.find(e => e.id === selectedOpp.assignedTo) : null
-                if (!emp) return '—'
+                if (!emp) return '-'
                 const rc = ROLE_COLOR[emp.role] ?? ROLE_COLOR.ASSOCIATE
                 return (
                   <span className="flex items-center gap-1.5 flex-wrap">
@@ -1779,7 +1758,7 @@ export default function PipelinePage() {
 
             <DrawerSection title="Schedule">
               <DrawerField label="Due Date"  value={new Date(selectedOpp.dueDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })} />
-              <DrawerField label="Time"      value={selectedOpp.localTime ? `${selectedOpp.localTime} ${selectedOpp.timezone ?? ''}` : '—'} />
+              <DrawerField label="Time"      value={selectedOpp.localTime ? `${selectedOpp.localTime} ${selectedOpp.timezone ?? ''}` : '-'} />
               {selectedOpp.localTime && selectedOpp.timezone && (
                 <DrawerField label="Your Local" value={
                   <span className="text-indigo-600 font-semibold">{convertTime(selectedOpp.localTime, selectedOpp.timezone)}</span>
@@ -1789,9 +1768,9 @@ export default function PipelinePage() {
             </DrawerSection>
 
             <DrawerSection title="Financials">
-              <DrawerField label="Contract Amount"  value={selectedOpp.contractAmount ? formatCurrency(selectedOpp.contractAmount) : '—'} />
-              <DrawerField label="Base Amount"      value={selectedOpp.baseAmount ? formatCurrency(selectedOpp.baseAmount) : '—'} />
-              <DrawerField label="Monthly Payment"  value={selectedOpp.monthlyPayment ? formatCurrency(selectedOpp.monthlyPayment) + '/mo' : '—'} />
+              <DrawerField label="Contract Amount"  value={selectedOpp.contractAmount ? formatCurrency(selectedOpp.contractAmount) : '-'} />
+              <DrawerField label="Base Amount"      value={selectedOpp.baseAmount ? formatCurrency(selectedOpp.baseAmount) : '-'} />
+              <DrawerField label="Monthly Payment"  value={selectedOpp.monthlyPayment ? formatCurrency(selectedOpp.monthlyPayment) + '/mo' : '-'} />
             </DrawerSection>
 
             {selectedOpp.comments && selectedOpp.comments.length > 0 && (
