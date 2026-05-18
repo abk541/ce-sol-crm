@@ -38,6 +38,16 @@ const MANUAL_STATUSES: OppStatus[] = ['ACTIVE', 'NEW_ASSIGNMENT', 'DISCUSSION']
 const TZ_ABBREVS = Object.keys(TIMEZONES)
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100, 0] // 0 = All
+const SAM_GOV_API_KEY_STORAGE = 'ces.samGovApiKey'
+
+function getBuildSamGovApiKey() {
+  return ((import.meta.env.VITE_SAM_GOV_API_KEY as string | undefined) ?? '').trim()
+}
+
+function getSavedSamGovApiKey() {
+  if (typeof window === 'undefined') return ''
+  return window.localStorage.getItem(SAM_GOV_API_KEY_STORAGE)?.trim() ?? ''
+}
 
 function typeLabel(val: string) {
   if (val === 'S&D') return 'Delivery'
@@ -801,6 +811,9 @@ function CreateModal({ onClose }: { onClose: () => void }) {
   const [importing, setImporting] = useState(false)
   const [lastImportedUrl, setLastImportedUrl] = useState('')
   const [initialComment, setInitialComment] = useState('')
+  const buildSamApiKey = getBuildSamGovApiKey()
+  const [samApiKey, setSamApiKey] = useState(() => buildSamApiKey ? '' : getSavedSamGovApiKey())
+  const [showSamApiKeyField, setShowSamApiKeyField] = useState(() => !buildSamApiKey && !getSavedSamGovApiKey())
   const [form, setForm] = useState<Partial<Opportunity>>({
     priority: 'MEDIUM', status: 'ACTIVE', type: 'OTJ', setAside: 'SB',
     period: new Date().toLocaleString('en-US', { month: 'short' }).toUpperCase() + ' ' + new Date().getFullYear(),
@@ -816,10 +829,14 @@ function CreateModal({ onClose }: { onClose: () => void }) {
     const url = samUrl.trim()
     if (!url || importing) return
 
-    const apiKey = import.meta.env.VITE_SAM_GOV_API_KEY as string | undefined
+    const apiKey = buildSamApiKey || samApiKey.trim()
     if (!apiKey) {
-      toast.error('SAM.gov API key not configured. Add VITE_SAM_GOV_API_KEY to your .env file.')
+      setShowSamApiKeyField(true)
+      toast.error('Enter your SAM.gov API key to import opportunities.')
       return
+    }
+    if (!buildSamApiKey && samApiKey.trim()) {
+      window.localStorage.setItem(SAM_GOV_API_KEY_STORAGE, samApiKey.trim())
     }
 
     // Parse the 32-char hex opportunity ID from the SAM.gov URL
@@ -836,8 +853,8 @@ function CreateModal({ onClose }: { onClose: () => void }) {
     setImporting(true)
     try {
       const endpoint = oppIdMatch
-        ? `https://api.sam.gov/opportunities/v2/search?limit=1&opportunityId=${oppIdMatch[1]}&api_key=${apiKey}`
-        : `https://api.sam.gov/opportunities/v2/search?limit=1&solicitationNumber=${encodeURIComponent(solNumMatch![1])}&api_key=${apiKey}`
+        ? `https://api.sam.gov/opportunities/v2/search?limit=1&opportunityId=${oppIdMatch[1]}&api_key=${encodeURIComponent(apiKey)}`
+        : `https://api.sam.gov/opportunities/v2/search?limit=1&solicitationNumber=${encodeURIComponent(solNumMatch![1])}&api_key=${encodeURIComponent(apiKey)}`
 
       const res = await fetch(endpoint)
       if (!res.ok) throw new Error(`SAM.gov returned ${res.status} ${res.statusText}`)
@@ -946,17 +963,69 @@ function CreateModal({ onClose }: { onClose: () => void }) {
       tab={tab} setTab={setTab}
       onClose={onClose}
       extraHeader={
-        <div className="flex gap-2">
-          <input
-            value={samUrl} onChange={e => setSamUrl(e.target.value)}
-            className="input-field flex-1 text-sm"
-            placeholder="Paste a SAM.gov URL to auto-fill all fields..."
-          />
-          <button type="button" onClick={handleImport} disabled={importing || !samUrl.trim()}
-            className="btn-primary flex-shrink-0 disabled:opacity-40">
-            {importing ? <Loader size={13} className="animate-spin" /> : <ExternalLink size={13} />}
-            {importing ? 'Importing...' : 'Import'}
-          </button>
+        <div className="space-y-2">
+          <div className="flex gap-2">
+            <input
+              value={samUrl} onChange={e => setSamUrl(e.target.value)}
+              className="input-field flex-1 text-sm"
+              placeholder="Paste a SAM.gov URL to auto-fill all fields..."
+            />
+            <button type="button" onClick={handleImport} disabled={importing || !samUrl.trim()}
+              className="btn-primary flex-shrink-0 disabled:opacity-40">
+              {importing ? <Loader size={13} className="animate-spin" /> : <ExternalLink size={13} />}
+              {importing ? 'Importing...' : 'Import'}
+            </button>
+          </div>
+          {!buildSamApiKey && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+              {showSamApiKeyField ? (
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <div className="min-w-0 flex-1">
+                    <label className="block text-[10px] font-bold uppercase tracking-wide text-amber-700 mb-1">
+                      SAM.gov API key
+                    </label>
+                    <input
+                      type="password"
+                      value={samApiKey}
+                      onChange={e => setSamApiKey(e.target.value)}
+                      className="input-field text-xs"
+                      placeholder="Paste your SAM.gov API key"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const key = samApiKey.trim()
+                      if (!key) { toast.error('Paste the SAM.gov API key first.'); return }
+                      window.localStorage.setItem(SAM_GOV_API_KEY_STORAGE, key)
+                      setShowSamApiKeyField(false)
+                      toast.success('SAM.gov API key saved in this browser.')
+                    }}
+                    className="btn-secondary text-xs sm:self-end"
+                  >
+                    Save key
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-xs font-medium text-amber-800">
+                    Using a SAM.gov API key saved in this browser.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      window.localStorage.removeItem(SAM_GOV_API_KEY_STORAGE)
+                      setSamApiKey('')
+                      setShowSamApiKeyField(true)
+                    }}
+                    className="text-xs font-semibold text-amber-700 hover:text-amber-900"
+                  >
+                    Change key
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       }
       footer={
