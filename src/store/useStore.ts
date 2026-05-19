@@ -19,6 +19,7 @@ import { isSupabaseConnected } from '../lib/supabase'
 import {
   loadAllData,
   seedIfEmpty,
+  seedEmployeesIfEmpty,
   upsertOpportunity,
   upsertSubcontractor,
   deleteSubcontractorRecord,
@@ -1090,6 +1091,8 @@ export const useStore = create<AppState>()(
         if (get().dbReady) return
 
         try {
+          await seedEmployeesIfEmpty(MOCK_EMPLOYEES)
+
           // seedIfEmpty is now a no-op (all mock arrays are empty)
           await seedIfEmpty({
             opportunities: MOCK_OPPORTUNITIES,

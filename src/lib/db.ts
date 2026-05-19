@@ -853,6 +853,31 @@ export async function clearBusinessData(): Promise<void> {
 
 // ── Seed if empty ────────────────────────────────────────────────────────────
 
+export async function seedEmployeesIfEmpty(employees: Employee[]): Promise<void> {
+  if (!isSupabaseConnected || !supabase || employees.length === 0) return
+
+  try {
+    const { count, error } = await supabase
+      .from('employees')
+      .select('*', { count: 'exact', head: true })
+
+    if (error) {
+      console.error('[db] seedEmployeesIfEmpty count check error', error)
+      return
+    }
+
+    if ((count ?? 0) > 0) return
+
+    const inserted = await insertBatched(
+      'employees',
+      employees.map(empToDb),
+    )
+    if (inserted) console.log('[db] Seeded employee hierarchy in Supabase.')
+  } catch (err) {
+    console.error('[db] seedEmployeesIfEmpty failed', err)
+  }
+}
+
 async function insertBatched<T>(
   table: string,
   rows: Record<string, unknown>[],
