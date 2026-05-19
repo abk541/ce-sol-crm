@@ -2165,7 +2165,7 @@ export default function PipelinePage() {
         onClose={() => setSelectedOpp(null)}
         title={selectedOpp?.solicitation ?? ''}
         subtitle={selectedOpp ? `${selectedOpp.solicitationId} - ${selectedOpp.client}` : ''}
-        width={720}
+        width={600}
         showBackdrop
       >
         {selectedOpp && (

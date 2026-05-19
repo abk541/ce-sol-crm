@@ -74,7 +74,7 @@ export function DrawerField({ label, value, className = '' }: { label: string; v
   return (
     <div className={`flex items-start justify-between py-2.5 border-b border-slate-50 last:border-0 ${className}`}>
       <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide flex-shrink-0 mt-0.5">{label}</span>
-      <div className="text-right text-sm text-slate-700 font-medium max-w-[60%] break-words">{value ?? '—'}</div>
+      <div className="text-right text-sm text-slate-700 font-medium max-w-[68%] break-words">{value ?? '-'}</div>
     </div>
   )
 }

@@ -272,6 +272,7 @@ const ROLE_COLOR_C: Record<string, { color: string; bg: string; border: string }
 function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClose: () => void }) {
   const { updateContract, addContractPoC, updateContractPoC, removeContractPoC, addLockedSubcontractor, addGovernmentWarning, updateGovernmentWarning, resolveGovernmentWarning, advanceContractStatus, terminateContract, currentUser, employees, opportunities } = useStore()
   const [tab, setTab] = useState<'overview' | 'poc' | 'subk' | 'warnings' | 'deliverables'>('overview')
+  const [deliverableDraft, setDeliverableDraft] = useState('')
 
   // Terminate form
   const [showTerminate, setShowTerminate] = useState(false)
@@ -955,14 +956,36 @@ function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClo
                 <span className="text-sm text-slate-700">{d}</span>
               </div>
             ))}
-            <button
-              onClick={() => {
-                const item = window.prompt('Add deliverable:')
-                if (item) updateContract(contract.id, { deliverables: [...(contract.deliverables || []), item] })
-              }}
-              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-dashed border-slate-300 text-xs text-slate-500 hover:text-indigo-600 hover:border-indigo-400 transition-colors">
-              <Plus size={12} /> Add Deliverable
-            </button>
+            <div className="p-3 rounded-xl border border-dashed border-slate-300 bg-slate-50">
+              <div className="flex flex-col sm:flex-row gap-2">
+                <input
+                  className="input-field text-xs"
+                  value={deliverableDraft}
+                  onChange={e => setDeliverableDraft(e.target.value)}
+                  placeholder="Add deliverable..."
+                  onKeyDown={e => {
+                    if (e.key !== 'Enter') return
+                    const item = deliverableDraft.trim()
+                    if (!item) return
+                    updateContract(contract.id, { deliverables: [...(contract.deliverables || []), item] })
+                    setDeliverableDraft('')
+                  }}
+                />
+                <button
+                  type="button"
+                  disabled={!deliverableDraft.trim()}
+                  onClick={() => {
+                    const item = deliverableDraft.trim()
+                    if (!item) return
+                    updateContract(contract.id, { deliverables: [...(contract.deliverables || []), item] })
+                    setDeliverableDraft('')
+                  }}
+                  className="btn-primary text-xs justify-center disabled:opacity-45 disabled:cursor-not-allowed"
+                >
+                  <Plus size={12} /> Add
+                </button>
+              </div>
+            </div>
           </div>
         )}
 

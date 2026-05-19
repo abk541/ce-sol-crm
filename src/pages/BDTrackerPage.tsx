@@ -239,8 +239,8 @@ export default function BDTrackerPage() {
           </div>
           <ResponsiveContainer width="100%" height={180}>
             <PieChart>
-              <Pie data={statusChart} dataKey="value" nameKey="name" innerRadius={48} outerRadius={72} paddingAngle={2}>
-                {statusChart.map(d => <Cell key={d.name} fill={d.color} />)}
+              <Pie data={statusChart} dataKey="value" nameKey="name" innerRadius={48} outerRadius={72} paddingAngle={2} stroke="transparent" strokeWidth={0}>
+                {statusChart.map(d => <Cell key={d.name} fill={d.color} stroke="transparent" strokeWidth={0} />)}
               </Pie>
               <Tooltip />
             </PieChart>

@@ -878,9 +878,10 @@ function AdminDashboard() {
             <PieChart style={{ cursor: 'pointer' }}>
               <Pie data={pipelineData} cx="50%" cy="50%"
                 innerRadius={40} outerRadius={58} paddingAngle={2} dataKey="value"
+                stroke="transparent" strokeWidth={0}
                 onClick={() => setActiveKpi({ key: 'pipeline', label: 'Active Pipeline', color: '#06B6D4' })}>
                 {pipelineData.map(entry => (
-                  <Cell key={entry.name} fill={STATUS_COLORS[entry.name] || '#CBD5E1'} />
+                  <Cell key={entry.name} fill={STATUS_COLORS[entry.name] || '#CBD5E1'} stroke="transparent" strokeWidth={0} />
                 ))}
               </Pie>
               <Tooltip content={<PieTip />} />
@@ -938,8 +939,9 @@ function AdminDashboard() {
             <ResponsiveContainer width={130} height={130}>
               <PieChart style={{ cursor: 'pointer' }}>
                 <Pie data={typeData} cx="50%" cy="50%"
-                  innerRadius={35} outerRadius={55} paddingAngle={3} dataKey="value">
-                  {typeData.map((_, idx) => <Cell key={idx} fill={TYPE_COLORS[idx % TYPE_COLORS.length]} />)}
+                  innerRadius={35} outerRadius={55} paddingAngle={3} dataKey="value"
+                  stroke="transparent" strokeWidth={0}>
+                  {typeData.map((_, idx) => <Cell key={idx} fill={TYPE_COLORS[idx % TYPE_COLORS.length]} stroke="transparent" strokeWidth={0} />)}
                 </Pie>
                 <Tooltip content={<PieTip />} />
               </PieChart>
@@ -1103,9 +1105,9 @@ function AdminDashboard() {
             <ResponsiveContainer width="100%" height={110}>
               <RadialBarChart cx="50%" cy="50%" innerRadius={18} outerRadius={52}
                 data={winRateData} startAngle={90} endAngle={-270}>
-                <RadialBar dataKey="winRate" cornerRadius={4} background={{ fill: '#F1F5F9' }}>
+                <RadialBar dataKey="winRate" cornerRadius={4} background={{ fill: 'rgba(215,190,122,0.12)' }}>
                   {winRateData.map((_, idx) => (
-                    <Cell key={idx} fill={['#6366F1', '#22C55E', '#F59E0B', '#06B6D4', '#8B5CF6'][idx]} />
+                    <Cell key={idx} fill={['#6366F1', '#22C55E', '#F59E0B', '#06B6D4', '#8B5CF6'][idx]} stroke="transparent" strokeWidth={0} />
                   ))}
                 </RadialBar>
                 <Tooltip content={({ active, payload }) => {

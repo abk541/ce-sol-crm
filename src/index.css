@@ -72,9 +72,41 @@
   background-color: rgba(10,29,43,0.88) !important;
 }
 
+.bg-indigo-50,
+.bg-blue-50,
+.bg-cyan-50,
+.bg-emerald-50,
+.bg-green-50,
+.bg-amber-50,
+.bg-yellow-50,
+.bg-orange-50,
+.bg-red-50,
+.bg-rose-50,
+.bg-purple-50 {
+  background-color: rgba(16,40,32,0.86) !important;
+}
+
+.bg-indigo-100,
+.bg-blue-100,
+.bg-cyan-100,
+.bg-emerald-100,
+.bg-green-100,
+.bg-amber-100,
+.bg-yellow-100,
+.bg-orange-100,
+.bg-red-100,
+.bg-rose-100,
+.bg-purple-100 {
+  background-color: rgba(184,145,78,0.18) !important;
+}
+
 .hover\:bg-white:hover,
 .hover\:bg-slate-50:hover,
-.hover\:bg-slate-100:hover {
+.hover\:bg-slate-100:hover,
+.hover\:bg-indigo-50:hover,
+.hover\:bg-indigo-100:hover,
+.hover\:bg-emerald-50:hover,
+.hover\:bg-emerald-100:hover {
   background-color: rgba(184,145,78,0.12) !important;
 }
 
@@ -122,6 +154,14 @@
 
 main {
   color: var(--text-primary);
+}
+
+.recharts-sector,
+path.recharts-sector,
+.recharts-pie-sector path {
+  stroke: transparent !important;
+  stroke-width: 0 !important;
+  outline: none !important;
 }
 
 /* ═══ Base ═══════════════════════════════════════════════════════════════════ */
@@ -467,6 +507,35 @@ main {
     color: var(--text-primary);
   }
   select option { background: #07131F; color: #F8FBF7; }
+
+  input[type="file"] {
+    color: var(--text-secondary);
+    min-width: 0;
+  }
+
+  input[type="file"]::file-selector-button {
+    margin-right: 12px;
+    border: 1px solid rgba(215,190,122,0.28);
+    border-radius: 8px;
+    background: rgba(184,145,78,0.18);
+    color: var(--text-primary);
+    font-weight: 700;
+    font-size: 12px;
+    padding: 7px 10px;
+    cursor: pointer;
+  }
+
+  input[type="file"]::file-selector-button:hover {
+    background: rgba(184,145,78,0.28);
+  }
+
+  input[type="date"]::-webkit-calendar-picker-indicator,
+  input[type="datetime-local"]::-webkit-calendar-picker-indicator,
+  input[type="time"]::-webkit-calendar-picker-indicator {
+    filter: invert(1) sepia(1) saturate(0.6) hue-rotate(350deg);
+    opacity: 0.75;
+    cursor: pointer;
+  }
 
   textarea {
     background: var(--bg-input);

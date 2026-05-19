@@ -19,9 +19,9 @@ const ROLE_LABEL: Record<HierarchyRole, string> = {
 
 // Avatar bg color by role
 const ROLE_AVATAR_CLS: Record<HierarchyRole, string> = {
-  BD_MANAGER: 'bg-indigo-100 text-indigo-700 border-indigo-200',
-  TEAM_LEAD:  'bg-blue-100 text-blue-700 border-blue-200',
-  ASSOCIATE:  'bg-cyan-100 text-cyan-700 border-cyan-200',
+  BD_MANAGER: 'bg-[#102820] text-[#D7BE7A] border-[#D7BE7A]/40',
+  TEAM_LEAD:  'bg-[#0A1D2B] text-[#7DD3FC] border-[#7DD3FC]/35',
+  ASSOCIATE:  'bg-[#082F49] text-[#A5F3FC] border-[#A5F3FC]/35',
 }
 
 const ACTIVE_STATUSES_EXCLUDE = ['ARCHIVED', 'TERMINATED', 'CANCELED']
@@ -194,7 +194,7 @@ export default function HierarchyAssignPicker({
                       className={[
                         'w-full text-left px-3 py-2.5 border-b border-slate-100 last:border-b-0 transition-colors',
                         enabled ? 'cursor-pointer hover:bg-slate-50' : 'cursor-default opacity-40',
-                        isSelected ? 'bg-indigo-50 border-l-2 border-l-indigo-500' : '',
+                        isSelected ? 'bg-[rgba(184,145,78,0.16)] border-l-2 border-l-[#D7BE7A]' : '',
                       ].join(' ')}
                     >
                       <div className="flex items-start gap-2">
@@ -207,7 +207,7 @@ export default function HierarchyAssignPicker({
 
                         <div className="flex-1 min-w-0">
                           {/* Name */}
-                          <p className={`text-xs font-semibold truncate ${isSelected ? 'text-indigo-700' : 'text-slate-800'}`}>
+                          <p className={`text-xs font-semibold truncate ${isSelected ? 'text-[#F8FBF7]' : 'text-slate-800'}`}>
                             {emp.name}
                           </p>
 
@@ -241,11 +241,14 @@ export default function HierarchyAssignPicker({
 
       {/* Summary bar */}
       {selectedEmp && (
-        <div className="mt-2 px-3 py-2 rounded-lg bg-indigo-50 border border-indigo-100 flex items-center gap-2">
+        <div
+          className="mt-2 px-3 py-2 rounded-lg border flex items-center gap-2"
+          style={{ background: 'rgba(184,145,78,0.12)', borderColor: 'rgba(215,190,122,0.28)' }}
+        >
           <div className={`w-6 h-6 rounded-full border flex items-center justify-center text-[10px] font-bold flex-shrink-0 ${ROLE_AVATAR_CLS[selectedEmp.role]}`}>
             {selectedEmp.avatar}
           </div>
-          <p className="text-xs text-indigo-700 font-semibold">
+          <p className="text-xs font-semibold" style={{ color: '#F8FBF7' }}>
             Assigned to: {selectedEmp.name}
             <span className="font-normal text-indigo-500 ml-1">· {ROLE_LABEL[selectedEmp.role]}</span>
           </p>
