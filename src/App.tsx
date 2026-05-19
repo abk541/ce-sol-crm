@@ -41,7 +41,7 @@ export default function App() {
     const checkSession = () => {
       const state = useStore.getState()
       if (state.isAuthenticated && state.loginTimestamp) {
-        state.syncDueOpportunities()
+        if (state.dbReady) state.syncDueOpportunities()
         const elapsed = Date.now() - state.loginTimestamp
         if (elapsed > 24 * 60 * 60 * 1000) {
           state.logout()
