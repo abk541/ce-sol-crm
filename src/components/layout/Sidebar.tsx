@@ -3,9 +3,9 @@ import { NavLink, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard, GitBranch, FileText, BarChart3,
   FileCheck2, Bell, Users, Settings, ChevronLeft,
-  ChevronRight, Shield, Database, TrendingUp, Briefcase,
+  ChevronRight, Database, TrendingUp,
   LogOut, ChevronDown, ClipboardList, HeartPulse,
-  ListChecks, Trophy, History, Building2, Award,
+  ListChecks, History, Building2,
 } from 'lucide-react'
 import { useState } from 'react'
 import { useStore } from '../../store/useStore'
@@ -26,18 +26,10 @@ const NAV = [
       { to: '/pipeline',          icon: GitBranch,     label: 'Contract Opportunities' },
       { to: '/proposals',         icon: FileText,      label: 'Assign Opportunities' },
       { to: '/bd-tracker',        icon: TrendingUp,    label: 'BD Tracker' },
+      { to: '/contracts',         icon: FileCheck2,    label: 'Contract Admin' },
       { to: '/tracker',           icon: ListChecks,    label: 'Deletion Requests' },
       { to: '/non-submissions',   icon: ClipboardList, label: 'Non-Submissions Report' },
       { to: '/past-performances', icon: History,       label: 'Past Performances' },
-    ],
-  },
-  {
-    label: 'Contract Admin',
-    items: [
-      { to: '/contracts',   icon: FileCheck2, label: 'Active Contracts' },
-      { to: '/fresh-award', icon: Trophy,     label: 'Fresh Award' },
-      { to: '/idiq',        icon: Briefcase,  label: 'IDIQ' },
-      { to: '/bpas',        icon: Shield,     label: 'BPAs' },
     ],
   },
   {
@@ -62,7 +54,7 @@ export default function Sidebar() {
   const { sidebarCollapsed, toggleSidebar, currentUser, logout, notifications } = useStore()
   const location = useLocation()
   const [expanded, setExpanded] = useState<Record<string, boolean>>({
-    Overview: true, 'Business Dev': true, 'Contract Admin': true, Operations: true, System: true,
+    Overview: true, 'Business Dev': true, Operations: true, System: true,
   })
   const unread = notifications.filter(n => !n.read).length
 

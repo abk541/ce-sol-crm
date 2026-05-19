@@ -12,7 +12,7 @@ import toast from 'react-hot-toast'
 import { useStore } from '../store/useStore'
 import type {
   Contract, ContractStatus, ContractPoC, LockedSubcontractor,
-  GovernmentWarning, GovWarningType, FreshAward,
+  GovernmentWarning, GovWarningType, FreshAward, FileAttachment, Comment,
 } from '../types'
 import { formatCurrency } from '../lib/utils'
 
@@ -51,7 +51,7 @@ const SEV_COLORS = {
 }
 
 // ── Tab definitions ─────────────────────────────────────────────────────
-type CTab = 'ALL' | 'ACTIVE_GROUP' | 'KICK_OFF' | 'LOCKING_SUB' | 'PERFORMING' | 'PENDING_PAYMENT' | 'ARCHIVED' | 'TERMINATED' | 'FRESH_AWARDS'
+type CTab = 'ALL' | 'ACTIVE_GROUP' | 'KICK_OFF' | 'LOCKING_SUB' | 'PERFORMING' | 'PENDING_PAYMENT' | 'ARCHIVED' | 'TERMINATED'
 
 const C_TABS: { key: CTab; label: string; statuses: ContractStatus[] }[] = [
   { key: 'ALL',           label: 'All',            statuses: ['KICK_OFF','LOCKING_SUB','ACTIVE','ON_GOING','PERFORMING','PENDING_PAYMENT','ARCHIVED','TERMINATED','CANCELED'] },
@@ -62,10 +62,96 @@ const C_TABS: { key: CTab; label: string; statuses: ContractStatus[] }[] = [
   { key: 'PENDING_PAYMENT',label:'Pend. Payment',  statuses: ['PENDING_PAYMENT'] },
   { key: 'ARCHIVED',      label: 'Archived',       statuses: ['ARCHIVED'] },
   { key: 'TERMINATED',    label: 'Terminated',     statuses: ['TERMINATED','CANCELED'] },
-  { key: 'FRESH_AWARDS',  label: 'Fresh Awards',   statuses: [] },
 ]
 
 const POC_ROLE_LABELS = { KO: 'Contracting Officer', COR: 'COR', END_USER: 'End User' }
+
+function formatDateTime(value: string) {
+  return new Date(value).toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  })
+}
+
+function toDatetimeLocal(value: string) {
+  const d = new Date(value)
+  if (!Number.isFinite(d.getTime())) return ''
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+function createAttachment(name: string, attachedAt: string, uploadedBy: string): FileAttachment {
+  return {
+    id: crypto.randomUUID(),
+    name,
+    attachedAt: new Date(attachedAt).toISOString(),
+    uploadedBy,
+  }
+}
+
+function AttachmentPicker({
+  label = 'Attachments',
+  attachments,
+  onChange,
+  uploadedBy,
+}: {
+  label?: string
+  attachments: FileAttachment[]
+  onChange: (attachments: FileAttachment[]) => void
+  uploadedBy: string
+}) {
+  const [fileName, setFileName] = useState('')
+  const [attachedAt, setAttachedAt] = useState(() => toDatetimeLocal(new Date().toISOString()))
+
+  const add = () => {
+    if (!fileName.trim() || !attachedAt) return
+    onChange([...attachments, createAttachment(fileName.trim(), attachedAt, uploadedBy)])
+    setFileName('')
+    setAttachedAt(toDatetimeLocal(new Date().toISOString()))
+  }
+
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white/70 p-3">
+      <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-slate-500">{label}</p>
+      <div className="grid gap-2 md:grid-cols-[1fr_180px_auto]">
+        <input
+          type="file"
+          onChange={e => setFileName(e.target.files?.[0]?.name ?? '')}
+          className="input-field text-xs"
+        />
+        <input
+          type="datetime-local"
+          value={attachedAt}
+          onChange={e => setAttachedAt(e.target.value)}
+          className="input-field text-xs"
+          required
+        />
+        <button
+          type="button"
+          onClick={add}
+          disabled={!fileName.trim() || !attachedAt}
+          className="btn-secondary justify-center text-xs disabled:opacity-40"
+        >
+          Add
+        </button>
+      </div>
+      {attachments.length > 0 && (
+        <div className="mt-3 space-y-1.5">
+          {attachments.map(att => (
+            <div key={att.id} className="flex items-center justify-between gap-2 rounded-lg border border-slate-100 bg-slate-50 px-2.5 py-1.5 text-[11px]">
+              <span className="min-w-0 truncate font-semibold text-slate-700">{att.name}</span>
+              <span className="whitespace-nowrap text-slate-400">{formatDateTime(att.attachedAt)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 
 // ─────────────────────────────────────────────────────────────────────────
 // Detail Drawer
@@ -82,7 +168,7 @@ const ROLE_COLOR_C: Record<string, { color: string; bg: string; border: string }
 }
 
 function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClose: () => void }) {
-  const { updateContract, addContractPoC, updateContractPoC, removeContractPoC, addLockedSubcontractor, addGovernmentWarning, resolveGovernmentWarning, advanceContractStatus, terminateContract, currentUser, employees, opportunities } = useStore()
+  const { updateContract, addContractPoC, updateContractPoC, removeContractPoC, addLockedSubcontractor, addGovernmentWarning, updateGovernmentWarning, resolveGovernmentWarning, advanceContractStatus, terminateContract, currentUser, employees, opportunities } = useStore()
   const [tab, setTab] = useState<'overview' | 'poc' | 'subk' | 'warnings' | 'deliverables'>('overview')
 
   // Terminate form
@@ -101,7 +187,14 @@ function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClo
 
   // Gov warning form
   const [addingWarning, setAddingWarning] = useState(false)
-  const [warnForm, setWarnForm] = useState({ type: 'CURE_NOTICE' as GovWarningType, issuedDate: '', description: '' })
+  const [warnForm, setWarnForm] = useState({
+    type: 'CURE_NOTICE' as GovWarningType,
+    issuedDate: '',
+    description: '',
+    comment: '',
+    attachments: [] as FileAttachment[],
+  })
+  const [warningCommentDrafts, setWarningCommentDrafts] = useState<Record<string, string>>({})
 
   // Edit status
   const [editingStatus, setEditingStatus] = useState(false)
@@ -546,6 +639,7 @@ function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClo
             )}
             {(contract.governmentWarnings || []).map(w => {
               const sev = SEV_COLORS[w.severity]
+              const commentDraft = warningCommentDrafts[w.id] ?? ''
               return (
                 <div key={w.id} className="p-4 rounded-xl border"
                   style={{ background: sev.bg, borderColor: sev.color + '40' }}>
@@ -559,7 +653,83 @@ function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClo
                     </span>
                   </div>
                   <p className="text-xs text-slate-700 mb-1">{w.description}</p>
-                  <p className="text-[10px] text-slate-400">Issued: {w.issuedDate}</p>
+                  <p className="text-[10px] text-slate-500">Issued: {w.issuedDate}</p>
+                  {(w.attachments || []).length > 0 && (
+                    <div className="mt-3 space-y-1.5 rounded-lg bg-white/60 p-2">
+                      <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Attachments</p>
+                      {(w.attachments || []).map(att => (
+                        <div key={att.id} className="flex items-center justify-between gap-2 text-[11px] text-slate-600">
+                          <span className="flex min-w-0 items-center gap-1 truncate font-semibold"><FileText size={10} /> {att.name}</span>
+                          <span className="whitespace-nowrap text-slate-400">{formatDateTime(att.attachedAt)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {(w.comments || []).length > 0 && (
+                    <div className="mt-3 space-y-2">
+                      <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Comments</p>
+                      {(w.comments || []).map(comment => (
+                        <div key={comment.id} className="rounded-lg bg-white/65 p-2">
+                          <div className="mb-1 flex items-center justify-between gap-2">
+                            <span className="text-[11px] font-semibold text-slate-700">{comment.author}</span>
+                            <span className="text-[10px] text-slate-400">{formatDateTime(comment.createdAt)}</span>
+                          </div>
+                          <p className="text-xs text-slate-700">{comment.text}</p>
+                          {(comment.attachments || []).map(att => (
+                            <p key={att.id} className="mt-1 flex items-center gap-1 text-[10px] font-semibold text-indigo-600">
+                              <FileText size={9} /> {att.name} - {formatDateTime(att.attachedAt)}
+                            </p>
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div className="mt-3 rounded-lg bg-white/55 p-2">
+                    <label className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-500">Add comment</label>
+                    <div className="flex gap-2">
+                      <input
+                        value={commentDraft}
+                        onChange={e => setWarningCommentDrafts(prev => ({ ...prev, [w.id]: e.target.value }))}
+                        className="input-field flex-1 py-1.5 text-xs"
+                        placeholder="Write a timestamped note..."
+                      />
+                      <button
+                        type="button"
+                        className="btn-secondary text-xs disabled:opacity-40"
+                        disabled={!commentDraft.trim()}
+                        onClick={() => {
+                          const text = commentDraft.trim()
+                          if (!text) return
+                          updateGovernmentWarning(contract.id, w.id, {
+                            comments: [
+                              ...(w.comments || []),
+                              {
+                                id: crypto.randomUUID(),
+                                text,
+                                author: currentUser?.username ?? currentUser?.name ?? 'unknown',
+                                createdAt: new Date().toISOString(),
+                              },
+                            ],
+                          })
+                          setWarningCommentDrafts(prev => ({ ...prev, [w.id]: '' }))
+                        }}
+                      >
+                        Save
+                      </button>
+                    </div>
+                  </div>
+                  <div className="mt-3">
+                    <AttachmentPicker
+                      label="Add warning attachment"
+                      attachments={[]}
+                      uploadedBy={currentUser?.username ?? currentUser?.name ?? 'unknown'}
+                      onChange={attachments => {
+                        updateGovernmentWarning(contract.id, w.id, {
+                          attachments: [...(w.attachments || []), ...attachments],
+                        })
+                      }}
+                    />
+                  </div>
                   {w.resolvedAt ? (
                     <div className="mt-2 flex items-center gap-1.5 text-[10px] text-emerald-600">
                       <CheckCircle2 size={10} /> Resolved {w.resolvedAt.slice(0, 10)} — {w.resolvedNote}
@@ -594,6 +764,15 @@ function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClo
                   <label className="block text-[10px] font-semibold text-slate-600 mb-0.5">Description *</label>
                   <textarea rows={2} value={warnForm.description} onChange={e => setWarnForm(p => ({ ...p, description: e.target.value }))} className="input-field text-xs py-1.5 w-full resize-none" />
                 </div>
+                <div>
+                  <label className="block text-[10px] font-semibold text-slate-600 mb-0.5">Initial Comment</label>
+                  <textarea rows={2} value={warnForm.comment} onChange={e => setWarnForm(p => ({ ...p, comment: e.target.value }))} className="input-field text-xs py-1.5 w-full resize-none" placeholder="Optional timestamped warning note..." />
+                </div>
+                <AttachmentPicker
+                  attachments={warnForm.attachments}
+                  uploadedBy={currentUser?.username ?? currentUser?.name ?? 'unknown'}
+                  onChange={attachments => setWarnForm(p => ({ ...p, attachments }))}
+                />
                 <div className="flex gap-2">
                   <button onClick={() => setAddingWarning(false)} className="btn-secondary flex-1 text-xs py-1.5">Cancel</button>
                   <button
@@ -605,8 +784,17 @@ function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClo
                         issuedDate: warnForm.issuedDate,
                         description: warnForm.description,
                         severity,
+                        attachments: warnForm.attachments,
+                        comments: warnForm.comment.trim()
+                          ? [{
+                              id: crypto.randomUUID(),
+                              text: warnForm.comment.trim(),
+                              author: currentUser?.username ?? currentUser?.name ?? 'unknown',
+                              createdAt: new Date().toISOString(),
+                            }]
+                          : [],
                       })
-                      setWarnForm({ type: 'CURE_NOTICE', issuedDate: '', description: '' })
+                      setWarnForm({ type: 'CURE_NOTICE', issuedDate: '', description: '', comment: '', attachments: [] })
                       setAddingWarning(false)
                     }}
                     className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-red-500 text-white hover:bg-red-600 transition-colors disabled:opacity-40">
@@ -740,17 +928,17 @@ function AssignModal({ award, onClose }: { award: FreshAward; onClose: () => voi
   const [form, setForm] = useState({
     assignedBDM: award.assignedBDM ?? '',
     assignedBDS: award.assignedBDS ?? '',
-    assignedSPM: award.assignedSPM ?? '',
-    assignedPM: award.assignedPM ?? '',
     assignedSupportAgent: award.assignedSupportAgent ?? '',
   })
 
   const handleSave = () => {
+    if (!form.assignedSupportAgent.trim()) {
+      toast.error('Associate is required before a fresh award can be assigned.')
+      return
+    }
     assignFreshAward(award.id, {
       assignedBDM: form.assignedBDM || undefined,
       assignedBDS: form.assignedBDS || undefined,
-      assignedSPM: form.assignedSPM || undefined,
-      assignedPM: form.assignedPM || undefined,
       assignedSupportAgent: form.assignedSupportAgent || undefined,
       status: 'ASSIGNED',
     })
@@ -761,9 +949,7 @@ function AssignModal({ award, onClose }: { award: FreshAward; onClose: () => voi
   const fields: { label: string; key: keyof typeof form }[] = [
     { label: 'Manager', key: 'assignedBDM' },
     { label: 'Team Lead', key: 'assignedBDS' },
-    { label: 'SPM', key: 'assignedSPM' },
-    { label: 'PM',  key: 'assignedPM'  },
-    { label: 'Associate', key: 'assignedSupportAgent' },
+    { label: 'Associate *', key: 'assignedSupportAgent' },
   ]
 
   return (
@@ -796,7 +982,7 @@ function AssignModal({ award, onClose }: { award: FreshAward; onClose: () => voi
           ))}
           <div className="flex gap-3 pt-2">
             <button onClick={onClose} className="btn-secondary flex-1 justify-center">Cancel</button>
-            <button onClick={handleSave} className="btn-primary flex-1 justify-center">
+            <button onClick={handleSave} disabled={!form.assignedSupportAgent.trim()} className="btn-primary flex-1 justify-center disabled:opacity-40">
               <Save size={13} /> Save Assignment
             </button>
           </div>
@@ -870,9 +1056,8 @@ function FreshAwardsTab() {
                         <div className="flex flex-col gap-0.5 text-[10px]">
                           {fa.assignedBDM && <span><span className="text-slate-400">Manager:</span> {fa.assignedBDM}</span>}
                           {fa.assignedBDS && <span><span className="text-slate-400">Team Lead:</span> {fa.assignedBDS}</span>}
-                          {fa.assignedSPM && <span><span className="text-slate-400">SPM:</span> {fa.assignedSPM}</span>}
-                          {fa.assignedPM  && <span><span className="text-slate-400">PM:</span>  {fa.assignedPM}</span>}
-                          {!fa.assignedBDM && !fa.assignedBDS && !fa.assignedSPM && !fa.assignedPM && (
+                          {fa.assignedSupportAgent && <span><span className="text-slate-400">Associate:</span> {fa.assignedSupportAgent}</span>}
+                          {!fa.assignedBDM && !fa.assignedBDS && !fa.assignedSupportAgent && (
                             <span className="text-slate-400 italic">Unassigned</span>
                           )}
                         </div>
@@ -928,12 +1113,13 @@ function FreshAwardsTab() {
 }
 
 export default function ContractsPage() {
-  const { contracts, employees, freshAwards } = useStore()
+  const { contracts, employees } = useStore()
   const [tab, setTab] = useState<CTab>('ALL')
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<Contract | null>(null)
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
   const [period, setPeriod] = useState<Period | null>(null)
+  const [columnFilters, setColumnFilters] = useState<Record<string, string>>({})
   const [sortKey, setSortKey] = useState<string>('')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
 
@@ -944,8 +1130,48 @@ export default function ContractsPage() {
 
   const tabDef = C_TABS.find(t => t.key === tab)!
 
+  const rowValue = (c: Contract, key: string) => {
+    const assignee = c.assignedTo ? employees.find(e => e.id === c.assignedTo)?.name : ''
+    const activeWarnings = (c.governmentWarnings || []).filter(w => !w.resolvedAt).map(w => GOV_WARNING_META[w.type]?.label || w.type).join(', ')
+    const values: Record<string, string> = {
+      title: c.title,
+      contractId: c.contractId,
+      type: c.type === 'S&D' ? 'Delivery' : c.type,
+      status: STATUS_META[c.status]?.label ?? c.status,
+      location: c.location,
+      popStart: c.popStart,
+      popEnd: c.popEnd,
+      value: String(c.value ?? ''),
+      assigned: assignee || c.supportAgent || '',
+      flags: activeWarnings,
+      naicsCode: c.naicsCode,
+      setAside: c.setAside ?? '',
+      client: c.client ?? '',
+    }
+    return values[key] ?? ''
+  }
+
+  const filterFields = [
+    { key: 'title', label: 'Title' },
+    { key: 'contractId', label: 'Contract ID' },
+    { key: 'type', label: 'Contract Type' },
+    { key: 'status', label: 'Status' },
+    { key: 'location', label: 'Location' },
+    { key: 'naicsCode', label: 'NAICS' },
+    { key: 'setAside', label: 'Set Aside' },
+    { key: 'client', label: 'Client' },
+    { key: 'assigned', label: 'Assigned' },
+    { key: 'flags', label: 'Flags' },
+  ] as const
+
+  const filterOptions = useMemo(() => {
+    return filterFields.reduce((acc, field) => {
+      acc[field.key] = Array.from(new Set(contracts.map(c => rowValue(c, field.key).trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b))
+      return acc
+    }, {} as Record<string, string[]>)
+  }, [contracts, employees])
+
   const filtered = useMemo(() => {
-    if (tab === 'FRESH_AWARDS') return []
     let list = contracts.filter(c => tabDef.statuses.includes(c.status))
     if (search) {
       const q = search.toLowerCase()
@@ -958,6 +1184,11 @@ export default function ContractsPage() {
       )
     }
     if (period) list = list.filter(c => filterByPeriod(c.popEnd, period))
+    filterFields.forEach(field => {
+      const q = (columnFilters[field.key] || '').trim().toLowerCase()
+      if (!q) return
+      list = list.filter(c => rowValue(c, field.key).toLowerCase().includes(q))
+    })
     if (sortKey) {
       list = [...list].sort((a, b) => {
         let av: any = (a as any)[sortKey]
@@ -970,7 +1201,7 @@ export default function ContractsPage() {
       })
     }
     return list
-  }, [contracts, tab, search, period, sortKey, sortDir])
+  }, [contracts, tab, search, period, sortKey, sortDir, columnFilters, employees])
 
   const totalValue = contracts.reduce((s, c) => s + c.value, 0)
   const activeCount = contracts.filter(c => ['ACTIVE', 'ON_GOING', 'PERFORMING', 'KICK_OFF', 'LOCKING_SUB'].includes(c.status)).length
@@ -982,9 +1213,9 @@ export default function ContractsPage() {
       <div className="mb-5">
         <p className="text-[10px] font-bold text-slate-400 tracking-[0.2em] mb-1">CES · CONTRACT ADMIN</p>
         <h1 className="text-2xl font-black text-slate-900 flex items-center gap-3">
-          <FileCheck2 size={22} className="text-indigo-500" /> Active Contracts
+          <FileCheck2 size={22} className="text-indigo-500" /> Contract Admin
         </h1>
-        <p className="text-slate-500 text-sm mt-0.5">FY 2026 portfolio · {contracts.length} total</p>
+        <p className="text-slate-500 text-sm mt-0.5">Contract portfolio - {contracts.length} total</p>
       </div>
 
       {/* KPI cards */}
@@ -1007,9 +1238,7 @@ export default function ContractsPage() {
       <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
         <div className="flex gap-1 p-1 bg-slate-100 rounded-xl border border-slate-200 flex-wrap">
           {C_TABS.map(t => {
-            const cnt = t.key === 'FRESH_AWARDS'
-              ? freshAwards.filter(fa => fa.status !== 'MOVED_TO_ACTIVE').length
-              : contracts.filter(c => t.statuses.includes(c.status)).length
+            const cnt = contracts.filter(c => t.statuses.includes(c.status)).length
             return (
               <button key={t.key} onClick={() => setTab(t.key)}
                 className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1 ${
@@ -1035,11 +1264,41 @@ export default function ContractsPage() {
         </div>
       </div>
 
-      {/* Fresh Awards Tab */}
-      {tab === 'FRESH_AWARDS' && <FreshAwardsTab />}
+      <div className="mb-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div>
+            <p className="text-xs font-bold text-slate-700">Column filters</p>
+            <p className="text-[11px] text-slate-400">Type in any field and choose a suggestion from live contract data.</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setColumnFilters({})}
+            className="btn-secondary text-xs"
+          >
+            Clear filters
+          </button>
+        </div>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          {filterFields.map(field => (
+            <div key={field.key}>
+              <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-slate-400">{field.label}</label>
+              <input
+                value={columnFilters[field.key] || ''}
+                list={`contract-filter-${field.key}`}
+                onChange={e => setColumnFilters(prev => ({ ...prev, [field.key]: e.target.value }))}
+                className="input-field w-full py-1.5 text-xs"
+                placeholder={`Any ${field.label.toLowerCase()}`}
+              />
+              <datalist id={`contract-filter-${field.key}`}>
+                {(filterOptions[field.key] || []).map(option => <option key={option} value={option} />)}
+              </datalist>
+            </div>
+          ))}
+        </div>
+      </div>
 
       {/* Table */}
-      {tab !== 'FRESH_AWARDS' && <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-visible">
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-visible">
         <div className="overflow-x-auto overflow-y-visible">
           <table className="data-table">
             <thead>
@@ -1116,9 +1375,13 @@ export default function ContractsPage() {
                     <td className="text-xs" onClick={e => e.stopPropagation()}>
                       <div className="flex items-center gap-1">
                         {activeWarnings.length > 0 && (
-                          <span className="flex items-center gap-0.5 text-[10px] font-bold text-red-500">
-                            <AlertTriangle size={10} /> {activeWarnings.length}
-                          </span>
+                          <div className="flex max-w-[180px] flex-wrap gap-1">
+                            {activeWarnings.map(w => (
+                              <span key={w.id} className="flex items-center gap-0.5 rounded-md bg-red-50 px-1.5 py-0.5 text-[10px] font-bold text-red-600">
+                                <AlertTriangle size={9} /> {GOV_WARNING_META[w.type]?.label || w.type}
+                              </span>
+                            ))}
+                          </div>
                         )}
                         {(c.pocs || []).length > 0 && (
                           <span className="text-[10px] text-indigo-500 font-bold">
@@ -1171,7 +1434,7 @@ export default function ContractsPage() {
             </tbody>
           </table>
         </div>
-      </div>}
+      </div>
 
       {/* Detail modal */}
       <AnimatePresence>

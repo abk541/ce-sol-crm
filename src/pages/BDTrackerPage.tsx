@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Filter, MoreHorizontal, Search, TrendingUp } from 'lucide-react'
+import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import type { BDSubmission } from '../types'
 import { useStore } from '../store/useStore'
 import toast from 'react-hot-toast'
@@ -115,8 +116,8 @@ export default function BDTrackerPage() {
     }, {} as Record<FilterKey, string[]>)
   }, [bdSubmissions, opportunities, employees])
 
-  const filtered = useMemo(() => {
-    let list = bdSubmissions.filter(s => s.status === tab)
+  const baseFiltered = useMemo(() => {
+    let list = [...bdSubmissions]
     if (period) list = list.filter(s => filterByPeriod(s.dueDate || s.submittedOn, period))
     if (search.trim()) {
       const q = search.trim().toLowerCase()
@@ -132,7 +133,9 @@ export default function BDTrackerPage() {
       list = list.filter(s => filterValue(s, filter.key, opportunities, employees).toLowerCase().includes(q))
     })
     return list
-  }, [bdSubmissions, tab, period, search, filters, opportunities, employees])
+  }, [bdSubmissions, period, search, filters, opportunities, employees])
+
+  const filtered = useMemo(() => baseFiltered.filter(s => s.status === tab), [baseFiltered, tab])
 
   const totalRows = filtered.length
   const perPageNum = perPage === 'All' ? totalRows || 1 : (perPage as number)
@@ -142,11 +145,26 @@ export default function BDTrackerPage() {
   const pageRows = perPage === 'All' ? filtered : filtered.slice(pageStart, pageStart + perPageNum)
 
   const stats = {
-    submitted: bdSubmissions.filter(s => s.status === 'SUBMITTED').length,
-    discussion: bdSubmissions.filter(s => s.status === 'DISCUSSING').length,
-    awarded: bdSubmissions.filter(s => s.status === 'AWARDED').length,
-    dropped: bdSubmissions.filter(s => s.status === 'DROPPED').length,
+    submitted: baseFiltered.filter(s => s.status === 'SUBMITTED').length,
+    discussion: baseFiltered.filter(s => s.status === 'DISCUSSING').length,
+    awarded: baseFiltered.filter(s => s.status === 'AWARDED').length,
+    dropped: baseFiltered.filter(s => s.status === 'DROPPED').length,
+    winRate: baseFiltered.length ? Math.round((baseFiltered.filter(s => s.status === 'AWARDED').length / baseFiltered.length) * 100) : 0,
   }
+
+  const statusChart = BD_TABS.map(t => ({ name: t.label, value: baseFiltered.filter(s => s.status === t.key).length, color: STATUS_META[t.key].color })).filter(d => d.value > 0)
+  const personChart = useMemo(() => {
+    const counts: Record<string, number> = {}
+    baseFiltered.forEach(row => {
+      const opp = rowOpportunity(row, opportunities)
+      const chain = getAssignmentChain(employees, opp?.assignedTo)
+      const key = filters.associate || filters.teamLead || filters.manager
+        ? (chain.associate?.name || row.supportAgent || 'Unassigned')
+        : (chain.manager?.name || row.bdm || 'Unassigned')
+      counts[key] = (counts[key] || 0) + 1
+    })
+    return Object.entries(counts).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value).slice(0, 8)
+  }, [baseFiltered, opportunities, employees, filters])
 
   const clearFilters = () => {
     setSearch('')
@@ -167,12 +185,13 @@ export default function BDTrackerPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
         {[
           { label: 'Submitted', value: stats.submitted, meta: STATUS_META.SUBMITTED },
           { label: 'Discussion', value: stats.discussion, meta: STATUS_META.DISCUSSING },
           { label: 'Awarded', value: stats.awarded, meta: STATUS_META.AWARDED },
           { label: 'Dropped', value: stats.dropped, meta: STATUS_META.DROPPED },
+          { label: 'Win Rate', value: `${stats.winRate}%`, meta: STATUS_META.AWARDED },
         ].map(card => (
           <div key={card.label} className="rounded-2xl border p-4 text-center" style={{ background: card.meta.bg, borderColor: card.meta.border }}>
             <p className="text-2xl font-black" style={{ color: card.meta.color }}>{card.value}</p>
@@ -212,10 +231,42 @@ export default function BDTrackerPage() {
         </div>
       </div>
 
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="mb-3">
+            <p className="text-sm font-bold text-slate-800">Tracker Status Mix</p>
+            <p className="text-xs text-slate-400">Counts respect the date, search, person, and field filters.</p>
+          </div>
+          <ResponsiveContainer width="100%" height={180}>
+            <PieChart>
+              <Pie data={statusChart} dataKey="value" nameKey="name" innerRadius={48} outerRadius={72} paddingAngle={2}>
+                {statusChart.map(d => <Cell key={d.name} fill={d.color} />)}
+              </Pie>
+              <Tooltip />
+            </PieChart>
+          </ResponsiveContainer>
+        </div>
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="mb-3">
+            <p className="text-sm font-bold text-slate-800">Workload by Person</p>
+            <p className="text-xs text-slate-400">Changes from total to person-focused when manager, team lead, or associate filters are selected.</p>
+          </div>
+          <ResponsiveContainer width="100%" height={180}>
+            <BarChart data={personChart}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" vertical={false} />
+              <XAxis dataKey="name" tick={{ fill: '#94A3B8', fontSize: 10 }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fill: '#94A3B8', fontSize: 10 }} axisLine={false} tickLine={false} allowDecimals={false} />
+              <Tooltip />
+              <Bar dataKey="value" name="Opportunities" fill="#4338CA" radius={[5, 5, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+
       <div>
         <div className="mb-3 flex flex-wrap gap-1 rounded-xl border border-slate-200 bg-slate-100 p-1">
           {BD_TABS.map(t => {
-            const cnt = bdSubmissions.filter(s => s.status === t.key).length
+            const cnt = baseFiltered.filter(s => s.status === t.key).length
             const meta = STATUS_META[t.key]
             return (
               <button key={t.key} onClick={() => { setTab(t.key); setPage(1) }}

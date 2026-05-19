@@ -9,7 +9,7 @@ import {
   Ban, ChevronLeft, ChevronRight,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
-import type { Opportunity, Priority, OppStatus, Comment } from '../types'
+import type { Opportunity, Priority, OppStatus, Comment, FileAttachment } from '../types'
 import { TIMEZONES } from '../data/mock'
 import { formatCurrency } from '../lib/utils'
 import { assignableEmployeesForUser, getAssignmentChain, isAssignedToAssociate, ROLE_DISPLAY_LABELS } from '../lib/team'
@@ -135,9 +135,79 @@ function formatDateTime(value: string) {
     month: 'short',
     day: 'numeric',
     year: 'numeric',
-    hour: '2-digit',
+    hour: 'numeric',
     minute: '2-digit',
+    hour12: true,
   })
+}
+
+function toDatetimeLocal(value: string) {
+  const d = new Date(value)
+  if (!Number.isFinite(d.getTime())) return ''
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+function CommentAttachmentPicker({
+  attachments,
+  onChange,
+  uploadedBy,
+}: {
+  attachments: FileAttachment[]
+  onChange: (attachments: FileAttachment[]) => void
+  uploadedBy: string
+}) {
+  const [fileName, setFileName] = useState('')
+  const [attachedAt, setAttachedAt] = useState(() => toDatetimeLocal(new Date().toISOString()))
+
+  const add = () => {
+    if (!fileName.trim() || !attachedAt) return
+    onChange([
+      ...attachments,
+      {
+        id: crypto.randomUUID(),
+        name: fileName.trim(),
+        attachedAt: new Date(attachedAt).toISOString(),
+        uploadedBy,
+      },
+    ])
+    setFileName('')
+    setAttachedAt(toDatetimeLocal(new Date().toISOString()))
+  }
+
+  return (
+    <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
+      <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-slate-500">Comment attachments</p>
+      <div className="grid gap-2 md:grid-cols-[1fr_180px_auto]">
+        <input type="file" onChange={e => setFileName(e.target.files?.[0]?.name ?? '')} className="input-field text-xs" />
+        <input type="datetime-local" value={attachedAt} onChange={e => setAttachedAt(e.target.value)} className="input-field text-xs" required />
+        <button type="button" onClick={add} disabled={!fileName.trim() || !attachedAt} className="btn-secondary justify-center text-xs disabled:opacity-40">Add</button>
+      </div>
+      {attachments.length > 0 && (
+        <div className="mt-2 space-y-1">
+          {attachments.map(att => (
+            <div key={att.id} className="flex items-center justify-between gap-2 rounded-lg bg-white px-2.5 py-1.5 text-[11px]">
+              <span className="min-w-0 truncate font-semibold text-slate-700">{att.name}</span>
+              <span className="whitespace-nowrap text-slate-400">{formatDateTime(att.attachedAt)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function CommentAttachments({ attachments }: { attachments?: FileAttachment[] }) {
+  if (!attachments?.length) return null
+  return (
+    <div className="mt-2 space-y-1">
+      {attachments.map(att => (
+        <p key={att.id} className="flex items-center gap-1 text-[10px] font-semibold text-indigo-600">
+          <FileText size={9} /> {att.name} - {formatDateTime(att.attachedAt)}
+        </p>
+      ))}
+    </div>
+  )
 }
 
 export function parseSamGovDeadline(raw: string | undefined) {
@@ -474,6 +544,7 @@ function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) 
   const [showDeleteReq, setShowDeleteReq] = useState(false)
   const [deleteReason, setDeleteReason] = useState('')
   const [newComment, setNewComment] = useState('')
+  const [newCommentAttachments, setNewCommentAttachments] = useState<FileAttachment[]>([])
   const [saving, setSaving] = useState(false)
 
   const isManager = currentUser?.role === 'BD_MANAGER'
@@ -502,6 +573,7 @@ function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) 
         text: newComment.trim(),
         author: currentUser?.username ?? 'unknown',
         createdAt: new Date().toISOString(),
+        attachments: newCommentAttachments,
       })
     }
     setSaving(true)
@@ -698,6 +770,7 @@ function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) 
                   <span className="text-[10px] text-slate-400">{formatDateTime(c.createdAt)}</span>
                 </div>
                 <p className="text-xs text-slate-600">{c.text}</p>
+                <CommentAttachments attachments={c.attachments} />
               </div>
             ))}
           </div>
@@ -710,6 +783,13 @@ function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) 
               className="input-field w-full resize-none"
               placeholder="Type your comment here..."
             />
+            <div className="mt-3">
+              <CommentAttachmentPicker
+                attachments={newCommentAttachments}
+                onChange={setNewCommentAttachments}
+                uploadedBy={currentUser?.username ?? currentUser?.name ?? 'unknown'}
+              />
+            </div>
             <p className="text-[10px] text-slate-400 mt-1">Comment will be saved when you click "Save Changes".</p>
           </div>
         </div>
@@ -1134,6 +1214,7 @@ function CreateModal({ onClose }: { onClose: () => void }) {
   const [samUrl, setSamUrl] = useState('')
   const [importing, setImporting] = useState(false)
   const [initialComment, setInitialComment] = useState('')
+  const [initialCommentAttachments, setInitialCommentAttachments] = useState<FileAttachment[]>([])
   const buildSamApiKey = getBuildSamGovApiKey()
   const [useBrowserSamApiKey, setUseBrowserSamApiKey] = useState(() => !buildSamApiKey)
   const [samApiKey, setSamApiKey] = useState(() => getSavedSamGovApiKey())
@@ -1238,6 +1319,7 @@ function CreateModal({ onClose }: { onClose: () => void }) {
         text: initialComment.trim(),
         author: currentUser?.username ?? 'unknown',
         createdAt: new Date().toISOString(),
+        attachments: initialCommentAttachments,
       })
     }
     setSaving(true)
@@ -1507,6 +1589,11 @@ function CreateModal({ onClose }: { onClose: () => void }) {
             rows={5}
             className="input-field w-full resize-none"
             placeholder="Add an initial comment or note about this opportunity..."
+          />
+          <CommentAttachmentPicker
+            attachments={initialCommentAttachments}
+            onChange={setInitialCommentAttachments}
+            uploadedBy={currentUser?.username ?? currentUser?.name ?? 'unknown'}
           />
         </div>
       )}
@@ -2142,6 +2229,7 @@ export default function PipelinePage() {
                       <span className="text-[10px] text-slate-400">{formatDateTime(c.createdAt)}</span>
                     </div>
                     <p className="text-xs text-slate-600">{c.text}</p>
+                    <CommentAttachments attachments={c.attachments} />
                   </div>
                 ))}
               </DrawerSection>

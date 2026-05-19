@@ -13,11 +13,11 @@ import {
   RadialBarChart, RadialBar, LineChart, Line,
 } from 'recharts'
 import { useStore } from '../store/useStore'
-import { AGENT_STATS, REVENUE_TREND, SUBMISSIONS_TREND } from '../data/mock'
 import AnimatedNumber from '../components/shared/AnimatedNumber'
-import { PeriodFilterPills as PeriodFilter, type PeriodPill as Period, sliceTrendByPeriod } from '../components/shared/PeriodFilter'
+import PeriodFilter, { type Period, filterByPeriod } from '../components/shared/PeriodFilter'
 import { formatCurrency, avatarColor } from '../lib/utils'
 import { useNavigate } from 'react-router-dom'
+import { getAssignmentChain } from '../lib/team'
 
 const stagger = { animate: { transition: { staggerChildren: 0.05 } } }
 const fadeUp = {
@@ -134,17 +134,28 @@ function KpiDetailDrawer({
 
   const content = useMemo(() => {
     if (kpi.key === 'revenue') {
+      const revenueByMonth = Array.from({ length: 6 }, (_, offset) => {
+        const d = new Date()
+        d.setMonth(d.getMonth() - (5 - offset))
+        const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+        const month = d.toLocaleDateString('en-US', { month: 'short' })
+        const revenue = opportunities
+          .filter(o => ['SUBMITTED', 'WON'].includes(o.status) && ((o.submittedAt || o.dueDate || '').startsWith(key)))
+          .reduce((sum, o) => sum + Number(o.contractAmount || o.value || 0), 0)
+        return { month, revenue }
+      })
+      const maxRevenue = Math.max(1, ...revenueByMonth.map(d => d.revenue))
       return (
         <div className="space-y-3">
           <p className="text-xs text-slate-500">Revenue breakdown by month (current period)</p>
           <div className="space-y-2">
-            {REVENUE_TREND.slice(-6).map(d => (
+            {revenueByMonth.map(d => (
               <div key={d.month} className="flex items-center gap-3">
                 <span className="text-xs text-slate-500 w-8">{d.month}</span>
                 <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
                   <motion.div className="h-full rounded-full" style={{ background: kpi.color }}
                     initial={{ width: 0 }}
-                    animate={{ width: `${(d.revenue / 750000) * 100}%` }}
+                    animate={{ width: `${(d.revenue / maxRevenue) * 100}%` }}
                     transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
                   />
                 </div>
@@ -188,10 +199,17 @@ function KpiDetailDrawer({
       )
     }
     if (kpi.key === 'submissions') {
+      const byAgent = Object.values(opportunities.filter(o => ['SUBMITTED', 'WON', 'LOST', 'DROPPED', 'CANCELED'].includes(o.status)).reduce((acc: Record<string, any>, o) => {
+        const key = o.supportAgent || o.bds || o.bdm || 'Unassigned'
+        acc[key] ??= { username: key, name: key, avatar: key.slice(0, 2).toUpperCase(), submissions: 0 }
+        acc[key].submissions += 1
+        return acc
+      }, {})).sort((a: any, b: any) => b.submissions - a.submissions)
+      const maxSubmissions = Math.max(1, ...(byAgent as any[]).map(a => a.submissions))
       return (
         <div className="space-y-3">
-          <p className="text-xs text-slate-500">Submissions breakdown by agent</p>
-          {AGENT_STATS.filter(a => a.submissions > 0).sort((a, b) => b.submissions - a.submissions).map((a, i) => (
+          <p className="text-xs text-slate-500">Submissions breakdown by associate</p>
+          {(byAgent as any[]).map((a, i) => (
             <div key={a.username} className="flex items-center gap-3 p-2.5 rounded-xl hover:bg-slate-50 transition-colors cursor-pointer">
               <span className="text-xs text-slate-400 w-4">#{i + 1}</span>
               <div className={`w-7 h-7 rounded-lg flex items-center justify-center text-[9px] font-black text-white bg-gradient-to-br ${avatarColor(a.avatar)}`}>
@@ -202,7 +220,7 @@ function KpiDetailDrawer({
                 <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden mt-1">
                   <motion.div className="h-full rounded-full" style={{ background: kpi.color }}
                     initial={{ width: 0 }}
-                    animate={{ width: `${(a.submissions / 12) * 100}%` }}
+                    animate={{ width: `${(a.submissions / maxSubmissions) * 100}%` }}
                     transition={{ duration: 0.5, delay: i * 0.05 }}
                   />
                 </div>
@@ -214,10 +232,20 @@ function KpiDetailDrawer({
       )
     }
     if (kpi.key === 'winrate') {
+      const byAgent = Object.values(opportunities.filter(o => ['SUBMITTED', 'WON', 'LOST', 'DROPPED', 'CANCELED'].includes(o.status)).reduce((acc: Record<string, any>, o) => {
+        const key = o.supportAgent || o.bds || o.bdm || 'Unassigned'
+        acc[key] ??= { username: key, name: key, avatar: key.slice(0, 2).toUpperCase(), submissions: 0, wins: 0, losses: 0, nonSubs: 0, winRate: 0 }
+        acc[key].submissions += 1
+        if (o.status === 'WON') acc[key].wins += 1
+        if (['LOST', 'DROPPED', 'CANCELED'].includes(o.status)) acc[key].losses += 1
+        if (o.status === 'NOT_SUBMITTED') acc[key].nonSubs += 1
+        acc[key].winRate = acc[key].submissions ? Math.round((acc[key].wins / acc[key].submissions) * 100) : 0
+        return acc
+      }, {})).sort((a: any, b: any) => b.winRate - a.winRate)
       return (
         <div className="space-y-3">
-          <p className="text-xs text-slate-500">Win/loss breakdown by agent</p>
-          {AGENT_STATS.sort((a, b) => b.winRate - a.winRate).map((a, i) => (
+          <p className="text-xs text-slate-500">Win/loss breakdown by associate</p>
+          {(byAgent as any[]).map((a) => (
             <div key={a.username} className="p-3 rounded-xl border border-slate-100 hover:border-slate-200 transition-colors">
               <div className="flex items-center gap-2 mb-2">
                 <div className={`w-6 h-6 rounded-md flex items-center justify-center text-[9px] font-black text-white bg-gradient-to-br ${avatarColor(a.avatar)}`}>
@@ -331,39 +359,59 @@ function KpiDetailDrawer({
 
 // Agent Dashboard
 function AgentDashboard() {
-  const { currentUser, opportunities, nonSubReports } = useStore()
+  const { currentUser, opportunities, nonSubReports, bdSubmissions, employees } = useStore()
   const navigate = useNavigate()
-  const myStats = AGENT_STATS.find(s => s.username === currentUser?.username) ?? {
-    username: '', name: currentUser?.name ?? '', avatar: currentUser?.avatar ?? '',
-    role: currentUser?.role ?? 'ASSOCIATE', submissions: 0, wins: 0, losses: 0,
-    nonSubs: 0, active: 0, winRate: 0, submissionRate: 0, score: 0, rank: 0, goal: 5, streak: 0,
-  }
-  const tier = getTier(myStats.score)
 
   const myOpps = useMemo(() => {
+    const me = employees.find(e => e.email === currentUser?.email || e.name === currentUser?.name)
     const un = (currentUser?.username ?? '').toLowerCase()
-    const fn = (currentUser?.name ?? '').split(' ')[0].toLowerCase()
+    const fn = (currentUser?.name ?? '').toLowerCase()
     return opportunities.filter(o => {
       if (o.isDeleted) return false
-      const b = `${o.bds} ${o.bdm}`.toLowerCase()
-      return b.includes(un) || b.includes(fn)
+      const b = `${o.bds} ${o.bdm} ${o.supportAgent}`.toLowerCase()
+      return o.assignedTo === me?.id || b.includes(un) || b.includes(fn)
     })
-  }, [opportunities, currentUser])
+  }, [opportunities, currentUser, employees])
 
   const activeOpps = myOpps.filter(o => o.status === 'ACTIVE')
     .sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime())
   const overdueCount = activeOpps.filter(o => new Date(o.dueDate) < new Date()).length
   const pendingReport = nonSubReports.find(r => r.agentUsername === currentUser?.username && r.status === 'PENDING')
+  const mySubmissionRows = bdSubmissions.filter(s => {
+    const q = `${s.supportAgent || ''} ${s.bdm} ${s.bds}`.toLowerCase()
+    return q.includes((currentUser?.name || '').toLowerCase()) || q.includes((currentUser?.username || '').toLowerCase())
+  })
+  const myStats = {
+    username: currentUser?.username ?? '',
+    name: currentUser?.name ?? '',
+    avatar: currentUser?.avatar ?? '',
+    role: currentUser?.role ?? 'ASSOCIATE',
+    submissions: mySubmissionRows.length,
+    wins: mySubmissionRows.filter(s => s.status === 'AWARDED').length,
+    losses: mySubmissionRows.filter(s => ['LOST', 'DROPPED', 'CANCELED', 'NOT_SUBMITTED'].includes(s.status)).length,
+    nonSubs: nonSubReports.filter(r => r.agentUsername === currentUser?.username).length,
+    active: activeOpps.length,
+    winRate: mySubmissionRows.length ? Math.round((mySubmissionRows.filter(s => s.status === 'AWARDED').length / mySubmissionRows.length) * 100) : 0,
+    submissionRate: myOpps.length ? Math.round((mySubmissionRows.length / myOpps.length) * 100) : 0,
+    score: Math.min(100, Math.round((mySubmissionRows.length * 10) + (mySubmissionRows.filter(s => s.status === 'AWARDED').length * 18) - (nonSubReports.filter(r => r.agentUsername === currentUser?.username).length * 6))),
+    rank: 1,
+    goal: 5,
+    streak: mySubmissionRows.length ? 1 : 0,
+  }
+  const tier = getTier(myStats.score)
   const goalPct = Math.min(100, myStats.goal ? (myStats.submissions / myStats.goal) * 100 : 0)
   const daysLeft = 31 - new Date().getDate()
 
-  const personalChart = [
-    { name: 'Aug', s: 1 }, { name: 'Sep', s: 0 }, { name: 'Oct', s: 2 },
-    { name: 'Nov', s: 1 }, { name: 'Dec', s: 2 }, { name: 'Jan', s: 1 },
-    { name: 'Feb', s: 3 }, { name: 'Mar', s: 2 },
-    { name: 'Apr', s: Math.max(0, myStats.submissions - 3) },
-    { name: 'May', s: 1 },
-  ]
+  const personalChart = Array.from({ length: 6 }, (_, offset) => {
+    const d = new Date()
+    d.setMonth(d.getMonth() - (5 - offset))
+    const month = d.toLocaleDateString('en-US', { month: 'short' })
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+    return {
+      name: month,
+      s: mySubmissionRows.filter(row => (row.submittedOn || '').startsWith(key)).length,
+    }
+  })
 
   const RANK_COLORS = ['#F59E0B', '#94A3B8', '#CD7F32', '#6366F1', '#475569', '#475569', '#475569']
 
@@ -609,30 +657,50 @@ function AgentDashboard() {
 
 // Admin / Manager Dashboard
 function AdminDashboard() {
-  const { opportunities, nonSubReports, deletionRequests, activityLogs, currentUser } = useStore()
+  const { opportunities, nonSubReports, deletionRequests, activityLogs, currentUser, bdSubmissions, contracts, employees } = useStore()
   const navigate = useNavigate()
-  const [period, setPeriod] = useState<Period>('ALL')
+  const [period, setPeriod] = useState<Period | null>(null)
   const [leaderRole, setLeaderRole] = useState<'ALL' | 'BD_MANAGER' | 'TEAM_LEAD' | 'ASSOCIATE'>('ALL')
+  const [naicsFilter, setNaicsFilter] = useState('')
   const [activeKpi, setActiveKpi] = useState<KpiDetail | null>(null)
 
-  const opps = opportunities.filter(o => !o.isDeleted)
-  const revData = sliceTrendByPeriod(REVENUE_TREND, period)
-  const subData = sliceTrendByPeriod(SUBMISSIONS_TREND, period)
+  const opps = opportunities.filter(o => !o.isDeleted && (!naicsFilter || o.naicsCode.toLowerCase().includes(naicsFilter.toLowerCase())))
+  const filteredOpps = opps.filter(o => filterByPeriod(o.submittedAt || o.dueDate, period))
+  const filteredSubmissions = bdSubmissions.filter(s =>
+    filterByPeriod(s.submittedOn || s.dueDate, period) &&
+    (!naicsFilter || (opps.find(o => o.solicitationId === s.solicitationId)?.naicsCode || '').toLowerCase().includes(naicsFilter.toLowerCase()))
+  )
 
-  const cutoffMs: Record<Period, number> = { '7D': 7, '30D': 30, '3M': 90, '6M': 180, '1Y': 365, 'ALL': 99999 }
-  const cutoff = Date.now() - cutoffMs[period] * 86400000
-  const filteredOpps = opps.filter(o => new Date(o.dueDate).getTime() >= cutoff)
+  const monthSeries = Array.from({ length: 6 }, (_, offset) => {
+    const d = new Date()
+    d.setMonth(d.getMonth() - (5 - offset))
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+    return { key, month: d.toLocaleDateString('en-US', { month: 'short' }) }
+  })
+
+  const revData = monthSeries.map(m => ({
+    month: m.month,
+    revenue: filteredSubmissions
+      .filter(s => (s.submittedOn || '').startsWith(m.key))
+      .reduce((sum, s) => sum + Number(s.value || 0), 0),
+  }))
+
+  const subData = monthSeries.map(m => ({
+    month: m.month,
+    submissions: filteredSubmissions.filter(s => (s.submittedOn || '').startsWith(m.key)).length,
+    wins: filteredSubmissions.filter(s => (s.submittedOn || '').startsWith(m.key) && s.status === 'AWARDED').length,
+  }))
 
   const active    = filteredOpps.filter(o => o.status === 'ACTIVE').length
-  const submitted = filteredOpps.filter(o => o.status === 'SUBMITTED').length
-  const won       = filteredOpps.filter(o => o.status === 'WON').length
-  const totalSubs = AGENT_STATS.reduce((s, a) => s + a.submissions, 0)
-  const totalWins = AGENT_STATS.reduce((s, a) => s + a.wins, 0)
+  const submitted = filteredSubmissions.length
+  const won       = filteredSubmissions.filter(o => o.status === 'AWARDED').length
+  const totalSubs = filteredSubmissions.length
+  const totalWins = filteredSubmissions.filter(s => s.status === 'AWARDED').length
   const winRate   = totalSubs > 0 ? Math.round((totalWins / totalSubs) * 100) : 0
-  const revenue   = revData.reduce((s, d) => s + d.revenue, 0)
-
-  const pendingDeletes  = deletionRequests.filter(r => r.status === 'PENDING').length
-  const pendingReports  = nonSubReports.filter(r => r.status === 'PENDING').length
+  const revenue   = filteredSubmissions.reduce((s, d) => s + Number(d.value || 0), 0)
+  const archivedRevenue = contracts
+    .filter(c => c.status === 'ARCHIVED' && filterByPeriod(c.popEnd || c.popStart, period))
+    .reduce((sum, c) => sum + Number(c.value || 0), 0)
 
   const pipelineData = useMemo(() => {
     const counts: Record<string, number> = {}
@@ -647,10 +715,45 @@ function AdminDashboard() {
     return Object.entries(counts).map(([name, value]) => ({ name, value }))
   }, [opps])
 
+  const naicsData = useMemo(() => {
+    const counts: Record<string, number> = {}
+    opps.forEach(o => { counts[o.naicsCode || 'Unspecified'] = (counts[o.naicsCode || 'Unspecified'] || 0) + 1 })
+    return Object.entries(counts).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value).slice(0, 8)
+  }, [opps])
+
   const TYPE_COLORS = ['#6366F1', '#22C55E', '#F59E0B', '#06B6D4', '#8B5CF6', '#F97316']
 
-  const agents = AGENT_STATS
-    .filter(s => leaderRole === 'ALL' || s.role === leaderRole)
+  const agents = employees
+    .filter(e => leaderRole === 'ALL' || e.role === leaderRole)
+    .map(e => {
+      const submissions = filteredSubmissions.filter(s => {
+        const opp = opportunities.find(o => o.solicitationId === s.solicitationId)
+        const chain = getAssignmentChain(employees, opp?.assignedTo)
+        return chain.manager?.id === e.id || chain.teamLead?.id === e.id || chain.associate?.id === e.id ||
+          [s.bdm, s.bds, s.supportAgent].some(name => (name || '').toLowerCase() === e.name.toLowerCase())
+      })
+      const wins = submissions.filter(s => s.status === 'AWARDED').length
+      const losses = submissions.filter(s => ['LOST', 'DROPPED', 'CANCELED', 'NOT_SUBMITTED'].includes(s.status)).length
+      const winRate = submissions.length ? Math.round((wins / submissions.length) * 100) : 0
+      const score = Math.min(100, Math.round(submissions.length * 10 + wins * 18 - losses * 5))
+      return {
+        username: e.email,
+        name: e.name,
+        avatar: e.avatar,
+        role: e.role,
+        submissions: submissions.length,
+        wins,
+        losses,
+        nonSubs: submissions.filter(s => s.status === 'NOT_SUBMITTED').length,
+        active: opportunities.filter(o => o.assignedTo === e.id && o.status === 'ACTIVE').length,
+        winRate,
+        submissionRate: opportunities.length ? Math.round((submissions.length / opportunities.length) * 100) : 0,
+        score,
+        rank: 0,
+        goal: 5,
+        streak: submissions.length ? 1 : 0,
+      }
+    })
     .sort((a, b) => b.score - a.score)
 
   const winRateData = agents.slice(0, 5).map(a => ({
@@ -664,13 +767,11 @@ function AdminDashboard() {
 
   const kpis = [
     { key: 'revenue',  icon: DollarSign,   label: 'Period Revenue',    value: revenue,                     display: formatCurrency(revenue), color: '#6366F1', change: `${filteredOpps.length} records`, up: revenue > 0 },
+    { key: 'net',      icon: TrendingUp,    label: 'Net Revenue',       value: archivedRevenue,             display: formatCurrency(archivedRevenue), color: '#0F766E', change: 'archived only', up: archivedRevenue > 0 },
     { key: 'pipeline', icon: Target,        label: 'Active Pipeline',   value: active,                      display: null, color: '#06B6D4', change: `${submitted} submitted`, up: true },
     { key: 'submissions', icon: Send,       label: 'Total Submissions', value: totalSubs,                   display: null, color: '#22C55E', change: `${totalWins} wins`, up: totalSubs > 0 },
-    { key: 'winrate',  icon: Percent,       label: 'Win Rate',          value: winRate,                     display: `${winRate}%`, color: '#F59E0B', change: `${totalWins} wins`, up: winRate > 30 },
+    { key: 'winrate',  icon: Percent,       label: 'Submission Conversion', value: winRate,                 display: `${winRate}%`, color: '#F59E0B', change: `${totalWins} awarded`, up: winRate > 30 },
     { key: 'won',      icon: FileCheck2,    label: 'Won Contracts',     value: won,                         display: null, color: '#8B5CF6', change: `${filteredOpps.length} tracked`, up: true },
-    { key: 'reviews',  icon: AlertTriangle, label: 'Pending Reviews',   value: pendingDeletes + pendingReports, display: null,
-      color: (pendingDeletes + pendingReports) > 0 ? '#EF4444' : '#94A3B8',
-      change: `${pendingDeletes} deletion`, up: false },
   ]
 
   return (
@@ -686,15 +787,12 @@ function AdminDashboard() {
             </p>
           </div>
           <div className="flex items-center gap-3">
-            {(pendingDeletes + pendingReports) > 0 && (
-              <motion.button
-                className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold text-red-600 border border-red-200 bg-red-50 cursor-pointer hover:bg-red-100 transition-colors"
-                animate={{ opacity: [1, 0.65, 1] }} transition={{ duration: 2, repeat: Infinity }}
-                onClick={() => setActiveKpi({ key: 'reviews', label: 'Pending Reviews', color: '#EF4444' })}>
-                <AlertTriangle size={12} />
-                {pendingDeletes + pendingReports} pending
-              </motion.button>
-            )}
+            <input
+              value={naicsFilter}
+              onChange={e => setNaicsFilter(e.target.value)}
+              className="input-field w-44 py-2 text-xs"
+              placeholder="Filter by NAICS..."
+            />
             <PeriodFilter value={period} onChange={setPeriod} />
           </div>
         </div>
@@ -938,33 +1036,31 @@ function AdminDashboard() {
 
         {/* Right column */}
         <motion.div variants={fadeUp} className="flex flex-col gap-4">
-          {/* Pending actions */}
+          {/* NAICS distribution */}
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
             <h3 className="text-sm font-bold text-slate-800 mb-3 flex items-center gap-2">
-              <AlertTriangle size={13} className="text-amber-500" /> Pending Actions
+              <BarChart2 size={13} className="text-indigo-500" /> NAICS Distribution
             </h3>
             <div className="space-y-2">
-              {[
-                { label: 'Deletion Requests', count: pendingDeletes, total: deletionRequests.length, color: '#F97316', nav: '/pipeline', kpi: 'reviews' },
-                { label: 'Non-Sub Reports',   count: pendingReports,  total: nonSubReports.length,   color: '#F59E0B', nav: '/non-submissions', kpi: 'reviews' },
-              ].map(item => (
-                <div key={item.label}
-                  className="flex items-center justify-between p-3 rounded-xl transition-all hover:scale-[1.01] cursor-pointer"
-                  style={{
-                    background: item.count > 0 ? `${item.color}18` : 'rgba(255,255,255,0.045)',
-                    border: `1px solid ${item.count > 0 ? item.color + '45' : 'rgba(215,190,122,0.14)'}`,
-                  }}
-                  onClick={() => navigate(item.nav)}>
-                  <div>
-                    <p className="text-xs font-semibold text-slate-700">{item.label}</p>
-                    <p className="text-[10px] text-slate-400">{item.total > 0 ? `${item.total} total` : 'No records yet'}</p>
+              {naicsData.length === 0 && <p className="py-6 text-center text-sm text-slate-400">No NAICS data yet.</p>}
+              {naicsData.map((item, idx) => {
+                const pct = Math.round((item.value / Math.max(1, opps.length)) * 100)
+                return (
+                <div key={item.name} className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                  <div className="mb-1 flex items-center justify-between gap-2">
+                    <p className="truncate text-xs font-semibold text-slate-700">{item.name}</p>
+                    <p className="text-xs font-black text-slate-900">{item.value}</p>
                   </div>
-                  <div className="text-right">
-                    <p className="text-xl font-black leading-none" style={{ color: item.count > 0 ? item.color : '#CBD5E1' }}>{item.count}</p>
-                    <p className="text-[9px] text-slate-400 mt-0.5">pending</p>
+                  <div className="h-1.5 overflow-hidden rounded-full bg-white">
+                    <motion.div
+                      className="h-full rounded-full"
+                      style={{ background: TYPE_COLORS[idx % TYPE_COLORS.length] }}
+                      initial={{ width: 0 }}
+                      animate={{ width: `${pct}%` }}
+                    />
                   </div>
                 </div>
-              ))}
+              )})}
             </div>
           </div>
 

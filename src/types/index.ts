@@ -42,12 +42,20 @@ export type ContractType = 'OTJ' | 'RECURRING' | 'BPA' | 'IDIQ' | 'S&D' | 'SUPPL
 export type ContractFinanceType = 'FFP' | 'T&M' | 'CPFF' | 'OTHER'
 export type SetAside = 'SB' | 'SDVOSB' | 'WOSB' | 'HUBZone' | 'VOSB' | '8(a)' | 'UNRES'
 
-// ── Comments ──────────────────────────────────────────────────────────
+// ── Attachments / Comments ────────────────────────────────────────────
+export interface FileAttachment {
+  id: string
+  name: string
+  attachedAt: string
+  uploadedBy: string
+}
+
 export interface Comment {
   id: string
   text: string
   author: string
   createdAt: string
+  attachments?: FileAttachment[]
 }
 
 // ── Subcontractor (on opportunity) ───────────────────────────────────
@@ -134,6 +142,8 @@ export interface GovernmentWarning {
   issuedDate: string
   description: string
   severity: 'RED' | 'YELLOW' | 'INFO'
+  attachments?: FileAttachment[]
+  comments?: Comment[]
   resolvedAt?: string
   resolvedNote?: string
 }
