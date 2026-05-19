@@ -3,6 +3,7 @@ import { HashRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { useStore } from './store/useStore'
 import toast from 'react-hot-toast'
 import Layout from './components/layout/Layout'
+import AccessNoticePage from './pages/auth/AccessNoticePage'
 import LoginPage from './pages/auth/LoginPage'
 import FirstLoginPage from './pages/auth/FirstLoginPage'
 import MFASetupPage from './pages/auth/MFASetupPage'
@@ -27,8 +28,14 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
+function AccessNoticeGuard({ children }: { children: React.ReactNode }) {
+  const accepted = useStore(s => s.accessNoticeAccepted)
+  if (!accepted) return <Navigate to="/access-notice" replace />
+  return <>{children}</>
+}
+
 export default function App() {
-  const { isAuthenticated } = useStore()
+  const { isAuthenticated, accessNoticeAccepted } = useStore()
   const initializeStore = useStore(s => s.initializeStore)
 
   // Re-run every time the user logs in so Supabase data always wins over stale localStorage
@@ -56,11 +63,15 @@ export default function App() {
   return (
     <HashRouter>
       <Routes>
-        <Route path="/login"       element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <LoginPage />} />
-        <Route path="/first-login" element={<FirstLoginPage />} />
-        <Route path="/mfa-setup"   element={<MFASetupPage />} />
+        <Route
+          path="/access-notice"
+          element={accessNoticeAccepted ? <Navigate to={isAuthenticated ? "/dashboard" : "/login"} replace /> : <AccessNoticePage />}
+        />
+        <Route path="/login"       element={<AccessNoticeGuard>{isAuthenticated ? <Navigate to="/dashboard" replace /> : <LoginPage />}</AccessNoticeGuard>} />
+        <Route path="/first-login" element={<AccessNoticeGuard><FirstLoginPage /></AccessNoticeGuard>} />
+        <Route path="/mfa-setup"   element={<AccessNoticeGuard><MFASetupPage /></AccessNoticeGuard>} />
 
-        <Route path="/" element={<AuthGuard><Layout /></AuthGuard>}>
+        <Route path="/" element={<AccessNoticeGuard><AuthGuard><Layout /></AuthGuard></AccessNoticeGuard>}>
           <Route index element={<Navigate to="/dashboard" replace />} />
           <Route path="dashboard"     element={<DashboardPage />} />
           <Route path="pipeline"      element={<PipelinePage />} />
@@ -81,7 +92,7 @@ export default function App() {
           <Route path="settings"          element={<PlaceholderPage title="Settings" />} />
         </Route>
 
-        <Route path="*" element={<Navigate to={isAuthenticated ? "/dashboard" : "/login"} replace />} />
+        <Route path="*" element={<Navigate to={accessNoticeAccepted ? (isAuthenticated ? "/dashboard" : "/login") : "/access-notice"} replace />} />
       </Routes>
     </HashRouter>
   )

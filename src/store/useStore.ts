@@ -43,6 +43,7 @@ interface AppState {
   needsFirstLogin: boolean
   needsMFASetup: boolean
   loginTimestamp: number | null
+  accessNoticeAccepted: boolean
 
   // Data
   users: User[]
@@ -65,6 +66,7 @@ interface AppState {
   // ── Auth actions ───────────────────────────────────────────────────
   login: (email: string, password: string) => { ok: boolean; error?: string; needsFirst?: boolean; needsMFA?: boolean }
   logout: () => void
+  acceptAccessNotice: () => void
   completeFirstLogin: (password: string) => void
   completeMFASetup: () => void
 
@@ -213,6 +215,7 @@ export const useStore = create<AppState>()(
       needsFirstLogin: false,
       needsMFASetup: false,
       loginTimestamp: null,
+      accessNoticeAccepted: false,
       users: MOCK_USERS,
       opportunities: MOCK_OPPORTUNITIES,
       contracts: MOCK_CONTRACTS,
@@ -250,6 +253,8 @@ export const useStore = create<AppState>()(
       },
 
       logout: () => set({ currentUser: null, isAuthenticated: false, needsFirstLogin: false, needsMFASetup: false, loginTimestamp: null, dbReady: false }),
+
+      acceptAccessNotice: () => set({ accessNoticeAccepted: true }),
 
       completeFirstLogin: (_password) => {
         const u = get().currentUser
@@ -1156,6 +1161,7 @@ export const useStore = create<AppState>()(
             needsFirstLogin: false,
             needsMFASetup:   false,
             loginTimestamp:  null,
+            accessNoticeAccepted: false,
             users:           MOCK_USERS,
             employees:       MOCK_EMPLOYEES,
             opportunities:   [],
@@ -1173,7 +1179,7 @@ export const useStore = create<AppState>()(
             dbReady:         false,
           }
         }
-        return { ...s, needsPurge: false, dbReady: false }
+        return { ...s, accessNoticeAccepted: Boolean(s.accessNoticeAccepted), needsPurge: false, dbReady: false }
       },
       // Persist all business data so changes survive logout/refresh
       // (Supabase sync overrides this when connected; localStorage is the fallback)
@@ -1183,6 +1189,7 @@ export const useStore = create<AppState>()(
         needsFirstLogin:  s.needsFirstLogin,
         needsMFASetup:    s.needsMFASetup,
         loginTimestamp:   s.loginTimestamp,
+        accessNoticeAccepted: s.accessNoticeAccepted,
         sidebarCollapsed:  s.sidebarCollapsed,
         opportunities:     s.opportunities,
         contracts:         s.contracts,
