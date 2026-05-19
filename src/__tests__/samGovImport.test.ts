@@ -26,6 +26,7 @@ describe('SAM.gov import API calls', () => {
     expect(p.get('noticeid')).toBe(noticeId)
     expect(p.get('solnum')).toBeNull()
     expect(p.get('limit')).toBe('1')
+    expect(p.get('offset')).toBe('0')
     expect(p.get('api_key')).toBe('test key')
     expect(p.get('postedFrom')).toBe('05/19/2025')
     expect(p.get('postedTo')).toBe('05/18/2026')
@@ -43,10 +44,18 @@ describe('SAM.gov import API calls', () => {
     expect(p.get('noticeid')).toBeNull()
     expect(p.get('postedFrom')).toBe('05/19/2025')
     expect(p.get('postedTo')).toBe('05/18/2026')
+    expect(p.get('offset')).toBe('0')
   })
 
   it('keeps the mandatory posted-date range inside SAM.gov one-year limit', () => {
     expect(getSamGovPostedRange(NOW)).toEqual({
+      postedFrom: '05/19/2025',
+      postedTo: '05/18/2026',
+    })
+  })
+
+  it('uses the SAM.gov Eastern business date instead of the browser local date', () => {
+    expect(getSamGovPostedRange(new Date('2026-05-19T01:00:00Z'))).toEqual({
       postedFrom: '05/19/2025',
       postedTo: '05/18/2026',
     })

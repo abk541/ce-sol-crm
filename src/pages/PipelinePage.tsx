@@ -54,8 +54,19 @@ export function formatSamGovDate(d: Date) {
   return `${mm}/${dd}/${d.getFullYear()}`
 }
 
+function samGovEasternToday(now = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(now)
+  const value = (type: string) => parts.find(part => part.type === type)?.value ?? ''
+  return new Date(`${value('year')}-${value('month')}-${value('day')}T12:00:00Z`)
+}
+
 export function getSamGovPostedRange(now = new Date()) {
-  const postedTo = new Date(now)
+  const postedTo = samGovEasternToday(now)
   const postedFrom = new Date(postedTo)
   postedFrom.setFullYear(postedTo.getFullYear() - 1)
   postedFrom.setDate(postedFrom.getDate() + 1)
@@ -81,6 +92,7 @@ export function buildSamGovOpportunityEndpoint(url: string, apiKey: string, now 
   const { postedFrom, postedTo } = getSamGovPostedRange(now)
   const params = new URLSearchParams({
     limit: '1',
+    offset: '0',
     api_key: trimmedKey,
     postedFrom,
     postedTo,
@@ -1017,7 +1029,8 @@ function CreateModal({ onClose }: { onClose: () => void }) {
   const [importing, setImporting] = useState(false)
   const [initialComment, setInitialComment] = useState('')
   const buildSamApiKey = getBuildSamGovApiKey()
-  const [samApiKey, setSamApiKey] = useState(() => buildSamApiKey ? '' : getSavedSamGovApiKey())
+  const [useBrowserSamApiKey, setUseBrowserSamApiKey] = useState(() => !buildSamApiKey)
+  const [samApiKey, setSamApiKey] = useState(() => getSavedSamGovApiKey())
   const [showSamApiKeyField, setShowSamApiKeyField] = useState(() => !buildSamApiKey && !getSavedSamGovApiKey())
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState<Partial<Opportunity>>({
@@ -1035,13 +1048,13 @@ function CreateModal({ onClose }: { onClose: () => void }) {
     const url = samUrl.trim()
     if (!url || importing) return
 
-    const apiKey = buildSamApiKey || samApiKey.trim()
+    const apiKey = useBrowserSamApiKey ? samApiKey.trim() : buildSamApiKey
     if (!apiKey) {
       setShowSamApiKeyField(true)
       toast.error('Enter your SAM.gov API key to import opportunities.')
       return
     }
-    if (!buildSamApiKey && samApiKey.trim()) {
+    if (useBrowserSamApiKey && samApiKey.trim()) {
       window.localStorage.setItem(SAM_GOV_API_KEY_STORAGE, samApiKey.trim())
     }
 
@@ -1140,7 +1153,7 @@ function CreateModal({ onClose }: { onClose: () => void }) {
               {importing ? 'Importing...' : 'Import'}
             </button>
           </div>
-          {!buildSamApiKey && (
+          {(buildSamApiKey || showSamApiKeyField || samApiKey) && (
             <div className="rounded-xl border p-3" style={{ background: 'rgba(184,145,78,0.10)', borderColor: 'rgba(215,190,122,0.32)' }}>
               {showSamApiKeyField ? (
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
@@ -1162,6 +1175,7 @@ function CreateModal({ onClose }: { onClose: () => void }) {
                       const key = samApiKey.trim()
                       if (!key) { toast.error('Paste the SAM.gov API key first.'); return }
                       window.localStorage.setItem(SAM_GOV_API_KEY_STORAGE, key)
+                      setUseBrowserSamApiKey(true)
                       setShowSamApiKeyField(false)
                       toast.success('SAM.gov API key saved in this browser.')
                     }}
@@ -1173,19 +1187,29 @@ function CreateModal({ onClose }: { onClose: () => void }) {
               ) : (
                 <div className="flex items-center justify-between gap-3">
                   <p className="text-xs font-medium text-[#F8FBF7]">
-                    Using a SAM.gov API key saved in this browser.
+                    Using {useBrowserSamApiKey ? 'a browser-saved' : 'the GitHub'} SAM.gov API key.
                   </p>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      window.localStorage.removeItem(SAM_GOV_API_KEY_STORAGE)
-                      setSamApiKey('')
-                      setShowSamApiKeyField(true)
-                    }}
-                    className="text-xs font-semibold text-[#D7BE7A] hover:text-white"
-                  >
-                    Change key
-                  </button>
+                  <div className="flex items-center gap-3">
+                    {buildSamApiKey && useBrowserSamApiKey && (
+                      <button
+                        type="button"
+                        onClick={() => setUseBrowserSamApiKey(false)}
+                        className="text-xs font-semibold text-[#D7BE7A] hover:text-white"
+                      >
+                        Use GitHub key
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setUseBrowserSamApiKey(true)
+                        setShowSamApiKeyField(true)
+                      }}
+                      className="text-xs font-semibold text-[#D7BE7A] hover:text-white"
+                    >
+                      {buildSamApiKey ? 'Override key' : 'Change key'}
+                    </button>
+                  </div>
                 </div>
               )}
             </div>

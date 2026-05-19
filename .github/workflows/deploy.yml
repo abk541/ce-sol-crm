@@ -39,7 +39,7 @@ jobs:
         env:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL || secrets.SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY || secrets.VITE_SUPABASE_PUBLISHABLE_KEY || secrets.SUPABASE_PUBLISHABLE_KEY || secrets.SUPABASE_ANON_KEY }}
-          VITE_SAM_GOV_API_KEY: ${{ secrets.VITE_SAM_GOV_API_KEY }}
+          VITE_SAM_GOV_API_KEY: ${{ secrets.VITE_SAM_GOV_API_KEY || secrets.SAM_GOV_API_KEY }}
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
