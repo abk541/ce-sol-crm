@@ -5,7 +5,7 @@ import {
   AlertTriangle, ListChecks, ChevronRight, X, Save, Plus,
   ArrowRight, CheckCircle2, Info, DollarSign, MapPin, Calendar,
   Phone, Mail, Clock, Shield, FileText, Trash2, AlertCircle,
-  ChevronUp, ChevronDown, ChevronsUpDown,
+  ChevronUp, ChevronDown, ChevronsUpDown, Pencil,
 } from 'lucide-react'
 import PeriodFilter, { type Period, filterByPeriod } from '../components/shared/PeriodFilter'
 import toast from 'react-hot-toast'
@@ -15,7 +15,6 @@ import type {
   GovernmentWarning, GovWarningType, FreshAward,
 } from '../types'
 import { formatCurrency } from '../lib/utils'
-import { generatePastPerformancePdf } from '../lib/pastPerformancePdf'
 
 // ── Status config ───────────────────────────────────────────────────────
 const STATUS_META: Record<ContractStatus, { label: string; color: string; bg: string; border: string }> = {
@@ -83,10 +82,8 @@ const ROLE_COLOR_C: Record<string, { color: string; bg: string; border: string }
 }
 
 function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClose: () => void }) {
-  const { updateContract, addContractPoC, removeContractPoC, addLockedSubcontractor, addGovernmentWarning, resolveGovernmentWarning, advanceContractStatus, terminateContract, currentUser, employees, opportunities } = useStore()
+  const { updateContract, addContractPoC, updateContractPoC, removeContractPoC, addLockedSubcontractor, addGovernmentWarning, resolveGovernmentWarning, advanceContractStatus, terminateContract, currentUser, employees, opportunities } = useStore()
   const [tab, setTab] = useState<'overview' | 'poc' | 'subk' | 'warnings' | 'deliverables'>('overview')
-  const [showPastPerformance, setShowPastPerformance] = useState(false)
-  const [pastPerformanceDescription, setPastPerformanceDescription] = useState('')
 
   // Terminate form
   const [showTerminate, setShowTerminate] = useState(false)
@@ -95,6 +92,7 @@ function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClo
 
   // PoC form
   const [addingPoC, setAddingPoC] = useState(false)
+  const [editingPoCId, setEditingPoCId] = useState<string | null>(null)
   const [pocForm, setPocForm] = useState({ role: 'KO' as ContractPoC['role'], name: '', email: '', phone: '', notes: '' })
 
   // Locked sub form
@@ -111,6 +109,8 @@ function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClo
   const nextStatus = STATUS_FLOW[contract.status]
   const meta = STATUS_META[contract.status]
   const sourceOpportunity = contract.opportunityId ? opportunities.find(o => o.id === contract.opportunityId) : undefined
+  const potentialQuoteSourcings = (sourceOpportunity?.subcontractors || []).filter(s => !!s.quoteFile)
+  const lockedQuoteFiles = new Set((contract.lockedSubcontractors || []).flatMap(s => s.quotes || []))
 
   return (
     <div className="fixed inset-0 z-[51] flex items-center justify-center p-4 sm:p-6" style={{ pointerEvents: 'none' }}>
@@ -119,7 +119,7 @@ function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClo
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.96, y: 20 }}
         transition={{ type: 'spring', stiffness: 300, damping: 28 }}
-        className="w-full max-w-2xl max-h-[90vh] flex flex-col rounded-2xl overflow-hidden"
+        className="w-full max-w-5xl max-h-[90vh] flex flex-col rounded-2xl overflow-hidden"
         style={{
           background: 'var(--bg-card)',
           border: '1px solid var(--border-default)',
@@ -152,7 +152,7 @@ function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClo
         {[
           { key: 'overview', label: 'Overview', icon: Info },
           { key: 'poc', label: `PoC (${(contract.pocs || []).length})`, icon: UserPlus },
-          { key: 'subk', label: `Subk (${(contract.lockedSubcontractors || []).length})`, icon: Building2 },
+          { key: 'subk', label: `Potential Subk (${(contract.lockedSubcontractors || []).length + potentialQuoteSourcings.length})`, icon: Building2 },
           { key: 'warnings', label: `Warnings (${(contract.governmentWarnings || []).filter(w => !w.resolvedAt).length})`, icon: AlertTriangle },
           { key: 'deliverables', label: `Deliverables`, icon: ListChecks },
         ].map(t => (
@@ -285,14 +285,6 @@ function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClo
               </button>
             )}
 
-            <button
-              onClick={() => setShowPastPerformance(true)}
-              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 transition-colors"
-            >
-              <FileText size={12} />
-              Generate Past Performance
-            </button>
-
             {/* Terminate button */}
             {!['TERMINATED','ARCHIVED','CANCELED'].includes(contract.status) && (
               <button
@@ -317,10 +309,30 @@ function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClo
                   <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700">
                     {POC_ROLE_LABELS[poc.role]}
                   </span>
-                  <button onClick={() => removeContractPoC(contract.id, poc.id)}
-                    className="text-slate-400 hover:text-red-500 transition-colors">
-                    <Trash2 size={12} />
-                  </button>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => {
+                        setEditingPoCId(poc.id)
+                        setPocForm({
+                          role: poc.role,
+                          name: poc.name,
+                          email: poc.email || '',
+                          phone: poc.phone || '',
+                          notes: poc.notes || '',
+                        })
+                        setAddingPoC(true)
+                      }}
+                      className="text-slate-400 hover:text-indigo-600 transition-colors"
+                      title="Edit PoC"
+                    >
+                      <Pencil size={12} />
+                    </button>
+                    <button onClick={() => removeContractPoC(contract.id, poc.id)}
+                      className="text-slate-400 hover:text-red-500 transition-colors"
+                      title="Delete PoC">
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
                 </div>
                 <p className="text-sm font-semibold text-slate-800">{poc.name}</p>
                 {poc.email && <p className="text-xs text-slate-500 flex items-center gap-1.5 mt-1"><Mail size={10} />{poc.email}</p>}
@@ -332,7 +344,7 @@ function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClo
 
             {addingPoC ? (
               <div className="p-4 rounded-xl border border-indigo-200 bg-indigo-50 space-y-3">
-                <p className="text-xs font-bold text-indigo-700">Add Point of Contact</p>
+                <p className="text-xs font-bold text-indigo-700">{editingPoCId ? 'Edit Point of Contact' : 'Add Point of Contact'}</p>
                 <div className="grid grid-cols-2 gap-2">
                   <div>
                     <label className="block text-[10px] font-semibold text-slate-600 mb-0.5">Role</label>
@@ -360,16 +372,30 @@ function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClo
                   <input value={pocForm.notes} onChange={e => setPocForm(p => ({ ...p, notes: e.target.value }))} className="input-field text-xs py-1.5 w-full" />
                 </div>
                 <div className="flex gap-2">
-                  <button onClick={() => setAddingPoC(false)} className="btn-secondary flex-1 text-xs py-1.5">Cancel</button>
+                  <button
+                    onClick={() => {
+                      setAddingPoC(false)
+                      setEditingPoCId(null)
+                      setPocForm({ role: 'KO', name: '', email: '', phone: '', notes: '' })
+                    }}
+                    className="btn-secondary flex-1 text-xs py-1.5"
+                  >
+                    Cancel
+                  </button>
                   <button
                     disabled={!pocForm.name}
                     onClick={() => {
-                      addContractPoC(contract.id, { ...pocForm })
+                      if (editingPoCId) {
+                        updateContractPoC(contract.id, editingPoCId, { ...pocForm })
+                      } else {
+                        addContractPoC(contract.id, { ...pocForm })
+                      }
                       setPocForm({ role: 'KO', name: '', email: '', phone: '', notes: '' })
+                      setEditingPoCId(null)
                       setAddingPoC(false)
                     }}
                     className="btn-primary flex-1 text-xs py-1.5 disabled:opacity-40">
-                    Save PoC
+                    {editingPoCId ? 'Save Changes' : 'Save PoC'}
                   </button>
                 </div>
               </div>
@@ -384,8 +410,52 @@ function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClo
         {/* LOCKED SUBK TAB */}
         {tab === 'subk' && (
           <div className="space-y-3">
-            {(contract.lockedSubcontractors || []).length === 0 && !addingSub && (
-              <p className="text-sm text-slate-400 text-center py-8">No locked sourcing entries.</p>
+            {potentialQuoteSourcings.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Potential Sourcing With Quotes</p>
+                {potentialQuoteSourcings.map(sub => {
+                  const alreadyLocked = !!sub.quoteFile && lockedQuoteFiles.has(sub.quoteFile)
+                  return (
+                    <div key={sub.id} className="p-4 rounded-xl bg-cyan-50 border border-cyan-200">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-sm font-bold text-slate-800 truncate">{sub.companyName}</p>
+                          <p className="text-xs text-slate-500">{sub.contactName || 'No contact listed'}</p>
+                          {sub.email && <p className="text-xs text-slate-500 flex items-center gap-1.5 mt-1"><Mail size={10} />{sub.email}</p>}
+                          <p className="text-[10px] text-cyan-700 mt-2 flex items-center gap-1">
+                            <FileText size={10} /> {sub.quoteFile}
+                          </p>
+                        </div>
+                        <button
+                          disabled={alreadyLocked}
+                          onClick={() => {
+                            addLockedSubcontractor(contract.id, {
+                              companyName: sub.companyName,
+                              contactName: sub.contactName,
+                              email: sub.email || undefined,
+                              phone: sub.phone || undefined,
+                              setAside: sub.setAside || undefined,
+                              naicsCode: sub.naicsCode || undefined,
+                              notes: sub.notes || undefined,
+                              quotes: sub.quoteFile ? [sub.quoteFile] : [],
+                              createdAt: new Date().toISOString(),
+                              createdBy: currentUser?.username || currentUser?.name || 'current_user',
+                            })
+                            toast.success('Sourcing locked to active contract')
+                          }}
+                          className="btn-secondary text-xs whitespace-nowrap disabled:opacity-40"
+                        >
+                          {alreadyLocked ? 'Locked' : 'Lock Quote'}
+                        </button>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+
+            {(contract.lockedSubcontractors || []).length === 0 && potentialQuoteSourcings.length === 0 && !addingSub && (
+              <p className="text-sm text-slate-400 text-center py-8">No quoted sourcing entries found for this contract.</p>
             )}
             {(contract.lockedSubcontractors || []).map(sub => (
               <div key={sub.id} className="p-4 rounded-xl bg-slate-50 border border-slate-200">
@@ -633,62 +703,6 @@ function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClo
           </div>
         )}
       </AnimatePresence>
-
-      <AnimatePresence>
-        {showPastPerformance && (
-          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-            <div className="absolute inset-0" style={{ background: 'rgba(15,23,42,0.55)', backdropFilter: 'blur(6px)' }} onClick={() => setShowPastPerformance(false)} />
-            <motion.div
-              initial={{ opacity: 0, scale: 0.96, y: 12 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.96, y: 12 }}
-              className="relative z-10 w-full max-w-lg rounded-2xl bg-white shadow-2xl"
-              style={{ border: '1px solid var(--border-default)' }}
-            >
-              <div className="px-6 py-4 border-b border-slate-100">
-                <h3 className="text-base font-bold text-slate-900">Generate Past Performance</h3>
-                <p className="text-xs text-slate-500 mt-0.5">{contract.title}</p>
-              </div>
-              <div className="p-6 space-y-3">
-                <label className="block text-xs font-semibold text-slate-600">
-                  Project Description <span className="text-rose-500">*</span>
-                </label>
-                <textarea
-                  value={pastPerformanceDescription}
-                  onChange={e => setPastPerformanceDescription(e.target.value)}
-                  rows={6}
-                  className="input-field resize-none"
-                  placeholder="Enter the project description to place into the PDF template..."
-                />
-                <div className="rounded-xl bg-slate-50 border border-slate-100 px-3 py-2 text-xs text-slate-500">
-                  Date of contract and contract ID are filled from the awarded opportunity and active contract details.
-                </div>
-              </div>
-              <div className="flex gap-3 px-6 pb-6">
-                <button onClick={() => setShowPastPerformance(false)} className="btn-secondary flex-1 justify-center">Cancel</button>
-                <button
-                  onClick={async () => {
-                    if (!pastPerformanceDescription.trim()) {
-                      toast.error('Project description is required.')
-                      return
-                    }
-                    await generatePastPerformancePdf({
-                      contract,
-                      opportunity: sourceOpportunity,
-                      description: pastPerformanceDescription.trim(),
-                    })
-                    toast.success('Past performance PDF generated')
-                    setShowPastPerformance(false)
-                  }}
-                  className="btn-primary flex-1 justify-center gap-1.5"
-                >
-                  <FileText size={13} /> Generate PDF
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
     </div>
   )
 }
@@ -796,23 +810,24 @@ function FreshAwardsTab() {
   const { freshAwards, moveFreshAwardToActive } = useStore()
   const [assigningId, setAssigningId] = useState<string | null>(null)
 
-  const assigningAward = assigningId ? freshAwards.find(fa => fa.id === assigningId) : null
+  const visibleFreshAwards = freshAwards.filter(fa => fa.status !== 'MOVED_TO_ACTIVE')
+  const assigningAward = assigningId ? visibleFreshAwards.find(fa => fa.id === assigningId) : null
 
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2">
         <FileCheck2 size={14} className="text-emerald-500" />
         <p className="text-sm font-bold text-slate-700">Fresh Awards</p>
-        <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">{freshAwards.length}</span>
+        <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">{visibleFreshAwards.length}</span>
       </div>
 
-      {freshAwards.length === 0 ? (
+      {visibleFreshAwards.length === 0 ? (
         <div className="bg-white rounded-2xl border border-slate-200 py-16 text-center text-slate-400 text-sm">
           No fresh awards yet.
         </div>
       ) : (
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-          <div className="overflow-x-auto">
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-visible">
+          <div className="overflow-x-auto overflow-y-visible">
             <table className="data-table">
               <thead>
                 <tr>
@@ -827,7 +842,7 @@ function FreshAwardsTab() {
                 </tr>
               </thead>
               <tbody>
-                {freshAwards.map((fa, i) => {
+                {visibleFreshAwards.map((fa, i) => {
                   const meta = FA_STATUS_META[fa.status]
                   return (
                     <motion.tr key={fa.id}
@@ -993,7 +1008,7 @@ export default function ContractsPage() {
         <div className="flex gap-1 p-1 bg-slate-100 rounded-xl border border-slate-200 flex-wrap">
           {C_TABS.map(t => {
             const cnt = t.key === 'FRESH_AWARDS'
-              ? freshAwards.length
+              ? freshAwards.filter(fa => fa.status !== 'MOVED_TO_ACTIVE').length
               : contracts.filter(c => t.statuses.includes(c.status)).length
             return (
               <button key={t.key} onClick={() => setTab(t.key)}
@@ -1024,8 +1039,8 @@ export default function ContractsPage() {
       {tab === 'FRESH_AWARDS' && <FreshAwardsTab />}
 
       {/* Table */}
-      {tab !== 'FRESH_AWARDS' && <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-        <div className="overflow-x-auto">
+      {tab !== 'FRESH_AWARDS' && <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-visible">
+        <div className="overflow-x-auto overflow-y-visible">
           <table className="data-table">
             <thead>
               <tr>

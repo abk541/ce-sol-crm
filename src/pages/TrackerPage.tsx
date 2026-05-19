@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+ï»¿import { useState, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   ListChecks, Send, Trash2, CheckCircle2, XCircle,
@@ -57,7 +57,7 @@ function StatusDropdown({ oppId, current, canEdit }: { oppId: string; current: O
 
   const handleChange = (s: OppStatus) => {
     if (s === 'WON') {
-      // Guard: create a FreshAward only if one doesn’t already exist for this opportunity
+      // Guard: create a FreshAward only if one doesn't already exist for this opportunity
       const alreadyAwarded = freshAwards.some(fa => fa.opportunityId === oppId)
       if (alreadyAwarded) {
         updateOpportunity(oppId, { status: 'WON' })
@@ -128,7 +128,7 @@ function Paginator({ total, perPage, page, onPage, onPerPage }: {
       <div className="flex items-center gap-3 text-xs text-slate-500">
         {perPage === 'all'
           ? `All ${total} rows`
-          : `${Math.min((page - 1) * (perPage as number) + 1, total)}–${Math.min(page * (perPage as number), total)} of ${total}`}
+          : `${Math.min((page - 1) * (perPage as number) + 1, total)}-${Math.min(page * (perPage as number), total)} of ${total}`}
         <div className="flex gap-1">
           <button onClick={() => onPage(page - 1)} disabled={page <= 1}
             className="w-6 h-6 rounded flex items-center justify-center hover:bg-slate-100 disabled:opacity-30 transition-colors">
@@ -146,7 +146,7 @@ function Paginator({ total, perPage, page, onPage, onPerPage }: {
 
 export default function TrackerPage() {
   const { opportunities, deletionRequests, reviewDeletionRequest, currentUser } = useStore()
-  const [tab, setTab] = useState<'submitted' | 'deleted' | 'pending'>('submitted')
+  const [tab, setTab] = useState<'submitted' | 'deleted' | 'pending'>('deleted')
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<Opportunity | null>(null)
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
@@ -185,7 +185,6 @@ export default function TrackerPage() {
   )
 
   const tabs = [
-    { id: 'submitted' as const, label: 'Submitted Contracts', count: submitted.length, icon: Send },
     { id: 'deleted'   as const, label: 'Deleted Opportunities', count: deleted.length, icon: Trash2 },
     ...(isAdmin ? [{ id: 'pending' as const, label: 'Deletion Requests', count: pending.length, icon: AlertTriangle }] : []),
   ]
@@ -196,11 +195,11 @@ export default function TrackerPage() {
       <motion.div variants={fadeUp} initial="initial" animate="animate">
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div>
-            <p className="text-[10px] font-bold text-slate-400 tracking-[0.2em] mb-1">CES - TRACKER</p>
+            <p className="text-[10px] font-bold text-slate-400 tracking-[0.2em] mb-1">CES - DELETION REQUESTS</p>
             <h1 className="text-2xl font-black text-slate-900 flex items-center gap-3">
-              <ListChecks size={22} className="text-indigo-500" /> Opportunity Tracker
+              <ListChecks size={22} className="text-indigo-500" /> Deletion Requests
             </h1>
-            <p className="text-slate-500 text-sm mt-0.5">Submitted contracts, pipeline outcomes, deletion workflow</p>
+            <p className="text-slate-500 text-sm mt-0.5">Review pending deletions and archived deleted opportunities.</p>
           </div>
         </div>
       </motion.div>

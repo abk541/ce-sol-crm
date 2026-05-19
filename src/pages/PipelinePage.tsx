@@ -12,7 +12,8 @@ import { useStore } from '../store/useStore'
 import type { Opportunity, Priority, OppStatus, Comment } from '../types'
 import { TIMEZONES } from '../data/mock'
 import { formatCurrency } from '../lib/utils'
-import { getAssignmentChain, isAssignedToAssociate, ROLE_DISPLAY_LABELS } from '../lib/team'
+import { assignableEmployeesForUser, getAssignmentChain, isAssignedToAssociate, ROLE_DISPLAY_LABELS } from '../lib/team'
+import { NAICS_CODES } from '../data/naics'
 import toast from 'react-hot-toast'
 import DetailDrawer, { DrawerSection, DrawerField } from '../components/shared/DetailDrawer'
 import PeriodFilter, { type Period, filterByPeriod } from '../components/shared/PeriodFilter'
@@ -191,21 +192,121 @@ export function mapSamGovOpportunityToForm(opp: any, url: string) {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────
-function convertTime(time: string, sourceTzAbbrev: string): string {
+function timeZoneOffsetMs(date: Date, timeZone: string): number {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).formatToParts(date)
+  const value = (type: string) => Number(parts.find(part => part.type === type)?.value ?? 0)
+  const asUtc = Date.UTC(value('year'), value('month') - 1, value('day'), value('hour'), value('minute'), value('second'))
+  return asUtc - date.getTime()
+}
+
+function parseClockTime(time: string | undefined) {
+  const value = (time || '').trim()
+  const twelve = value.match(/^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)$/i)
+  if (twelve) {
+    let hour = Number(twelve[1])
+    const minute = Number(twelve[2] ?? 0)
+    const marker = twelve[3].toUpperCase()
+    if (marker === 'PM' && hour < 12) hour += 12
+    if (marker === 'AM' && hour === 12) hour = 0
+    return { hour, minute }
+  }
+  const twentyFour = value.match(/^(\d{1,2}):(\d{2})$/)
+  if (twentyFour) return { hour: Number(twentyFour[1]), minute: Number(twentyFour[2]) }
+  return { hour: 0, minute: 0 }
+}
+
+function zonedDateTimeToUtc(date: string, time: string, timeZone: string): Date {
+  const [year, month, day] = date.split('-').map(Number)
+  const { hour, minute } = parseClockTime(time)
+  const utcGuess = new Date(Date.UTC(year, (month || 1) - 1, day || 1, hour || 0, minute || 0, 0))
+  const offset = timeZoneOffsetMs(utcGuess, timeZone)
+  return new Date(utcGuess.getTime() - offset)
+}
+
+function formatOpportunityTime(time: string | undefined, sourceTzAbbrev?: string, date?: string): string {
+  if (!time) return '-'
+  const ianaSource = sourceTzAbbrev ? TIMEZONES[sourceTzAbbrev] : undefined
+  try {
+    if (ianaSource && date) {
+      const utc = zonedDateTimeToUtc(date, time, ianaSource)
+      return new Intl.DateTimeFormat('en-US', {
+        timeZone: ianaSource,
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+        timeZoneName: 'short',
+      }).format(utc)
+    }
+    const { hour: h, minute: m } = parseClockTime(time)
+    const d = new Date()
+    d.setHours(h || 0, m || 0, 0, 0)
+    return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
+  } catch {
+    return `${time} ${sourceTzAbbrev ?? ''}`.trim()
+  }
+}
+
+function convertTime(time: string, sourceTzAbbrev: string, date?: string): string {
   const ianaSource = TIMEZONES[sourceTzAbbrev]
   if (!ianaSource || !time) return `${time} ${sourceTzAbbrev}`
   try {
-    const today = new Date().toISOString().split('T')[0]
-    const guessUTC = new Date(`${today}T${time}:00Z`)
-    const fmtd = new Intl.DateTimeFormat('en-US', { timeZone: ianaSource, hour: '2-digit', minute: '2-digit', hour12: false }).format(guessUTC)
-    const [fh, fm] = fmtd.split(':').map(Number)
-    const [th, tm] = time.split(':').map(Number)
-    const offsetMs = ((th - fh) * 60 + (tm - fm)) * 60000
-    const actualUTC = new Date(guessUTC.getTime() + offsetMs)
-    const localStr = new Intl.DateTimeFormat('en-US', { hour: '2-digit', minute: '2-digit', hour12: false }).format(actualUTC)
+    const actualUTC = zonedDateTimeToUtc(date || new Date().toISOString().slice(0, 10), time, ianaSource)
+    const localStr = new Intl.DateTimeFormat('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+      timeZoneName: 'short',
+    }).format(actualUTC)
     const tzAbbr = new Intl.DateTimeFormat('en-US', { timeZoneName: 'short' }).formatToParts(actualUTC).find(p => p.type === 'timeZoneName')?.value ?? ''
-    return `${localStr} ${tzAbbr} (local)`
+    return `${localStr}${tzAbbr && !localStr.includes(tzAbbr) ? ` ${tzAbbr}` : ''} (local)`
   } catch { return `${time} ${sourceTzAbbrev}` }
+}
+
+function NaicsInput({ value, onChange }: { value?: string; onChange: (value: string) => void }) {
+  const [query, setQuery] = useState('')
+  const suggestions = useMemo(() => {
+    const q = (query || value || '').toLowerCase().trim()
+    const list = q
+      ? NAICS_CODES.filter(item => item.code.includes(q) || item.title.toLowerCase().includes(q))
+      : NAICS_CODES
+    return list.slice(0, 40)
+  }, [query, value])
+
+  return (
+    <>
+      <input
+        value={value ?? ''}
+        list="naics-code-options"
+        onChange={e => {
+          const raw = e.target.value
+          const code = raw.match(/\d{6}/)?.[0] ?? raw
+          setQuery(raw)
+          onChange(code)
+        }}
+        className="input-field"
+        placeholder="Type code or industry name"
+      />
+      <datalist id="naics-code-options">
+        {suggestions.map(item => (
+          <option key={`${item.code}-${item.title}`} value={`${item.code} - ${item.title}`} />
+        ))}
+      </datalist>
+    </>
+  )
 }
 
 // ── Badges ────────────────────────────────────────────────────────────
@@ -283,7 +384,6 @@ type OppFormTab = 'details' | 'schedule' | 'team' | 'assign' | 'comments'
 const OPP_FORM_TABS: { id: OppFormTab; label: string }[] = [
   { id: 'details',  label: 'Opportunity' },
   { id: 'schedule', label: 'Schedule' },
-  { id: 'team',     label: 'Team & Finance' },
   { id: 'assign',   label: 'Assignment' },
   { id: 'comments', label: 'Comments' },
 ]
@@ -368,7 +468,7 @@ function OppModalShell({ title, subtitle, tab, setTab, onClose, extraHeader, foo
 
 // ── Edit Modal ────────────────────────────────────────────────────────
 function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) {
-  const { updateOpportunity, requestDeletion, deletionRequests, currentUser } = useStore()
+  const { updateOpportunity, requestDeletion, deletionRequests, currentUser, employees } = useStore()
   const [tab, setTab] = useState<OppFormTab>('details')
   const [form, setForm] = useState<Partial<Opportunity>>({ ...opp })
   const [showDeleteReq, setShowDeleteReq] = useState(false)
@@ -378,6 +478,11 @@ function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) 
 
   const isManager = currentUser?.role === 'BD_MANAGER'
   const hasPendingDelete = deletionRequests.some(r => r.opportunityId === opp.id && r.status === 'PENDING')
+  const allowedAssignees = useMemo(() => {
+    const ids = assignableEmployeesForUser(employees, currentUser).map(employee => employee.id)
+    if (form.assignedTo && !ids.includes(form.assignedTo)) ids.push(form.assignedTo)
+    return ids
+  }, [employees, currentUser, form.assignedTo])
   const set = (k: keyof Opportunity, v: any) => setForm(p => ({ ...p, [k]: v }))
   const lbl = 'block text-xs font-semibold text-slate-500 mb-1.5'
 
@@ -385,6 +490,11 @@ function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) 
     if (!form.solicitation?.trim()) { toast.error('Solicitation title is required'); setTab('details'); return }
     if (!form.type) { toast.error('Contract type is required'); setTab('details'); return }
     if (!form.dueDate) { toast.error('Due date is required'); setTab('schedule'); return }
+    if (form.assignedTo && form.assignedTo !== opp.assignedTo && !allowedAssignees.includes(form.assignedTo)) {
+      toast.error('You can only assign opportunities inside your team.')
+      setTab('assign')
+      return
+    }
     const updatedComments = [...(form.comments ?? [])]
     if (newComment.trim()) {
       updatedComments.push({
@@ -423,11 +533,6 @@ function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) 
               className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold text-red-600 bg-red-50 border border-red-200 hover:bg-red-100 transition-colors">
               <Trash2 size={12} /> Request Deletion
             </button>
-          )}
-          {hasPendingDelete && (
-            <span className="flex items-center gap-1 text-xs text-amber-600 bg-amber-50 border border-amber-200 px-3 py-2 rounded-xl">
-              ⚠ Deletion pending review
-            </span>
           )}
           <div className="ml-auto flex gap-3">
             <button type="button" onClick={onClose} className="btn-secondary">Cancel</button>
@@ -474,7 +579,7 @@ function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) 
             </div>
             <div>
               <label className={lbl}>NAICS Code</label>
-              <input value={form.naicsCode ?? ''} onChange={e => set('naicsCode', e.target.value)} className="input-field" />
+              <NaicsInput value={form.naicsCode ?? ''} onChange={value => set('naicsCode', value)} />
             </div>
           </div>
           <div className="grid grid-cols-3 gap-4">
@@ -502,7 +607,7 @@ function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) 
             </div>
             <div>
               <label className={lbl}>Local Time (HH:MM)</label>
-              <input value={form.localTime ?? ''} onChange={e => set('localTime', e.target.value)} className="input-field" placeholder="17:00" />
+              <input value={form.localTime ?? ''} onChange={e => set('localTime', e.target.value)} className="input-field" placeholder="5:00 PM" />
             </div>
             <div>
               <label className={lbl}>Timezone</label>
@@ -513,7 +618,7 @@ function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) 
           </div>
           {form.localTime && form.timezone && (
             <p className="text-[11px] text-indigo-600 -mt-2 flex items-center gap-1 font-medium">
-              <Clock size={10} /> Your local: {convertTime(form.localTime, form.timezone)}
+              <Clock size={10} /> Your local: {convertTime(form.localTime, form.timezone, form.dueDate)}
             </p>
           )}
           <div className="grid grid-cols-2 gap-4">
@@ -569,6 +674,7 @@ function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) 
             value={form.assignedTo}
             onChange={v => set('assignedTo', v)}
             deadline={form.dueDate || opp.dueDate || undefined}
+            allowedEmployeeIds={allowedAssignees}
           />
         </div>
       )}
@@ -921,7 +1027,7 @@ function SubmitModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }
         <div className="p-4 rounded-xl bg-indigo-50 border border-indigo-100">
           <p className="text-xs font-semibold text-indigo-500 mb-1.5">Opportunity details</p>
           <p className="text-sm font-semibold text-slate-800">{opp.solicitation}</p>
-          <p className="text-xs text-slate-500 mt-0.5">{opp.solicitationId} - Due: {new Date(opp.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} {opp.localTime && `at ${opp.localTime} ${opp.timezone ?? ''}`}</p>
+          <p className="text-xs text-slate-500 mt-0.5">{opp.solicitationId} - Due: {new Date(opp.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} {opp.localTime && `at ${formatOpportunityTime(opp.localTime, opp.timezone, opp.dueDate)}`}</p>
           <p className="text-xs text-indigo-600 font-semibold mt-1">{typeLabel(opp.type)}</p>
         </div>
 
@@ -1023,7 +1129,7 @@ function SubmitModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }
 
 // ── Create Modal ──────────────────────────────────────────────────────
 function CreateModal({ onClose }: { onClose: () => void }) {
-  const { createOpportunity, currentUser } = useStore()
+  const { createOpportunity, currentUser, employees } = useStore()
   const [tab, setTab] = useState<OppFormTab>('details')
   const [samUrl, setSamUrl] = useState('')
   const [importing, setImporting] = useState(false)
@@ -1041,6 +1147,10 @@ function CreateModal({ onClose }: { onClose: () => void }) {
     client: '', location: '', dueDate: '', localTime: '', timezone: 'EST',
     comments: [], proposals: [], subcontractors: [], assignedTo: undefined,
   })
+  const allowedAssignees = useMemo(
+    () => assignableEmployeesForUser(employees, currentUser).map(employee => employee.id),
+    [employees, currentUser],
+  )
   const set = (k: keyof Opportunity, v: any) => setForm(p => ({ ...p, [k]: v }))
   const lbl = 'block text-xs font-semibold text-slate-500 mb-1.5'
 
@@ -1116,6 +1226,11 @@ function CreateModal({ onClose }: { onClose: () => void }) {
     if (!form.solicitation?.trim()) { toast.error('Solicitation title is required'); setTab('details'); return }
     if (!form.type) { toast.error('Contract type is required'); setTab('details'); return }
     if (!form.dueDate) { toast.error('Due date is required'); setTab('schedule'); return }
+    if (form.assignedTo && !allowedAssignees.includes(form.assignedTo)) {
+      toast.error('You can only assign opportunities inside your team.')
+      setTab('assign')
+      return
+    }
     const comments: Comment[] = []
     if (initialComment.trim()) {
       comments.push({
@@ -1270,7 +1385,7 @@ function CreateModal({ onClose }: { onClose: () => void }) {
             </div>
             <div>
               <label className={lbl}>NAICS Code</label>
-              <input value={form.naicsCode ?? ''} onChange={e => set('naicsCode', e.target.value)} className="input-field" placeholder="238220" />
+              <NaicsInput value={form.naicsCode ?? ''} onChange={value => set('naicsCode', value)} />
             </div>
           </div>
           <div className="grid grid-cols-3 gap-4">
@@ -1298,7 +1413,7 @@ function CreateModal({ onClose }: { onClose: () => void }) {
             </div>
             <div>
               <label className={lbl}>Local Time (HH:MM)</label>
-              <input value={form.localTime ?? ''} onChange={e => set('localTime', e.target.value)} className="input-field" placeholder="17:00" />
+              <input value={form.localTime ?? ''} onChange={e => set('localTime', e.target.value)} className="input-field" placeholder="5:00 PM" />
             </div>
             <div>
               <label className={lbl}>Timezone</label>
@@ -1309,7 +1424,7 @@ function CreateModal({ onClose }: { onClose: () => void }) {
           </div>
           {form.localTime && form.timezone && (
             <p className="text-[11px] text-indigo-600 -mt-2 flex items-center gap-1 font-medium">
-              <Clock size={10} /> Your local: {convertTime(form.localTime, form.timezone)}
+              <Clock size={10} /> Your local: {convertTime(form.localTime, form.timezone, form.dueDate)}
             </p>
           )}
           <div className="grid grid-cols-2 gap-4">
@@ -1366,6 +1481,7 @@ function CreateModal({ onClose }: { onClose: () => void }) {
             value={form.assignedTo}
             onChange={v => set('assignedTo', v)}
             deadline={form.dueDate || undefined}
+            allowedEmployeeIds={allowedAssignees}
           />
         </div>
       )}
@@ -1678,6 +1794,7 @@ export default function PipelinePage() {
   const [pageSize, setPageSize] = useState(25)
 
   const canSubmit = ['BD_MANAGER', 'TEAM_LEAD', 'ASSOCIATE'].includes(currentUser?.role ?? '')
+  const canManageOpportunities = currentUser?.role === 'BD_MANAGER'
 
   const filterOptions = useMemo(() => {
     const visibleOpps = opportunities.filter(o => !o.isDeleted && OPP_VIEW_STATUSES.includes(o.status as any) && isAssignedToAssociate(employees, o.assignedTo))
@@ -1739,6 +1856,10 @@ export default function PipelinePage() {
   const hasFilters = !!dueDateRange || Object.values(columnFilters).some(v => v.trim())
 
   const handleCancel = (o: Opportunity) => {
+    if (!canManageOpportunities) {
+      toast.error('Only managers can cancel opportunities.')
+      return
+    }
     moveOpportunityToBDTracker(o.id, 'CANCELED', 'Canceled from Contract Opportunities')
     toast.success(`"${o.solicitation}" canceled.`)
   }
@@ -1811,12 +1932,12 @@ export default function PipelinePage() {
       </div>
 
       {/* Table */}
-      <div className="glass rounded-2xl overflow-hidden">
+      <div className="glass rounded-2xl overflow-visible">
         <div className="px-5 py-3 flex items-center gap-2" style={{ borderBottom: '1px solid rgba(0,0,0,0.07)' }}>
           <Filter size={12} className="text-slate-400" />
           <p className="text-xs font-semibold text-slate-500">{filtered.length} results - select a row to see details</p>
         </div>
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto overflow-y-visible">
           <table className="data-table">
             <thead>
               <tr>
@@ -1868,7 +1989,6 @@ export default function PipelinePage() {
                     <td><span className="text-indigo-600 text-xs font-mono font-semibold">{o.solicitationId}</span></td>
                     <td className="max-w-[200px]">
                       <p className="truncate text-xs text-slate-800 font-medium" title={o.solicitation}>{o.solicitation}</p>
-                      {o.deletionRequested && <p className="text-[9px] text-amber-600">⚠ Deletion pending</p>}
                     </td>
                     <td>
                       <span className="text-[10px] font-semibold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">{o.setAside}</span>
@@ -1879,10 +1999,10 @@ export default function PipelinePage() {
                       </span>
                     </td>
                     <td className="text-slate-500 text-xs whitespace-nowrap group relative">
-                      <span className="cursor-help">{o.localTime} {o.timezone}</span>
+                      <span className="cursor-help">{formatOpportunityTime(o.localTime, o.timezone, o.dueDate)}</span>
                       {o.localTime && o.timezone && (
                         <div className="hidden group-hover:block absolute bottom-full left-0 mb-1 z-30 rounded-lg px-2.5 py-1.5 text-[10px] whitespace-nowrap shadow-lg font-medium" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-default)', color: '#6366F1', boxShadow: '0 4px 12px rgba(0,0,0,0.10)' }}>
-                          <Clock size={9} className="inline mr-1" />{convertTime(o.localTime, o.timezone)}
+                          <Clock size={9} className="inline mr-1" />{convertTime(o.localTime, o.timezone, o.dueDate)}
                         </div>
                       )}
                     </td>
@@ -1923,10 +2043,12 @@ export default function PipelinePage() {
                             <Send size={12} />
                           </button>
                         )}
-                        <button title="Cancel opportunity" onClick={() => handleCancel(o)}
-                          className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-red-600 hover:bg-red-50 transition-all">
-                          <Ban size={12} />
-                        </button>
+                        {canManageOpportunities && (
+                          <button title="Cancel opportunity" onClick={() => handleCancel(o)}
+                            className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-red-600 hover:bg-red-50 transition-all">
+                            <Ban size={12} />
+                          </button>
+                        )}
                       </div>
                     </td>
                   </motion.tr>
@@ -1956,8 +2078,8 @@ export default function PipelinePage() {
         onClose={() => setSelectedOpp(null)}
         title={selectedOpp?.solicitation ?? ''}
         subtitle={selectedOpp ? `${selectedOpp.solicitationId} - ${selectedOpp.client}` : ''}
-        width={420}
-        showBackdrop={false}
+        width={720}
+        showBackdrop
       >
         {selectedOpp && (
           <>
@@ -1990,10 +2112,10 @@ export default function PipelinePage() {
 
             <DrawerSection title="Schedule">
               <DrawerField label="Due Date"  value={new Date(selectedOpp.dueDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })} />
-              <DrawerField label="Time"      value={selectedOpp.localTime ? `${selectedOpp.localTime} ${selectedOpp.timezone ?? ''}` : '-'} />
+              <DrawerField label="Time"      value={formatOpportunityTime(selectedOpp.localTime, selectedOpp.timezone, selectedOpp.dueDate)} />
               {selectedOpp.localTime && selectedOpp.timezone && (
                 <DrawerField label="Your Local" value={
-                  <span className="text-indigo-600 font-semibold">{convertTime(selectedOpp.localTime, selectedOpp.timezone)}</span>
+                  <span className="text-indigo-600 font-semibold">{convertTime(selectedOpp.localTime, selectedOpp.timezone, selectedOpp.dueDate)}</span>
                 } />
               )}
               <DrawerField label="Captured On" value={selectedOpp.capturedOn} />
@@ -2053,9 +2175,11 @@ export default function PipelinePage() {
                   <Send size={12} /> Submit Proposal
                 </button>
               )}
-              <button className="btn-secondary text-xs gap-1.5 text-red-600 border-red-200 hover:bg-red-50" onClick={() => { setSelectedOpp(null); handleCancel(selectedOpp) }}>
-                <Ban size={12} /> Cancel
-              </button>
+              {canManageOpportunities && (
+                <button className="btn-secondary text-xs gap-1.5 text-red-600 border-red-200 hover:bg-red-50" onClick={() => { setSelectedOpp(null); handleCancel(selectedOpp) }}>
+                  <Ban size={12} /> Cancel
+                </button>
+              )}
             </div>
           </>
         )}

@@ -26,7 +26,7 @@ const NAV = [
       { to: '/pipeline',          icon: GitBranch,     label: 'Contract Opportunities' },
       { to: '/proposals',         icon: FileText,      label: 'Assign Opportunities' },
       { to: '/bd-tracker',        icon: TrendingUp,    label: 'BD Tracker' },
-      { to: '/tracker',           icon: ListChecks,    label: 'Tracker' },
+      { to: '/tracker',           icon: ListChecks,    label: 'Deletion Requests' },
       { to: '/non-submissions',   icon: ClipboardList, label: 'Non-Submissions Report' },
       { to: '/past-performances', icon: History,       label: 'Past Performances' },
     ],
@@ -140,7 +140,9 @@ export default function Sidebar() {
                   transition={{ duration: 0.18 }}
                   className="space-y-0.5 overflow-hidden"
                 >
-                  {group.items.map(item => {
+                  {group.items
+                    .filter(item => currentUser?.role !== 'ASSOCIATE' || item.to !== '/proposals')
+                    .map(item => {
                     const isActive = location.pathname === item.to
                     return (
                       <NavLink key={item.to} to={item.to}>

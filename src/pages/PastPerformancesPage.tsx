@@ -6,14 +6,57 @@ import {
   ChevronDown, X, Save, Eye, Tag, MoreHorizontal,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
-import type { PastPerformance } from '../types'
+import type { Contract, PastPerformance } from '../types'
 import { formatCurrency } from '../lib/utils'
+import { generatePastPerformancePdf } from '../lib/pastPerformancePdf'
 import toast from 'react-hot-toast'
 
 function ExportModal({ pp, onClose }: { pp: PastPerformance; onClose: () => void }) {
+  const { contracts, opportunities } = useStore()
   const [desc, setDesc] = useState(pp.description)
   const [touched, setTouched] = useState(false)
   const invalid = touched && !desc.trim()
+
+  const handleExport = async () => {
+    if (!desc.trim()) { setTouched(true); return }
+    const contract = contracts.find(c => c.id === pp.contractId || c.contractId === pp.contractNumber)
+    const fallbackContract: Contract = {
+      id: pp.contractId || pp.id,
+      contractId: pp.contractNumber,
+      title: pp.title,
+      type: pp.type,
+      financeType: pp.financeType,
+      naicsCode: pp.naicsCode,
+      setAside: pp.setAside,
+      status: 'ARCHIVED',
+      location: pp.location || '',
+      client: pp.client,
+      popStart: pp.popStart,
+      popEnd: pp.popEnd,
+      value: pp.value,
+      spm: '',
+      pm: '',
+      bdm: pp.bdm,
+      bds: pp.bds,
+      opportunityId: pp.opportunityId,
+    }
+    const targetContract = contract || fallbackContract
+    const opportunity = targetContract.opportunityId
+      ? opportunities.find(o => o.id === targetContract.opportunityId)
+      : undefined
+    try {
+      await generatePastPerformancePdf({
+        contract: targetContract,
+        opportunity,
+        description: desc.trim(),
+      })
+      toast.success('Past performance PDF generated')
+      onClose()
+    } catch (err) {
+      console.error(err)
+      toast.error('Could not generate the PDF template.')
+    }
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
@@ -62,11 +105,7 @@ function ExportModal({ pp, onClose }: { pp: PastPerformance; onClose: () => void
           <button onClick={onClose} className="btn-secondary flex-1 text-xs">Cancel</button>
           <button
             disabled={!desc.trim()}
-            onClick={() => {
-              if (!desc.trim()) { setTouched(true); return }
-              toast.success('PDF exported successfully')
-              onClose()
-            }}
+            onClick={handleExport}
             className="btn-primary flex-1 text-xs gap-1.5 disabled:opacity-40"
           >
             <Download size={12} /> Export PDF
@@ -187,61 +226,42 @@ function DetailDrawerPP({ pp, onClose, onExport }: { pp: PastPerformance; onClos
 }
 
 export default function PastPerformancesPage() {
-  const { pastPerformances, contracts, freshAwards } = useStore()
+  const { contracts } = useStore()
   const [search, setSearch] = useState('')
-  const [source, setSource] = useState<'AWARDED' | 'ACTIVE'>('AWARDED')
+  const [source, setSource] = useState<'ACTIVE' | 'COMPLETED'>('ACTIVE')
   const [selected, setSelected] = useState<PastPerformance | null>(null)
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
   const [exportTarget, setExportTarget] = useState<PastPerformance | null>(null)
 
   const sourceRows = useMemo<PastPerformance[]>(() => {
-    if (source === 'ACTIVE') {
-      return contracts.map(c => ({
-        id: `active-${c.id}`,
-        contractId: c.id,
-        opportunityId: c.opportunityId,
-        contractNumber: c.contractId,
-        title: c.title,
-        client: c.client || '',
-        type: c.type,
-        financeType: c.financeType,
-        naicsCode: c.naicsCode,
-        setAside: c.setAside || 'UNRES',
-        value: c.value,
-        popStart: c.popStart,
-        popEnd: c.popEnd,
-        location: c.location,
-        description: '',
-        relevance: '',
-        bdm: c.bdm || '',
-        bds: c.bds || '',
-        createdAt: c.popStart,
-        createdBy: 'System',
-      }))
-    }
-    const awardRows = freshAwards.map(fa => ({
-      id: `award-${fa.id}`,
-      opportunityId: fa.opportunityId,
-      contractId: fa.contractId,
-      contractNumber: fa.solicitationId,
-      title: fa.solicitation,
-      client: fa.client,
-      type: fa.type,
-      naicsCode: fa.naicsCode,
-      setAside: fa.setAside,
-      value: fa.contractAmount ?? 0,
-      popStart: fa.awardedDate,
-      popEnd: fa.movedAt?.slice(0, 10) ?? '',
-      location: fa.location,
+    const visibleContracts = contracts.filter(c =>
+      source === 'ACTIVE'
+        ? c.status !== 'ARCHIVED'
+        : c.status === 'ARCHIVED'
+    )
+    return visibleContracts.map(c => ({
+      id: `${source.toLowerCase()}-${c.id}`,
+      contractId: c.id,
+      opportunityId: c.opportunityId,
+      contractNumber: c.contractId,
+      title: c.title,
+      client: c.client || '',
+      type: c.type,
+      financeType: c.financeType,
+      naicsCode: c.naicsCode,
+      setAside: c.setAside || 'UNRES',
+      value: c.value,
+      popStart: c.popStart,
+      popEnd: c.popEnd,
+      location: c.location,
       description: '',
       relevance: '',
-      bdm: fa.assignedBDM || '',
-      bds: fa.assignedBDS || '',
-      createdAt: fa.awardedDate,
+      bdm: c.bdm || '',
+      bds: c.bds || '',
+      createdAt: c.popStart,
       createdBy: 'System',
     }))
-    return [...awardRows, ...pastPerformances]
-  }, [source, contracts, freshAwards, pastPerformances])
+  }, [source, contracts])
 
   const filtered = useMemo(() => {
     if (!search) return sourceRows
@@ -273,8 +293,8 @@ export default function PastPerformancesPage() {
       <div className="mb-5 flex flex-wrap items-center gap-3">
         <div className="flex gap-1 rounded-xl border border-slate-200 bg-slate-100 p-1">
           {[
-            { key: 'AWARDED' as const, label: 'Awarded' },
             { key: 'ACTIVE' as const, label: 'Active Contracts' },
+            { key: 'COMPLETED' as const, label: 'Completed' },
           ].map(item => (
             <button key={item.key} onClick={() => setSource(item.key)}
               className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-all ${source === item.key ? 'border border-slate-200 bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>

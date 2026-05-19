@@ -7,6 +7,7 @@ interface HierarchyAssignPickerProps {
   onChange: (employeeId: string) => void
   deadline?: string        // ISO date string (popEnd/dueDate) for conflict detection
   label?: string
+  allowedEmployeeIds?: string[]
 }
 
 // Role display helpers
@@ -66,8 +67,23 @@ export default function HierarchyAssignPicker({
   onChange,
   deadline,
   label,
+  allowedEmployeeIds,
 }: HierarchyAssignPickerProps) {
   const { employees, contracts } = useStore()
+  const allowedSet = useMemo(() => allowedEmployeeIds ? new Set(allowedEmployeeIds) : null, [allowedEmployeeIds])
+  const visibleSet = useMemo(() => {
+    if (!allowedSet) return null
+    const ids = new Set<string>()
+    const byId = new Map(employees.map(employee => [employee.id, employee]))
+    for (const allowedId of allowedSet) {
+      let current = byId.get(allowedId)
+      while (current) {
+        ids.add(current.id)
+        current = current.managerId ? byId.get(current.managerId) : undefined
+      }
+    }
+    return ids
+  }, [allowedSet, employees])
 
   const selectionChain = useMemo(
     () => deriveSelectionChain(employees, value),
@@ -102,11 +118,17 @@ export default function HierarchyAssignPicker({
   // Get the list of employees for each column
   function getColumnItems(colIdx: number): { emp: Employee; enabled: boolean }[] {
     const role = COLUMN_DEFS[colIdx].role
-    const allAtTier = employees.filter(e => e.role === role)
+    const allAtTier = employees.filter(e => e.role === role && (!visibleSet || visibleSet.has(e.id)))
+    const canPick = (employee: Employee) => !allowedSet || allowedSet.has(employee.id)
+    const hasAllowedReport = (employee: Employee): boolean => {
+      if (!allowedSet) return true
+      const directReports = employees.filter(candidate => candidate.managerId === employee.id)
+      return directReports.some(candidate => allowedSet.has(candidate.id) || hasAllowedReport(candidate))
+    }
 
     if (colIdx === 0) {
-      // Managers: always show all, always enabled
-      return allAtTier.map(emp => ({ emp, enabled: true }))
+      // Managers may be navigation-only when assignment is limited to team leads/associates.
+      return allAtTier.map(emp => ({ emp, enabled: canPick(emp) || hasAllowedReport(emp) }))
     }
 
     // For subsequent columns, filter by parent selection
@@ -119,7 +141,7 @@ export default function HierarchyAssignPicker({
     // Only show direct reports of the selected parent
     return allAtTier
       .filter(emp => emp.managerId === parentSelId)
-      .map(emp => ({ emp, enabled: true }))
+      .map(emp => ({ emp, enabled: canPick(emp) || hasAllowedReport(emp) }))
   }
 
   const selectedEmp = value ? employees.find(e => e.id === value) : undefined

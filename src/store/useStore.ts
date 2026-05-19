@@ -29,6 +29,7 @@ import {
   upsertLockedSubcontractor,
   upsertGovernmentWarning,
   upsertFreshAward,
+  deleteFreshAwardRecord,
   upsertPastPerformance,
   upsertNonSubReport,
   upsertDeletionRequest,
@@ -818,20 +819,14 @@ export const useStore = create<AppState>()(
           opportunityId: fa.opportunityId,
         }
 
-        // Write contract + updated award in a single set() call to keep state consistent
+        // Move the award into Contract Admin and remove it from Fresh Awards.
         set(s => ({
           contracts: [contract, ...s.contracts],
-          freshAwards: s.freshAwards.map(f =>
-            f.id === id
-              ? { ...f, status: 'MOVED_TO_ACTIVE', contractId: newContractId, movedAt: new Date().toISOString() }
-              : f
-          ),
+          freshAwards: s.freshAwards.filter(f => f.id !== id),
         }))
 
-        // Persist both to Supabase
         upsertContract(contract)
-        const movedFa = get().freshAwards.find(f => f.id === id)
-        if (movedFa) upsertFreshAward(movedFa)
+        deleteFreshAwardRecord(id)
 
         get().addNotification({
           type: 'CONTRACT_CREATED',
@@ -1007,12 +1002,16 @@ export const useStore = create<AppState>()(
         const req = get().deletionRequests.find(r => r.id === id)
         if (req) upsertDeletionRequest(req)
         if (req && action === 'APPROVED') {
+          const deletedSubmissionId = get().opportunities.find(o => o.id === req.opportunityId)?.solicitationId
           set(s => ({
             opportunities: s.opportunities.map(o =>
               o.id === req.opportunityId
                 ? { ...o, isDeleted: true, deletionRequested: false }
                 : o
-            )
+            ),
+            bdSubmissions: deletedSubmissionId
+              ? s.bdSubmissions.filter(b => b.solicitationId !== deletedSubmissionId)
+              : s.bdSubmissions,
           }))
           const deletedOpp = get().opportunities.find(o => o.id === req.opportunityId)
           if (deletedOpp) upsertOpportunity(deletedOpp)

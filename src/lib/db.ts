@@ -780,6 +780,16 @@ export async function upsertFreshAward(fa: FreshAward): Promise<void> {
   }
 }
 
+export async function deleteFreshAwardRecord(id: string): Promise<void> {
+  if (!isSupabaseConnected || !supabase) return
+  try {
+    const { error } = await supabase.from('fresh_awards').delete().eq('id', id)
+    if (error) console.error('[db] deleteFreshAwardRecord error', error)
+  } catch (err) {
+    console.error('[db] deleteFreshAwardRecord failed', err)
+  }
+}
+
 export async function upsertPastPerformance(pp: PastPerformance): Promise<void> {
   if (!isSupabaseConnected || !supabase) return
   try {

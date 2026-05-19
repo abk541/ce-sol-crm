@@ -1,4 +1,4 @@
-import type { Employee } from '../types'
+import type { Employee, User } from '../types'
 
 export const ROLE_DISPLAY_LABELS: Record<string, string> = {
   BD_MANAGER: 'Manager',
@@ -45,9 +45,43 @@ export function getAssignmentChain(employees: Employee[], assignedTo?: string): 
 }
 
 export function isAssignedToAssociate(employees: Employee[], assignedTo?: string): boolean {
-  return getAssignmentChain(employees, assignedTo).associate?.role === 'ASSOCIATE'
+  return !!getAssignmentChain(employees, assignedTo).assigned
 }
 
 export function employeeName(employees: Employee[], employeeId?: string): string {
   return employeeId ? employees.find(employee => employee.id === employeeId)?.name ?? '' : ''
+}
+
+export function findEmployeeForUser(employees: Employee[], user?: User | null): Employee | undefined {
+  if (!user) return undefined
+  const email = user.email?.toLowerCase()
+  return employees.find(employee =>
+    employee.email.toLowerCase() === email ||
+    employee.name.toLowerCase() === user.name.toLowerCase(),
+  )
+}
+
+export function assignableEmployeesForUser(employees: Employee[], user?: User | null): Employee[] {
+  if (!user) return []
+  if (user.role === 'ASSOCIATE') return []
+
+  const currentEmployee = findEmployeeForUser(employees, user)
+  if (!currentEmployee) {
+    if (user.role === 'BD_MANAGER') return employees.filter(employee => employee.role !== 'BD_MANAGER')
+    if (user.role === 'TEAM_LEAD') return employees.filter(employee => employee.role === 'ASSOCIATE')
+    return []
+  }
+
+  if (currentEmployee.role === 'BD_MANAGER') {
+    const teamLeads = employees.filter(employee => employee.managerId === currentEmployee.id && employee.role === 'TEAM_LEAD')
+    const teamLeadIds = new Set(teamLeads.map(employee => employee.id))
+    const associates = employees.filter(employee => employee.role === 'ASSOCIATE' && employee.managerId && teamLeadIds.has(employee.managerId))
+    return [...teamLeads, ...associates]
+  }
+
+  if (currentEmployee.role === 'TEAM_LEAD') {
+    return employees.filter(employee => employee.managerId === currentEmployee.id && employee.role === 'ASSOCIATE')
+  }
+
+  return []
 }

@@ -31,6 +31,7 @@ vi.mock('../lib/db', () => ({
   upsertLockedSubcontractor: vi.fn().mockResolvedValue(null),
   upsertGovernmentWarning: vi.fn().mockResolvedValue(null),
   upsertFreshAward: vi.fn().mockResolvedValue(null),
+  deleteFreshAwardRecord: vi.fn().mockResolvedValue(null),
   upsertPastPerformance: vi.fn().mockResolvedValue(null),
   upsertNonSubReport: vi.fn().mockResolvedValue(null),
   upsertDeletionRequest: vi.fn().mockResolvedValue(null),
@@ -385,23 +386,21 @@ describe('4 · FreshAward → Active Contract (moveFreshAwardToActive)', () => {
     expect(useStore.getState().contracts[0].status).toBe('KICK_OFF')
   })
 
-  it('FreshAward status becomes MOVED_TO_ACTIVE', () => {
+  it('removes the FreshAward from the active Fresh Awards list', () => {
     useStore.setState({ freshAwards: [FA_BASE], contracts: [] })
 
     useStore.getState().moveFreshAwardToActive('fa1')
 
-    const award = useStore.getState().freshAwards.find(f => f.id === 'fa1')
-    expect(award?.status).toBe('MOVED_TO_ACTIVE')
+    expect(useStore.getState().freshAwards.some(f => f.id === 'fa1')).toBe(false)
   })
 
-  it('links contractId back on the FreshAward', () => {
+  it('keeps the created contract linked to the original opportunity', () => {
     useStore.setState({ freshAwards: [FA_BASE], contracts: [] })
 
     useStore.getState().moveFreshAwardToActive('fa1')
 
-    const award = useStore.getState().freshAwards.find(f => f.id === 'fa1')
     const contract = useStore.getState().contracts[0]
-    expect(award?.contractId).toBe(contract.id)
+    expect(contract.opportunityId).toBe('opp1')
   })
 })
 
@@ -627,8 +626,7 @@ describe('9 · Full end-to-end contract lifecycle', () => {
 
     // Step 7: Move FreshAward → Active Contract
     useStore.getState().moveFreshAwardToActive(award!.id)
-    const movedAward = useStore.getState().freshAwards.find(fa => fa.id === award!.id)
-    expect(movedAward?.status).toBe('MOVED_TO_ACTIVE')
+    expect(useStore.getState().freshAwards.some(fa => fa.id === award!.id)).toBe(false)
     const contract = useStore.getState().contracts[0]
     expect(contract.status).toBe('KICK_OFF')
 

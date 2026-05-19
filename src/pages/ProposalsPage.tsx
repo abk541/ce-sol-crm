@@ -5,19 +5,20 @@ import { useStore } from '../store/useStore'
 import type { Opportunity } from '../types'
 import toast from 'react-hot-toast'
 import HierarchyAssignPicker from '../components/shared/HierarchyAssignPicker'
-import { getAssignmentChain } from '../lib/team'
+import { assignableEmployeesForUser, getAssignmentChain } from '../lib/team'
 
 const ASSIGNABLE_STATUSES = ['ACTIVE', 'NEW_ASSIGNMENT', 'DISCUSSION'] as const
 
 function AssignModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) {
-  const { assignOpportunityToEmployee, employees } = useStore()
+  const { assignOpportunityToEmployee, employees, currentUser } = useStore()
   const [selectedEmpId, setSelectedEmpId] = useState<string | undefined>(opp.assignedTo)
+  const assignable = useMemo(() => assignableEmployeesForUser(employees, currentUser), [employees, currentUser])
 
   const handleAssign = () => {
-    if (!selectedEmpId) { toast.error('Please select an associate'); return }
+    if (!selectedEmpId) { toast.error('Please select an assignee'); return }
     const emp = employees.find(e => e.id === selectedEmpId)
-    if (emp?.role !== 'ASSOCIATE') {
-      toast.error('Opportunities must be assigned to an associate.')
+    if (!emp || !assignable.some(item => item.id === emp.id)) {
+      toast.error('You can only assign inside your team.')
       return
     }
     assignOpportunityToEmployee(opp.id, selectedEmpId)
@@ -46,10 +47,11 @@ function AssignModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }
 
         <div className="flex-1 overflow-y-auto px-6 py-5">
           <HierarchyAssignPicker
-            label="Select Associate"
+            label="Select Assignee"
             value={selectedEmpId}
             onChange={setSelectedEmpId}
             deadline={opp.dueDate}
+            allowedEmployeeIds={assignable.map(emp => emp.id)}
           />
         </div>
 
@@ -66,19 +68,31 @@ function AssignModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }
 }
 
 export default function ProposalsPage() {
-  const { opportunities, employees } = useStore()
+  const { opportunities, employees, currentUser } = useStore()
   const [assignTarget, setAssignTarget] = useState<Opportunity | null>(null)
+  const assignable = useMemo(() => assignableEmployeesForUser(employees, currentUser), [employees, currentUser])
+  const canAssign = currentUser?.role !== 'ASSOCIATE'
 
   const rows = useMemo(() =>
     opportunities
       .filter(o =>
         !o.isDeleted &&
         ASSIGNABLE_STATUSES.includes(o.status as any) &&
-        getAssignmentChain(employees, o.assignedTo).associate == null
+        getAssignmentChain(employees, o.assignedTo).assigned == null
       )
       .sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime()),
     [opportunities, employees]
   )
+
+  if (!canAssign) {
+    return (
+      <div className="p-6 page-enter">
+        <div className="glass rounded-2xl p-8 text-center text-sm text-slate-400">
+          Assign Opportunities is only available to managers and team leads.
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="p-6 page-enter">
@@ -86,7 +100,7 @@ export default function ProposalsPage() {
         <div>
           <p className="mb-1 text-[10px] font-bold tracking-[0.2em] text-slate-400">CES - BUSINESS DEV</p>
           <h1 className="text-2xl font-black text-slate-900">Assign Opportunities</h1>
-          <p className="mt-0.5 text-sm text-slate-500">{rows.length} opportunities waiting for associate assignment</p>
+          <p className="mt-0.5 text-sm text-slate-500">{rows.length} captured opportunities waiting for assignment</p>
         </div>
       </div>
 
@@ -130,7 +144,7 @@ export default function ProposalsPage() {
                   </td>
                   <td className="max-w-[150px] text-xs text-slate-500"><p className="truncate">{o.location}</p></td>
                   <td>
-                    <button onClick={() => setAssignTarget(o)} className="btn-secondary gap-1 px-2.5 py-1 text-xs">
+                    <button onClick={() => setAssignTarget(o)} disabled={assignable.length === 0} className="btn-secondary gap-1 px-2.5 py-1 text-xs disabled:opacity-40">
                       <UserPlus size={10} /> Assign
                     </button>
                   </td>
