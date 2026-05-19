@@ -45,7 +45,7 @@ export function getAssignmentChain(employees: Employee[], assignedTo?: string): 
 }
 
 export function isAssignedToAssociate(employees: Employee[], assignedTo?: string): boolean {
-  return !!getAssignmentChain(employees, assignedTo).assigned
+  return !!getAssignmentChain(employees, assignedTo).associate
 }
 
 export function employeeName(employees: Employee[], employeeId?: string): string {

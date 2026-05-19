@@ -5,7 +5,7 @@ import { useStore } from '../store/useStore'
 import type { Opportunity } from '../types'
 import toast from 'react-hot-toast'
 import HierarchyAssignPicker from '../components/shared/HierarchyAssignPicker'
-import { assignableEmployeesForUser, getAssignmentChain } from '../lib/team'
+import { assignableEmployeesForUser, isAssignedToAssociate } from '../lib/team'
 
 const ASSIGNABLE_STATUSES = ['ACTIVE', 'NEW_ASSIGNMENT', 'DISCUSSION'] as const
 
@@ -78,7 +78,7 @@ export default function ProposalsPage() {
       .filter(o =>
         !o.isDeleted &&
         ASSIGNABLE_STATUSES.includes(o.status as any) &&
-        getAssignmentChain(employees, o.assignedTo).assigned == null
+        !isAssignedToAssociate(employees, o.assignedTo)
       )
       .sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime()),
     [opportunities, employees]

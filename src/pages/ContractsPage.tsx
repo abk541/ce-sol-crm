@@ -5,7 +5,7 @@ import {
   AlertTriangle, ListChecks, ChevronRight, X, Save, Plus,
   ArrowRight, CheckCircle2, Info, DollarSign, MapPin, Calendar,
   Phone, Mail, Clock, Shield, FileText, Trash2, AlertCircle,
-  ChevronUp, ChevronDown, ChevronsUpDown, Pencil,
+  ChevronUp, ChevronDown, ChevronsUpDown, Pencil, Receipt, Download,
 } from 'lucide-react'
 import PeriodFilter, { type Period, filterByPeriod } from '../components/shared/PeriodFilter'
 import toast from 'react-hot-toast'
@@ -51,7 +51,7 @@ const SEV_COLORS = {
 }
 
 // ── Tab definitions ─────────────────────────────────────────────────────
-type CTab = 'ALL' | 'ACTIVE_GROUP' | 'KICK_OFF' | 'LOCKING_SUB' | 'PERFORMING' | 'PENDING_PAYMENT' | 'ARCHIVED' | 'TERMINATED' | 'FRESH_AWARDS'
+type CTab = 'ALL' | 'ACTIVE_GROUP' | 'KICK_OFF' | 'LOCKING_SUB' | 'PERFORMING' | 'PENDING_PAYMENT' | 'ARCHIVED' | 'TERMINATED' | 'FRESH_AWARDS' | 'FINANCE'
 
 const C_TABS: { key: CTab; label: string; statuses: ContractStatus[] }[] = [
   { key: 'ALL',           label: 'All',            statuses: ['KICK_OFF','LOCKING_SUB','ACTIVE','ON_GOING','PERFORMING','PENDING_PAYMENT','ARCHIVED','TERMINATED','CANCELED'] },
@@ -63,6 +63,7 @@ const C_TABS: { key: CTab; label: string; statuses: ContractStatus[] }[] = [
   { key: 'ARCHIVED',      label: 'Archived',       statuses: ['ARCHIVED'] },
   { key: 'TERMINATED',    label: 'Terminated',     statuses: ['TERMINATED','CANCELED'] },
   { key: 'FRESH_AWARDS',  label: 'Fresh Awards',   statuses: [] },
+  { key: 'FINANCE',       label: 'Finance Projections', statuses: [] },
 ]
 
 const POC_ROLE_LABELS = { KO: 'Contracting Officer', COR: 'COR', END_USER: 'End User' }
@@ -83,6 +84,106 @@ function toDatetimeLocal(value: string) {
   if (!Number.isFinite(d.getTime())) return ''
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+function isActiveContract(c: Contract) {
+  return !['ARCHIVED', 'TERMINATED', 'CANCELED'].includes(c.status)
+}
+
+function subkQuoteSummary(contract: Contract) {
+  const quotes = (contract.lockedSubcontractors || [])
+    .flatMap(sub => (sub.quotes || []).map(quote => ({ quote, company: sub.companyName })))
+
+  if (quotes.length === 0) return 'No locked subk quotes yet'
+  return quotes
+    .map(item => `${item.company}: ${item.quote}`)
+    .join(', ')
+}
+
+function subkMonthlyBillingRows(contract: Contract) {
+  const subs = contract.lockedSubcontractors || []
+  if (subs.length === 0) return ['No locked subk billing rows yet']
+  return subs.map(sub => `${sub.companyName}: billing amount to be entered on invoice`)
+}
+
+function invoiceAmountFor(contract: Contract) {
+  if (contract.type === 'RECURRING') return contract.monthlyPayment || 0
+  return contract.value || 0
+}
+
+function invoiceCadenceFor(contract: Contract) {
+  return contract.type === 'RECURRING' ? 'Monthly recurring invoice' : 'One-time job invoice'
+}
+
+function escapeHtml(value: string) {
+  return value.replace(/[&<>"']/g, char => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#039;',
+  }[char] || char))
+}
+
+function generateInvoiceFile(contract: Contract) {
+  const amount = invoiceAmountFor(contract)
+  const subkRows = contract.type === 'RECURRING'
+    ? subkMonthlyBillingRows(contract).map(row => `<li>${escapeHtml(row)}</li>`).join('')
+    : `<li>${escapeHtml(subkQuoteSummary(contract))}</li>`
+  const html = `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Invoice - ${escapeHtml(contract.contractId)}</title>
+  <style>
+    body { font-family: Inter, Arial, sans-serif; color: #172033; padding: 32px; }
+    .header { display: flex; justify-content: space-between; gap: 24px; border-bottom: 2px solid #172033; padding-bottom: 18px; }
+    h1 { margin: 0; font-size: 26px; }
+    .muted { color: #64748b; font-size: 12px; }
+    .total { margin: 28px 0; padding: 18px; border: 1px solid #d7be7a; background: #fbf6e7; border-radius: 12px; }
+    .total strong { display: block; font-size: 28px; color: #0f766e; margin-top: 4px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 18px; }
+    th, td { text-align: left; border-bottom: 1px solid #e2e8f0; padding: 10px; font-size: 13px; }
+    th { color: #64748b; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <h1>Invoice</h1>
+      <div class="muted">${escapeHtml(invoiceCadenceFor(contract))}</div>
+    </div>
+    <div>
+      <div><strong>${escapeHtml(contract.contractId)}</strong></div>
+      <div class="muted">${new Date().toLocaleDateString('en-US')}</div>
+    </div>
+  </div>
+  <div class="total">
+    Invoice Amount
+    <strong>${formatCurrency(amount)}</strong>
+    <div class="muted">${contract.type === 'RECURRING' ? 'Recurring contracts invoice by month.' : 'OTJ contracts invoice the total contract value.'}</div>
+  </div>
+  <table>
+    <tr><th>Contract</th><td>${escapeHtml(contract.title)}</td></tr>
+    <tr><th>Client</th><td>${escapeHtml(contract.client || '-')}</td></tr>
+    <tr><th>Type</th><td>${escapeHtml(contract.type)}</td></tr>
+    <tr><th>Total Contract Value</th><td>${formatCurrency(contract.value || 0)}</td></tr>
+    ${contract.type === 'RECURRING' ? `<tr><th>Monthly Payment (Gov)</th><td>${formatCurrency(contract.monthlyPayment || 0)}</td></tr>` : ''}
+  </table>
+  <h2 style="font-size:16px;margin-top:28px;">Subk Reference</h2>
+  <ul>${subkRows}</ul>
+</body>
+</html>`
+
+  const blob = new Blob([html], { type: 'text/html;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `invoice-${contract.contractId || contract.id}.html`
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(url)
 }
 
 function createAttachment(name: string, attachedAt: string, uploadedBy: string): FileAttachment {
@@ -205,6 +306,16 @@ function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClo
   const sourceOpportunity = contract.opportunityId ? opportunities.find(o => o.id === contract.opportunityId) : undefined
   const potentialQuoteSourcings = (sourceOpportunity?.subcontractors || []).filter(s => !!s.quoteFile)
   const lockedQuoteFiles = new Set((contract.lockedSubcontractors || []).flatMap(s => s.quotes || []))
+  const financeRows = contract.type === 'RECURRING'
+    ? [
+        { label: 'Total Contract Value (Gov)', value: formatCurrency(contract.value || 0) },
+        { label: 'Monthly Payment (Gov)', value: formatCurrency(contract.monthlyPayment || 0) },
+        ...subkMonthlyBillingRows(contract).map(row => ({ label: 'Monthly Billing (Subk)', value: row })),
+      ]
+    : [
+        { label: 'Total Contract Value (Gov)', value: formatCurrency(contract.value || 0) },
+        { label: "Quote (Subk's)", value: subkQuoteSummary(contract) },
+      ]
 
   return (
     <div className="fixed inset-0 z-[51] flex items-center justify-center p-4 sm:p-6" style={{ pointerEvents: 'none' }}>
@@ -288,6 +399,27 @@ function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClo
                   <p className="text-sm font-semibold text-slate-700">{formatCurrency(contract.monthlyPayment)}</p>
                 </div>
               )}
+            </div>
+
+            <div className="rounded-xl border border-slate-200 bg-white p-3">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Finance Projection</p>
+                <button
+                  type="button"
+                  onClick={() => generateInvoiceFile(contract)}
+                  className="btn-secondary gap-1 px-2.5 py-1 text-xs"
+                >
+                  <Receipt size={12} /> Generate Invoice
+                </button>
+              </div>
+              <div className="space-y-1.5">
+                {financeRows.map((row, index) => (
+                  <div key={`${row.label}-${index}`} className="grid gap-2 rounded-lg bg-slate-50 px-3 py-2 text-xs sm:grid-cols-[180px_1fr]">
+                    <span className="font-semibold text-slate-500">{row.label}</span>
+                    <span className="font-semibold text-slate-800">{row.value}</span>
+                  </div>
+                ))}
+              </div>
             </div>
 
             {/* Details */}
@@ -1113,6 +1245,120 @@ function FreshAwardsTab() {
   )
 }
 
+function FinanceProjectionsTab({ contracts }: { contracts: Contract[] }) {
+  const activeContracts = contracts.filter(isActiveContract)
+  const otjContracts = activeContracts.filter(c => c.type === 'OTJ')
+  const recurringContracts = activeContracts.filter(c => c.type === 'RECURRING')
+  const otjTotal = otjContracts.reduce((sum, c) => sum + (c.value || 0), 0)
+  const recurringMonthly = recurringContracts.reduce((sum, c) => sum + (c.monthlyPayment || 0), 0)
+  const projectedInvoiceTotal = activeContracts.reduce((sum, c) => sum + invoiceAmountFor(c), 0)
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">Contract Admin</p>
+            <h2 className="mt-1 flex items-center gap-2 text-lg font-black text-slate-900">
+              <DollarSign size={18} className="text-emerald-500" /> Finance Projections
+            </h2>
+            <p className="mt-0.5 text-sm text-slate-500">
+              Active-contract billing view. OTJ invoices use total contract value; recurring invoices use monthly value.
+            </p>
+          </div>
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-3">
+          {[
+            { label: 'OTJ Total Contract Value', value: formatCurrency(otjTotal), sub: `${otjContracts.length} OTJ contracts` },
+            { label: 'Recurring Monthly Gov Billing', value: formatCurrency(recurringMonthly), sub: `${recurringContracts.length} recurring contracts` },
+            { label: 'Next Invoice Batch', value: formatCurrency(projectedInvoiceTotal), sub: 'OTJ total + recurring monthly' },
+          ].map(card => (
+            <div key={card.label} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <p className="text-xl font-black text-slate-900">{card.value}</p>
+              <p className="mt-1 text-xs font-bold text-slate-600">{card.label}</p>
+              <p className="mt-0.5 text-[11px] text-slate-400">{card.sub}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <div className="overflow-x-auto">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Contract</th>
+                <th>Type</th>
+                <th>Government Billing</th>
+                <th>Subk Row</th>
+                <th>Invoice Return</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {activeContracts.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="py-12 text-center text-sm text-slate-400">
+                    No active contracts available for finance projections.
+                  </td>
+                </tr>
+              )}
+              {activeContracts.map(c => {
+                const isRecurring = c.type === 'RECURRING'
+                const subkRows = isRecurring ? subkMonthlyBillingRows(c) : [subkQuoteSummary(c)]
+                return (
+                  <tr key={c.id}>
+                    <td className="max-w-[260px]">
+                      <p className="truncate text-xs font-bold text-slate-800" title={c.title}>{c.title}</p>
+                      <p className="text-[10px] font-mono text-slate-400">{c.contractId}</p>
+                    </td>
+                    <td>
+                      <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-600">
+                        {isRecurring ? 'Recurring' : c.type}
+                      </span>
+                    </td>
+                    <td className="text-xs text-slate-700">
+                      {isRecurring ? (
+                        <div>
+                          <p><span className="font-bold">Monthly Payment (Gov):</span> {formatCurrency(c.monthlyPayment || 0)}</p>
+                          <p className="mt-0.5 text-[11px] text-slate-400">Total contract value: {formatCurrency(c.value || 0)}</p>
+                        </div>
+                      ) : (
+                        <p><span className="font-bold">Total Contract Value:</span> {formatCurrency(c.value || 0)}</p>
+                      )}
+                    </td>
+                    <td className="max-w-[360px] text-xs text-slate-600">
+                      {subkRows.map((row, index) => (
+                        <p key={`${c.id}-${index}`} className="truncate" title={row}>
+                          <span className="font-bold">{isRecurring ? 'Monthly Billing (Subk)' : "Quote (Subk's)"}:</span> {row}
+                        </p>
+                      ))}
+                    </td>
+                    <td className="whitespace-nowrap text-xs font-black text-emerald-600">
+                      {formatCurrency(invoiceAmountFor(c))}
+                      <p className="text-[10px] font-semibold text-slate-400">{isRecurring ? 'per month' : 'total value'}</p>
+                    </td>
+                    <td>
+                      <button
+                        type="button"
+                        onClick={() => generateInvoiceFile(c)}
+                        className="btn-primary gap-1 px-2.5 py-1 text-xs"
+                      >
+                        <Download size={11} /> Generate Invoice
+                      </button>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function ContractsPage() {
   const { contracts, employees, freshAwards } = useStore()
   const [tab, setTab] = useState<CTab>('ALL')
@@ -1173,7 +1419,7 @@ export default function ContractsPage() {
   }, [contracts, employees])
 
   const filtered = useMemo(() => {
-    if (tab === 'FRESH_AWARDS') return []
+    if (tab === 'FRESH_AWARDS' || tab === 'FINANCE') return []
     let list = contracts.filter(c => tabDef.statuses.includes(c.status))
     if (search) {
       const q = search.toLowerCase()
@@ -1242,7 +1488,9 @@ export default function ContractsPage() {
           {C_TABS.map(t => {
             const cnt = t.key === 'FRESH_AWARDS'
               ? freshAwards.filter(fa => fa.status !== 'MOVED_TO_ACTIVE').length
-              : contracts.filter(c => t.statuses.includes(c.status)).length
+              : t.key === 'FINANCE'
+                ? contracts.filter(isActiveContract).length
+                : contracts.filter(c => t.statuses.includes(c.status)).length
             return (
               <button key={t.key} onClick={() => setTab(t.key)}
                 className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1 ${
@@ -1258,19 +1506,22 @@ export default function ContractsPage() {
             )
           })}
         </div>
-        <div className="flex items-center gap-2">
-          <div className="relative">
-            <Search size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input value={search} onChange={e => setSearch(e.target.value)}
-              className="input-field pl-9 text-xs py-2 w-56" placeholder="Search contracts…" />
+        {tab !== 'FRESH_AWARDS' && tab !== 'FINANCE' && (
+          <div className="flex items-center gap-2">
+            <div className="relative">
+              <Search size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input value={search} onChange={e => setSearch(e.target.value)}
+                className="input-field pl-9 text-xs py-2 w-56" placeholder="Search contracts…" />
+            </div>
+            <PeriodFilter value={period} onChange={setPeriod} />
           </div>
-          <PeriodFilter value={period} onChange={setPeriod} />
-        </div>
+        )}
       </div>
 
       {tab === 'FRESH_AWARDS' && <FreshAwardsTab />}
+      {tab === 'FINANCE' && <FinanceProjectionsTab contracts={contracts} />}
 
-      {tab !== 'FRESH_AWARDS' && <div className="mb-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      {tab !== 'FRESH_AWARDS' && tab !== 'FINANCE' && <div className="mb-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="mb-3 flex items-center justify-between gap-3">
           <div>
             <p className="text-xs font-bold text-slate-700">Column filters</p>
@@ -1304,7 +1555,7 @@ export default function ContractsPage() {
       </div>}
 
       {/* Table */}
-      {tab !== 'FRESH_AWARDS' && <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-visible">
+      {tab !== 'FRESH_AWARDS' && tab !== 'FINANCE' && <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-visible">
         <div className="overflow-x-auto overflow-y-visible">
           <table className="data-table">
             <thead>
