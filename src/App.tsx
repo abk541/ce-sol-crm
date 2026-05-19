@@ -17,6 +17,7 @@ import AdminPage from './pages/AdminPage'
 import TrackerPage from './pages/TrackerPage'
 import NonSubmissionsPage from './pages/NonSubmissionsPage'
 import PastPerformancesPage from './pages/PastPerformancesPage'
+import FreshAwardPage from './pages/FreshAwardPage'
 import SubkDatabasePage from './pages/SubkDatabasePage'
 import PlaceholderPage from './pages/PlaceholderPage'
 
@@ -83,7 +84,7 @@ export default function App() {
           <Route path="tracker"             element={<TrackerPage />} />
           <Route path="non-submissions"   element={<NonSubmissionsPage />} />
           <Route path="past-performances" element={<PastPerformancesPage />} />
-          <Route path="fresh-award"       element={<Navigate to="/contracts" replace />} />
+          <Route path="fresh-award"       element={<FreshAwardPage />} />
           <Route path="subk-database"     element={<SubkDatabasePage />} />
           <Route path="notifications"     element={<NotificationsPage />} />
           <Route path="database"          element={<PlaceholderPage title="INT-Database" />} />

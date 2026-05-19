@@ -13,6 +13,7 @@ const ROUTE_LABELS: Record<string, string> = {
   '/tracker':          'Deletion Requests',
   '/non-submissions':  'Non-Submissions Report',
   '/contracts':        'Contract Admin',
+  '/fresh-award':      'Fresh Awards',
   '/notifications':    'Notifications',
   '/database':         'INT-Database',
   '/admin':            'Admin',

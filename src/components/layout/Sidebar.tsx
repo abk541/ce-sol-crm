@@ -3,7 +3,7 @@ import { NavLink, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard, GitBranch, FileText, BarChart3,
   FileCheck2, Bell, Users, Settings, ChevronLeft,
-  ChevronRight, Database, TrendingUp,
+  ChevronRight, Database, TrendingUp, Trophy,
   LogOut, ChevronDown, ClipboardList, HeartPulse,
   ListChecks, History, Building2,
 } from 'lucide-react'
@@ -27,6 +27,7 @@ const NAV = [
       { to: '/proposals',         icon: FileText,      label: 'Assign Opportunities' },
       { to: '/bd-tracker',        icon: TrendingUp,    label: 'BD Tracker' },
       { to: '/contracts',         icon: FileCheck2,    label: 'Contract Admin' },
+      { to: '/fresh-award',       icon: Trophy,        label: 'Fresh Awards' },
       { to: '/tracker',           icon: ListChecks,    label: 'Deletion Requests' },
       { to: '/non-submissions',   icon: ClipboardList, label: 'Non-Submissions Report' },
       { to: '/past-performances', icon: History,       label: 'Past Performances' },

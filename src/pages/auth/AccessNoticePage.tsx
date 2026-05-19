@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { AlertTriangle, ArrowRight, CheckSquare, LockKeyhole, Mail, ShieldAlert } from 'lucide-react'
+import { AlertTriangle, ArrowRight, LockKeyhole, Mail, ShieldAlert } from 'lucide-react'
 import CompanyLogo from '../../components/shared/CompanyLogo'
 import { useStore } from '../../store/useStore'
 
@@ -134,10 +134,7 @@ export default function AccessNoticePage() {
             </label>
 
             <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex items-center gap-2 text-xs font-semibold text-stone-400">
-                <CheckSquare size={14} className="text-[#D7BE7A]" />
-                Acceptance is required before sign-in.
-              </div>
+              <div />
               <button
                 type="button"
                 onClick={handleAccept}

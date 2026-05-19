@@ -51,7 +51,7 @@ const SEV_COLORS = {
 }
 
 // ── Tab definitions ─────────────────────────────────────────────────────
-type CTab = 'ALL' | 'ACTIVE_GROUP' | 'KICK_OFF' | 'LOCKING_SUB' | 'PERFORMING' | 'PENDING_PAYMENT' | 'ARCHIVED' | 'TERMINATED'
+type CTab = 'ALL' | 'ACTIVE_GROUP' | 'KICK_OFF' | 'LOCKING_SUB' | 'PERFORMING' | 'PENDING_PAYMENT' | 'ARCHIVED' | 'TERMINATED' | 'FRESH_AWARDS'
 
 const C_TABS: { key: CTab; label: string; statuses: ContractStatus[] }[] = [
   { key: 'ALL',           label: 'All',            statuses: ['KICK_OFF','LOCKING_SUB','ACTIVE','ON_GOING','PERFORMING','PENDING_PAYMENT','ARCHIVED','TERMINATED','CANCELED'] },
@@ -62,6 +62,7 @@ const C_TABS: { key: CTab; label: string; statuses: ContractStatus[] }[] = [
   { key: 'PENDING_PAYMENT',label:'Pend. Payment',  statuses: ['PENDING_PAYMENT'] },
   { key: 'ARCHIVED',      label: 'Archived',       statuses: ['ARCHIVED'] },
   { key: 'TERMINATED',    label: 'Terminated',     statuses: ['TERMINATED','CANCELED'] },
+  { key: 'FRESH_AWARDS',  label: 'Fresh Awards',   statuses: [] },
 ]
 
 const POC_ROLE_LABELS = { KO: 'Contracting Officer', COR: 'COR', END_USER: 'End User' }
@@ -1113,7 +1114,7 @@ function FreshAwardsTab() {
 }
 
 export default function ContractsPage() {
-  const { contracts, employees } = useStore()
+  const { contracts, employees, freshAwards } = useStore()
   const [tab, setTab] = useState<CTab>('ALL')
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<Contract | null>(null)
@@ -1172,6 +1173,7 @@ export default function ContractsPage() {
   }, [contracts, employees])
 
   const filtered = useMemo(() => {
+    if (tab === 'FRESH_AWARDS') return []
     let list = contracts.filter(c => tabDef.statuses.includes(c.status))
     if (search) {
       const q = search.toLowerCase()
@@ -1238,7 +1240,9 @@ export default function ContractsPage() {
       <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
         <div className="flex gap-1 p-1 bg-slate-100 rounded-xl border border-slate-200 flex-wrap">
           {C_TABS.map(t => {
-            const cnt = contracts.filter(c => t.statuses.includes(c.status)).length
+            const cnt = t.key === 'FRESH_AWARDS'
+              ? freshAwards.filter(fa => fa.status !== 'MOVED_TO_ACTIVE').length
+              : contracts.filter(c => t.statuses.includes(c.status)).length
             return (
               <button key={t.key} onClick={() => setTab(t.key)}
                 className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1 ${
@@ -1264,7 +1268,9 @@ export default function ContractsPage() {
         </div>
       </div>
 
-      <div className="mb-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      {tab === 'FRESH_AWARDS' && <FreshAwardsTab />}
+
+      {tab !== 'FRESH_AWARDS' && <div className="mb-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="mb-3 flex items-center justify-between gap-3">
           <div>
             <p className="text-xs font-bold text-slate-700">Column filters</p>
@@ -1295,10 +1301,10 @@ export default function ContractsPage() {
             </div>
           ))}
         </div>
-      </div>
+      </div>}
 
       {/* Table */}
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-visible">
+      {tab !== 'FRESH_AWARDS' && <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-visible">
         <div className="overflow-x-auto overflow-y-visible">
           <table className="data-table">
             <thead>
@@ -1434,7 +1440,7 @@ export default function ContractsPage() {
             </tbody>
           </table>
         </div>
-      </div>
+      </div>}
 
       {/* Detail modal */}
       <AnimatePresence>
