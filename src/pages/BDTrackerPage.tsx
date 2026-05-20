@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
+import { motion } from 'framer-motion'
 import { Filter, MoreHorizontal, Search, TrendingUp } from 'lucide-react'
 import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import type { BDSubmission } from '../types'
@@ -8,6 +8,7 @@ import toast from 'react-hot-toast'
 import PeriodFilter, { type Period, filterByPeriod } from '../components/shared/PeriodFilter'
 import { getAssignmentChain } from '../lib/team'
 import { formatCurrency } from '../lib/utils'
+import FloatingActionMenu from '../components/shared/FloatingActionMenu'
 
 type BDTab = BDSubmission['status']
 
@@ -327,17 +328,12 @@ export default function BDTrackerPage() {
                       <td className="text-xs text-slate-600">{chain.associate?.name ?? s.supportAgent ?? '-'}</td>
                       <td className="whitespace-nowrap text-xs font-semibold text-emerald-600">{formatCurrency(s.value)}</td>
                       <td className="max-w-[140px] text-xs text-slate-400"><p className="truncate">{s.comment ?? '-'}</p></td>
-                      <td className="relative">
-                        <button onClick={e => { e.stopPropagation(); setMenuOpen(menuOpen === String(s.id) ? null : String(s.id)) }}
-                          className="flex h-7 w-7 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700">
-                          <MoreHorizontal size={14} />
-                        </button>
-                        <AnimatePresence>
-                          {menuOpen === String(s.id) && (
-                            <>
-                              <div className="fixed inset-0 z-20" onClick={() => setMenuOpen(null)} />
-                              <motion.div initial={{ opacity: 0, scale: 0.95, y: -4 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: -4 }}
-                                className="absolute right-0 top-8 z-30 w-44 rounded-xl border border-slate-200 bg-white py-1 shadow-xl">
+                      <td onClick={e => e.stopPropagation()}>
+                        <FloatingActionMenu
+                          open={menuOpen === String(s.id)}
+                          onOpenChange={open => setMenuOpen(open ? String(s.id) : null)}
+                          trigger={<MoreHorizontal size={14} />}
+                        >
                                 <p className="px-3 py-1 text-[9px] font-bold uppercase tracking-wider text-slate-400">Move to</p>
                                 {BD_TABS.filter(t => t.key !== s.status).map(t => {
                                   const itemMeta = STATUS_META[t.key]
@@ -353,10 +349,7 @@ export default function BDTrackerPage() {
                                     </button>
                                   )
                                 })}
-                              </motion.div>
-                            </>
-                          )}
-                        </AnimatePresence>
+                        </FloatingActionMenu>
                       </td>
                     </motion.tr>
                   )

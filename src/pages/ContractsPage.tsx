@@ -15,6 +15,14 @@ import type {
   GovernmentWarning, GovWarningType, FreshAward, FileAttachment, Comment,
 } from '../types'
 import { formatCurrency } from '../lib/utils'
+import FloatingActionMenu from '../components/shared/FloatingActionMenu'
+import {
+  canGenerateContractInvoice,
+  generateContractInvoicePdf,
+  invoiceAmountForContract,
+  subkMonthlyBillingRowsForContract,
+  subkQuoteSummaryForContract,
+} from '../lib/invoicePdf'
 
 // ── Status config ───────────────────────────────────────────────────────
 const STATUS_META: Record<ContractStatus, { label: string; color: string; bg: string; border: string }> = {
@@ -51,7 +59,7 @@ const SEV_COLORS = {
 }
 
 // ── Tab definitions ─────────────────────────────────────────────────────
-type CTab = 'ALL' | 'ACTIVE_GROUP' | 'KICK_OFF' | 'LOCKING_SUB' | 'PERFORMING' | 'PENDING_PAYMENT' | 'ARCHIVED' | 'TERMINATED'
+type CTab = 'ALL' | 'ACTIVE_GROUP' | 'KICK_OFF' | 'LOCKING_SUB' | 'PERFORMING' | 'PENDING_PAYMENT' | 'ARCHIVED' | 'TERMINATED' | 'FINANCE'
 
 const C_TABS: { key: CTab; label: string; statuses: ContractStatus[] }[] = [
   { key: 'ALL',           label: 'All',            statuses: ['KICK_OFF','LOCKING_SUB','ACTIVE','ON_GOING','PERFORMING','PENDING_PAYMENT','ARCHIVED','TERMINATED','CANCELED'] },
@@ -62,6 +70,7 @@ const C_TABS: { key: CTab; label: string; statuses: ContractStatus[] }[] = [
   { key: 'PENDING_PAYMENT',label:'Pend. Payment',  statuses: ['PENDING_PAYMENT'] },
   { key: 'ARCHIVED',      label: 'Archived',       statuses: ['ARCHIVED'] },
   { key: 'TERMINATED',    label: 'Terminated',     statuses: ['TERMINATED','CANCELED'] },
+  { key: 'FINANCE',       label: 'Finance Projections', statuses: [] },
 ]
 
 const POC_ROLE_LABELS = { KO: 'Contracting Officer', COR: 'COR', END_USER: 'End User' }
@@ -89,99 +98,27 @@ function isActiveContract(c: Contract) {
 }
 
 function subkQuoteSummary(contract: Contract) {
-  const quotes = (contract.lockedSubcontractors || [])
-    .flatMap(sub => (sub.quotes || []).map(quote => ({ quote, company: sub.companyName })))
-
-  if (quotes.length === 0) return 'No locked subk quotes yet'
-  return quotes
-    .map(item => `${item.company}: ${item.quote}`)
-    .join(', ')
+  return subkQuoteSummaryForContract(contract)
 }
 
 function subkMonthlyBillingRows(contract: Contract) {
-  const subs = contract.lockedSubcontractors || []
-  if (subs.length === 0) return ['No locked subk billing rows yet']
-  return subs.map(sub => `${sub.companyName}: billing amount to be entered on invoice`)
+  return subkMonthlyBillingRowsForContract(contract)
 }
 
 function invoiceAmountFor(contract: Contract) {
-  if (contract.type === 'RECURRING') return contract.monthlyPayment || 0
-  return contract.value || 0
+  return invoiceAmountForContract(contract)
 }
 
-function invoiceCadenceFor(contract: Contract) {
-  return contract.type === 'RECURRING' ? 'Monthly recurring invoice' : 'One-time job invoice'
-}
-
-function escapeHtml(value: string) {
-  return value.replace(/[&<>"']/g, char => ({
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#039;',
-  }[char] || char))
-}
-
-function generateInvoiceFile(contract: Contract) {
-  const amount = invoiceAmountFor(contract)
-  const subkRows = contract.type === 'RECURRING'
-    ? subkMonthlyBillingRows(contract).map(row => `<li>${escapeHtml(row)}</li>`).join('')
-    : `<li>${escapeHtml(subkQuoteSummary(contract))}</li>`
-  const html = `<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <title>Invoice - ${escapeHtml(contract.contractId)}</title>
-  <style>
-    body { font-family: Inter, Arial, sans-serif; color: #172033; padding: 32px; }
-    .header { display: flex; justify-content: space-between; gap: 24px; border-bottom: 2px solid #172033; padding-bottom: 18px; }
-    h1 { margin: 0; font-size: 26px; }
-    .muted { color: #64748b; font-size: 12px; }
-    .total { margin: 28px 0; padding: 18px; border: 1px solid #d7be7a; background: #fbf6e7; border-radius: 12px; }
-    .total strong { display: block; font-size: 28px; color: #0f766e; margin-top: 4px; }
-    table { width: 100%; border-collapse: collapse; margin-top: 18px; }
-    th, td { text-align: left; border-bottom: 1px solid #e2e8f0; padding: 10px; font-size: 13px; }
-    th { color: #64748b; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
-  </style>
-</head>
-<body>
-  <div class="header">
-    <div>
-      <h1>Invoice</h1>
-      <div class="muted">${escapeHtml(invoiceCadenceFor(contract))}</div>
-    </div>
-    <div>
-      <div><strong>${escapeHtml(contract.contractId)}</strong></div>
-      <div class="muted">${new Date().toLocaleDateString('en-US')}</div>
-    </div>
-  </div>
-  <div class="total">
-    Invoice Amount
-    <strong>${formatCurrency(amount)}</strong>
-    <div class="muted">${contract.type === 'RECURRING' ? 'Recurring contracts invoice by month.' : 'OTJ contracts invoice the total contract value.'}</div>
-  </div>
-  <table>
-    <tr><th>Contract</th><td>${escapeHtml(contract.title)}</td></tr>
-    <tr><th>Client</th><td>${escapeHtml(contract.client || '-')}</td></tr>
-    <tr><th>Type</th><td>${escapeHtml(contract.type)}</td></tr>
-    <tr><th>Total Contract Value</th><td>${formatCurrency(contract.value || 0)}</td></tr>
-    ${contract.type === 'RECURRING' ? `<tr><th>Monthly Payment (Gov)</th><td>${formatCurrency(contract.monthlyPayment || 0)}</td></tr>` : ''}
-  </table>
-  <h2 style="font-size:16px;margin-top:28px;">Subk Reference</h2>
-  <ul>${subkRows}</ul>
-</body>
-</html>`
-
-  const blob = new Blob([html], { type: 'text/html;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = `invoice-${contract.contractId || contract.id}.html`
-  document.body.appendChild(link)
-  link.click()
-  link.remove()
-  URL.revokeObjectURL(url)
+async function generateInvoiceFile(contract: Contract) {
+  try {
+    await generateContractInvoicePdf(contract)
+    toast.success('Invoice PDF generated')
+  } catch (err) {
+    console.error(err)
+    toast.error(contract.type === 'OTJ'
+      ? 'OTJ invoices can only be generated in Pending Payment.'
+      : 'Could not generate invoice PDF.')
+  }
 }
 
 function createAttachment(name: string, attachedAt: string, uploadedBy: string): FileAttachment {
@@ -305,6 +242,7 @@ function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClo
   const sourceOpportunity = contract.opportunityId ? opportunities.find(o => o.id === contract.opportunityId) : undefined
   const potentialQuoteSourcings = (sourceOpportunity?.subcontractors || []).filter(s => !!s.quoteFile)
   const lockedQuoteFiles = new Set((contract.lockedSubcontractors || []).flatMap(s => s.quotes || []))
+  const invoiceReady = canGenerateContractInvoice(contract)
   const financeRows = contract.type === 'RECURRING'
     ? [
         { label: 'Total Contract Value (Gov)', value: formatCurrency(contract.value || 0) },
@@ -406,7 +344,9 @@ function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClo
                 <button
                   type="button"
                   onClick={() => generateInvoiceFile(contract)}
-                  className="btn-secondary gap-1 px-2.5 py-1 text-xs"
+                  disabled={!invoiceReady}
+                  title={!invoiceReady ? 'OTJ invoices are generated when the contract reaches Pending Payment.' : 'Generate invoice PDF'}
+                  className="btn-secondary gap-1 px-2.5 py-1 text-xs disabled:cursor-not-allowed disabled:opacity-45"
                 >
                   <Receipt size={12} /> Generate Invoice
                 </button>
@@ -1327,6 +1267,7 @@ function FinanceProjectionsTab({ contracts }: { contracts: Contract[] }) {
               )}
               {activeContracts.map(c => {
                 const isRecurring = c.type === 'RECURRING'
+                const invoiceReady = canGenerateContractInvoice(c)
                 const subkRows = isRecurring ? subkMonthlyBillingRows(c) : [subkQuoteSummary(c)]
                 return (
                   <tr key={c.id}>
@@ -1364,7 +1305,9 @@ function FinanceProjectionsTab({ contracts }: { contracts: Contract[] }) {
                       <button
                         type="button"
                         onClick={() => generateInvoiceFile(c)}
-                        className="btn-primary gap-1 px-2.5 py-1 text-xs"
+                        disabled={!invoiceReady}
+                        title={!invoiceReady ? 'OTJ invoices are generated when the contract reaches Pending Payment.' : 'Generate invoice PDF'}
+                        className="btn-primary gap-1 px-2.5 py-1 text-xs disabled:cursor-not-allowed disabled:opacity-45"
                       >
                         <Download size={11} /> Generate Invoice
                       </button>
@@ -1396,7 +1339,8 @@ export default function ContractsPage() {
     else { setSortKey(key); setSortDir('asc') }
   }
 
-  const tabDef = C_TABS.find(t => t.key === tab)!
+  const isFinanceTab = tab === 'FINANCE'
+  const tabDef = C_TABS.find(t => t.key === tab) ?? C_TABS[0]
 
   const rowValue = (c: Contract, key: string) => {
     const assignee = c.assignedTo ? employees.find(e => e.id === c.assignedTo)?.name : ''
@@ -1440,7 +1384,7 @@ export default function ContractsPage() {
   }, [contracts, employees])
 
   const filtered = useMemo(() => {
-    let list = contracts.filter(c => tabDef.statuses.includes(c.status))
+    let list = isFinanceTab ? [] : contracts.filter(c => tabDef.statuses.includes(c.status))
     if (search) {
       const q = search.toLowerCase()
       list = list.filter(c =>
@@ -1469,7 +1413,7 @@ export default function ContractsPage() {
       })
     }
     return list
-  }, [contracts, tab, search, period, sortKey, sortDir, columnFilters, employees])
+  }, [contracts, isFinanceTab, tabDef, search, period, sortKey, sortDir, columnFilters, employees])
 
   const totalValue = contracts.reduce((s, c) => s + c.value, 0)
   const activeCount = contracts.filter(c => ['ACTIVE', 'ON_GOING', 'PERFORMING', 'KICK_OFF', 'LOCKING_SUB'].includes(c.status)).length
@@ -1506,7 +1450,9 @@ export default function ContractsPage() {
       <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
         <div className="flex gap-1 p-1 bg-slate-100 rounded-xl border border-slate-200 flex-wrap">
           {C_TABS.map(t => {
-            const cnt = contracts.filter(c => t.statuses.includes(c.status)).length
+            const cnt = t.key === 'FINANCE'
+              ? contracts.filter(isActiveContract).length
+              : contracts.filter(c => t.statuses.includes(c.status)).length
             return (
               <button key={t.key} onClick={() => setTab(t.key)}
                 className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1 ${
@@ -1522,15 +1468,22 @@ export default function ContractsPage() {
             )
           })}
         </div>
-        <div className="flex items-center gap-2">
+        {!isFinanceTab && (
+          <div className="flex items-center gap-2">
             <div className="relative">
               <Search size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
               <input value={search} onChange={e => setSearch(e.target.value)}
                 className="input-field pl-9 text-xs py-2 w-56" placeholder="Search contracts…" />
             </div>
             <PeriodFilter value={period} onChange={setPeriod} />
-        </div>
+          </div>
+        )}
       </div>
+
+      {isFinanceTab ? (
+        <FinanceProjectionsTab contracts={contracts} />
+      ) : (
+        <>
 
       <div className="mb-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="mb-3 flex items-center justify-between gap-3">
@@ -1659,42 +1612,28 @@ export default function ContractsPage() {
                       </div>
                     </td>
                     <td onClick={e => e.stopPropagation()}>
-                      <div className="relative">
-                        <button
-                          onClick={() => setMenuOpen(menuOpen === c.id ? null : c.id)}
-                          className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
-                        >
-                          <MoreHorizontal size={14} />
-                        </button>
-                        <AnimatePresence>
-                          {menuOpen === c.id && (
-                            <motion.div
-                              initial={{ opacity: 0, scale: 0.95, y: -5 }}
-                              animate={{ opacity: 1, scale: 1, y: 0 }}
-                              exit={{ opacity: 0, scale: 0.95, y: -5 }}
-                              className="absolute right-0 top-8 z-30 rounded-xl py-1 w-44"
-                            style={{ background: 'var(--bg-card)', border: '1px solid var(--border-default)', boxShadow: '0 8px 24px rgba(0,0,0,0.10)' }}
-                            >
-                              {[
-                                { label: 'View Details', icon: ChevronRight, action: () => { setSelected(c); setMenuOpen(null) } },
-                                { label: 'Add PoC', icon: UserPlus, action: () => { setSelected(c); setMenuOpen(null) } },
-                                { label: 'Lock Subk', icon: Building2, action: () => { setSelected(c); setMenuOpen(null) } },
-                                { label: 'Issue Warning', icon: AlertTriangle, action: () => { setSelected(c); setMenuOpen(null) } },
-                              ].map(item => (
-                                <button key={item.label} onClick={item.action}
-                                  className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium transition-colors"
-                                  style={{ color: '#475569' }}
-                                  onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(0,0,0,0.04)'; (e.currentTarget as HTMLButtonElement).style.color = '#0F172A' }}
-                                  onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = ''; (e.currentTarget as HTMLButtonElement).style.color = '#475569' }}
-                                >
-                                  <item.icon size={11} className="text-slate-400" />
-                                  {item.label}
-                                </button>
-                              ))}
-                            </motion.div>
-                          )}
-                        </AnimatePresence>
-                      </div>
+                      <FloatingActionMenu
+                        open={menuOpen === c.id}
+                        onOpenChange={open => setMenuOpen(open ? c.id : null)}
+                        trigger={<MoreHorizontal size={14} />}
+                      >
+                        {[
+                          { label: 'View Details', icon: ChevronRight, action: () => { setSelected(c); setMenuOpen(null) } },
+                          { label: 'Add PoC', icon: UserPlus, action: () => { setSelected(c); setMenuOpen(null) } },
+                          { label: 'Lock Subk', icon: Building2, action: () => { setSelected(c); setMenuOpen(null) } },
+                          { label: 'Issue Warning', icon: AlertTriangle, action: () => { setSelected(c); setMenuOpen(null) } },
+                        ].map(item => (
+                          <button key={item.label} onClick={item.action}
+                            className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium transition-colors"
+                            style={{ color: '#475569' }}
+                            onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(0,0,0,0.04)'; (e.currentTarget as HTMLButtonElement).style.color = '#0F172A' }}
+                            onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = ''; (e.currentTarget as HTMLButtonElement).style.color = '#475569' }}
+                          >
+                            <item.icon size={11} className="text-slate-400" />
+                            {item.label}
+                          </button>
+                        ))}
+                      </FloatingActionMenu>
                     </td>
                   </motion.tr>
                 )
@@ -1720,9 +1659,7 @@ export default function ContractsPage() {
         )}
       </AnimatePresence>
 
-      {/* Close menu on outside click */}
-      {menuOpen && (
-        <div className="fixed inset-0 z-20" onClick={() => setMenuOpen(null)} />
+        </>
       )}
     </div>
   )

@@ -9,6 +9,7 @@ import { useStore } from '../store/useStore'
 import type { Contract, PastPerformance } from '../types'
 import { formatCurrency } from '../lib/utils'
 import { generatePastPerformancePdf } from '../lib/pastPerformancePdf'
+import FloatingActionMenu from '../components/shared/FloatingActionMenu'
 import toast from 'react-hot-toast'
 
 function ExportModal({ pp, onClose }: { pp: PastPerformance; onClose: () => void }) {
@@ -359,25 +360,12 @@ export default function PastPerformancesPage() {
                     {pp.popStart}<br /><span className="text-slate-400">→ {pp.popEnd}</span>
                   </td>
                   <td className="text-xs text-slate-600">{pp.bdm} / {pp.bds}</td>
-                  <td className="relative" onClick={e => e.stopPropagation()}>
-                    <button
-                      onClick={e => { e.stopPropagation(); setMenuOpen(menuOpen === pp.id ? null : pp.id) }}
-                      className="w-7 h-7 rounded-md flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+                  <td onClick={e => e.stopPropagation()}>
+                    <FloatingActionMenu
+                      open={menuOpen === pp.id}
+                      onOpenChange={open => setMenuOpen(open ? pp.id : null)}
+                      trigger={<MoreHorizontal size={14} />}
                     >
-                      <MoreHorizontal size={14} />
-                    </button>
-                    <AnimatePresence>
-                      {menuOpen === pp.id && (
-                        <>
-                          <div className="fixed inset-0 z-20" onClick={() => setMenuOpen(null)} />
-                          <motion.div
-                            initial={{ opacity: 0, scale: 0.95, y: -4 }}
-                            animate={{ opacity: 1, scale: 1, y: 0 }}
-                            exit={{ opacity: 0, scale: 0.95, y: -4 }}
-                            transition={{ duration: 0.12 }}
-                            className="absolute right-0 top-8 z-30 rounded-xl py-1 w-44"
-                            style={{ background: 'var(--bg-card)', border: '1px solid var(--border-default)', boxShadow: '0 8px 24px rgba(0,0,0,0.10)' }}
-                          >
                             <button
                               onClick={() => { setSelected(pp); setMenuOpen(null) }}
                               className="block w-full text-left px-3 py-2 text-xs font-medium transition-colors"
@@ -415,10 +403,7 @@ export default function PastPerformancesPage() {
                             >
                               Delete Record
                             </button>
-                          </motion.div>
-                        </>
-                      )}
-                    </AnimatePresence>
+                    </FloatingActionMenu>
                   </td>
                 </motion.tr>
               ))}

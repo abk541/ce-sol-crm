@@ -46,6 +46,7 @@ export const TIMEZONES: Record<string, string> = {
   'HST': 'Pacific/Honolulu',   'AST': 'Asia/Riyadh',
   'EET': 'Asia/Amman',         'IRT': 'Asia/Tehran',
   'GMT': 'Europe/London',      'CET': 'Europe/Paris',
+  'GMT+1': 'Etc/GMT-1',
 }
 
 // ── Employees (Hierarchy) ─────────────────────────────────────────────

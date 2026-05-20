@@ -18,6 +18,7 @@ import toast from 'react-hot-toast'
 import DetailDrawer, { DrawerSection, DrawerField } from '../components/shared/DetailDrawer'
 import PeriodFilter, { type Period, filterByPeriod } from '../components/shared/PeriodFilter'
 import HierarchyAssignPicker from '../components/shared/HierarchyAssignPicker'
+import FloatingActionMenu from '../components/shared/FloatingActionMenu'
 
 // ── Constants ─────────────────────────────────────────────────────────
 const TYPES_DISPLAY: { value: string; label: string }[] = [
@@ -210,27 +211,26 @@ function CommentAttachments({ attachments }: { attachments?: FileAttachment[] })
   )
 }
 
+function formatMoroccoFixedTime(date: Date) {
+  const morocco = new Date(date.getTime() + 60 * 60 * 1000)
+  return {
+    dueDate: morocco.toISOString().slice(0, 10),
+    localTime: `${String(morocco.getUTCHours()).padStart(2, '0')}:${String(morocco.getUTCMinutes()).padStart(2, '0')}`,
+    timezone: 'GMT+1',
+  }
+}
+
 export function parseSamGovDeadline(raw: string | undefined) {
-  if (!raw) return { dueDate: '', localTime: '', timezone: 'EST' }
+  if (!raw) return { dueDate: '', localTime: '', timezone: 'GMT+1' }
   const exact = raw.match(/^(\d{4}-\d{2}-\d{2})[T\s](\d{2}:\d{2})(?::\d{2})?(?:\.\d+)?(Z|[+-]\d{2}:?\d{2})?/)
   if (exact) {
     const offset = exact[3] ?? ''
-    const timezone =
-      offset === 'Z' ? 'GMT' :
-      /^-0[45]/.test(offset) ? 'EST' :
-      /^-0[56]/.test(offset) ? 'CST' :
-      /^-0[67]/.test(offset) ? 'MST' :
-      /^-0[78]/.test(offset) ? 'PST' :
-      'EST'
-    return { dueDate: exact[1], localTime: exact[2], timezone }
+    if (offset) return formatMoroccoFixedTime(new Date(raw))
+    return { dueDate: exact[1], localTime: exact[2], timezone: 'GMT+1' }
   }
   const parsed = new Date(raw)
-  if (!Number.isFinite(parsed.getTime())) return { dueDate: '', localTime: '', timezone: 'EST' }
-  return {
-    dueDate: parsed.toISOString().slice(0, 10),
-    localTime: `${String(parsed.getUTCHours()).padStart(2, '0')}:${String(parsed.getUTCMinutes()).padStart(2, '0')}`,
-    timezone: 'GMT',
-  }
+  if (!Number.isFinite(parsed.getTime())) return { dueDate: '', localTime: '', timezone: 'GMT+1' }
+  return formatMoroccoFixedTime(parsed)
 }
 
 export function mapSamGovOpportunityToForm(opp: any, url: string) {
@@ -332,17 +332,17 @@ function convertTime(time: string, sourceTzAbbrev: string, date?: string): strin
   if (!ianaSource || !time) return `${time} ${sourceTzAbbrev}`
   try {
     const actualUTC = zonedDateTimeToUtc(date || new Date().toISOString().slice(0, 10), time, ianaSource)
-    const localStr = new Intl.DateTimeFormat('en-US', {
+    const moroccoStr = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Etc/GMT-1',
       month: 'short',
       day: 'numeric',
       year: 'numeric',
       hour: 'numeric',
       minute: '2-digit',
       hour12: true,
-      timeZoneName: 'short',
+      timeZoneName: 'shortOffset',
     }).format(actualUTC)
-    const tzAbbr = new Intl.DateTimeFormat('en-US', { timeZoneName: 'short' }).formatToParts(actualUTC).find(p => p.type === 'timeZoneName')?.value ?? ''
-    return `${localStr}${tzAbbr && !localStr.includes(tzAbbr) ? ` ${tzAbbr}` : ''} (local)`
+    return `${moroccoStr} (Morocco)`
   } catch { return `${time} ${sourceTzAbbrev}` }
 }
 
@@ -683,14 +683,14 @@ function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) 
             </div>
             <div>
               <label className={lbl}>Timezone</label>
-              <select value={form.timezone ?? 'EST'} onChange={e => set('timezone', e.target.value)} className="select-field">
+              <select value={form.timezone ?? 'GMT+1'} onChange={e => set('timezone', e.target.value)} className="select-field">
                 {TZ_ABBREVS.map(t => <option key={t}>{t}</option>)}
               </select>
             </div>
           </div>
           {form.localTime && form.timezone && (
             <p className="text-[11px] text-indigo-600 -mt-2 flex items-center gap-1 font-medium">
-              <Clock size={10} /> Your local: {convertTime(form.localTime, form.timezone, form.dueDate)}
+              <Clock size={10} /> Morocco time: {convertTime(form.localTime, form.timezone, form.dueDate)}
             </p>
           )}
           <div className="grid grid-cols-2 gap-4">
@@ -1225,7 +1225,7 @@ function CreateModal({ onClose }: { onClose: () => void }) {
     period: new Date().toLocaleString('en-US', { month: 'short' }).toUpperCase() + ' ' + new Date().getFullYear(),
     capturedOn: new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }),
     bdm: '', bds: '', naicsCode: '', solicitationId: '', solicitation: '',
-    client: '', location: '', dueDate: '', localTime: '', timezone: 'EST',
+    client: '', location: '', dueDate: '', localTime: '', timezone: 'GMT+1',
     comments: [], proposals: [], subcontractors: [], assignedTo: undefined,
   })
   const allowedAssignees = useMemo(
@@ -1499,14 +1499,14 @@ function CreateModal({ onClose }: { onClose: () => void }) {
             </div>
             <div>
               <label className={lbl}>Timezone</label>
-              <select value={form.timezone ?? 'EST'} onChange={e => set('timezone', e.target.value)} className="select-field">
+              <select value={form.timezone ?? 'GMT+1'} onChange={e => set('timezone', e.target.value)} className="select-field">
                 {TZ_ABBREVS.map(t => <option key={t}>{t}</option>)}
               </select>
             </div>
           </div>
           {form.localTime && form.timezone && (
             <p className="text-[11px] text-indigo-600 -mt-2 flex items-center gap-1 font-medium">
-              <Clock size={10} /> Your local: {convertTime(form.localTime, form.timezone, form.dueDate)}
+              <Clock size={10} /> Morocco time: {convertTime(form.localTime, form.timezone, form.dueDate)}
             </p>
           )}
           <div className="grid grid-cols-2 gap-4">
@@ -1625,25 +1625,11 @@ function RowMenu({
   const submittable = OPP_VIEW_STATUSES.includes(o.status as any)
 
   return (
-    <div className="relative inline-block">
-      {menuOpen && (
-        <div className="fixed inset-0 z-20" onClick={() => setMenuOpen(false)} />
-      )}
-      <button
-        title="More actions"
-        onClick={e => { e.stopPropagation(); setMenuOpen(v => !v) }}
-        className="w-7 h-7 rounded-md flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors relative z-30">
-        <MoreHorizontal size={14} />
-      </button>
-      <AnimatePresence>
-        {menuOpen && (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95, y: -4 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.95, y: -4 }}
-            transition={{ type: 'spring', stiffness: 400, damping: 28 }}
-            className="absolute right-0 top-8 z-30 rounded-xl py-1 w-44"
-            style={{ background: 'var(--bg-card)', border: '1px solid var(--border-default)', boxShadow: '0 8px 24px rgba(0,0,0,0.10)' }}>
+    <FloatingActionMenu
+      open={menuOpen}
+      onOpenChange={setMenuOpen}
+      trigger={<MoreHorizontal size={14} />}
+    >
             <button
               onClick={e => { e.stopPropagation(); setMenuOpen(false); onViewDetails() }}
               className="w-full text-left px-3 py-2 text-xs font-semibold flex items-center gap-2 transition-colors"
@@ -1695,10 +1681,7 @@ function RowMenu({
               onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = ''; (e.currentTarget as HTMLButtonElement).style.color = '#DC2626' }}>
               <Trash2 size={12} /> Request Deletion
             </button>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
+    </FloatingActionMenu>
   )
 }
 

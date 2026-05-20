@@ -92,8 +92,8 @@ describe('SAM.gov import API calls', () => {
     expect(mapped.client).toBe('Veterans Health Administration')
     expect(mapped.type).toBeUndefined()
     expect(mapped.dueDate).toBe('2026-05-27')
-    expect(mapped.localTime).toBe('10:00')
-    expect(mapped.timezone).toBe('EST')
+    expect(mapped.localTime).toBe('16:00')
+    expect(mapped.timezone).toBe('GMT+1')
   })
 
   it('falls back to department when subtier is missing', () => {
@@ -106,11 +106,11 @@ describe('SAM.gov import API calls', () => {
     expect(mapped.client).toBe('Department of Defense')
   })
 
-  it('preserves posted deadline clock time instead of converting through the browser timezone', () => {
+  it('converts posted deadline clock time to Morocco GMT+1', () => {
     expect(parseSamGovDeadline('2026-05-27T23:59:00-04:00')).toEqual({
-      dueDate: '2026-05-27',
-      localTime: '23:59',
-      timezone: 'EST',
+      dueDate: '2026-05-28',
+      localTime: '04:59',
+      timezone: 'GMT+1',
     })
   })
 })

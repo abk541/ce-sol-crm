@@ -9,6 +9,7 @@ import { useStore } from '../store/useStore'
 import type { FreshAward } from '../types'
 import { formatCurrency } from '../lib/utils'
 import toast from 'react-hot-toast'
+import FloatingActionMenu from '../components/shared/FloatingActionMenu'
 
 const STATUS_META = {
   PENDING_ASSIGNMENT: { label: 'Pending Assignment', color: '#D97706', bg: '#FEF3C7', border: '#FDE68A' },
@@ -203,25 +204,12 @@ export default function FreshAwardPage() {
                       style={{ background: meta.bg, color: meta.color, border: `1px solid ${meta.border}` }}>
                       {meta.label}
                     </span>
-                    <div className="relative">
-                      <button
-                        onClick={e => { e.stopPropagation(); setMenuOpen(menuOpen === fa.id ? null : fa.id) }}
-                        className="w-6 h-6 rounded-md flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
-                      >
-                        <MoreHorizontal size={13} />
-                      </button>
-                      <AnimatePresence>
-                        {menuOpen === fa.id && (
-                          <>
-                            <div className="fixed inset-0 z-20" onClick={() => setMenuOpen(null)} />
-                            <motion.div
-                              initial={{ opacity: 0, scale: 0.95, y: -4 }}
-                              animate={{ opacity: 1, scale: 1, y: 0 }}
-                              exit={{ opacity: 0, scale: 0.95, y: -4 }}
-                              transition={{ duration: 0.12 }}
-                              className="absolute right-0 top-7 z-30 rounded-xl py-1 w-44"
-                              style={{ background: 'var(--bg-card)', border: '1px solid var(--border-default)', boxShadow: '0 8px 24px rgba(0,0,0,0.10)' }}
-                            >
+                    <FloatingActionMenu
+                      open={menuOpen === fa.id}
+                      onOpenChange={open => setMenuOpen(open ? fa.id : null)}
+                      trigger={<MoreHorizontal size={13} />}
+                      triggerClassName="w-6 h-6 rounded-md flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+                    >
                               <button
                                 onClick={() => { setSelected(fa); setMenuOpen(null) }}
                                 className="block w-full text-left px-3 py-2 text-xs font-medium transition-colors"
@@ -259,11 +247,7 @@ export default function FreshAwardPage() {
                               >
                                 View Details
                               </button>
-                            </motion.div>
-                          </>
-                        )}
-                      </AnimatePresence>
-                    </div>
+                    </FloatingActionMenu>
                   </div>
                 </div>
 

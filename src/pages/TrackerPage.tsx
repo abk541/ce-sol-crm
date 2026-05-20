@@ -11,6 +11,7 @@ import type { OppStatus } from '../types'
 import toast from 'react-hot-toast'
 import DetailDrawer, { DrawerSection, DrawerField } from '../components/shared/DetailDrawer'
 import type { Opportunity } from '../types'
+import FloatingActionMenu from '../components/shared/FloatingActionMenu'
 
 const stagger = { animate: { transition: { staggerChildren: 0.05 } } }
 const fadeUp = {
@@ -283,23 +284,13 @@ export default function TrackerPage() {
                       <td onClick={e => e.stopPropagation()}>
                         <StatusDropdown oppId={o.id} current={o.status} canEdit={isManager} />
                       </td>
-                      <td onClick={e => e.stopPropagation()} className="relative">
-                        <button
-                          onClick={e => { e.stopPropagation(); setMenuOpen(menuOpen === o.id ? null : o.id) }}
-                          className="w-7 h-7 rounded-md flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors">
-                          <MoreHorizontal size={14} />
-                        </button>
-                        <AnimatePresence>
-                          {menuOpen === o.id && (
-                            <>
-                              <div className="fixed inset-0 z-20" onClick={() => setMenuOpen(null)} />
-                              <motion.div
-                                initial={{ opacity: 0, scale: 0.95, y: -4 }}
-                                animate={{ opacity: 1, scale: 1, y: 0 }}
-                                exit={{ opacity: 0, scale: 0.95, y: -4 }}
-                                transition={{ duration: 0.12 }}
-                                className="absolute right-0 top-8 z-30 rounded-xl py-1 w-40"
-                                style={{ background: 'var(--bg-card)', border: '1px solid var(--border-default)', boxShadow: '0 8px 24px rgba(0,0,0,0.10)' }}>
+                      <td onClick={e => e.stopPropagation()}>
+                        <FloatingActionMenu
+                          open={menuOpen === o.id}
+                          onOpenChange={open => setMenuOpen(open ? o.id : null)}
+                          trigger={<MoreHorizontal size={14} />}
+                          width={160}
+                        >
                                 <button
                                   onClick={() => { setSelected(o); setMenuOpen(null) }}
                                   className="block w-full text-left px-3 py-2 text-xs font-medium transition-colors"
@@ -324,10 +315,7 @@ export default function TrackerPage() {
                                   onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = ''; (e.currentTarget as HTMLButtonElement).style.color = '#475569' }}>
                                   Copy ID
                                 </button>
-                              </motion.div>
-                            </>
-                          )}
-                        </AnimatePresence>
+                        </FloatingActionMenu>
                       </td>
                     </motion.tr>
                   ))}
