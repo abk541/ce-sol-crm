@@ -23,6 +23,7 @@ vi.mock('../lib/db', () => ({
   seedIfEmpty: vi.fn().mockResolvedValue(null),
   clearBusinessData: vi.fn().mockResolvedValue(null),
   upsertOpportunity: vi.fn().mockResolvedValue(null),
+  deleteOpportunityRecord: vi.fn().mockResolvedValue(null),
   upsertSubcontractor: vi.fn().mockResolvedValue(null),
   deleteSubcontractorRecord: vi.fn().mockResolvedValue(null),
   upsertContract: vi.fn().mockResolvedValue(null),
@@ -557,34 +558,36 @@ describe('7 · BD Submission status updates', () => {
 
 // ═════════════════════════════════════════════════════════════════════
 describe('8 · Cancel opportunity', () => {
-  it('sets status → CANCELED via updateOpportunity', () => {
+  it('routes CANCELED updates only to BD Tracker canceled', async () => {
     const opp = makeOpp({ id: 'opp1', status: 'ACTIVE' })
-    useStore.setState({ opportunities: [opp] })
+    useStore.setState({ opportunities: [opp], bdSubmissions: [] })
 
-    useStore.getState().updateOpportunity('opp1', { status: 'CANCELED' })
+    await useStore.getState().updateOpportunity('opp1', { status: 'CANCELED' })
 
-    const updated = useStore.getState().opportunities.find(o => o.id === 'opp1')
-    expect(updated?.status).toBe('CANCELED')
+    expect(useStore.getState().opportunities.some(o => o.id === 'opp1')).toBe(false)
+    const trackerRow = useStore.getState().bdSubmissions.find(b => b.solicitationId === opp.solicitationId)
+    expect(trackerRow?.status).toBe('CANCELED')
   })
 
-  it('CANCELED opp is absent from pipeline view', () => {
+  it('removes canceled opportunities from every opportunity-backed view', async () => {
     const opp = makeOpp({ id: 'opp1', status: 'ACTIVE' })
     useStore.setState({ opportunities: [opp] })
 
-    useStore.getState().updateOpportunity('opp1', { status: 'CANCELED' })
+    await useStore.getState().updateOpportunity('opp1', { status: 'CANCELED' })
 
     const pipeline = useStore.getState().opportunities
       .filter(o => !o.isDeleted && OPP_VIEW_STATUSES.includes(o.status as OppStatus))
     expect(pipeline.some(o => o.id === 'opp1')).toBe(false)
+    expect(useStore.getState().opportunities).toHaveLength(0)
   })
 
-  it('works from any pre-submission status (NEW_ASSIGNMENT, DISCUSSION)', () => {
+  it('works from any pre-submission status (NEW_ASSIGNMENT, DISCUSSION)', async () => {
     for (const status of ['NEW_ASSIGNMENT', 'DISCUSSION'] as OppStatus[]) {
       const opp = makeOpp({ id: `opp-${status}`, status })
-      useStore.setState({ opportunities: [opp] })
-      useStore.getState().updateOpportunity(`opp-${status}`, { status: 'CANCELED' })
-      const updated = useStore.getState().opportunities.find(o => o.id === `opp-${status}`)
-      expect(updated?.status).toBe('CANCELED')
+      useStore.setState({ opportunities: [opp], bdSubmissions: [] })
+      await useStore.getState().updateOpportunity(`opp-${status}`, { status: 'CANCELED' })
+      expect(useStore.getState().opportunities.some(o => o.id === `opp-${status}`)).toBe(false)
+      expect(useStore.getState().bdSubmissions[0]?.status).toBe('CANCELED')
     }
   })
 })
@@ -657,6 +660,17 @@ describe('10 · Assignment queue readiness', () => {
 
     const updated = useStore.getState().opportunities.find(o => o.id === 'opp-team-lead-only')
     expect(updated?.assignedTo).toBe('tl')
+    expect(updated?.status).toBe('NEW_ASSIGNMENT')
+  })
+
+  it('keeps manager-only assignments in Assign Opportunities', () => {
+    const opp = makeOpp({ id: 'opp-manager-only', status: 'ACTIVE', assignedTo: undefined })
+    useStore.setState({ employees, opportunities: [opp] })
+
+    useStore.getState().assignOpportunityToEmployee('opp-manager-only', 'mgr')
+
+    const updated = useStore.getState().opportunities.find(o => o.id === 'opp-manager-only')
+    expect(updated?.assignedTo).toBe('mgr')
     expect(updated?.status).toBe('NEW_ASSIGNMENT')
   })
 

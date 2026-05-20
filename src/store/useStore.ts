@@ -21,6 +21,7 @@ import {
   seedIfEmpty,
   seedEmployeesIfEmpty,
   upsertOpportunity,
+  deleteOpportunityRecord,
   upsertSubcontractor,
   deleteSubcontractorRecord,
   upsertContract,
@@ -333,6 +334,11 @@ export const useStore = create<AppState>()(
       },
 
       updateOpportunity: async (id, data) => {
+        if (data.status === 'CANCELED') {
+          get().moveOpportunityToBDTracker(id, 'CANCELED', 'Canceled')
+          return true
+        }
+
         const previous = get().opportunities
         set(s => ({
           opportunities: s.opportunities.map(o =>
@@ -397,6 +403,24 @@ export const useStore = create<AppState>()(
       moveOpportunityToBDTracker: (id, status, comment) => {
         const opp = get().opportunities.find(o => o.id === id)
         if (!opp) return
+
+        const existing = get().bdSubmissions.find(b => b.solicitationId === opp.solicitationId)
+
+        if (status === 'CANCELED') {
+          const trackerRow = bdSubmissionFromOpportunity(opp, 'CANCELED', existing, comment)
+          set(s => ({
+            opportunities: s.opportunities.filter(o => o.id !== id),
+            nonSubReports: s.nonSubReports.filter(r => r.opportunityId !== id),
+            deletionRequests: s.deletionRequests.filter(r => r.opportunityId !== id),
+            bdSubmissions: existing
+              ? s.bdSubmissions.map(b => b.id === existing.id ? trackerRow : b)
+              : [trackerRow, ...s.bdSubmissions],
+          }))
+          upsertBDSubmission(trackerRow)
+          deleteOpportunityRecord(id)
+          return
+        }
+
         const opportunityStatus = bdStatusToOpportunityStatus(status)
         set(s => ({
           opportunities: s.opportunities.map(o =>
@@ -408,7 +432,6 @@ export const useStore = create<AppState>()(
 
         const updatedOpp = get().opportunities.find(o => o.id === id)
         if (!updatedOpp) return
-        const existing = get().bdSubmissions.find(b => b.solicitationId === updatedOpp.solicitationId)
         const trackerRow = bdSubmissionFromOpportunity(updatedOpp, status, existing, comment)
         set(s => ({
           bdSubmissions: existing
@@ -1145,16 +1168,33 @@ export const useStore = create<AppState>()(
 
           const data = await loadAllData()
           if (data) {
+            const canceledOpportunities = data.opportunities.filter(o => o.status === 'CANCELED')
+            const canceledIds = new Set(canceledOpportunities.map(o => o.id))
+            const bdSubmissions = [...data.bdSubmissions]
+
+            canceledOpportunities.forEach(opp => {
+              const existing = bdSubmissions.find(b => b.solicitationId === opp.solicitationId)
+              const trackerRow = bdSubmissionFromOpportunity(opp, 'CANCELED', existing, 'Canceled')
+              if (existing) {
+                const idx = bdSubmissions.findIndex(b => b.id === existing.id)
+                bdSubmissions[idx] = trackerRow
+              } else {
+                bdSubmissions.unshift(trackerRow)
+              }
+              upsertBDSubmission(trackerRow)
+              deleteOpportunityRecord(opp.id)
+            })
+
             set({
               employees: data.employees.length > 0 ? data.employees : get().employees,
-              opportunities: data.opportunities,
+              opportunities: data.opportunities.filter(o => o.status !== 'CANCELED'),
               contracts: data.contracts,
               freshAwards: data.freshAwards,
               pastPerformances: data.pastPerformances,
               subcontractors: data.subcontractors,
-              nonSubReports: data.nonSubReports,
-              deletionRequests: data.deletionRequests,
-              bdSubmissions: data.bdSubmissions,
+              nonSubReports: data.nonSubReports.filter(r => !canceledIds.has(r.opportunityId)),
+              deletionRequests: data.deletionRequests.filter(r => !canceledIds.has(r.opportunityId)),
+              bdSubmissions,
               dbReady: true,
             })
           }

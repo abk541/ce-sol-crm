@@ -692,6 +692,24 @@ export async function upsertOpportunity(o: Opportunity): Promise<boolean> {
   }
 }
 
+export async function deleteOpportunityRecord(id: string): Promise<boolean> {
+  if (!isSupabaseConnected || !supabase) {
+    console.error('[db] deleteOpportunityRecord skipped: Supabase is not configured')
+    return false
+  }
+  try {
+    const { error } = await supabase.from('opportunities').delete().eq('id', id)
+    if (error) {
+      console.error('[db] deleteOpportunityRecord error', error)
+      return false
+    }
+    return true
+  } catch (err) {
+    console.error('[db] deleteOpportunityRecord failed', err)
+    return false
+  }
+}
+
 export async function upsertSubcontractor(sub: Subcontractor): Promise<void> {
   if (!isSupabaseConnected || !supabase) return
   try {
