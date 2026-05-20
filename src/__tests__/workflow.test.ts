@@ -44,7 +44,7 @@ vi.mock('../lib/supabase', () => ({
 }))
 
 import { useStore } from '../store/useStore'
-import type { Opportunity, Contract, OppStatus, ContractStatus } from '../types'
+import type { Opportunity, Contract, OppStatus, ContractStatus, Employee } from '../types'
 
 // ── Pipeline view filter (mirrors PipelinePage) ───────────────────────
 const OPP_VIEW_STATUSES: OppStatus[] = ['ACTIVE', 'NEW_ASSIGNMENT', 'DISCUSSION']
@@ -639,5 +639,35 @@ describe('9 · Full end-to-end contract lifecycle', () => {
 
     // Step 9: PastPerformance auto-created on archive
     expect(useStore.getState().pastPerformances.some(p => p.contractId === contract.id)).toBe(true)
+  })
+})
+
+describe('10 · Assignment queue readiness', () => {
+  const employees: Employee[] = [
+    { id: 'mgr', name: 'Manager One', email: 'mgr@ces.com', role: 'BD_MANAGER', managerId: null, avatar: 'MO' },
+    { id: 'tl', name: 'Team Lead One', email: 'tl@ces.com', role: 'TEAM_LEAD', managerId: 'mgr', avatar: 'TL' },
+    { id: 'associate', name: 'Associate One', email: 'associate@ces.com', role: 'ASSOCIATE', managerId: 'tl', avatar: 'AO' },
+  ]
+
+  it('keeps team-lead-only assignments in Assign Opportunities', () => {
+    const opp = makeOpp({ id: 'opp-team-lead-only', status: 'ACTIVE', assignedTo: undefined })
+    useStore.setState({ employees, opportunities: [opp] })
+
+    useStore.getState().assignOpportunityToEmployee('opp-team-lead-only', 'tl')
+
+    const updated = useStore.getState().opportunities.find(o => o.id === 'opp-team-lead-only')
+    expect(updated?.assignedTo).toBe('tl')
+    expect(updated?.status).toBe('NEW_ASSIGNMENT')
+  })
+
+  it('moves associate assignments into Contract Opportunities', () => {
+    const opp = makeOpp({ id: 'opp-associate-ready', status: 'NEW_ASSIGNMENT', assignedTo: 'tl' })
+    useStore.setState({ employees, opportunities: [opp] })
+
+    useStore.getState().assignOpportunityToEmployee('opp-associate-ready', 'associate')
+
+    const updated = useStore.getState().opportunities.find(o => o.id === 'opp-associate-ready')
+    expect(updated?.assignedTo).toBe('associate')
+    expect(updated?.status).toBe('ACTIVE')
   })
 })

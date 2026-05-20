@@ -35,6 +35,7 @@ import {
   upsertDeletionRequest,
   upsertBDSubmission,
 } from '../lib/db'
+import { isAssignedToAssociate } from '../lib/team'
 
 interface AppState {
   // Auth
@@ -160,6 +161,21 @@ const STATUS_FLOW: Record<string, string> = {
 }
 
 const PRE_SUBMISSION_STATUSES: Opportunity['status'][] = ['ACTIVE', 'NEW_ASSIGNMENT', 'DISCUSSION']
+
+function normalizeOpportunityAssignmentStatus(opp: Opportunity, employees: Employee[]): Opportunity {
+  if (!PRE_SUBMISSION_STATUSES.includes(opp.status)) return opp
+  const readyForContractOpportunities = isAssignedToAssociate(employees, opp.assignedTo)
+
+  if (readyForContractOpportunities && opp.status === 'NEW_ASSIGNMENT') {
+    return { ...opp, status: 'ACTIVE' }
+  }
+
+  if (!readyForContractOpportunities && opp.status === 'ACTIVE') {
+    return { ...opp, status: 'NEW_ASSIGNMENT' }
+  }
+
+  return opp
+}
 
 function isDeadlineReached(opp: Opportunity, now = new Date()): boolean {
   if (!opp.dueDate || !PRE_SUBMISSION_STATUSES.includes(opp.status)) return false
@@ -299,7 +315,7 @@ export const useStore = create<AppState>()(
 
       // ── Opportunity management ──────────────────────────────────────
       createOpportunity: async (data) => {
-        const opp: Opportunity = { ...data, id: `o${Date.now()}` }
+        const opp = normalizeOpportunityAssignmentStatus({ ...data, id: `o${Date.now()}` }, get().employees)
         const saved = await upsertOpportunity(opp)
         if (!saved) {
           showDatabaseSaveError('Opportunity')
@@ -319,7 +335,9 @@ export const useStore = create<AppState>()(
       updateOpportunity: async (id, data) => {
         const previous = get().opportunities
         set(s => ({
-          opportunities: s.opportunities.map(o => o.id === id ? { ...o, ...data } : o)
+          opportunities: s.opportunities.map(o =>
+            o.id === id ? normalizeOpportunityAssignmentStatus({ ...o, ...data }, s.employees) : o
+          )
         }))
         const updated = get().opportunities.find(o => o.id === id)
         if (!updated) return false
@@ -1070,7 +1088,9 @@ export const useStore = create<AppState>()(
       assignOpportunityToEmployee: (opportunityId, employeeId) => {
         set(s => ({
           opportunities: s.opportunities.map(o =>
-            o.id === opportunityId ? { ...o, assignedTo: employeeId } : o
+            o.id === opportunityId
+              ? normalizeOpportunityAssignmentStatus({ ...o, assignedTo: employeeId }, s.employees)
+              : o
           )
         }))
         const emp = get().employees.find(e => e.id === employeeId)
