@@ -26,8 +26,6 @@ const NAV = [
       { to: '/pipeline',          icon: GitBranch,     label: 'Contract Opportunities' },
       { to: '/proposals',         icon: FileText,      label: 'Assign Opportunities' },
       { to: '/bd-tracker',        icon: TrendingUp,    label: 'BD Tracker' },
-      { to: '/contracts',         icon: FileCheck2,    label: 'Contract Admin' },
-      { to: '/fresh-award',       icon: Trophy,        label: 'Fresh Awards' },
       { to: '/tracker',           icon: ListChecks,    label: 'Deletion Requests' },
       { to: '/non-submissions',   icon: ClipboardList, label: 'Non-Submissions Report' },
       { to: '/past-performances', icon: History,       label: 'Past Performances' },
@@ -35,6 +33,13 @@ const NAV = [
   },
   {
     label: 'Operations',
+    items: [
+      { to: '/contracts',   icon: FileCheck2, label: 'Contract Admin' },
+      { to: '/fresh-award', icon: Trophy,     label: 'Fresh Awards' },
+    ],
+  },
+  {
+    label: 'Databases',
     items: [
       { to: '/subk-database', icon: Building2, label: 'Subk Database' },
       { to: '/database',      icon: Database,  label: 'INT-Database' },
@@ -55,7 +60,7 @@ export default function Sidebar() {
   const { sidebarCollapsed, toggleSidebar, currentUser, logout, notifications } = useStore()
   const location = useLocation()
   const [expanded, setExpanded] = useState<Record<string, boolean>>({
-    Overview: true, 'Business Dev': true, Operations: true, System: true,
+    Overview: true, 'Business Dev': true, Operations: true, Databases: true, System: true,
   })
   const unread = notifications.filter(n => !n.read).length
 

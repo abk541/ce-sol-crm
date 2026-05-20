@@ -8,12 +8,16 @@ import { useStore } from '../../store/useStore'
 export default function AccessNoticePage() {
   const navigate = useNavigate()
   const acceptAccessNotice = useStore(s => s.acceptAccessNotice)
+  const { isAuthenticated, needsFirstLogin, needsMFASetup } = useStore()
   const [confirmed, setConfirmed] = useState(false)
 
   const handleAccept = () => {
     if (!confirmed) return
     acceptAccessNotice()
-    navigate('/login', { replace: true })
+    navigate(
+      needsFirstLogin ? '/first-login' : needsMFASetup ? '/mfa-setup' : isAuthenticated ? '/dashboard' : '/login',
+      { replace: true },
+    )
   }
 
   return (

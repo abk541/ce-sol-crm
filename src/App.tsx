@@ -30,13 +30,15 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
 }
 
 function AccessNoticeGuard({ children }: { children: React.ReactNode }) {
-  const accepted = useStore(s => s.accessNoticeAccepted)
-  if (!accepted) return <Navigate to="/access-notice" replace />
+  const { accessNoticeAccepted, isAuthenticated, needsFirstLogin, needsMFASetup, currentUser } = useStore()
+  const hasValidatedCredentials = isAuthenticated || needsFirstLogin || needsMFASetup || !!currentUser
+  if (!hasValidatedCredentials) return <Navigate to="/login" replace />
+  if (!accessNoticeAccepted) return <Navigate to="/access-notice" replace />
   return <>{children}</>
 }
 
 export default function App() {
-  const { isAuthenticated, accessNoticeAccepted } = useStore()
+  const { isAuthenticated, accessNoticeAccepted, needsFirstLogin, needsMFASetup, currentUser } = useStore()
   const initializeStore = useStore(s => s.initializeStore)
 
   // Re-run every time the user logs in so Supabase data always wins over stale localStorage
@@ -66,9 +68,15 @@ export default function App() {
       <Routes>
         <Route
           path="/access-notice"
-          element={accessNoticeAccepted ? <Navigate to={isAuthenticated ? "/dashboard" : "/login"} replace /> : <AccessNoticePage />}
+          element={
+            !isAuthenticated && !needsFirstLogin && !needsMFASetup && !currentUser
+              ? <Navigate to="/login" replace />
+              : accessNoticeAccepted
+                ? <Navigate to={needsFirstLogin ? "/first-login" : needsMFASetup ? "/mfa-setup" : isAuthenticated ? "/dashboard" : "/login"} replace />
+                : <AccessNoticePage />
+          }
         />
-        <Route path="/login"       element={<AccessNoticeGuard>{isAuthenticated ? <Navigate to="/dashboard" replace /> : <LoginPage />}</AccessNoticeGuard>} />
+        <Route path="/login"       element={isAuthenticated ? <Navigate to={accessNoticeAccepted ? "/dashboard" : "/access-notice"} replace /> : <LoginPage />} />
         <Route path="/first-login" element={<AccessNoticeGuard><FirstLoginPage /></AccessNoticeGuard>} />
         <Route path="/mfa-setup"   element={<AccessNoticeGuard><MFASetupPage /></AccessNoticeGuard>} />
 
@@ -93,7 +101,7 @@ export default function App() {
           <Route path="settings"          element={<PlaceholderPage title="Settings" />} />
         </Route>
 
-        <Route path="*" element={<Navigate to={accessNoticeAccepted ? (isAuthenticated ? "/dashboard" : "/login") : "/access-notice"} replace />} />
+        <Route path="*" element={<Navigate to={isAuthenticated ? (accessNoticeAccepted ? "/dashboard" : "/access-notice") : "/login"} replace />} />
       </Routes>
     </HashRouter>
   )

@@ -30,9 +30,7 @@ export default function LoginPage() {
     setLoading(false)
 
     if (!result.ok) { setError(result.error!); return }
-    if (result.needsFirst) { navigate('/first-login'); return }
-    if (result.needsMFA) { navigate('/mfa-setup'); return }
-    setStep('mfa')
+    navigate('/access-notice')
   }
 
   const handleMFA = async (e: React.FormEvent) => {

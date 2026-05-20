@@ -2159,66 +2159,69 @@ export default function PipelinePage() {
         )}
       </div>
 
-      {/* Detail drawer */}
+      {/* Detail modal */}
       <DetailDrawer
         isOpen={!!selectedOpp}
         onClose={() => setSelectedOpp(null)}
         title={selectedOpp?.solicitation ?? ''}
         subtitle={selectedOpp ? `${selectedOpp.solicitationId} - ${selectedOpp.client}` : ''}
-        width={600}
+        width={980}
+        placement="modal"
         showBackdrop
       >
         {selectedOpp && (
           <>
-            <div className="flex gap-2 flex-wrap mb-5">
+            <div className="flex gap-2 flex-wrap mb-5 rounded-2xl border border-slate-100 bg-white/5 p-3">
               <PriorityBadge p={selectedOpp.priority} />
               <span className="text-[10px] font-semibold text-indigo-600 bg-indigo-50 border border-indigo-100 px-1.5 py-0.5 rounded">{typeLabel(selectedOpp.type)}</span>
             </div>
 
-            <DrawerSection title="Overview">
-              <DrawerField label="Client"    value={selectedOpp.client} />
-              <DrawerField label="Type"      value={typeLabel(selectedOpp.type)} />
-              <DrawerField label="Set-Aside" value={selectedOpp.setAside} />
-              <DrawerField label="NAICS"     value={selectedOpp.naicsCode} />
-              <DrawerField label="Location"  value={selectedOpp.location} />
-              <DrawerField label="Period"    value={selectedOpp.period} />
-            </DrawerSection>
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              <DrawerSection title="Overview">
+                <DrawerField label="Client"    value={selectedOpp.client} />
+                <DrawerField label="Type"      value={typeLabel(selectedOpp.type)} />
+                <DrawerField label="Set-Aside" value={selectedOpp.setAside} />
+                <DrawerField label="NAICS"     value={selectedOpp.naicsCode} />
+                <DrawerField label="Location"  value={selectedOpp.location} />
+                <DrawerField label="Period"    value={selectedOpp.period} />
+              </DrawerSection>
 
-            <DrawerSection title="Team">
-              {(() => {
-                const chain = getAssignmentChain(employees, selectedOpp.assignedTo)
-                return (
-                  <>
-                    <DrawerField label="Manager" value={chain.manager?.name || '-'} />
-                    <DrawerField label="Team Lead" value={chain.teamLead?.name || '-'} />
-                    <DrawerField label="Associate" value={chain.associate?.name || '-'} />
-                  </>
-                )
-              })()}
-            </DrawerSection>
+              <DrawerSection title="Team">
+                {(() => {
+                  const chain = getAssignmentChain(employees, selectedOpp.assignedTo)
+                  return (
+                    <>
+                      <DrawerField label="Manager" value={chain.manager?.name || '-'} />
+                      <DrawerField label="Team Lead" value={chain.teamLead?.name || '-'} />
+                      <DrawerField label="Associate" value={chain.associate?.name || '-'} />
+                    </>
+                  )
+                })()}
+              </DrawerSection>
 
-            <DrawerSection title="Schedule">
-              <DrawerField label="Due Date"  value={new Date(selectedOpp.dueDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })} />
-              <DrawerField label="Time"      value={formatOpportunityTime(selectedOpp.localTime, selectedOpp.timezone, selectedOpp.dueDate)} />
-              {selectedOpp.localTime && selectedOpp.timezone && (
-                <DrawerField label="Your Local" value={
-                  <span className="text-indigo-600 font-semibold">{convertTime(selectedOpp.localTime, selectedOpp.timezone, selectedOpp.dueDate)}</span>
-                } />
-              )}
-              <DrawerField label="Captured On" value={selectedOpp.capturedOn} />
-            </DrawerSection>
+              <DrawerSection title="Schedule">
+                <DrawerField label="Due Date"  value={new Date(selectedOpp.dueDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })} />
+                <DrawerField label="Time"      value={formatOpportunityTime(selectedOpp.localTime, selectedOpp.timezone, selectedOpp.dueDate)} />
+                {selectedOpp.localTime && selectedOpp.timezone && (
+                  <DrawerField label="Your Local" value={
+                    <span className="text-indigo-600 font-semibold">{convertTime(selectedOpp.localTime, selectedOpp.timezone, selectedOpp.dueDate)}</span>
+                  } />
+                )}
+                <DrawerField label="Captured On" value={selectedOpp.capturedOn} />
+              </DrawerSection>
+
+              <DrawerSection title="Financials">
+                <DrawerField label="Contract Amount"  value={selectedOpp.contractAmount ? formatCurrency(selectedOpp.contractAmount) : '-'} />
+                <DrawerField label="Base Amount"      value={selectedOpp.baseAmount ? formatCurrency(selectedOpp.baseAmount) : '-'} />
+                <DrawerField label="Monthly Payment"  value={selectedOpp.monthlyPayment ? formatCurrency(selectedOpp.monthlyPayment) + '/mo' : '-'} />
+              </DrawerSection>
+            </div>
 
             {selectedOpp.mandatoryEvents && (
               <DrawerSection title="Mandatory Events">
-                <p className="py-2.5 text-xs text-slate-600 leading-relaxed">{selectedOpp.mandatoryEvents}</p>
+                <p className="py-2.5 text-sm text-slate-600 leading-6">{selectedOpp.mandatoryEvents}</p>
               </DrawerSection>
             )}
-
-            <DrawerSection title="Financials">
-              <DrawerField label="Contract Amount"  value={selectedOpp.contractAmount ? formatCurrency(selectedOpp.contractAmount) : '-'} />
-              <DrawerField label="Base Amount"      value={selectedOpp.baseAmount ? formatCurrency(selectedOpp.baseAmount) : '-'} />
-              <DrawerField label="Monthly Payment"  value={selectedOpp.monthlyPayment ? formatCurrency(selectedOpp.monthlyPayment) + '/mo' : '-'} />
-            </DrawerSection>
 
             {selectedOpp.comments && selectedOpp.comments.length > 0 && (
               <DrawerSection title={`Comments (${selectedOpp.comments.length})`}>

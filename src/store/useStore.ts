@@ -241,18 +241,18 @@ export const useStore = create<AppState>()(
         if (user.password && user.password !== password)
           return { ok: false, error: 'Incorrect password.' }
         if (user.firstLogin) {
-          set({ currentUser: user, needsFirstLogin: true })
+          set({ currentUser: user, needsFirstLogin: true, accessNoticeAccepted: false })
           return { ok: true, needsFirst: true }
         }
         if (!user.mfaEnabled) {
-          set({ currentUser: user, needsMFASetup: true })
+          set({ currentUser: user, needsMFASetup: true, accessNoticeAccepted: false })
           return { ok: true, needsMFA: true }
         }
-        set({ currentUser: user, isAuthenticated: true, loginTimestamp: Date.now() })
+        set({ currentUser: user, isAuthenticated: true, loginTimestamp: Date.now(), accessNoticeAccepted: false })
         return { ok: true }
       },
 
-      logout: () => set({ currentUser: null, isAuthenticated: false, needsFirstLogin: false, needsMFASetup: false, loginTimestamp: null, dbReady: false }),
+      logout: () => set({ currentUser: null, isAuthenticated: false, needsFirstLogin: false, needsMFASetup: false, loginTimestamp: null, dbReady: false, accessNoticeAccepted: false }),
 
       acceptAccessNotice: () => set({ accessNoticeAccepted: true }),
 

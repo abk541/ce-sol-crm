@@ -9,10 +9,11 @@ interface Props {
   subtitle?: string
   width?: number
   showBackdrop?: boolean
+  placement?: 'side' | 'modal'
   children: React.ReactNode
 }
 
-export default function DetailDrawer({ isOpen, onClose, title, subtitle, width = 480, showBackdrop = true, children }: Props) {
+export default function DetailDrawer({ isOpen, onClose, title, subtitle, width = 480, showBackdrop = true, placement = 'side', children }: Props) {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
     if (isOpen) document.addEventListener('keydown', handler)
@@ -37,12 +38,20 @@ export default function DetailDrawer({ isOpen, onClose, title, subtitle, width =
 
           {/* Panel */}
           <motion.div
-            initial={{ x: width, opacity: 0 }}
-            animate={{ x: 0, opacity: 1 }}
-            exit={{ x: width, opacity: 0 }}
+            initial={placement === 'modal' ? { opacity: 0, scale: 0.96 } : { x: width, opacity: 0 }}
+            animate={placement === 'modal' ? { opacity: 1, scale: 1 } : { x: 0, opacity: 1 }}
+            exit={placement === 'modal' ? { opacity: 0, scale: 0.96 } : { x: width, opacity: 0 }}
             transition={{ type: 'spring', stiffness: 340, damping: 30 }}
-            className="fixed right-4 top-20 bottom-4 z-50 flex flex-col detail-drawer overflow-hidden rounded-2xl"
-            style={{ width: `min(${width}px, calc(100vw - 2rem))` }}
+            className={[
+              'fixed z-50 flex flex-col detail-drawer overflow-hidden rounded-2xl',
+              placement === 'modal'
+                ? 'left-1/2 top-1/2 max-h-[calc(100vh-3rem)]'
+                : 'right-4 top-20 bottom-4',
+            ].join(' ')}
+            style={{
+              width: `min(${width}px, calc(100vw - 2rem))`,
+              translate: placement === 'modal' ? '-50% -50%' : undefined,
+            }}
           >
             {/* Header */}
             <div className="flex items-start justify-between px-6 py-5 border-b border-slate-100 flex-shrink-0">
