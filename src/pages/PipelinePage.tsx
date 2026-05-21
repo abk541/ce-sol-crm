@@ -204,26 +204,64 @@ function CommentAttachments({ attachments }: { attachments?: FileAttachment[] })
   )
 }
 
-function formatMoroccoFixedTime(date: Date) {
-  const morocco = new Date(date.getTime() + 60 * 60 * 1000)
+/** Maps a fixed UTC-offset string (e.g. "-05:00") to a TIMEZONES abbreviation key. */
+function offsetToTzAbbrev(offset: string): string {
+  const MAP: Record<string, string> = {
+    Z: 'GMT', '+00:00': 'GMT', '-00:00': 'GMT',
+    '-04:00': 'EST', '-05:00': 'EST',
+    '-06:00': 'CST',
+    '-07:00': 'MST',
+    '-08:00': 'PST', '-09:00': 'PST',
+    '-10:00': 'HST',
+    '+01:00': 'GMT+1',
+    '+02:00': 'EET',
+    '+03:00': 'AST', '+03:30': 'IRT',
+  }
+  return MAP[offset] ?? offset   // keep raw offset when unknown
+}
+
+/** Adds exactly 1 hour (Morocco = UTC+1) to the given UTC milliseconds. */
+function utcPlusOneHour(utcMs: number): { moroccoDate: string; moroccoTime: string } {
+  const d = new Date(utcMs + 60 * 60 * 1000)
   return {
-    dueDate: morocco.toISOString().slice(0, 10),
-    localTime: `${String(morocco.getUTCHours()).padStart(2, '0')}:${String(morocco.getUTCMinutes()).padStart(2, '0')}`,
-    timezone: 'GMT+1',
+    moroccoDate: d.toISOString().slice(0, 10),
+    moroccoTime: `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`,
   }
 }
 
-export function parseSamGovDeadline(raw: string | undefined) {
-  if (!raw) return { dueDate: '', localTime: '', timezone: 'GMT+1' }
-  const exact = raw.match(/^(\d{4}-\d{2}-\d{2})[T\s](\d{2}:\d{2})(?::\d{2})?(?:\.\d+)?(Z|[+-]\d{2}:?\d{2})?/)
-  if (exact) {
-    const offset = exact[3] ?? ''
-    if (offset) return formatMoroccoFixedTime(new Date(raw))
-    return { dueDate: exact[1], localTime: exact[2], timezone: 'GMT+1' }
+export function parseSamGovDeadline(raw: string | undefined): {
+  dueDate: string; localTime: string; timezone: string; moroccoDate: string; moroccoTime: string
+} {
+  const empty = { dueDate: '', localTime: '', timezone: 'GMT+1', moroccoDate: '', moroccoTime: '' }
+  if (!raw) return empty
+
+  const m = raw.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})(?::\d{2})?(?:\.\d+)?(Z|[+-]\d{2}:?\d{2})?/)
+  if (m) {
+    const dateStr = m[1]   // "2026-05-27"
+    const timeStr = m[2]   // "10:00" — local clock time as stated in the ISO string
+    const rawOff  = m[3] ?? ''
+
+    if (rawOff) {
+      // Normalise compact form e.g. "-0500" → "-05:00"
+      const normalised = rawOff === 'Z'
+        ? '+00:00'
+        : rawOff.match(/^[+-]\d{4}$/) ? `${rawOff.slice(0, 3)}:${rawOff.slice(3)}`
+        : rawOff
+      const { moroccoDate, moroccoTime } = utcPlusOneHour(new Date(raw).getTime())
+      return { dueDate: dateStr, localTime: timeStr, timezone: offsetToTzAbbrev(normalised), moroccoDate, moroccoTime }
+    }
+
+    // No UTC offset present — treat local time as already in Morocco (GMT+1)
+    return { dueDate: dateStr, localTime: timeStr, timezone: 'GMT+1', moroccoDate: dateStr, moroccoTime: timeStr }
   }
+
+  // Fallback: let Date parse it and treat the result as UTC
   const parsed = new Date(raw)
-  if (!Number.isFinite(parsed.getTime())) return { dueDate: '', localTime: '', timezone: 'GMT+1' }
-  return formatMoroccoFixedTime(parsed)
+  if (!Number.isFinite(parsed.getTime())) return empty
+  const utcDate = parsed.toISOString().slice(0, 10)
+  const utcTime = `${String(parsed.getUTCHours()).padStart(2, '0')}:${String(parsed.getUTCMinutes()).padStart(2, '0')}`
+  const { moroccoDate, moroccoTime } = utcPlusOneHour(parsed.getTime())
+  return { dueDate: utcDate, localTime: utcTime, timezone: 'GMT', moroccoDate, moroccoTime }
 }
 
 export function mapSamGovOpportunityToForm(opp: any, url: string) {
@@ -250,6 +288,8 @@ export function mapSamGovOpportunityToForm(opp: any, url: string) {
     dueDate: deadline.dueDate,
     localTime: deadline.localTime,
     timezone: deadline.timezone,
+    moroccoTime: deadline.moroccoTime,
+    moroccoDate: deadline.moroccoDate,
     link: url,
   }
 }
@@ -337,6 +377,29 @@ function convertTime(time: string, sourceTzAbbrev: string, date?: string): strin
     }).format(actualUTC)
     return `${moroccoStr} (Morocco)`
   } catch { return `${time} ${sourceTzAbbrev}` }
+}
+
+/**
+ * Returns a human-readable Morocco (GMT+1) time string.
+ * Prefers pre-computed `moroccoTime`/`moroccoDate` fields (set on SAM.gov import,
+ * which are exact because they derive from the ISO-string UTC offset).
+ * Falls back to `convertTime` for manually-entered opportunities.
+ */
+function formatMoroccoDisplay(
+  localTime: string,
+  timezone: string | undefined,
+  dueDate: string | undefined,
+  moroccoTime: string | undefined,
+  moroccoDate: string | undefined,
+): string {
+  if (moroccoTime) {
+    const crossesMidnight = moroccoDate && dueDate && moroccoDate !== dueDate
+    const dateSuffix = crossesMidnight
+      ? ` (${new Date(moroccoDate + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })})`
+      : ''
+    return `${moroccoTime}${dateSuffix} GMT+1`
+  }
+  return timezone ? convertTime(localTime, timezone, dueDate) : `${localTime} GMT+1`
 }
 
 function NaicsInput({ value, onChange }: { value?: string; onChange: (value: string) => void }) {
@@ -681,9 +744,10 @@ function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) 
               </select>
             </div>
           </div>
-          {form.localTime && form.timezone && (
+          {form.localTime && (
             <p className="text-[11px] text-indigo-600 -mt-2 flex items-center gap-1 font-medium">
-              <Clock size={10} /> Morocco time: {convertTime(form.localTime, form.timezone, form.dueDate)}
+              <Clock size={10} /> Morocco (GMT+1):{' '}
+              {formatMoroccoDisplay(form.localTime, form.timezone, form.dueDate, form.moroccoTime, form.moroccoDate)}
             </p>
           )}
           <div className="grid grid-cols-2 gap-4">
@@ -1274,6 +1338,8 @@ function CreateModal({ onClose }: { onClose: () => void }) {
         dueDate:       mapped.dueDate || prev.dueDate,
         localTime:     mapped.localTime || prev.localTime,
         timezone:      mapped.timezone || prev.timezone,
+        moroccoTime:   mapped.moroccoTime || prev.moroccoTime,
+        moroccoDate:   mapped.moroccoDate || prev.moroccoDate,
         link:          url,
       }))
 
@@ -1426,9 +1492,10 @@ function CreateModal({ onClose }: { onClose: () => void }) {
               </select>
             </div>
           </div>
-          {form.localTime && form.timezone && (
+          {form.localTime && (
             <p className="text-[11px] text-indigo-600 -mt-2 flex items-center gap-1 font-medium">
-              <Clock size={10} /> Morocco time: {convertTime(form.localTime, form.timezone, form.dueDate)}
+              <Clock size={10} /> Morocco (GMT+1):{' '}
+              {formatMoroccoDisplay(form.localTime, form.timezone, form.dueDate, form.moroccoTime, form.moroccoDate)}
             </p>
           )}
           <div className="grid grid-cols-2 gap-4">
@@ -1992,9 +2059,9 @@ export default function PipelinePage() {
                     </td>
                     <td className="text-slate-500 text-xs whitespace-nowrap group relative">
                       <span className="cursor-help">{formatOpportunityTime(o.localTime, o.timezone, o.dueDate)}</span>
-                      {o.localTime && o.timezone && (
+                      {o.localTime && (
                         <div className="hidden group-hover:block absolute bottom-full left-0 mb-1 z-30 rounded-lg px-2.5 py-1.5 text-[10px] whitespace-nowrap shadow-lg font-medium" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-default)', color: '#6366F1', boxShadow: '0 4px 12px rgba(0,0,0,0.10)' }}>
-                          <Clock size={9} className="inline mr-1" />{convertTime(o.localTime, o.timezone, o.dueDate)}
+                          <Clock size={9} className="inline mr-1" />Morocco: {formatMoroccoDisplay(o.localTime, o.timezone, o.dueDate, o.moroccoTime, o.moroccoDate)}
                         </div>
                       )}
                     </td>
@@ -2107,9 +2174,11 @@ export default function PipelinePage() {
               <DrawerSection title="Schedule">
                 <DrawerField label="Due Date"  value={new Date(selectedOpp.dueDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })} />
                 <DrawerField label="Time"      value={formatOpportunityTime(selectedOpp.localTime, selectedOpp.timezone, selectedOpp.dueDate)} />
-                {selectedOpp.localTime && selectedOpp.timezone && (
-                  <DrawerField label="Your Local" value={
-                    <span className="text-indigo-600 font-semibold">{convertTime(selectedOpp.localTime, selectedOpp.timezone, selectedOpp.dueDate)}</span>
+                {selectedOpp.localTime && (
+                  <DrawerField label="Morocco (GMT+1)" value={
+                    <span className="text-indigo-600 font-semibold">
+                      {formatMoroccoDisplay(selectedOpp.localTime, selectedOpp.timezone, selectedOpp.dueDate, selectedOpp.moroccoTime, selectedOpp.moroccoDate)}
+                    </span>
                   } />
                 )}
                 <DrawerField label="Captured On" value={selectedOpp.capturedOn} />

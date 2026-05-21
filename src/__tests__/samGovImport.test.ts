@@ -77,7 +77,7 @@ describe('SAM.gov import API calls', () => {
     expect(endpoint).toContain('solnum=W912EP-26-R-0001')
   })
 
-  it('maps SAM.gov agency from subtier and leaves contract type empty', () => {
+  it('preserves the original SAM.gov local time and timezone, and computes Morocco time separately', () => {
     const mapped = mapSamGovOpportunityToForm({
       title: 'Roof Anchor Testing',
       solicitationNumber: '36C26326Q0724',
@@ -89,11 +89,18 @@ describe('SAM.gov import API calls', () => {
       placeOfPerformance: { city: { name: 'Iowa City' }, state: { code: 'IA' } },
     }, 'https://sam.gov/opp/example/view')
 
+    // Agency/type
     expect(mapped.client).toBe('Veterans Health Administration')
     expect(mapped.type).toBeUndefined()
+
+    // Original SAM.gov local time is preserved as-is
     expect(mapped.dueDate).toBe('2026-05-27')
-    expect(mapped.localTime).toBe('16:00')
-    expect(mapped.timezone).toBe('GMT+1')
+    expect(mapped.localTime).toBe('10:00')
+    expect(mapped.timezone).toBe('EST')
+
+    // Morocco equivalent computed from exact UTC offset (UTC 15:00 → Morocco 16:00)
+    expect(mapped.moroccoTime).toBe('16:00')
+    expect(mapped.moroccoDate).toBe('2026-05-27')
   })
 
   it('falls back to department when subtier is missing', () => {
@@ -106,11 +113,29 @@ describe('SAM.gov import API calls', () => {
     expect(mapped.client).toBe('Department of Defense')
   })
 
-  it('converts posted deadline clock time to Morocco GMT+1', () => {
-    expect(parseSamGovDeadline('2026-05-27T23:59:00-04:00')).toEqual({
-      dueDate: '2026-05-28',
-      localTime: '04:59',
-      timezone: 'GMT+1',
-    })
+  it('preserves original deadline and cross-midnight Morocco conversion correctly', () => {
+    // 23:59 local on May 27 at -04:00 offset → UTC 03:59 May 28 → Morocco 04:59 May 28
+    const result = parseSamGovDeadline('2026-05-27T23:59:00-04:00')
+    expect(result.dueDate).toBe('2026-05-27')
+    expect(result.localTime).toBe('23:59')
+    expect(result.timezone).toBe('EST')
+    expect(result.moroccoDate).toBe('2026-05-28')
+    expect(result.moroccoTime).toBe('04:59')
+  })
+
+  it('returns empty strings for missing deadline', () => {
+    const result = parseSamGovDeadline(undefined)
+    expect(result.dueDate).toBe('')
+    expect(result.localTime).toBe('')
+    expect(result.moroccoTime).toBe('')
+  })
+
+  it('maps a Z-offset (UTC) deadline to GMT timezone and Morocco +1h', () => {
+    const result = parseSamGovDeadline('2026-06-01T14:00:00Z')
+    expect(result.dueDate).toBe('2026-06-01')
+    expect(result.localTime).toBe('14:00')
+    expect(result.timezone).toBe('GMT')
+    expect(result.moroccoTime).toBe('15:00')
+    expect(result.moroccoDate).toBe('2026-06-01')
   })
 })

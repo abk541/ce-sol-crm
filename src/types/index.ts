@@ -187,6 +187,8 @@ export interface Opportunity {
   dueDate: string
   localTime: string
   timezone?: string
+  moroccoTime?: string   // HH:MM in Morocco GMT+1 — pre-computed at SAM.gov import
+  moroccoDate?: string   // YYYY-MM-DD in Morocco GMT+1 (may differ from dueDate)
   location: string
   pop: string
   bdm: string
