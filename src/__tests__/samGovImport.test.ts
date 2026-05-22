@@ -9,6 +9,7 @@ import {
   mapSamGovOpportunityToForm,
   parseSamGovDeadline,
 } from '../pages/PipelinePage'
+import { formatMoroccoDueTime, opportunityDeadlineTimeMs } from '../lib/timezone'
 
 const NOW = new Date('2026-05-18T12:00:00Z')
 
@@ -186,6 +187,27 @@ describe('SAM.gov import API calls', () => {
   it('uses SAM.gov named deadline timezone fields when present', () => {
     expect(extractSamGovDeadlineTimezone({ responseDeadLineTimeZone: 'Central Daylight Time' })).toBe('CDT')
     expect(parseSamGovDeadline('2026-07-15T10:00:00-05:00', 'CDT').timezone).toBe('CDT')
+  })
+
+  it('treats timezone abbreviations as fixed offsets, not browser daylight guesses', () => {
+    const estDeadline = opportunityDeadlineTimeMs({
+      dueDate: '2026-05-27',
+      localTime: '10:00 AM',
+      timezone: 'EST',
+    })
+    const edtDeadline = opportunityDeadlineTimeMs({
+      dueDate: '2026-05-27',
+      localTime: '10:00 AM',
+      timezone: 'EDT',
+    })
+
+    expect(estDeadline).toBe(new Date('2026-05-27T15:00:00Z').getTime())
+    expect(edtDeadline).toBe(new Date('2026-05-27T14:00:00Z').getTime())
+    expect(formatMoroccoDueTime({
+      dueDate: '2026-05-27',
+      localTime: '10:00 AM',
+      timezone: 'EST',
+    })).toBe('4:00 PM GMT+1')
   })
 
   it('recomputes Morocco time when an imported local deadline time is edited', () => {

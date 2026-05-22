@@ -360,6 +360,7 @@ export const useStore = create<AppState>()(
           read: false,
           relatedId: opp.id,
         })
+        get().syncDueOpportunities()
         return true
       },
 
@@ -383,6 +384,7 @@ export const useStore = create<AppState>()(
           showDatabaseSaveError('Opportunity update')
           return false
         }
+        get().syncDueOpportunities()
         return true
       },
 

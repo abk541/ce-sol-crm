@@ -1,6 +1,24 @@
 import { TIMEZONES } from '../data/mock'
 
 const MOROCCO_GMT_PLUS_ONE_MS = 60 * 60 * 1000
+const FIXED_TIMEZONE_OFFSETS: Record<string, number> = {
+  GMT: 0,
+  UTC: 0,
+  'GMT+1': 60,
+  EST: -5 * 60,
+  EDT: -4 * 60,
+  CST: -6 * 60,
+  CDT: -5 * 60,
+  MST: -7 * 60,
+  MDT: -6 * 60,
+  PST: -8 * 60,
+  PDT: -7 * 60,
+  HST: -10 * 60,
+  AST: 3 * 60,
+  EET: 2 * 60,
+  IRT: (3 * 60) + 30,
+  CET: 60,
+}
 
 export function normalizeUtcOffset(offset: string | undefined): string {
   const raw = (offset ?? '').trim()
@@ -19,7 +37,9 @@ export function timezoneLabelFromOffset(offset: string): string {
 
 export function fixedOffsetMinutes(label: string | undefined): number | null {
   const value = (label ?? '').trim()
-  if (!value || value === 'GMT') return value === 'GMT' ? 0 : null
+  if (!value) return null
+  const fixed = FIXED_TIMEZONE_OFFSETS[value.toUpperCase()]
+  if (fixed !== undefined) return fixed
 
   const match = value.match(/^(?:UTC|GMT)([+-])(\d{2})(?::?(\d{2}))?$/i)
   if (!match) return null

@@ -22,7 +22,7 @@ vi.mock('../lib/db', () => ({
   loadAllData: vi.fn().mockResolvedValue(null),
   seedIfEmpty: vi.fn().mockResolvedValue(null),
   clearBusinessData: vi.fn().mockResolvedValue(null),
-  upsertOpportunity: vi.fn().mockResolvedValue(null),
+  upsertOpportunity: vi.fn().mockResolvedValue(true),
   deleteOpportunityRecord: vi.fn().mockResolvedValue(null),
   upsertSubcontractor: vi.fn().mockResolvedValue(null),
   deleteSubcontractorRecord: vi.fn().mockResolvedValue(null),
@@ -277,6 +277,21 @@ describe('1 · submitOpportunity', () => {
 
     expect(useStore.getState().nonSubGraceHours).toBe(2)
     expect(useStore.getState().nonSubGraceMinutes).toBe(30)
+  })
+
+  it('runs deadline expiry immediately after an opportunity due date edit', async () => {
+    const opp = makeOpp({ id: 'opp-live-expiry', status: 'ACTIVE', dueDate: '2099-01-01', localTime: '9:00 AM', timezone: 'GMT+1' })
+    useStore.setState({ opportunities: [opp], nonSubReports: [], bdSubmissions: [], nonSubGraceHours: 0, nonSubGraceMinutes: 5 })
+
+    await useStore.getState().updateOpportunity('opp-live-expiry', {
+      dueDate: '2000-01-01',
+      localTime: '9:00 AM',
+      timezone: 'GMT+1',
+    })
+
+    const updated = useStore.getState().opportunities.find(o => o.id === 'opp-live-expiry')
+    expect(updated?.status).toBe('SUBMITTED')
+    expect(useStore.getState().nonSubReports).toHaveLength(1)
   })
 })
 
