@@ -19,6 +19,11 @@ jobs:
   # ── 1. Test + Build ──────────────────────────────────────────────────
   build:
     runs-on: ubuntu-latest
+    # The github-pages environment is where VITE_SAM_GOV_API_KEY (and the
+    # Supabase secrets) live. Without this, ${{ secrets.* }} returns empty
+    # strings inside this job and the bundle ships without the API key.
+    environment:
+      name: github-pages
     steps:
       - name: Checkout
         uses: actions/checkout@v4
