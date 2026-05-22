@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildSamGovOpportunityEndpoint,
+  extractSamGovAgency,
   getSamGovPostedRange,
   mapSamGovOpportunityToForm,
   parseSamGovDeadline,
@@ -111,6 +112,41 @@ describe('SAM.gov import API calls', () => {
     }, 'https://sam.gov/opp/example/view')
 
     expect(mapped.client).toBe('Department of Defense')
+  })
+
+  it('extracts sub-tier from fullParentPathName when flat fields are absent', () => {
+    expect(extractSamGovAgency({
+      fullParentPathName: 'DEPARTMENT OF VETERANS AFFAIRS.VETERANS HEALTH ADMINISTRATION.IOWA CITY VA HEALTH CARE SYSTEM',
+    })).toBe('VETERANS HEALTH ADMINISTRATION')
+  })
+
+  it('falls back to department portion of fullParentPathName when sub-tier portion is absent', () => {
+    expect(extractSamGovAgency({
+      fullParentPathName: 'DEPARTMENT OF DEFENSE',
+    })).toBe('DEPARTMENT OF DEFENSE')
+  })
+
+  it('reads nested subTier.name / department.name objects', () => {
+    expect(extractSamGovAgency({
+      subTier: { name: 'Forest Service' },
+      department: { name: 'Department of Agriculture' },
+    })).toBe('Forest Service')
+
+    expect(extractSamGovAgency({
+      department: { name: 'Department of Agriculture' },
+    })).toBe('Department of Agriculture')
+  })
+
+  it('reads bare string subTier / department fields', () => {
+    expect(extractSamGovAgency({
+      subTier: 'Naval Sea Systems Command',
+      department: 'Department of Defense',
+    })).toBe('Naval Sea Systems Command')
+  })
+
+  it('returns "Unknown" only when no recognisable field is present', () => {
+    expect(extractSamGovAgency({})).toBe('Unknown')
+    expect(extractSamGovAgency({ subtierName: '   ', departmentName: '' })).toBe('Unknown')
   })
 
   it('preserves original deadline and cross-midnight Morocco conversion correctly', () => {

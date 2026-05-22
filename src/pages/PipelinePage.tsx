@@ -264,6 +264,45 @@ export function parseSamGovDeadline(raw: string | undefined): {
   return { dueDate: utcDate, localTime: utcTime, timezone: 'GMT', moroccoDate, moroccoTime }
 }
 
+/**
+ * Extracts the Client / Agency name from a SAM.gov opportunity record.
+ *
+ * Priority (matches the SAM.gov UI):
+ *   1. Sub-tier   — the field SAM.gov labels "Sub-tier"
+ *   2. Department / Ind. Agency — when sub-tier is missing
+ *
+ * The v2 Opportunities API returns the agency hierarchy in any of three
+ * shapes depending on endpoint and record age, so we probe all of them:
+ *   • flat strings:    subtierName / departmentName
+ *   • nested objects:  subTier.name / department.name
+ *   • joined path:     fullParentPathName = "DEPT.SUBTIER.OFFICE"
+ */
+export function extractSamGovAgency(opp: any): string {
+  const trim = (v: unknown) => (typeof v === 'string' ? v.trim() : '')
+  const pathParts: string[] = typeof opp?.fullParentPathName === 'string'
+    ? opp.fullParentPathName.split('.').map((p: string) => p.trim()).filter(Boolean)
+    : []
+
+  // 1. Sub-tier (preferred — labelled "Client / Agency" in our form)
+  const subTier =
+    trim(opp?.subTier) ||
+    trim(opp?.subTier?.name) ||
+    trim(opp?.subtierName) ||
+    (pathParts.length >= 2 ? pathParts[1] : '')
+  if (subTier) return subTier
+
+  // 2. Department / Ind. Agency (fallback)
+  const department =
+    trim(opp?.department) ||
+    trim(opp?.department?.name) ||
+    trim(opp?.departmentName) ||
+    (pathParts.length >= 1 ? pathParts[0] : '')
+  if (department) return department
+
+  // 3. Last-resort fallbacks (older response shapes)
+  return trim(opp?.organizationName) || trim(opp?.agencyName) || 'Unknown'
+}
+
 export function mapSamGovOpportunityToForm(opp: any, url: string) {
   const setAsideMap: Record<string, string> = {
     SBA: 'SB',
@@ -280,7 +319,7 @@ export function mapSamGovOpportunityToForm(opp: any, url: string) {
   return {
     solicitation: opp.title ?? '',
     solicitationId: opp.solicitationNumber ?? '',
-    client: opp.subtierName ?? opp.departmentName ?? opp.agencyName ?? opp.organizationName ?? 'Unknown agency',
+    client: extractSamGovAgency(opp),
     naicsCode: opp.naicsCode ?? '',
     setAside: (setAsideMap[opp.typeOfSetAside ?? ''] ?? 'UNRES') as Opportunity['setAside'],
     type: undefined,
