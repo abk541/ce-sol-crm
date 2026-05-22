@@ -41,9 +41,17 @@ export const REVENUE_TREND: { month: string; revenue: number }[] = []
 export const SUBMISSIONS_TREND: { month: string; submissions: number; wins: number }[] = []
 
 export const TIMEZONES: Record<string, string> = {
+  // US standard time
   'EST': 'America/New_York',   'CST': 'America/Chicago',
   'MST': 'America/Denver',     'PST': 'America/Los_Angeles',
-  'HST': 'Pacific/Honolulu',   'AST': 'Asia/Riyadh',
+  'HST': 'Pacific/Honolulu',
+  // US daylight time — same IANA zones (which already handle DST automatically),
+  // but exposed as distinct dropdown options so SAM.gov-imported deadlines can
+  // be labelled with the same abbreviation the SAM.gov UI shows.
+  'EDT': 'America/New_York',   'CDT': 'America/Chicago',
+  'MDT': 'America/Denver',     'PDT': 'America/Los_Angeles',
+  // International
+  'AST': 'Asia/Riyadh',
   'EET': 'Asia/Amman',         'IRT': 'Asia/Tehran',
   'GMT': 'Europe/London',      'CET': 'Europe/Paris',
   'GMT+1': 'Etc/GMT-1',

@@ -204,15 +204,23 @@ function CommentAttachments({ attachments }: { attachments?: FileAttachment[] })
   )
 }
 
-/** Maps a fixed UTC-offset string (e.g. "-05:00") to a TIMEZONES abbreviation key. */
+/**
+ * Maps a fixed UTC-offset string (e.g. "-05:00") to a TIMEZONES abbreviation
+ * key. US offsets pick the daylight or standard label that matches the actual
+ * offset — e.g. -04:00 is EDT (Eastern Daylight), -05:00 is EST (Eastern
+ * Standard). SAM.gov sends the explicit offset in effect at the deadline,
+ * so this preserves the same abbreviation the SAM.gov UI shows.
+ */
 function offsetToTzAbbrev(offset: string): string {
   const MAP: Record<string, string> = {
     Z: 'GMT', '+00:00': 'GMT', '-00:00': 'GMT',
-    '-04:00': 'EST', '-05:00': 'EST',
-    '-06:00': 'CST',
-    '-07:00': 'MST',
-    '-08:00': 'PST', '-09:00': 'PST',
-    '-10:00': 'HST',
+    '-04:00': 'EDT',   // Eastern Daylight (was incorrectly mapped to EST)
+    '-05:00': 'EST',   // Eastern Standard
+    '-06:00': 'CST',   // Central Standard (also CDT in some agencies — defaulting to CST)
+    '-07:00': 'MST',   // Mountain Standard (also PDT — defaulting to MST)
+    '-08:00': 'PST',   // Pacific Standard
+    '-09:00': 'PST',
+    '-10:00': 'HST',   // Hawaii (no DST)
     '+01:00': 'GMT+1',
     '+02:00': 'EET',
     '+03:00': 'AST', '+03:30': 'IRT',

@@ -155,7 +155,7 @@ describe('SAM.gov import API calls', () => {
     const result = parseSamGovDeadline('2026-05-27T23:59:00-04:00')
     expect(result.dueDate).toBe('2026-05-27')
     expect(result.localTime).toBe('11:59 PM')
-    expect(result.timezone).toBe('EST')
+    expect(result.timezone).toBe('EDT')   // -04:00 is Eastern Daylight, not Standard
     expect(result.moroccoDate).toBe('2026-05-28')
     expect(result.moroccoTime).toBe('4:59 AM')
   })
@@ -174,6 +174,14 @@ describe('SAM.gov import API calls', () => {
     expect(result.timezone).toBe('GMT')
     expect(result.moroccoTime).toBe('3:00 PM')
     expect(result.moroccoDate).toBe('2026-06-01')
+  })
+
+  it('distinguishes US standard vs daylight offsets (EST vs EDT)', () => {
+    // Same wall-clock time, two different offsets:
+    //   -05:00 = Eastern Standard (winter)
+    //   -04:00 = Eastern Daylight (summer)
+    expect(parseSamGovDeadline('2026-01-15T10:00:00-05:00').timezone).toBe('EST')
+    expect(parseSamGovDeadline('2026-07-15T10:00:00-04:00').timezone).toBe('EDT')
   })
 
   it('normalises any clock-time variant into canonical 12h AM/PM', () => {
