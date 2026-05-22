@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildSamGovOpportunityEndpoint,
   extractSamGovAgency,
+  formatTime12h,
   getSamGovPostedRange,
   mapSamGovOpportunityToForm,
   parseSamGovDeadline,
@@ -94,13 +95,13 @@ describe('SAM.gov import API calls', () => {
     expect(mapped.client).toBe('Veterans Health Administration')
     expect(mapped.type).toBeUndefined()
 
-    // Original SAM.gov local time is preserved as-is
+    // Original SAM.gov local time is preserved as-is (formatted 12h)
     expect(mapped.dueDate).toBe('2026-05-27')
-    expect(mapped.localTime).toBe('10:00')
+    expect(mapped.localTime).toBe('10:00 AM')
     expect(mapped.timezone).toBe('EST')
 
-    // Morocco equivalent computed from exact UTC offset (UTC 15:00 → Morocco 16:00)
-    expect(mapped.moroccoTime).toBe('16:00')
+    // Morocco equivalent computed from exact UTC offset (UTC 15:00 → Morocco 16:00 / 4:00 PM)
+    expect(mapped.moroccoTime).toBe('4:00 PM')
     expect(mapped.moroccoDate).toBe('2026-05-27')
   })
 
@@ -153,10 +154,10 @@ describe('SAM.gov import API calls', () => {
     // 23:59 local on May 27 at -04:00 offset → UTC 03:59 May 28 → Morocco 04:59 May 28
     const result = parseSamGovDeadline('2026-05-27T23:59:00-04:00')
     expect(result.dueDate).toBe('2026-05-27')
-    expect(result.localTime).toBe('23:59')
+    expect(result.localTime).toBe('11:59 PM')
     expect(result.timezone).toBe('EST')
     expect(result.moroccoDate).toBe('2026-05-28')
-    expect(result.moroccoTime).toBe('04:59')
+    expect(result.moroccoTime).toBe('4:59 AM')
   })
 
   it('returns empty strings for missing deadline', () => {
@@ -169,9 +170,20 @@ describe('SAM.gov import API calls', () => {
   it('maps a Z-offset (UTC) deadline to GMT timezone and Morocco +1h', () => {
     const result = parseSamGovDeadline('2026-06-01T14:00:00Z')
     expect(result.dueDate).toBe('2026-06-01')
-    expect(result.localTime).toBe('14:00')
+    expect(result.localTime).toBe('2:00 PM')
     expect(result.timezone).toBe('GMT')
-    expect(result.moroccoTime).toBe('15:00')
+    expect(result.moroccoTime).toBe('3:00 PM')
     expect(result.moroccoDate).toBe('2026-06-01')
+  })
+
+  it('normalises any clock-time variant into canonical 12h AM/PM', () => {
+    expect(formatTime12h('10:00')).toBe('10:00 AM')      // 24h → 12h
+    expect(formatTime12h('17:30')).toBe('5:30 PM')       // 24h → 12h
+    expect(formatTime12h('00:15')).toBe('12:15 AM')      // midnight edge
+    expect(formatTime12h('12:00')).toBe('12:00 PM')      // noon edge
+    expect(formatTime12h('5:30PM')).toBe('5:30 PM')      // missing space
+    expect(formatTime12h('5:30 pm')).toBe('5:30 PM')     // lowercase
+    expect(formatTime12h('10:00 AM')).toBe('10:00 AM')   // already canonical
+    expect(formatTime12h('')).toBe('')
   })
 })

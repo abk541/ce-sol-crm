@@ -248,11 +248,23 @@ export function parseSamGovDeadline(raw: string | undefined): {
         : rawOff.match(/^[+-]\d{4}$/) ? `${rawOff.slice(0, 3)}:${rawOff.slice(3)}`
         : rawOff
       const { moroccoDate, moroccoTime } = utcPlusOneHour(new Date(raw).getTime())
-      return { dueDate: dateStr, localTime: timeStr, timezone: offsetToTzAbbrev(normalised), moroccoDate, moroccoTime }
+      return {
+        dueDate: dateStr,
+        localTime: formatTime12h(timeStr),
+        timezone: offsetToTzAbbrev(normalised),
+        moroccoDate,
+        moroccoTime: formatTime12h(moroccoTime),
+      }
     }
 
     // No UTC offset present — treat local time as already in Morocco (GMT+1)
-    return { dueDate: dateStr, localTime: timeStr, timezone: 'GMT+1', moroccoDate: dateStr, moroccoTime: timeStr }
+    return {
+      dueDate: dateStr,
+      localTime: formatTime12h(timeStr),
+      timezone: 'GMT+1',
+      moroccoDate: dateStr,
+      moroccoTime: formatTime12h(timeStr),
+    }
   }
 
   // Fallback: let Date parse it and treat the result as UTC
@@ -261,7 +273,13 @@ export function parseSamGovDeadline(raw: string | undefined): {
   const utcDate = parsed.toISOString().slice(0, 10)
   const utcTime = `${String(parsed.getUTCHours()).padStart(2, '0')}:${String(parsed.getUTCMinutes()).padStart(2, '0')}`
   const { moroccoDate, moroccoTime } = utcPlusOneHour(parsed.getTime())
-  return { dueDate: utcDate, localTime: utcTime, timezone: 'GMT', moroccoDate, moroccoTime }
+  return {
+    dueDate: utcDate,
+    localTime: formatTime12h(utcTime),
+    timezone: 'GMT',
+    moroccoDate,
+    moroccoTime: formatTime12h(moroccoTime),
+  }
 }
 
 /**
@@ -374,6 +392,80 @@ function zonedDateTimeToUtc(date: string, time: string, timeZone: string): Date 
   return new Date(utcGuess.getTime() - offset)
 }
 
+/** Inverse of zonedDateTimeToUtc: returns the wall-clock date + 24h time in the target zone. */
+function utcToZonedClock(utc: Date, timeZone: string): { date: string; time24: string } {
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  })
+  const parts = fmt.formatToParts(utc)
+  const get = (t: string) => parts.find(p => p.type === t)?.value ?? '00'
+  // Intl's en-US locale can emit "24" for midnight; normalise to "00".
+  const h = get('hour') === '24' ? '00' : get('hour')
+  return {
+    date: `${get('year')}-${get('month')}-${get('day')}`,
+    time24: `${h}:${get('minute')}`,
+  }
+}
+
+/**
+ * Re-projects the current (localTime + timezone + dueDate) onto a different
+ * timezone, preserving the absolute moment. Used when the user changes the
+ * timezone dropdown in the schedule tab — the wall-clock time + date and the
+ * Morocco line all update so they represent the same instant in the new zone.
+ */
+function applyTimezoneChange(
+  current: Partial<Opportunity>,
+  newTz: string,
+): Partial<Opportunity> {
+  const oldTz = current.timezone
+  const oldTime = current.localTime
+  const oldDate = current.dueDate
+  if (!oldTz || !oldTime || !oldDate || oldTz === newTz) {
+    return { ...current, timezone: newTz }
+  }
+  const oldIana = TIMEZONES[oldTz]
+  const newIana = TIMEZONES[newTz]
+  if (!oldIana || !newIana) return { ...current, timezone: newTz }
+  try {
+    const utc = zonedDateTimeToUtc(oldDate, oldTime, oldIana)
+    const { date: newDate, time24: newTime } = utcToZonedClock(utc, newIana)
+    const { date: morDate, time24: morTime } = utcToZonedClock(utc, 'Etc/GMT-1')
+    return {
+      ...current,
+      timezone: newTz,
+      dueDate: newDate,
+      localTime: formatTime12h(newTime),
+      moroccoTime: formatTime12h(morTime),
+      moroccoDate: morDate,
+    }
+  } catch {
+    return { ...current, timezone: newTz }
+  }
+}
+
+/** Normalises any of "10:00", "10:00 AM", "5:30PM", "17:30" to canonical "h:MM AM/PM". */
+export function formatTime12h(time: string | undefined): string {
+  if (!time) return ''
+  const value = String(time).trim()
+  const twelve = value.match(/^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)$/i)
+  if (twelve) {
+    const h = Number(twelve[1])
+    const min = twelve[2] ?? '00'
+    return `${h}:${min} ${twelve[3].toUpperCase()}`
+  }
+  const twentyFour = value.match(/^(\d{1,2}):(\d{2})/)
+  if (twentyFour) {
+    const h = Number(twentyFour[1])
+    const min = twentyFour[2]
+    if (!Number.isFinite(h)) return value
+    const period = h >= 12 ? 'PM' : 'AM'
+    const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h
+    return `${h12}:${min} ${period}`
+  }
+  return value
+}
+
 function formatOpportunityTime(time: string | undefined, sourceTzAbbrev?: string, date?: string): string {
   if (!time) return '-'
   const ianaSource = sourceTzAbbrev ? TIMEZONES[sourceTzAbbrev] : undefined
@@ -436,9 +528,9 @@ function formatMoroccoDisplay(
     const dateSuffix = crossesMidnight
       ? ` (${new Date(moroccoDate + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })})`
       : ''
-    return `${moroccoTime}${dateSuffix} GMT+1`
+    return `${formatTime12h(moroccoTime)}${dateSuffix} GMT+1`
   }
-  return timezone ? convertTime(localTime, timezone, dueDate) : `${localTime} GMT+1`
+  return timezone ? convertTime(localTime, timezone, dueDate) : `${formatTime12h(localTime)} GMT+1`
 }
 
 function NaicsInput({ value, onChange }: { value?: string; onChange: (value: string) => void }) {
@@ -774,11 +866,24 @@ function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) 
             </div>
             <div>
               <label className={lbl}>Local Time (HH:MM)</label>
-              <input value={form.localTime ?? ''} onChange={e => set('localTime', e.target.value)} className="input-field" placeholder="5:00 PM" />
+              <input
+                value={form.localTime ?? ''}
+                onChange={e => set('localTime', e.target.value)}
+                onBlur={e => {
+                  const normalised = formatTime12h(e.target.value.trim())
+                  if (normalised && normalised !== e.target.value) set('localTime', normalised)
+                }}
+                className="input-field"
+                placeholder="5:00 PM"
+              />
             </div>
             <div>
               <label className={lbl}>Timezone</label>
-              <select value={form.timezone ?? 'GMT+1'} onChange={e => set('timezone', e.target.value)} className="select-field">
+              <select
+                value={form.timezone ?? 'GMT+1'}
+                onChange={e => setForm(prev => applyTimezoneChange(prev, e.target.value))}
+                className="select-field"
+              >
                 {TZ_ABBREVS.map(t => <option key={t}>{t}</option>)}
               </select>
             </div>
@@ -1522,11 +1627,24 @@ function CreateModal({ onClose }: { onClose: () => void }) {
             </div>
             <div>
               <label className={lbl}>Local Time (HH:MM)</label>
-              <input value={form.localTime ?? ''} onChange={e => set('localTime', e.target.value)} className="input-field" placeholder="5:00 PM" />
+              <input
+                value={form.localTime ?? ''}
+                onChange={e => set('localTime', e.target.value)}
+                onBlur={e => {
+                  const normalised = formatTime12h(e.target.value.trim())
+                  if (normalised && normalised !== e.target.value) set('localTime', normalised)
+                }}
+                className="input-field"
+                placeholder="5:00 PM"
+              />
             </div>
             <div>
               <label className={lbl}>Timezone</label>
-              <select value={form.timezone ?? 'GMT+1'} onChange={e => set('timezone', e.target.value)} className="select-field">
+              <select
+                value={form.timezone ?? 'GMT+1'}
+                onChange={e => setForm(prev => applyTimezoneChange(prev, e.target.value))}
+                className="select-field"
+              >
                 {TZ_ABBREVS.map(t => <option key={t}>{t}</option>)}
               </select>
             </div>
