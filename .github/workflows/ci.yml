@@ -5,10 +5,9 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  workflow_dispatch:
 
 concurrency:
-  group: pages
+  group: pages-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -36,22 +35,17 @@ jobs:
       - name: Run tests
         run: npm test
 
-      # Vite reads VITE_* directly from process.env at build time —
-      # no .env file needed. Fallback to legacy secret names if present.
-      - name: Build
-        env:
-          VITE_SUPABASE_URL:      ${{ secrets.VITE_SUPABASE_URL || secrets.SUPABASE_URL }}
-          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY || secrets.SUPABASE_ANON_KEY }}
-          VITE_SAM_GOV_API_KEY:   ${{ secrets.VITE_SAM_GOV_API_KEY || secrets.SAM_GOV_API_KEY }}
+      # Write secrets into .env so Vite picks them up during the build.
+      # The .env file is gitignored and does not exist in the checkout,
+      # so we create it here. GitHub automatically masks these values in logs.
+      - name: Write .env from secrets
         run: |
-          # Fail loudly if the SAM.gov key didn't reach the build environment,
-          # rather than silently shipping a broken bundle.
-          if [ -z "$VITE_SAM_GOV_API_KEY" ]; then
-            echo "::error::VITE_SAM_GOV_API_KEY is empty — check repo Settings → Secrets → Actions."
-            exit 1
-          fi
-          echo "VITE_SAM_GOV_API_KEY present (length=${#VITE_SAM_GOV_API_KEY})"
-          npm run build
+          echo "VITE_SUPABASE_URL=${{ secrets.VITE_SUPABASE_URL }}"      >> .env
+          echo "VITE_SUPABASE_ANON_KEY=${{ secrets.VITE_SUPABASE_ANON_KEY }}" >> .env
+          echo "VITE_SAM_GOV_API_KEY=${{ secrets.VITE_SAM_GOV_API_KEY }}"    >> .env
+
+      - name: Build
+        run: npm run build
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
