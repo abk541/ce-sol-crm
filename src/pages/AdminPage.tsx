@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Plus, Pencil, Trash2, X, Check, Shield, Search } from 'lucide-react'
+import { Plus, Pencil, Trash2, X, Check, Shield, Search, Clock, Save } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import type { User, Role } from '../types'
 import { avatarColor } from '../lib/utils'
@@ -111,9 +111,18 @@ function UserModal({ user, onClose }: { user: User | null; onClose: () => void }
 }
 
 export default function AdminPage() {
-  const { users, deleteUser, currentUser } = useStore()
+  const {
+    users,
+    deleteUser,
+    currentUser,
+    nonSubGraceHours,
+    nonSubGraceMinutes,
+    updateNonSubGracePeriod,
+  } = useStore()
   const [search, setSearch] = useState('')
   const [modal, setModal] = useState<'create' | User | null>(null)
+  const [graceHours, setGraceHours] = useState(String(nonSubGraceHours))
+  const [graceMinutes, setGraceMinutes] = useState(String(nonSubGraceMinutes))
 
   const filtered = users.filter(u =>
     !search ||
@@ -128,6 +137,15 @@ export default function AdminPage() {
     toast.success(`${u.name} removed.`)
   }
 
+  const saveNonSubTiming = () => {
+    const hours = Math.max(0, Math.trunc(Number(graceHours) || 0))
+    const minutes = Math.max(0, Math.trunc(Number(graceMinutes) || 0))
+    updateNonSubGracePeriod(hours, minutes)
+    setGraceHours(String(hours))
+    setGraceMinutes(String(minutes))
+    toast.success('Non-submission timing updated')
+  }
+
   return (
     <div className="p-6 page-enter">
       <div className="flex items-center justify-between mb-6">
@@ -140,6 +158,45 @@ export default function AdminPage() {
         <button onClick={() => setModal('create')} className="btn-primary">
           <Plus size={14} /> Create User
         </button>
+      </div>
+
+      <div className="glass rounded-2xl p-4 mb-6">
+        <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
+          <div className="max-w-xl">
+            <div className="flex items-center gap-2 mb-1">
+              <Clock size={16} className="text-amber-300" />
+              <h2 className="text-sm font-bold text-white">Non-Submission Timing</h2>
+            </div>
+            <p className="text-xs text-slate-400">
+              Deadline-auto-submitted opportunities move to Non-Submission Reports after this grace period.
+            </p>
+          </div>
+          <div className="flex flex-col sm:flex-row gap-3 sm:items-end">
+            <div>
+              <label className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 block mb-1">Hours</label>
+              <input
+                type="number"
+                min={0}
+                value={graceHours}
+                onChange={e => setGraceHours(e.target.value)}
+                className="input-field w-full sm:w-28"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 block mb-1">Minutes</label>
+              <input
+                type="number"
+                min={0}
+                value={graceMinutes}
+                onChange={e => setGraceMinutes(e.target.value)}
+                className="input-field w-full sm:w-28"
+              />
+            </div>
+            <button type="button" onClick={saveNonSubTiming} className="btn-primary justify-center">
+              <Save size={13} /> Save Timing
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* Stats row */}

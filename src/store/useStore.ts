@@ -36,7 +36,7 @@ import {
   upsertDeletionRequest,
   upsertBDSubmission,
 } from '../lib/db'
-import { isAssignedToAssociate } from '../lib/team'
+import { getAssignmentChain, isAssignedToAssociate } from '../lib/team'
 
 interface AppState {
   // Auth
@@ -64,6 +64,8 @@ interface AppState {
 
   // UI
   sidebarCollapsed: boolean
+  nonSubGraceHours: number
+  nonSubGraceMinutes: number
 
   // ── Auth actions ───────────────────────────────────────────────────
   login: (email: string, password: string) => { ok: boolean; error?: string; needsFirst?: boolean; needsMFA?: boolean }
@@ -144,6 +146,7 @@ interface AppState {
 
   // ── UI ─────────────────────────────────────────────────────────────
   toggleSidebar: () => void
+  updateNonSubGracePeriod: (hours: number, minutes: number) => void
 
   // ── DB ─────────────────────────────────────────────────────────────
   dbReady: boolean
@@ -178,11 +181,60 @@ function normalizeOpportunityAssignmentStatus(opp: Opportunity, employees: Emplo
   return opp
 }
 
+function parseDeadlineClock(time?: string): string {
+  const value = (time ?? '').trim()
+  const twelveHour = value.match(/^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)$/i)
+
+  if (twelveHour) {
+    let hour = Number(twelveHour[1])
+    const minute = Number(twelveHour[2] ?? '00')
+    const marker = twelveHour[3].toUpperCase()
+
+    if (marker === 'PM' && hour < 12) hour += 12
+    if (marker === 'AM' && hour === 12) hour = 0
+
+    return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
+  }
+
+  const twentyFourHour = value.match(/^(\d{1,2}):(\d{2})$/)
+  if (twentyFourHour) {
+    return `${String(Number(twentyFourHour[1])).padStart(2, '0')}:${twentyFourHour[2]}`
+  }
+
+  return '23:59'
+}
+
+function deadlineTimeMs(opp: Opportunity): number | null {
+  if (!opp.dueDate) return null
+  const deadline = new Date(`${opp.dueDate}T${parseDeadlineClock(opp.localTime)}`)
+  return Number.isFinite(deadline.getTime()) ? deadline.getTime() : null
+}
+
 function isDeadlineReached(opp: Opportunity, now = new Date()): boolean {
-  if (!opp.dueDate || !PRE_SUBMISSION_STATUSES.includes(opp.status)) return false
-  const time = opp.localTime && /^\d{1,2}:\d{2}$/.test(opp.localTime) ? opp.localTime : '23:59'
-  const deadline = new Date(`${opp.dueDate}T${time}`)
-  return Number.isFinite(deadline.getTime()) && deadline.getTime() <= now.getTime()
+  if (!PRE_SUBMISSION_STATUSES.includes(opp.status)) return false
+  const deadlineMs = deadlineTimeMs(opp)
+  return deadlineMs !== null && deadlineMs <= now.getTime()
+}
+
+function isNonSubmissionGraceReached(opp: Opportunity, graceMs: number, now = new Date()): boolean {
+  const deadlineMs = deadlineTimeMs(opp)
+  return deadlineMs !== null && deadlineMs + Math.max(0, graceMs) <= now.getTime()
+}
+
+function gracePeriodLabel(hours: number, minutes: number): string {
+  const cleanHours = Math.max(0, Math.trunc(hours))
+  const cleanMinutes = Math.max(0, Math.trunc(minutes))
+  const parts = [
+    cleanHours ? `${cleanHours} hour${cleanHours === 1 ? '' : 's'}` : '',
+    cleanMinutes ? `${cleanMinutes} minute${cleanMinutes === 1 ? '' : 's'}` : '',
+  ].filter(Boolean)
+
+  return parts.length ? parts.join(' ') : 'immediately'
+}
+
+function nonSubmissionAgentUsername(opp: Opportunity, employees: Employee[], currentUser?: User | null): string {
+  const chain = getAssignmentChain(employees, opp.assignedTo)
+  return chain.associate?.email.split('@')[0] || opp.supportAgent || currentUser?.username || 'system'
 }
 
 function todayLabel() {
@@ -247,6 +299,8 @@ export const useStore = create<AppState>()(
       employees: MOCK_EMPLOYEES,
       bdSubmissions: MOCK_BD_SUBMISSIONS,
       sidebarCollapsed: false,
+      nonSubGraceHours: 0,
+      nonSubGraceMinutes: 5,
       dbReady: false,
       needsPurge: false,
 
@@ -512,33 +566,79 @@ export const useStore = create<AppState>()(
       syncDueOpportunities: () => {
         const now = new Date()
         const dueOpps = get().opportunities.filter(opp => !opp.isDeleted && isDeadlineReached(opp, now))
-        if (dueOpps.length === 0) return
+        if (dueOpps.length > 0) {
+          set(s => ({
+            opportunities: s.opportunities.map(opp =>
+              dueOpps.some(due => due.id === opp.id)
+                ? { ...opp, status: 'SUBMITTED', submittedAt: now.toISOString() }
+                : opp
+            )
+          }))
 
-        set(s => ({
-          opportunities: s.opportunities.map(opp =>
-            dueOpps.some(due => due.id === opp.id)
-              ? { ...opp, status: 'SUBMITTED', submittedAt: now.toISOString() }
-              : opp
+          const updated = get().opportunities.filter(opp => dueOpps.some(due => due.id === opp.id))
+          updated.forEach(opp => {
+            const existing = get().bdSubmissions.find(b => b.solicitationId === opp.solicitationId)
+            const trackerRow = bdSubmissionFromOpportunity(opp, 'SUBMITTED', existing, 'Deadline reached')
+            set(s => ({
+              bdSubmissions: existing
+                ? s.bdSubmissions.map(b => b.id === existing.id ? trackerRow : b)
+                : [trackerRow, ...s.bdSubmissions],
+            }))
+            upsertBDSubmission(trackerRow)
+            upsertOpportunity(opp)
+            get().addNotification({
+              type: 'CONTRACT_SUBMITTED',
+              title: 'Deadline reached',
+              message: `${opp.solicitation} reached its deadline and moved to submitted.`,
+              read: false,
+              relatedId: opp.id,
+            })
+          })
+        }
+
+        const { nonSubGraceHours, nonSubGraceMinutes } = get()
+        const graceMs = ((Math.max(0, nonSubGraceHours) * 60) + Math.max(0, nonSubGraceMinutes)) * 60_000
+        const reportedOpportunityIds = new Set(get().nonSubReports.map(report => report.opportunityId))
+        const reportableOpps = get().opportunities.filter(opp => {
+          if (opp.isDeleted || opp.status !== 'SUBMITTED' || opp.nonSubmissionReportId || reportedOpportunityIds.has(opp.id)) return false
+          if (!isNonSubmissionGraceReached(opp, graceMs, now)) return false
+          return get().bdSubmissions.some(b =>
+            b.solicitationId === opp.solicitationId &&
+            b.status === 'SUBMITTED' &&
+            b.comment === 'Deadline reached'
           )
+        })
+
+        if (reportableOpps.length === 0) return
+
+        const reports = reportableOpps.map((opp, index): NonSubmissionReport => ({
+          id: `nsr${now.getTime()}-${index}`,
+          opportunityId: opp.id,
+          agentUsername: nonSubmissionAgentUsername(opp, get().employees, get().currentUser),
+          reason: `No proposal submission was recorded within ${gracePeriodLabel(nonSubGraceHours, nonSubGraceMinutes)} after the due datetime.`,
+          status: 'PENDING',
+          submittedAt: now.toISOString(),
         }))
 
-        const updated = get().opportunities.filter(opp => dueOpps.some(due => due.id === opp.id))
-        updated.forEach(opp => {
-          const existing = get().bdSubmissions.find(b => b.solicitationId === opp.solicitationId)
-          const trackerRow = bdSubmissionFromOpportunity(opp, 'SUBMITTED', existing, 'Deadline reached')
-          set(s => ({
-            bdSubmissions: existing
-              ? s.bdSubmissions.map(b => b.id === existing.id ? trackerRow : b)
-              : [trackerRow, ...s.bdSubmissions],
-          }))
-          upsertBDSubmission(trackerRow)
-          upsertOpportunity(opp)
+        set(s => ({
+          nonSubReports: [...reports, ...s.nonSubReports],
+          opportunities: s.opportunities.map(opp => {
+            const report = reports.find(r => r.opportunityId === opp.id)
+            return report ? { ...opp, nonSubmissionReportId: report.id } : opp
+          }),
+        }))
+
+        reports.forEach(report => {
+          upsertNonSubReport(report)
+          const updatedOpp = get().opportunities.find(o => o.id === report.opportunityId)
+          if (updatedOpp) upsertOpportunity(updatedOpp)
           get().addNotification({
-            type: 'CONTRACT_SUBMITTED',
-            title: 'Deadline reached',
-            message: `${opp.solicitation} reached its deadline and moved to submitted.`,
+            type: 'NON_SUB_REVIEW',
+            title: 'Non-submission report pending',
+            message: `${updatedOpp?.solicitation ?? 'An opportunity'} passed the configured non-submission window.`,
             read: false,
-            relatedId: opp.id,
+            relatedId: report.opportunityId,
+            targetRole: 'BD_MANAGER',
           })
         })
       },
@@ -1015,14 +1115,25 @@ export const useStore = create<AppState>()(
         const report = get().nonSubReports.find(r => r.id === id)
         if (report) {
           upsertNonSubReport(report)
-          const newStatus = action === 'APPROVED' ? 'NOT_SUBMITTED' : 'DROPPED'
+          const newStatus: Opportunity['status'] = action === 'APPROVED' ? 'NOT_SUBMITTED' : 'DROPPED'
+          const trackerStatus: BDSubmission['status'] = action === 'APPROVED' ? 'NOT_SUBMITTED' : 'DROPPED'
           set(s => ({
             opportunities: s.opportunities.map(o =>
               o.id === report.opportunityId ? { ...o, status: newStatus } : o
             )
           }))
           const updatedOpp = get().opportunities.find(o => o.id === report.opportunityId)
-          if (updatedOpp) upsertOpportunity(updatedOpp)
+          if (updatedOpp) {
+            const existing = get().bdSubmissions.find(b => b.solicitationId === updatedOpp.solicitationId)
+            const trackerRow = bdSubmissionFromOpportunity(updatedOpp, trackerStatus, existing, reviewNote || report.reason)
+            set(s => ({
+              bdSubmissions: existing
+                ? s.bdSubmissions.map(b => b.id === existing.id ? trackerRow : b)
+                : [trackerRow, ...s.bdSubmissions],
+            }))
+            upsertBDSubmission(trackerRow)
+            upsertOpportunity(updatedOpp)
+          }
         }
       },
 
@@ -1206,11 +1317,15 @@ export const useStore = create<AppState>()(
 
       // ── UI ──────────────────────────────────────────────────────────
       toggleSidebar: () => set(s => ({ sidebarCollapsed: !s.sidebarCollapsed })),
+      updateNonSubGracePeriod: (hours, minutes) => set({
+        nonSubGraceHours: Math.max(0, Math.trunc(Number(hours) || 0)),
+        nonSubGraceMinutes: Math.max(0, Math.trunc(Number(minutes) || 0)),
+      }),
     }),
     {
       name: 'ces-crm-store',
-      // v5: persist the 24h app session while still reloading data from Supabase.
-      version: 5,
+      // v6: persist configurable non-submission grace timing.
+      version: 6,
       migrate: (persistedState: unknown, fromVersion: number) => {
         const s = persistedState as Record<string, unknown>
         if (fromVersion < 4) {
@@ -1237,9 +1352,18 @@ export const useStore = create<AppState>()(
             subkDatabase:    [],
             needsPurge:      false,
             dbReady:         false,
+            nonSubGraceHours: 0,
+            nonSubGraceMinutes: 5,
           }
         }
-        return { ...s, accessNoticeAccepted: Boolean(s.accessNoticeAccepted), needsPurge: false, dbReady: false }
+        return {
+          ...s,
+          accessNoticeAccepted: Boolean(s.accessNoticeAccepted),
+          nonSubGraceHours: Number(s.nonSubGraceHours ?? 0),
+          nonSubGraceMinutes: Number(s.nonSubGraceMinutes ?? 5),
+          needsPurge: false,
+          dbReady: false,
+        }
       },
       // Persist all business data so changes survive logout/refresh
       // (Supabase sync overrides this when connected; localStorage is the fallback)
@@ -1251,6 +1375,8 @@ export const useStore = create<AppState>()(
         loginTimestamp:   s.loginTimestamp,
         accessNoticeAccepted: s.accessNoticeAccepted,
         sidebarCollapsed:  s.sidebarCollapsed,
+        nonSubGraceHours:  s.nonSubGraceHours,
+        nonSubGraceMinutes: s.nonSubGraceMinutes,
         opportunities:     s.opportunities,
         contracts:         s.contracts,
         freshAwards:       s.freshAwards,

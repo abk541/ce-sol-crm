@@ -117,6 +117,8 @@ beforeEach(() => {
     currentUser: BD_MANAGER_USER,
     isAuthenticated: true,
     loginTimestamp: Date.now(),
+    nonSubGraceHours: 0,
+    nonSubGraceMinutes: 5,
   })
 })
 
@@ -189,7 +191,7 @@ describe('1 · submitOpportunity', () => {
   })
 
   it('auto-submits pre-submission opportunities when the deadline is reached', () => {
-    const opp = makeOpp({ id: 'opp-expired', status: 'ACTIVE', dueDate: '2000-01-01', localTime: '09:00' })
+    const opp = makeOpp({ id: 'opp-expired', status: 'ACTIVE', dueDate: '2000-01-01', localTime: '09:00 AM' })
     useStore.setState({ opportunities: [opp] })
 
     useStore.getState().syncDueOpportunities()
@@ -197,6 +199,54 @@ describe('1 · submitOpportunity', () => {
     const updated = useStore.getState().opportunities.find(o => o.id === 'opp-expired')
     expect(updated?.status).toBe('SUBMITTED')
     expect(updated?.submittedAt).toBeTruthy()
+  })
+
+  it('creates a pending non-submission report after the configured grace period', () => {
+    const opp = makeOpp({ id: 'opp-expired', status: 'ACTIVE', dueDate: '2000-01-01', localTime: '09:00 AM' })
+    useStore.setState({ opportunities: [opp], nonSubReports: [], bdSubmissions: [], nonSubGraceHours: 0, nonSubGraceMinutes: 5 })
+
+    useStore.getState().syncDueOpportunities()
+
+    const reports = useStore.getState().nonSubReports
+    const updated = useStore.getState().opportunities.find(o => o.id === 'opp-expired')
+    expect(reports).toHaveLength(1)
+    expect(reports[0].status).toBe('PENDING')
+    expect(reports[0].opportunityId).toBe('opp-expired')
+    expect(updated?.nonSubmissionReportId).toBe(reports[0].id)
+  })
+
+  it('does not create non-submission reports for manually submitted opportunities', () => {
+    const opp = makeOpp({ id: 'opp-manual', status: 'SUBMITTED', dueDate: '2000-01-01', localTime: '09:00 AM' })
+    useStore.setState({
+      opportunities: [opp],
+      nonSubReports: [],
+      bdSubmissions: [{
+        id: 11,
+        submittedOn: '2000-01-01',
+        solicitationId: opp.solicitationId,
+        setAside: opp.setAside,
+        type: opp.type,
+        solicitation: opp.solicitation,
+        status: 'SUBMITTED',
+        dueDate: opp.dueDate,
+        localTime: opp.localTime,
+        location: opp.location,
+        bdm: opp.bdm,
+        bds: opp.bds,
+        value: 0,
+      }],
+    })
+
+    useStore.getState().syncDueOpportunities()
+
+    expect(useStore.getState().nonSubReports).toHaveLength(0)
+  })
+
+  it('lets admins update the non-submission grace period', () => {
+    useStore.getState().updateNonSubGracePeriod(2, 30)
+
+    expect(useStore.getState().nonSubGraceHours).toBe(2)
+    expect(useStore.getState().nonSubGraceMinutes).toBe(30)
   })
 })
 
@@ -305,6 +355,40 @@ describe('3 · Non-Submission Report workflow', () => {
     expect(updated?.status).toBe('NOT_SUBMITTED')
   })
 
+  it('APPROVED moves the matching BD tracker row to NOT_SUBMITTED', () => {
+    const opp = makeOpp({ id: 'opp1', status: 'SUBMITTED' })
+    useStore.setState({
+      opportunities: [opp],
+      nonSubReports: [],
+      bdSubmissions: [{
+        id: 21,
+        submittedOn: '2026-05-01',
+        solicitationId: opp.solicitationId,
+        setAside: opp.setAside,
+        type: opp.type,
+        solicitation: opp.solicitation,
+        status: 'SUBMITTED',
+        dueDate: opp.dueDate,
+        localTime: opp.localTime,
+        location: opp.location,
+        bdm: opp.bdm,
+        bds: opp.bds,
+        value: 0,
+        comment: 'Deadline reached',
+      }],
+    })
+
+    useStore.getState().submitNonSubReport({
+      opportunityId: 'opp1',
+      agentUsername: 'agent1',
+      reason: 'No submission was recorded after the configured deadline window.',
+    })
+    const reportId = useStore.getState().nonSubReports[0].id
+    useStore.getState().reviewNonSubReport(reportId, 'APPROVED', 'Accepted', 'manager1')
+
+    expect(useStore.getState().bdSubmissions.find(b => b.id === 21)?.status).toBe('NOT_SUBMITTED')
+  })
+
   it('DECLINED → opportunity status becomes DROPPED', () => {
     const opp = makeOpp({ id: 'opp1', status: 'ACTIVE' })
     useStore.setState({ opportunities: [opp], nonSubReports: [] })
@@ -318,6 +402,40 @@ describe('3 · Non-Submission Report workflow', () => {
 
     const updated = useStore.getState().opportunities.find(o => o.id === 'opp1')
     expect(updated?.status).toBe('DROPPED')
+  })
+
+  it('DECLINED moves the matching BD tracker row to DROPPED', () => {
+    const opp = makeOpp({ id: 'opp1', status: 'SUBMITTED' })
+    useStore.setState({
+      opportunities: [opp],
+      nonSubReports: [],
+      bdSubmissions: [{
+        id: 22,
+        submittedOn: '2026-05-01',
+        solicitationId: opp.solicitationId,
+        setAside: opp.setAside,
+        type: opp.type,
+        solicitation: opp.solicitation,
+        status: 'SUBMITTED',
+        dueDate: opp.dueDate,
+        localTime: opp.localTime,
+        location: opp.location,
+        bdm: opp.bdm,
+        bds: opp.bds,
+        value: 0,
+        comment: 'Deadline reached',
+      }],
+    })
+
+    useStore.getState().submitNonSubReport({
+      opportunityId: 'opp1',
+      agentUsername: 'agent1',
+      reason: 'No submission was recorded after the configured deadline window.',
+    })
+    const reportId = useStore.getState().nonSubReports[0].id
+    useStore.getState().reviewNonSubReport(reportId, 'DECLINED', 'Not approved', 'manager1')
+
+    expect(useStore.getState().bdSubmissions.find(b => b.id === 22)?.status).toBe('DROPPED')
   })
 
   it('review records the reviewer and note on the report', () => {
