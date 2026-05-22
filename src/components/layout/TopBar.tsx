@@ -365,7 +365,7 @@ export default function TopBar() {
                         <DetailRow label="Title" value={selectedContext.contract.title} />
                         <DetailRow label="Contract ID" value={selectedContext.contract.contractId} />
                         <DetailRow label="Client" value={selectedContext.contract.client} />
-                        <DetailRow label="Type" value={selectedContext.contract.type === 'S&D' ? 'Delivery' : selectedContext.contract.type} />
+                        <DetailRow label="Type" value={selectedContext.contract.type === 'S&D' || selectedContext.contract.type === 'SUPPLY' ? 'S&D' : selectedContext.contract.type} />
                         <DetailRow label="Status" value={selectedContext.contract.status.replace(/_/g, ' ')} />
                         <DetailRow label="Value" value={formatCurrency(selectedContext.contract.value || 0)} />
                       </>

@@ -1348,7 +1348,7 @@ export default function ContractsPage() {
     const values: Record<string, string> = {
       title: c.title,
       contractId: c.contractId,
-      type: c.type === 'S&D' ? 'Delivery' : c.type,
+      type: c.type === 'S&D' || c.type === 'SUPPLY' ? 'S&D' : c.type,
       status: STATUS_META[c.status]?.label ?? c.status,
       location: c.location,
       popStart: c.popStart,

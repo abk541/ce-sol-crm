@@ -35,8 +35,7 @@ const TYPES_DISPLAY: { value: string; label: string }[] = [
   { value: 'RECURRING', label: 'RECURRING' },
   { value: 'BPA',       label: 'BPA' },
   { value: 'IDIQ',      label: 'IDIQ' },
-  { value: 'S&D',       label: 'Delivery' },
-  { value: 'SUPPLY',    label: 'SUPPLY' },
+  { value: 'S&D',       label: 'S&D' },
 ]
 const SET_ASIDES = ['SB', 'SDVOSB', 'WOSB', 'HUBZone', 'VOSB', '8(a)', 'UNRES']
 const PRIORITIES: Priority[] = ['MEDIUM', 'HIGH', 'VERY_HIGH']
@@ -140,7 +139,7 @@ async function readSamGovError(res: Response) {
 }
 
 function typeLabel(val: string) {
-  if (val === 'S&D') return 'Delivery'
+  if (val === 'S&D' || val === 'SUPPLY') return 'S&D'
   return val
 }
 
@@ -1413,7 +1412,7 @@ function SubmitModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }
             </>
           )}
 
-          {/* BPA / IDIQ / S&D / SUPPLY: all three fields */}
+          {/* BPA / IDIQ / S&D: all three fields */}
           {!isOTJ && !isRecurring && (
             <>
               <div>
@@ -1993,8 +1992,7 @@ const COLUMN_FILTERS = [
   { key: 'solicitationId', label: 'ID',           placeholder: 'Any ID' },
   { key: 'solicitation',   label: 'Solicitation', placeholder: 'Any solicitation' },
   { key: 'setAside',       label: 'Set Aside',    placeholder: 'Any set aside' },
-  { key: 'localTime',      label: 'Local Due Time', placeholder: 'Any local time' },
-  { key: 'moroccoDueTime', label: 'Morocco Time', placeholder: 'Any Morocco time' },
+  { key: 'localTime',      label: 'Local Time',   placeholder: 'Any local time' },
   { key: 'location',       label: 'Location',     placeholder: 'Any location' },
   { key: 'manager',        label: 'Manager',      placeholder: 'Any manager' },
   { key: 'teamLead',       label: 'Team Lead',    placeholder: 'Any team lead' },
@@ -2016,8 +2014,6 @@ function getColumnFilterValue(o: Opportunity, key: ColumnFilterKey, employees: R
       return typeLabel(o.type)
     case 'localTime':
       return `${o.localTime ?? ''} ${o.timezone ?? ''}`.trim()
-    case 'moroccoDueTime':
-      return formatMoroccoDisplay(o.localTime, o.timezone, o.dueDate, o.moroccoTime, o.moroccoDate)
     case 'manager':
       return chain.manager?.name ?? ''
     case 'teamLead':
@@ -2086,7 +2082,7 @@ export default function PipelinePage() {
   const canManageOpportunities = currentUser?.role === 'BD_MANAGER'
 
   const filterOptions = useMemo(() => {
-    const visibleOpps = opportunities.filter(o => !o.isDeleted && OPP_VIEW_STATUSES.includes(o.status as any) && isAssignedToAssociate(employees, o.assignedTo))
+    const visibleOpps = opportunities.filter(o => !o.isDeleted && !o.nonSubmissionReportId && OPP_VIEW_STATUSES.includes(o.status as any) && isAssignedToAssociate(employees, o.assignedTo))
     return COLUMN_FILTERS.reduce((acc, col) => {
       const values = visibleOpps
         .map(o => getColumnFilterValue(o, col.key, employees))
@@ -2098,7 +2094,7 @@ export default function PipelinePage() {
   }, [opportunities, employees])
 
   const filtered = useMemo(() => {
-    let list = opportunities.filter(o => !o.isDeleted && OPP_VIEW_STATUSES.includes(o.status as any) && isAssignedToAssociate(employees, o.assignedTo))
+    let list = opportunities.filter(o => !o.isDeleted && !o.nonSubmissionReportId && OPP_VIEW_STATUSES.includes(o.status as any) && isAssignedToAssociate(employees, o.assignedTo))
 
     if (dueDateRange) list = list.filter(o => filterByPeriod(o.dueDate, dueDateRange))
 
@@ -2240,15 +2236,14 @@ export default function PipelinePage() {
                   { label: 'Solicitation', k: 'solicitation' },
                   { label: 'Set Aside',   k: 'setAside' },
                   { label: 'Due Date',    k: 'dueDate' },
-                  { label: 'Local Due Time', k: 'localTime' },
-                  { label: 'Morocco Time', k: '' },
+                  { label: 'Local Time', k: 'localTime', title: 'Hover a local time to see Morocco time' },
                   { label: 'Location',    k: 'location' },
                   { label: 'Manager',     k: '' },
                   { label: 'Team Lead',   k: '' },
                   { label: 'Associate',   k: '' },
                   { label: 'Actions',     k: '' },
                 ].map(col => (
-                  <th key={col.k || col.label}>
+                  <th key={col.k || col.label} title={'title' in col ? col.title : undefined}>
                     {col.k ? (
                       <button onClick={() => col.k && toggleSort(col.k as SortKey)}
                         className="flex items-center gap-1 hover:text-slate-700 transition-colors">
@@ -2288,12 +2283,11 @@ export default function PipelinePage() {
                         {new Date(o.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                       </span>
                     </td>
-                    <td className="text-slate-500 text-xs whitespace-nowrap">
+                    <td
+                      className="text-slate-500 text-xs whitespace-nowrap cursor-help"
+                      title={`Morocco time: ${formatMoroccoDisplay(o.localTime, o.timezone, o.dueDate, o.moroccoTime, o.moroccoDate)}`}
+                    >
                       {formatLocalDueTimeShared(o.localTime, o.timezone)}
-                    </td>
-                    <td className="text-slate-500 text-xs whitespace-nowrap">
-                      <Clock size={9} className="inline mr-1 text-amber-300" />
-                      {formatMoroccoDisplay(o.localTime, o.timezone, o.dueDate, o.moroccoTime, o.moroccoDate)}
                     </td>
                     <td><span className="text-slate-500 text-xs">{o.location}</span></td>
                     {(() => {
@@ -2403,7 +2397,7 @@ export default function PipelinePage() {
 
               <DrawerSection title="Schedule">
                 <DrawerField label="Due Date"  value={new Date(selectedOpp.dueDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })} />
-                <DrawerField label="Local Due Time" value={formatLocalDueTimeShared(selectedOpp.localTime, selectedOpp.timezone)} />
+                <DrawerField label="Local Time" value={formatLocalDueTimeShared(selectedOpp.localTime, selectedOpp.timezone)} />
                 {selectedOpp.localTime && (
                   <DrawerField label="Morocco (GMT+1)" value={
                     <span className="text-indigo-600 font-semibold">

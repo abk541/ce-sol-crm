@@ -108,7 +108,7 @@ export async function generateContractInvoicePdf(contract: Contract) {
   write('CONTRACT ID', contract.contractId || contract.id, 56, 635, 42)
   write('CLIENT / AGENCY', contract.client || '-', 235, 635, 42)
   write('LOCATION', contract.location || '-', 405, 635, 28)
-  write('TYPE', contract.type === 'S&D' ? 'Delivery' : contract.type, 56, 587, 24)
+  write('TYPE', contract.type === 'S&D' || contract.type === 'SUPPLY' ? 'S&D' : contract.type, 56, 587, 24)
   write('STATUS', contract.status, 160, 587, 22)
   write('INVOICE PERIOD', invoicePeriod, 245, 587, 24)
   write('TOTAL CONTRACT VALUE', fmtMoney(contract.value || 0), 360, 587, 28)

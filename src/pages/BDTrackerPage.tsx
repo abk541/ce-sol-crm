@@ -49,7 +49,7 @@ type Filters = Record<FilterKey, string>
 const EMPTY_FILTERS: Filters = FILTERS.reduce((acc, filter) => ({ ...acc, [filter.key]: '' }), {} as Filters)
 
 function typeLabel(value: string) {
-  return value === 'S&D' ? 'Delivery' : value
+  return value === 'S&D' || value === 'SUPPLY' ? 'S&D' : value
 }
 
 function rowOpportunity(row: BDSubmission, opportunities: ReturnType<typeof useStore.getState>['opportunities']) {

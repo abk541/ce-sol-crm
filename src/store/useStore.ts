@@ -186,12 +186,6 @@ function deadlineTimeMs(opp: Opportunity): number | null {
   return opportunityDeadlineTimeMs(opp)
 }
 
-function isDeadlineReached(opp: Opportunity, now = new Date()): boolean {
-  if (!PRE_SUBMISSION_STATUSES.includes(opp.status)) return false
-  const deadlineMs = deadlineTimeMs(opp)
-  return deadlineMs !== null && deadlineMs <= now.getTime()
-}
-
 function isNonSubmissionGraceReached(opp: Opportunity, graceMs: number, now = new Date()): boolean {
   const deadlineMs = deadlineTimeMs(opp)
   return deadlineMs !== null && deadlineMs + Math.max(0, graceMs) <= now.getTime()
@@ -543,48 +537,14 @@ export const useStore = create<AppState>()(
       // ── Contract management ─────────────────────────────────────────
       syncDueOpportunities: () => {
         const now = new Date()
-        const dueOpps = get().opportunities.filter(opp => !opp.isDeleted && isDeadlineReached(opp, now))
-        if (dueOpps.length > 0) {
-          set(s => ({
-            opportunities: s.opportunities.map(opp =>
-              dueOpps.some(due => due.id === opp.id)
-                ? { ...opp, status: 'SUBMITTED', submittedAt: now.toISOString() }
-                : opp
-            )
-          }))
-
-          const updated = get().opportunities.filter(opp => dueOpps.some(due => due.id === opp.id))
-          updated.forEach(opp => {
-            const existing = get().bdSubmissions.find(b => b.solicitationId === opp.solicitationId)
-            const trackerRow = bdSubmissionFromOpportunity(opp, 'SUBMITTED', existing, 'Deadline reached')
-            set(s => ({
-              bdSubmissions: existing
-                ? s.bdSubmissions.map(b => b.id === existing.id ? trackerRow : b)
-                : [trackerRow, ...s.bdSubmissions],
-            }))
-            upsertBDSubmission(trackerRow)
-            upsertOpportunity(opp)
-            get().addNotification({
-              type: 'CONTRACT_SUBMITTED',
-              title: 'Deadline reached',
-              message: `${opp.solicitation} reached its deadline and moved to submitted.`,
-              read: false,
-              relatedId: opp.id,
-            })
-          })
-        }
-
         const { nonSubGraceHours, nonSubGraceMinutes } = get()
         const graceMs = ((Math.max(0, nonSubGraceHours) * 60) + Math.max(0, nonSubGraceMinutes)) * 60_000
         const reportedOpportunityIds = new Set(get().nonSubReports.map(report => report.opportunityId))
         const reportableOpps = get().opportunities.filter(opp => {
-          if (opp.isDeleted || opp.status !== 'SUBMITTED' || opp.nonSubmissionReportId || reportedOpportunityIds.has(opp.id)) return false
+          if (opp.isDeleted || !PRE_SUBMISSION_STATUSES.includes(opp.status) || opp.nonSubmissionReportId || reportedOpportunityIds.has(opp.id)) return false
+          if (!isAssignedToAssociate(get().employees, opp.assignedTo)) return false
           if (!isNonSubmissionGraceReached(opp, graceMs, now)) return false
-          return get().bdSubmissions.some(b =>
-            b.solicitationId === opp.solicitationId &&
-            b.status === 'SUBMITTED' &&
-            b.comment === 'Deadline reached'
-          )
+          return true
         })
 
         if (reportableOpps.length === 0) return
@@ -613,7 +573,7 @@ export const useStore = create<AppState>()(
           get().addNotification({
             type: 'NON_SUB_REVIEW',
             title: 'Non-submission report pending',
-            message: `${updatedOpp?.solicitation ?? 'An opportunity'} passed the configured non-submission window.`,
+            message: `${updatedOpp?.solicitation ?? 'An opportunity'} passed the configured non-submission window and moved to Non-Submission Reports.`,
             read: false,
             relatedId: report.opportunityId,
             targetRole: 'BD_MANAGER',

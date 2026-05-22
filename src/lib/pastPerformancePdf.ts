@@ -73,7 +73,7 @@ export async function generatePastPerformancePdf({
   write('CONTRACT ID', contractId, 56, 658, 42)
   write('AGENCY', contract.client || opportunity?.client || '-', 235, 658, 42)
   write('LOCATION', contract.location || opportunity?.location || '-', 405, 658, 28)
-  write('TYPE', contract.type === 'S&D' ? 'Delivery' : contract.type, 56, 610, 24)
+  write('TYPE', contract.type === 'S&D' || contract.type === 'SUPPLY' ? 'S&D' : contract.type, 56, 610, 24)
   write('NAICS', contract.naicsCode || opportunity?.naicsCode || '-', 160, 610, 18)
   write('SET ASIDE', contract.setAside || opportunity?.setAside || '-', 245, 610, 18)
   write('TOTAL CONSTRUCTION AMOUNT', fmtMoney(amount), 360, 610, 28)

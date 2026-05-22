@@ -103,6 +103,12 @@ const BD_MANAGER_USER = {
   createdAt: '2026-01-01',
 }
 
+const TEST_EMPLOYEES: Employee[] = [
+  { id: 'emp-manager', name: 'Test Manager', email: 'manager@ces.com', role: 'BD_MANAGER', managerId: null, avatar: 'TM' },
+  { id: 'emp-lead', name: 'Test Team Lead', email: 'lead@ces.com', role: 'TEAM_LEAD', managerId: 'emp-manager', avatar: 'TL' },
+  { id: 'emp-associate', name: 'Test Associate', email: 'associate@ces.com', role: 'ASSOCIATE', managerId: 'emp-lead', avatar: 'TA' },
+]
+
 beforeEach(() => {
   useStore.setState({
     opportunities: [],
@@ -117,6 +123,7 @@ beforeEach(() => {
     currentUser: BD_MANAGER_USER,
     isAuthenticated: true,
     loginTimestamp: Date.now(),
+    employees: TEST_EMPLOYEES,
     nonSubGraceHours: 0,
     nonSubGraceMinutes: 5,
   })
@@ -190,19 +197,20 @@ describe('1 · submitOpportunity', () => {
     expect(updated?.status).toBe('SUBMITTED')
   })
 
-  it('auto-submits pre-submission opportunities when the deadline is reached', () => {
-    const opp = makeOpp({ id: 'opp-expired', status: 'ACTIVE', dueDate: '2000-01-01', localTime: '09:00 AM' })
-    useStore.setState({ opportunities: [opp] })
+  it('does not auto-submit pre-submission opportunities when the deadline is reached', () => {
+    const opp = makeOpp({ id: 'opp-expired', status: 'ACTIVE', assignedTo: 'emp-associate', dueDate: '2000-01-01', localTime: '09:00 AM' })
+    useStore.setState({ opportunities: [opp], nonSubReports: [], bdSubmissions: [] })
 
     useStore.getState().syncDueOpportunities()
 
     const updated = useStore.getState().opportunities.find(o => o.id === 'opp-expired')
-    expect(updated?.status).toBe('SUBMITTED')
-    expect(updated?.submittedAt).toBeTruthy()
+    expect(updated?.status).toBe('ACTIVE')
+    expect(updated?.submittedAt).toBeFalsy()
+    expect(useStore.getState().bdSubmissions).toHaveLength(0)
   })
 
   it('creates a pending non-submission report after the configured grace period', () => {
-    const opp = makeOpp({ id: 'opp-expired', status: 'ACTIVE', dueDate: '2000-01-01', localTime: '09:00 AM' })
+    const opp = makeOpp({ id: 'opp-expired', status: 'ACTIVE', assignedTo: 'emp-associate', dueDate: '2000-01-01', localTime: '09:00 AM' })
     useStore.setState({ opportunities: [opp], nonSubReports: [], bdSubmissions: [], nonSubGraceHours: 0, nonSubGraceMinutes: 5 })
 
     useStore.getState().syncDueOpportunities()
@@ -213,6 +221,18 @@ describe('1 · submitOpportunity', () => {
     expect(reports[0].status).toBe('PENDING')
     expect(reports[0].opportunityId).toBe('opp-expired')
     expect(updated?.nonSubmissionReportId).toBe(reports[0].id)
+    expect(updated?.status).toBe('ACTIVE')
+    expect(useStore.getState().bdSubmissions).toHaveLength(0)
+  })
+
+  it('does not create non-submission reports for manager-only assignments', () => {
+    const opp = makeOpp({ id: 'opp-manager-only', status: 'NEW_ASSIGNMENT', assignedTo: 'emp-manager', dueDate: '2000-01-01', localTime: '09:00 AM' })
+    useStore.setState({ opportunities: [opp], nonSubReports: [], bdSubmissions: [], nonSubGraceHours: 0, nonSubGraceMinutes: 5 })
+
+    useStore.getState().syncDueOpportunities()
+
+    expect(useStore.getState().nonSubReports).toHaveLength(0)
+    expect(useStore.getState().bdSubmissions).toHaveLength(0)
   })
 
   it('uses the opportunity local due timezone before moving to non-submission reports', () => {
@@ -221,6 +241,7 @@ describe('1 · submitOpportunity', () => {
       const opp = makeOpp({
         id: 'opp-local-deadline',
         status: 'ACTIVE',
+        assignedTo: 'emp-associate',
         dueDate: '2026-05-22',
         localTime: '10:00 AM',
         timezone: 'UTC-05:00',
@@ -234,12 +255,13 @@ describe('1 · submitOpportunity', () => {
 
       vi.setSystemTime(new Date('2026-05-22T15:04:59Z'))
       useStore.getState().syncDueOpportunities()
-      expect(useStore.getState().opportunities.find(o => o.id === opp.id)?.status).toBe('SUBMITTED')
+      expect(useStore.getState().opportunities.find(o => o.id === opp.id)?.status).toBe('ACTIVE')
       expect(useStore.getState().nonSubReports).toHaveLength(0)
 
       vi.setSystemTime(new Date('2026-05-22T15:05:00Z'))
       useStore.getState().syncDueOpportunities()
       expect(useStore.getState().nonSubReports).toHaveLength(1)
+      expect(useStore.getState().bdSubmissions).toHaveLength(0)
     } finally {
       vi.useRealTimers()
     }
@@ -280,7 +302,7 @@ describe('1 · submitOpportunity', () => {
   })
 
   it('runs deadline expiry immediately after an opportunity due date edit', async () => {
-    const opp = makeOpp({ id: 'opp-live-expiry', status: 'ACTIVE', dueDate: '2099-01-01', localTime: '9:00 AM', timezone: 'GMT+1' })
+    const opp = makeOpp({ id: 'opp-live-expiry', status: 'ACTIVE', assignedTo: 'emp-associate', dueDate: '2099-01-01', localTime: '9:00 AM', timezone: 'GMT+1' })
     useStore.setState({ opportunities: [opp], nonSubReports: [], bdSubmissions: [], nonSubGraceHours: 0, nonSubGraceMinutes: 5 })
 
     await useStore.getState().updateOpportunity('opp-live-expiry', {
@@ -290,8 +312,9 @@ describe('1 · submitOpportunity', () => {
     })
 
     const updated = useStore.getState().opportunities.find(o => o.id === 'opp-live-expiry')
-    expect(updated?.status).toBe('SUBMITTED')
+    expect(updated?.status).toBe('ACTIVE')
     expect(useStore.getState().nonSubReports).toHaveLength(1)
+    expect(useStore.getState().bdSubmissions).toHaveLength(0)
   })
 })
 

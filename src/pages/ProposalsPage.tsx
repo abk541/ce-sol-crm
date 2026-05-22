@@ -77,6 +77,7 @@ export default function ProposalsPage() {
     opportunities
       .filter(o =>
         !o.isDeleted &&
+        !o.nonSubmissionReportId &&
         ASSIGNABLE_STATUSES.includes(o.status as any) &&
         !isAssignedToAssociate(employees, o.assignedTo)
       )

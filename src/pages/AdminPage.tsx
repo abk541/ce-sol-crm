@@ -168,7 +168,7 @@ export default function AdminPage() {
               <h2 className="text-sm font-bold text-white">Non-Submission Timing</h2>
             </div>
             <p className="text-xs text-slate-400">
-              Deadline-auto-submitted opportunities move to Non-Submission Reports after this grace period.
+              Assigned opportunities move directly to Non-Submission Reports after the due datetime plus this grace period.
             </p>
           </div>
           <div className="flex flex-col sm:flex-row gap-3 sm:items-end">
