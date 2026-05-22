@@ -215,6 +215,36 @@ describe('1 · submitOpportunity', () => {
     expect(updated?.nonSubmissionReportId).toBe(reports[0].id)
   })
 
+  it('uses the opportunity local due timezone before moving to non-submission reports', () => {
+    vi.useFakeTimers()
+    try {
+      const opp = makeOpp({
+        id: 'opp-local-deadline',
+        status: 'ACTIVE',
+        dueDate: '2026-05-22',
+        localTime: '10:00 AM',
+        timezone: 'UTC-05:00',
+      })
+      useStore.setState({ opportunities: [opp], nonSubReports: [], bdSubmissions: [], nonSubGraceHours: 0, nonSubGraceMinutes: 5 })
+
+      vi.setSystemTime(new Date('2026-05-22T14:59:00Z'))
+      useStore.getState().syncDueOpportunities()
+      expect(useStore.getState().opportunities.find(o => o.id === opp.id)?.status).toBe('ACTIVE')
+      expect(useStore.getState().nonSubReports).toHaveLength(0)
+
+      vi.setSystemTime(new Date('2026-05-22T15:04:59Z'))
+      useStore.getState().syncDueOpportunities()
+      expect(useStore.getState().opportunities.find(o => o.id === opp.id)?.status).toBe('SUBMITTED')
+      expect(useStore.getState().nonSubReports).toHaveLength(0)
+
+      vi.setSystemTime(new Date('2026-05-22T15:05:00Z'))
+      useStore.getState().syncDueOpportunities()
+      expect(useStore.getState().nonSubReports).toHaveLength(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('does not create non-submission reports for manually submitted opportunities', () => {
     const opp = makeOpp({ id: 'opp-manual', status: 'SUBMITTED', dueDate: '2000-01-01', localTime: '09:00 AM' })
     useStore.setState({

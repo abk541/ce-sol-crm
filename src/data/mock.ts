@@ -55,6 +55,15 @@ export const TIMEZONES: Record<string, string> = {
   'EET': 'Asia/Amman',         'IRT': 'Asia/Tehran',
   'GMT': 'Europe/London',      'CET': 'Europe/Paris',
   'GMT+1': 'Etc/GMT-1',
+  // Fixed UTC offsets from SAM.gov responseDeadLine values. These preserve
+  // the source deadline offset exactly when SAM.gov does not provide a named
+  // timezone abbreviation.
+  'UTC-10:00': 'Etc/GMT+10',    'UTC-09:00': 'Etc/GMT+9',
+  'UTC-08:00': 'Etc/GMT+8',     'UTC-07:00': 'Etc/GMT+7',
+  'UTC-06:00': 'Etc/GMT+6',     'UTC-05:00': 'Etc/GMT+5',
+  'UTC-04:00': 'Etc/GMT+4',     'UTC+00:00': 'Etc/GMT',
+  'UTC+01:00': 'Etc/GMT-1',     'UTC+02:00': 'Etc/GMT-2',
+  'UTC+03:00': 'Etc/GMT-3',
 }
 
 // ── Employees (Hierarchy) ─────────────────────────────────────────────

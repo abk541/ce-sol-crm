@@ -16,6 +16,7 @@ import {
   MOCK_BD_SUBMISSIONS,
 } from '../data/mock'
 import { isSupabaseConnected } from '../lib/supabase'
+import { opportunityDeadlineTimeMs } from '../lib/timezone'
 import {
   loadAllData,
   seedIfEmpty,
@@ -181,33 +182,8 @@ function normalizeOpportunityAssignmentStatus(opp: Opportunity, employees: Emplo
   return opp
 }
 
-function parseDeadlineClock(time?: string): string {
-  const value = (time ?? '').trim()
-  const twelveHour = value.match(/^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)$/i)
-
-  if (twelveHour) {
-    let hour = Number(twelveHour[1])
-    const minute = Number(twelveHour[2] ?? '00')
-    const marker = twelveHour[3].toUpperCase()
-
-    if (marker === 'PM' && hour < 12) hour += 12
-    if (marker === 'AM' && hour === 12) hour = 0
-
-    return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
-  }
-
-  const twentyFourHour = value.match(/^(\d{1,2}):(\d{2})$/)
-  if (twentyFourHour) {
-    return `${String(Number(twentyFourHour[1])).padStart(2, '0')}:${twentyFourHour[2]}`
-  }
-
-  return '23:59'
-}
-
 function deadlineTimeMs(opp: Opportunity): number | null {
-  if (!opp.dueDate) return null
-  const deadline = new Date(`${opp.dueDate}T${parseDeadlineClock(opp.localTime)}`)
-  return Number.isFinite(deadline.getTime()) ? deadline.getTime() : null
+  return opportunityDeadlineTimeMs(opp)
 }
 
 function isDeadlineReached(opp: Opportunity, now = new Date()): boolean {

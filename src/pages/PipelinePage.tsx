@@ -19,6 +19,14 @@ import DetailDrawer, { DrawerSection, DrawerField } from '../components/shared/D
 import PeriodFilter, { type Period, filterByPeriod } from '../components/shared/PeriodFilter'
 import HierarchyAssignPicker from '../components/shared/HierarchyAssignPicker'
 import FloatingActionMenu from '../components/shared/FloatingActionMenu'
+import {
+  formatLocalDueTime as formatLocalDueTimeShared,
+  formatMoroccoDueTime as formatMoroccoDueTimeShared,
+  normalizeUtcOffset,
+  opportunityDeadlineTimeMs,
+  timezoneLabelFromOffset,
+  utcToMoroccoClock,
+} from '../lib/timezone'
 
 // ── Constants ─────────────────────────────────────────────────────────
 const TYPES_DISPLAY: { value: string; label: string }[] = [
@@ -32,6 +40,18 @@ const TYPES_DISPLAY: { value: string; label: string }[] = [
 ]
 const SET_ASIDES = ['SB', 'SDVOSB', 'WOSB', 'HUBZone', 'VOSB', '8(a)', 'UNRES']
 const PRIORITIES: Priority[] = ['MEDIUM', 'HIGH', 'VERY_HIGH']
+const SAM_TIMEZONE_ALIASES: Record<string, string> = {
+  'EASTERN STANDARD TIME': 'EST',
+  'EASTERN DAYLIGHT TIME': 'EDT',
+  'CENTRAL STANDARD TIME': 'CST',
+  'CENTRAL DAYLIGHT TIME': 'CDT',
+  'MOUNTAIN STANDARD TIME': 'MST',
+  'MOUNTAIN DAYLIGHT TIME': 'MDT',
+  'PACIFIC STANDARD TIME': 'PST',
+  'PACIFIC DAYLIGHT TIME': 'PDT',
+  'HAWAII STANDARD TIME': 'HST',
+  'GREENWICH MEAN TIME': 'GMT',
+}
 
 // Pre-submission view statuses only
 const OPP_VIEW_STATUSES: OppStatus[] = ['ACTIVE', 'NEW_ASSIGNMENT', 'DISCUSSION']
@@ -237,7 +257,39 @@ function utcPlusOneHour(utcMs: number): { moroccoDate: string; moroccoTime: stri
   }
 }
 
-export function parseSamGovDeadline(raw: string | undefined): {
+function normaliseSamGovTimezone(value: unknown): string {
+  if (typeof value !== 'string') return ''
+  const raw = value.trim()
+  if (!raw) return ''
+
+  const upper = raw.toUpperCase()
+  if (TIMEZONES[upper]) return upper
+  if (SAM_TIMEZONE_ALIASES[upper]) return SAM_TIMEZONE_ALIASES[upper]
+  if (/^(?:UTC|GMT)?[+-]\d{2}:?\d{2}$/i.test(raw)) {
+    return timezoneLabelFromOffset(normalizeUtcOffset(raw.replace(/^(?:UTC|GMT)/i, '')))
+  }
+  return TIMEZONES[raw] ? raw : ''
+}
+
+export function extractSamGovDeadlineTimezone(opp: any): string {
+  const candidates = [
+    opp?.responseDeadLineTimeZone,
+    opp?.responseDeadlineTimeZone,
+    opp?.responseDeadLineTimezone,
+    opp?.responseDeadlineTimezone,
+    opp?.deadlineTimeZone,
+    opp?.deadlineTimezone,
+    opp?.timeZone,
+    opp?.timezone,
+  ]
+  for (const candidate of candidates) {
+    const normalised = normaliseSamGovTimezone(candidate)
+    if (normalised) return normalised
+  }
+  return ''
+}
+
+export function parseSamGovDeadline(raw: string | undefined, specifiedTimezone = ''): {
   dueDate: string; localTime: string; timezone: string; moroccoDate: string; moroccoTime: string
 } {
   const empty = { dueDate: '', localTime: '', timezone: 'GMT+1', moroccoDate: '', moroccoTime: '' }
@@ -251,15 +303,12 @@ export function parseSamGovDeadline(raw: string | undefined): {
 
     if (rawOff) {
       // Normalise compact form e.g. "-0500" → "-05:00"
-      const normalised = rawOff === 'Z'
-        ? '+00:00'
-        : rawOff.match(/^[+-]\d{4}$/) ? `${rawOff.slice(0, 3)}:${rawOff.slice(3)}`
-        : rawOff
-      const { moroccoDate, moroccoTime } = utcPlusOneHour(new Date(raw).getTime())
+      const normalised = normalizeUtcOffset(rawOff)
+      const { moroccoDate, moroccoTime } = utcToMoroccoClock(new Date(raw).getTime())
       return {
         dueDate: dateStr,
         localTime: formatTime12h(timeStr),
-        timezone: offsetToTzAbbrev(normalised),
+        timezone: specifiedTimezone || timezoneLabelFromOffset(normalised),
         moroccoDate,
         moroccoTime: formatTime12h(moroccoTime),
       }
@@ -280,7 +329,7 @@ export function parseSamGovDeadline(raw: string | undefined): {
   if (!Number.isFinite(parsed.getTime())) return empty
   const utcDate = parsed.toISOString().slice(0, 10)
   const utcTime = `${String(parsed.getUTCHours()).padStart(2, '0')}:${String(parsed.getUTCMinutes()).padStart(2, '0')}`
-  const { moroccoDate, moroccoTime } = utcPlusOneHour(parsed.getTime())
+  const { moroccoDate, moroccoTime } = utcToMoroccoClock(parsed.getTime())
   return {
     dueDate: utcDate,
     localTime: formatTime12h(utcTime),
@@ -341,7 +390,7 @@ export function mapSamGovOpportunityToForm(opp: any, url: string) {
   }
   const pop = opp.placeOfPerformance
   const locationParts = [pop?.city?.name, pop?.state?.code].filter(Boolean)
-  const deadline = parseSamGovDeadline(opp.responseDeadLine)
+  const deadline = parseSamGovDeadline(opp.responseDeadLine, extractSamGovDeadlineTimezone(opp))
   return {
     solicitation: opp.title ?? '',
     solicitationId: opp.solicitationNumber ?? '',
@@ -430,19 +479,18 @@ function isCompleteClockTime(time: string | undefined): boolean {
 }
 
 export function syncMoroccoProjection(current: Partial<Opportunity>): Partial<Opportunity> {
-  const timezone = current.timezone || 'GMT+1'
-  const ianaSource = TIMEZONES[timezone]
-  if (!current.dueDate || !isCompleteClockTime(current.localTime) || !ianaSource) {
+  if (!current.dueDate || !isCompleteClockTime(current.localTime)) {
     return { ...current, moroccoTime: '', moroccoDate: '' }
   }
 
   try {
-    const utc = zonedDateTimeToUtc(current.dueDate, current.localTime || '', ianaSource)
-    const { date: moroccoDate, time24 } = utcToZonedClock(utc, 'Etc/GMT-1')
+    const utcMs = opportunityDeadlineTimeMs(current)
+    if (utcMs === null) return { ...current, moroccoTime: '', moroccoDate: '' }
+    const { moroccoDate, moroccoTime } = utcToMoroccoClock(utcMs)
     return {
       ...current,
       moroccoDate,
-      moroccoTime: formatTime12h(time24),
+      moroccoTime: formatTime12h(moroccoTime),
     }
   } catch {
     return { ...current, moroccoTime: '', moroccoDate: '' }
@@ -484,6 +532,7 @@ function formatOpportunityTime(time: string | undefined, sourceTzAbbrev?: string
   if (!time) return '-'
   const ianaSource = sourceTzAbbrev ? TIMEZONES[sourceTzAbbrev] : undefined
   try {
+    if (sourceTzAbbrev === 'GMT' || sourceTzAbbrev?.startsWith('UTC')) return formatLocalDueTimeShared(time, sourceTzAbbrev)
     if (ianaSource && date) {
       const utc = zonedDateTimeToUtc(date, time, ianaSource)
       return new Intl.DateTimeFormat('en-US', {
@@ -537,15 +586,7 @@ function formatMoroccoDisplay(
   moroccoTime: string | undefined,
   moroccoDate: string | undefined,
 ): string {
-  if (!isCompleteClockTime(localTime)) return 'Enter a complete local time'
-  if (moroccoTime) {
-    const crossesMidnight = moroccoDate && dueDate && moroccoDate !== dueDate
-    const dateSuffix = crossesMidnight
-      ? ` (${new Date(moroccoDate + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })})`
-      : ''
-    return `${formatTime12h(moroccoTime)}${dateSuffix} GMT+1`
-  }
-  return timezone ? convertTime(localTime, timezone, dueDate) : `${formatTime12h(localTime)} GMT+1`
+  return formatMoroccoDueTimeShared({ localTime, timezone, dueDate, moroccoTime, moroccoDate })
 }
 
 function NaicsInput({ value, onChange }: { value?: string; onChange: (value: string) => void }) {
@@ -1330,7 +1371,7 @@ function SubmitModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }
         <div className="p-4 rounded-xl bg-indigo-50 border border-indigo-100">
           <p className="text-xs font-semibold text-indigo-500 mb-1.5">Opportunity details</p>
           <p className="text-sm font-semibold text-slate-800">{opp.solicitation}</p>
-          <p className="text-xs text-slate-500 mt-0.5">{opp.solicitationId} - Due: {new Date(opp.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} {opp.localTime && `at ${formatOpportunityTime(opp.localTime, opp.timezone, opp.dueDate)}`}</p>
+          <p className="text-xs text-slate-500 mt-0.5">{opp.solicitationId} - Due: {new Date(opp.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} {opp.localTime && `at ${formatLocalDueTimeShared(opp.localTime, opp.timezone)}`}</p>
           <p className="text-xs text-indigo-600 font-semibold mt-1">{typeLabel(opp.type)}</p>
         </div>
 
@@ -1952,7 +1993,8 @@ const COLUMN_FILTERS = [
   { key: 'solicitationId', label: 'ID',           placeholder: 'Any ID' },
   { key: 'solicitation',   label: 'Solicitation', placeholder: 'Any solicitation' },
   { key: 'setAside',       label: 'Set Aside',    placeholder: 'Any set aside' },
-  { key: 'localTime',      label: 'Time / TZ',    placeholder: 'Any time' },
+  { key: 'localTime',      label: 'Local Due Time', placeholder: 'Any local time' },
+  { key: 'moroccoDueTime', label: 'Morocco Time', placeholder: 'Any Morocco time' },
   { key: 'location',       label: 'Location',     placeholder: 'Any location' },
   { key: 'manager',        label: 'Manager',      placeholder: 'Any manager' },
   { key: 'teamLead',       label: 'Team Lead',    placeholder: 'Any team lead' },
@@ -1974,6 +2016,8 @@ function getColumnFilterValue(o: Opportunity, key: ColumnFilterKey, employees: R
       return typeLabel(o.type)
     case 'localTime':
       return `${o.localTime ?? ''} ${o.timezone ?? ''}`.trim()
+    case 'moroccoDueTime':
+      return formatMoroccoDisplay(o.localTime, o.timezone, o.dueDate, o.moroccoTime, o.moroccoDate)
     case 'manager':
       return chain.manager?.name ?? ''
     case 'teamLead':
@@ -2196,7 +2240,8 @@ export default function PipelinePage() {
                   { label: 'Solicitation', k: 'solicitation' },
                   { label: 'Set Aside',   k: 'setAside' },
                   { label: 'Due Date',    k: 'dueDate' },
-                  { label: 'Time / TZ',   k: 'localTime' },
+                  { label: 'Local Due Time', k: 'localTime' },
+                  { label: 'Morocco Time', k: '' },
                   { label: 'Location',    k: 'location' },
                   { label: 'Manager',     k: '' },
                   { label: 'Team Lead',   k: '' },
@@ -2243,13 +2288,12 @@ export default function PipelinePage() {
                         {new Date(o.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                       </span>
                     </td>
-                    <td className="text-slate-500 text-xs whitespace-nowrap group relative">
-                      <span className="cursor-help">{formatOpportunityTime(o.localTime, o.timezone, o.dueDate)}</span>
-                      {o.localTime && (
-                        <div className="hidden group-hover:block absolute bottom-full left-0 mb-1 z-30 rounded-lg px-2.5 py-1.5 text-[10px] whitespace-nowrap shadow-lg font-medium" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-default)', color: '#6366F1', boxShadow: '0 4px 12px rgba(0,0,0,0.10)' }}>
-                          <Clock size={9} className="inline mr-1" />Morocco: {formatMoroccoDisplay(o.localTime, o.timezone, o.dueDate, o.moroccoTime, o.moroccoDate)}
-                        </div>
-                      )}
+                    <td className="text-slate-500 text-xs whitespace-nowrap">
+                      {formatLocalDueTimeShared(o.localTime, o.timezone)}
+                    </td>
+                    <td className="text-slate-500 text-xs whitespace-nowrap">
+                      <Clock size={9} className="inline mr-1 text-amber-300" />
+                      {formatMoroccoDisplay(o.localTime, o.timezone, o.dueDate, o.moroccoTime, o.moroccoDate)}
                     </td>
                     <td><span className="text-slate-500 text-xs">{o.location}</span></td>
                     {(() => {
@@ -2359,7 +2403,7 @@ export default function PipelinePage() {
 
               <DrawerSection title="Schedule">
                 <DrawerField label="Due Date"  value={new Date(selectedOpp.dueDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })} />
-                <DrawerField label="Time"      value={formatOpportunityTime(selectedOpp.localTime, selectedOpp.timezone, selectedOpp.dueDate)} />
+                <DrawerField label="Local Due Time" value={formatLocalDueTimeShared(selectedOpp.localTime, selectedOpp.timezone)} />
                 {selectedOpp.localTime && (
                   <DrawerField label="Morocco (GMT+1)" value={
                     <span className="text-indigo-600 font-semibold">
