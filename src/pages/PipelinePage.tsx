@@ -416,40 +416,46 @@ function utcToZonedClock(utc: Date, timeZone: string): { date: string; time24: s
   }
 }
 
-/**
- * Re-projects the current (localTime + timezone + dueDate) onto a different
- * timezone, preserving the absolute moment. Used when the user changes the
- * timezone dropdown in the schedule tab — the wall-clock time + date and the
- * Morocco line all update so they represent the same instant in the new zone.
- */
 function applyTimezoneChange(
   current: Partial<Opportunity>,
   newTz: string,
 ): Partial<Opportunity> {
-  const oldTz = current.timezone
-  const oldTime = current.localTime
-  const oldDate = current.dueDate
-  if (!oldTz || !oldTime || !oldDate || oldTz === newTz) {
-    return { ...current, timezone: newTz }
+  return syncMoroccoProjection({ ...current, timezone: newTz })
+}
+
+function isCompleteClockTime(time: string | undefined): boolean {
+  if (!time?.trim()) return false
+  const value = time.trim()
+  return /^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)$/i.test(value) || /^\d{1,2}:\d{2}$/.test(value)
+}
+
+export function syncMoroccoProjection(current: Partial<Opportunity>): Partial<Opportunity> {
+  const timezone = current.timezone || 'GMT+1'
+  const ianaSource = TIMEZONES[timezone]
+  if (!current.dueDate || !isCompleteClockTime(current.localTime) || !ianaSource) {
+    return { ...current, moroccoTime: '', moroccoDate: '' }
   }
-  const oldIana = TIMEZONES[oldTz]
-  const newIana = TIMEZONES[newTz]
-  if (!oldIana || !newIana) return { ...current, timezone: newTz }
+
   try {
-    const utc = zonedDateTimeToUtc(oldDate, oldTime, oldIana)
-    const { date: newDate, time24: newTime } = utcToZonedClock(utc, newIana)
-    const { date: morDate, time24: morTime } = utcToZonedClock(utc, 'Etc/GMT-1')
+    const utc = zonedDateTimeToUtc(current.dueDate, current.localTime || '', ianaSource)
+    const { date: moroccoDate, time24 } = utcToZonedClock(utc, 'Etc/GMT-1')
     return {
       ...current,
-      timezone: newTz,
-      dueDate: newDate,
-      localTime: formatTime12h(newTime),
-      moroccoTime: formatTime12h(morTime),
-      moroccoDate: morDate,
+      moroccoDate,
+      moroccoTime: formatTime12h(time24),
     }
   } catch {
-    return { ...current, timezone: newTz }
+    return { ...current, moroccoTime: '', moroccoDate: '' }
   }
+}
+
+export function applyScheduleFieldChange(
+  current: Partial<Opportunity>,
+  key: 'dueDate' | 'localTime' | 'timezone',
+  value: string,
+): Partial<Opportunity> {
+  if (key === 'timezone') return applyTimezoneChange(current, value)
+  return syncMoroccoProjection({ ...current, [key]: value })
 }
 
 /** Normalises any of "10:00", "10:00 AM", "5:30PM", "17:30" to canonical "h:MM AM/PM". */
@@ -531,6 +537,7 @@ function formatMoroccoDisplay(
   moroccoTime: string | undefined,
   moroccoDate: string | undefined,
 ): string {
+  if (!isCompleteClockTime(localTime)) return 'Enter a complete local time'
   if (moroccoTime) {
     const crossesMidnight = moroccoDate && dueDate && moroccoDate !== dueDate
     const dateSuffix = crossesMidnight
@@ -870,16 +877,23 @@ function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) 
           <div className="grid grid-cols-3 gap-4">
             <div>
               <label className={lbl}>Due Date *</label>
-              <input type="date" value={form.dueDate ?? ''} onChange={e => set('dueDate', e.target.value)} className="input-field" />
+              <input
+                type="date"
+                value={form.dueDate ?? ''}
+                onChange={e => setForm(prev => applyScheduleFieldChange(prev, 'dueDate', e.target.value))}
+                className="input-field"
+              />
             </div>
             <div>
               <label className={lbl}>Local Time (HH:MM)</label>
               <input
                 value={form.localTime ?? ''}
-                onChange={e => set('localTime', e.target.value)}
+                onChange={e => setForm(prev => applyScheduleFieldChange(prev, 'localTime', e.target.value))}
                 onBlur={e => {
                   const normalised = formatTime12h(e.target.value.trim())
-                  if (normalised && normalised !== e.target.value) set('localTime', normalised)
+                  if (normalised && normalised !== e.target.value) {
+                    setForm(prev => applyScheduleFieldChange(prev, 'localTime', normalised))
+                  }
                 }}
                 className="input-field"
                 placeholder="5:00 PM"
@@ -889,7 +903,7 @@ function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) 
               <label className={lbl}>Timezone</label>
               <select
                 value={form.timezone ?? 'GMT+1'}
-                onChange={e => setForm(prev => applyTimezoneChange(prev, e.target.value))}
+                onChange={e => setForm(prev => applyScheduleFieldChange(prev, 'timezone', e.target.value))}
                 className="select-field"
               >
                 {TZ_ABBREVS.map(t => <option key={t}>{t}</option>)}
@@ -1631,16 +1645,23 @@ function CreateModal({ onClose }: { onClose: () => void }) {
           <div className="grid grid-cols-3 gap-4">
             <div>
               <label className={lbl}>Due Date *</label>
-              <input type="date" value={form.dueDate ?? ''} onChange={e => set('dueDate', e.target.value)} className="input-field" />
+              <input
+                type="date"
+                value={form.dueDate ?? ''}
+                onChange={e => setForm(prev => applyScheduleFieldChange(prev, 'dueDate', e.target.value))}
+                className="input-field"
+              />
             </div>
             <div>
               <label className={lbl}>Local Time (HH:MM)</label>
               <input
                 value={form.localTime ?? ''}
-                onChange={e => set('localTime', e.target.value)}
+                onChange={e => setForm(prev => applyScheduleFieldChange(prev, 'localTime', e.target.value))}
                 onBlur={e => {
                   const normalised = formatTime12h(e.target.value.trim())
-                  if (normalised && normalised !== e.target.value) set('localTime', normalised)
+                  if (normalised && normalised !== e.target.value) {
+                    setForm(prev => applyScheduleFieldChange(prev, 'localTime', normalised))
+                  }
                 }}
                 className="input-field"
                 placeholder="5:00 PM"
@@ -1650,7 +1671,7 @@ function CreateModal({ onClose }: { onClose: () => void }) {
               <label className={lbl}>Timezone</label>
               <select
                 value={form.timezone ?? 'GMT+1'}
-                onChange={e => setForm(prev => applyTimezoneChange(prev, e.target.value))}
+                onChange={e => setForm(prev => applyScheduleFieldChange(prev, 'timezone', e.target.value))}
                 className="select-field"
               >
                 {TZ_ABBREVS.map(t => <option key={t}>{t}</option>)}

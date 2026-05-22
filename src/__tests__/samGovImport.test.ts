@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  applyScheduleFieldChange,
   buildSamGovOpportunityEndpoint,
   extractSamGovAgency,
   formatTime12h,
@@ -182,6 +183,53 @@ describe('SAM.gov import API calls', () => {
     //   -04:00 = Eastern Daylight (summer)
     expect(parseSamGovDeadline('2026-01-15T10:00:00-05:00').timezone).toBe('EST')
     expect(parseSamGovDeadline('2026-07-15T10:00:00-04:00').timezone).toBe('EDT')
+  })
+
+  it('recomputes Morocco time when an imported local deadline time is edited', () => {
+    const mapped = mapSamGovOpportunityToForm({
+      title: 'Roof Anchor Testing',
+      solicitationNumber: '36C26326Q0724',
+      subtierName: 'Veterans Health Administration',
+      responseDeadLine: '2026-05-27T10:00:00-04:00',
+    }, 'https://sam.gov/opp/example/view')
+
+    const changed = applyScheduleFieldChange(mapped, 'localTime', '11:30 AM')
+
+    expect(changed.localTime).toBe('11:30 AM')
+    expect(changed.timezone).toBe('EDT')
+    expect(changed.moroccoTime).toBe('4:30 PM')
+    expect(changed.moroccoDate).toBe('2026-05-27')
+  })
+
+  it('recomputes Morocco time when the source timezone is edited', () => {
+    const changed = applyScheduleFieldChange({
+      dueDate: '2026-05-27',
+      localTime: '10:00 AM',
+      timezone: 'GMT+1',
+      moroccoTime: '10:00 AM',
+      moroccoDate: '2026-05-27',
+    }, 'timezone', 'EDT')
+
+    expect(changed.localTime).toBe('10:00 AM')
+    expect(changed.dueDate).toBe('2026-05-27')
+    expect(changed.timezone).toBe('EDT')
+    expect(changed.moroccoTime).toBe('3:00 PM')
+    expect(changed.moroccoDate).toBe('2026-05-27')
+  })
+
+  it('recomputes Morocco date when an imported due date edit crosses midnight', () => {
+    const mapped = mapSamGovOpportunityToForm({
+      title: 'Late Deadline',
+      solicitationNumber: '36C26326Q0724',
+      subtierName: 'Veterans Health Administration',
+      responseDeadLine: '2026-05-27T23:30:00-04:00',
+    }, 'https://sam.gov/opp/example/view')
+
+    const changed = applyScheduleFieldChange(mapped, 'dueDate', '2026-05-28')
+
+    expect(changed.dueDate).toBe('2026-05-28')
+    expect(changed.moroccoTime).toBe('4:30 AM')
+    expect(changed.moroccoDate).toBe('2026-05-29')
   })
 
   it('normalises any clock-time variant into canonical 12h AM/PM', () => {
