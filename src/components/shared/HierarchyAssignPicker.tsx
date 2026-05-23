@@ -154,11 +154,11 @@ export default function HierarchyAssignPicker({
   return (
     <div>
       {label && (
-        <label className="block text-xs font-semibold text-slate-500 mb-2">{label}</label>
+        <label className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-slate-400">{label}</label>
       )}
 
       {/* Cascading columns */}
-      <div className="flex gap-0 border border-slate-200 rounded-xl overflow-hidden bg-white">
+      <div className="grid overflow-hidden rounded-2xl border border-[#D7BE7A]/20 bg-[#06131F]/90 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] md:grid-cols-3">
         {COLUMN_DEFS.map((col, colIdx) => {
           const items = getColumnItems(colIdx)
           const selIdInCol = selectionChain[colIdx]
@@ -166,19 +166,19 @@ export default function HierarchyAssignPicker({
           return (
             <div
               key={col.role}
-              className="flex-1 min-w-0 border-r border-slate-200 last:border-r-0 flex flex-col"
+              className="min-w-0 border-b border-[#D7BE7A]/20 last:border-b-0 md:border-b-0 md:border-r md:last:border-r-0 md:border-[#D7BE7A]/20"
             >
               {/* Column header */}
-              <div className="px-3 py-2 border-b border-slate-200 bg-slate-50 flex-shrink-0">
-                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider truncate">
+              <div className="border-b border-[#D7BE7A]/20 bg-[#0A1D2B] px-4 py-3">
+                <p className="truncate text-[10px] font-black uppercase tracking-[0.16em] text-[#D7BE7A]">
                   {col.header}
                 </p>
               </div>
 
               {/* Scrollable list */}
-              <div className="flex-1 overflow-y-auto max-h-52">
+              <div className="max-h-[min(34vh,320px)] min-h-[210px] overflow-y-auto">
                 {items.length === 0 && (
-                  <div className="px-3 py-4 text-[11px] text-slate-400 text-center">—</div>
+                  <div className="px-3 py-8 text-center text-[11px] text-slate-500">No options</div>
                 )}
                 {items.map(({ emp, enabled }) => {
                   const isSelected = selIdInCol === emp.id
@@ -192,9 +192,9 @@ export default function HierarchyAssignPicker({
                       disabled={!enabled}
                       onClick={() => handleSelect(emp, enabled)}
                       className={[
-                        'w-full text-left px-3 py-2.5 border-b border-slate-100 last:border-b-0 transition-colors',
-                        enabled ? 'cursor-pointer hover:bg-slate-50' : 'cursor-default opacity-40',
-                        isSelected ? 'bg-[rgba(184,145,78,0.16)] border-l-2 border-l-[#D7BE7A]' : '',
+                        'w-full border-b border-[#D7BE7A]/10 px-4 py-3 text-left transition-all last:border-b-0',
+                        enabled ? 'cursor-pointer hover:bg-[#D7BE7A]/10' : 'cursor-default opacity-35',
+                        isSelected ? 'border-l-2 border-l-[#D7BE7A] bg-[#D7BE7A]/20 shadow-[inset_0_0_0_1px_rgba(215,190,122,0.10)]' : '',
                       ].join(' ')}
                     >
                       <div className="flex items-start gap-2">
@@ -207,24 +207,24 @@ export default function HierarchyAssignPicker({
 
                         <div className="flex-1 min-w-0">
                           {/* Name */}
-                          <p className={`text-xs font-semibold truncate ${isSelected ? 'text-[#F8FBF7]' : 'text-slate-800'}`}>
+                          <p className={`truncate text-sm font-bold ${isSelected ? 'text-[#F8FBF7]' : 'text-slate-100'}`}>
                             {emp.name}
                           </p>
 
                           {/* Role label */}
-                          <p className="text-[10px] text-slate-400 truncate">{ROLE_LABEL[emp.role]}</p>
+                          <p className="truncate text-[10px] font-medium text-slate-400">{ROLE_LABEL[emp.role]}</p>
 
                           {/* Badges row */}
                           <div className="flex items-center gap-1 mt-1 flex-wrap">
                             {/* Active contracts badge */}
-                            <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full border ${activeCount > 0 ? 'text-slate-600 bg-slate-100 border-slate-200' : 'text-slate-400 bg-slate-50 border-slate-100'}`}>
+                            <span className={`rounded-full border px-1.5 py-0.5 text-[9px] font-semibold ${activeCount > 0 ? 'border-[#D7BE7A]/30 bg-[#D7BE7A]/10 text-[#F8FBF7]' : 'border-white/10 bg-white/5 text-slate-400'}`}>
                               {activeCount} active
                             </span>
 
                             {/* Conflict badge */}
                             {conflictCount > 0 && (
-                              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-700">
-                                ⚠ {conflictCount} end same day
+                              <span className="rounded-full border border-amber-300/35 bg-amber-300/20 px-1.5 py-0.5 text-[9px] font-bold text-amber-100">
+                                {conflictCount} end same day
                               </span>
                             )}
                           </div>
@@ -242,15 +242,15 @@ export default function HierarchyAssignPicker({
       {/* Summary bar */}
       {selectedEmp && (
         <div
-          className="mt-2 px-3 py-2 rounded-lg border flex items-center gap-2"
+          className="mt-3 flex items-center gap-3 rounded-2xl border px-4 py-3"
           style={{ background: 'rgba(184,145,78,0.12)', borderColor: 'rgba(215,190,122,0.28)' }}
         >
-          <div className={`w-6 h-6 rounded-full border flex items-center justify-center text-[10px] font-bold flex-shrink-0 ${ROLE_AVATAR_CLS[selectedEmp.role]}`}>
+          <div className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full border text-[10px] font-bold ${ROLE_AVATAR_CLS[selectedEmp.role]}`}>
             {selectedEmp.avatar}
           </div>
-          <p className="text-xs font-semibold" style={{ color: '#F8FBF7' }}>
+          <p className="min-w-0 text-sm font-bold" style={{ color: '#F8FBF7' }}>
             Assigned to: {selectedEmp.name}
-            <span className="font-normal text-indigo-500 ml-1">· {ROLE_LABEL[selectedEmp.role]}</span>
+            {' - '}{ROLE_LABEL[selectedEmp.role]}
           </p>
         </div>
       )}
