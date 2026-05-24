@@ -12,6 +12,7 @@ import PipelinePage from './pages/PipelinePage'
 import ProposalsPage from './pages/ProposalsPage'
 import BDTrackerPage from './pages/BDTrackerPage'
 import ContractsPage from './pages/ContractsPage'
+import FinanceProjectionsPage from './pages/FinanceProjectionsPage'
 import NotificationsPage from './pages/NotificationsPage'
 import AdminPage from './pages/AdminPage'
 import TrackerPage from './pages/TrackerPage'
@@ -87,6 +88,7 @@ export default function App() {
           <Route path="proposals"     element={<ProposalsPage />} />
           <Route path="bd-tracker"    element={<BDTrackerPage />} />
           <Route path="contracts"     element={<ContractsPage />} />
+          <Route path="finance-projections" element={<FinanceProjectionsPage />} />
           <Route path="idiq"          element={<Navigate to="/contracts" replace />} />
           <Route path="bpas"          element={<Navigate to="/contracts" replace />} />
           <Route path="tracker"             element={<TrackerPage />} />

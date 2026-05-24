@@ -5,7 +5,7 @@ import {
   FileCheck2, Bell, Users, Settings, ChevronLeft,
   ChevronRight, Database, TrendingUp, Trophy,
   LogOut, ChevronDown, ClipboardList, HeartPulse,
-  ListChecks, History, Building2,
+  ListChecks, History, Building2, DollarSign,
 } from 'lucide-react'
 import { useState } from 'react'
 import { useStore } from '../../store/useStore'
@@ -39,6 +39,12 @@ const NAV = [
     ],
   },
   {
+    label: 'Finance',
+    items: [
+      { to: '/finance-projections', icon: DollarSign, label: 'Finance Projections' },
+    ],
+  },
+  {
     label: 'Databases',
     items: [
       { to: '/subk-database', icon: Building2, label: 'Subk Database' },
@@ -60,7 +66,7 @@ export default function Sidebar() {
   const { sidebarCollapsed, toggleSidebar, currentUser, logout, notifications } = useStore()
   const location = useLocation()
   const [expanded, setExpanded] = useState<Record<string, boolean>>({
-    Overview: true, 'Business Dev': true, Operations: true, Databases: true, System: true,
+    Overview: true, 'Business Dev': true, Operations: true, Finance: true, Databases: true, System: true,
   })
   const unread = notifications.filter(n => !n.read).length
 
