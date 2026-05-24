@@ -211,66 +211,108 @@ function AttachmentPicker({
   onChange: (attachments: FileAttachment[]) => void
   uploadedBy: string
 }) {
-  const [fileName, setFileName] = useState('')
-  const [fileData, setFileData] = useState<Pick<FileAttachment, 'dataUrl' | 'mimeType' | 'size'> | undefined>()
   const [attachedAt, setAttachedAt] = useState(() => toDatetimeLocal(new Date().toISOString()))
 
-  const add = () => {
-    if (!fileName.trim() || !attachedAt) return
-    onChange([...attachments, createAttachment(fileName.trim(), attachedAt, uploadedBy, fileData)])
-    setFileName('')
-    setFileData(undefined)
-    setAttachedAt(toDatetimeLocal(new Date().toISOString()))
+  const addFile = (file: File, input: HTMLInputElement) => {
+    if (!attachedAt) {
+      toast.error('Choose an attachment timestamp first.')
+      input.value = ''
+      return
+    }
+
+    const reader = new FileReader()
+    reader.onload = () => {
+      const attachment = createAttachment(file.name, attachedAt, uploadedBy, {
+        dataUrl: typeof reader.result === 'string' ? reader.result : undefined,
+        mimeType: file.type || undefined,
+        size: file.size,
+      })
+      onChange([...attachments, attachment])
+      setAttachedAt(toDatetimeLocal(new Date().toISOString()))
+      input.value = ''
+      toast.success('Attachment added')
+    }
+    reader.onerror = () => {
+      input.value = ''
+      toast.error('Attachment could not be read.')
+    }
+    reader.readAsDataURL(file)
   }
 
   return (
     <div
-      className="rounded-xl border p-3"
-      style={{ background: 'rgba(255,255,255,0.06)', borderColor: 'rgba(215,190,122,0.24)' }}
+      className="rounded-2xl border p-4"
+      style={{ background: 'rgba(8,24,37,0.72)', borderColor: 'rgba(215,190,122,0.32)' }}
     >
-      <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-slate-200">{label}</p>
-      <div className="grid gap-2 md:grid-cols-[1fr_180px_auto]">
+      <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-wide text-[#F8E8B8]">{label}</p>
+          <p className="mt-1 text-[11px] font-medium text-slate-300">Select a file and it will be attached to this deliverable automatically.</p>
+        </div>
+        <span className="rounded-full border border-[#D7BE7A]/30 bg-[#D7BE7A]/10 px-2 py-1 text-[10px] font-bold text-[#F8E8B8]">
+          {attachments.length} attached
+        </span>
+      </div>
+      <div className="grid gap-2 md:grid-cols-[190px_1fr]">
+        <label className="block">
+          <span className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-300">Timestamp</span>
+          <input
+            type="datetime-local"
+            value={attachedAt}
+            onChange={e => setAttachedAt(e.target.value)}
+            className="input-field w-full text-xs"
+            required
+          />
+        </label>
+        <label className="block">
+          <span className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-300">File</span>
         <input
           type="file"
           onChange={e => {
             const file = e.target.files?.[0]
-            setFileName(file?.name ?? '')
-            setFileData(undefined)
             if (!file) return
-            const reader = new FileReader()
-            reader.onload = () => {
-              setFileData({
-                dataUrl: typeof reader.result === 'string' ? reader.result : undefined,
-                mimeType: file.type || undefined,
-                size: file.size,
-              })
-            }
-            reader.readAsDataURL(file)
+            addFile(file, e.currentTarget)
           }}
-          className="input-field text-xs file:mr-3 file:rounded-lg file:border-0 file:bg-[#D7BE7A] file:px-3 file:py-1.5 file:text-xs file:font-bold file:text-[#07131F]"
+          className="input-field w-full text-xs file:mr-3 file:rounded-lg file:border-0 file:bg-[#D7BE7A] file:px-3 file:py-1.5 file:text-xs file:font-bold file:text-[#07131F]"
         />
-        <input
-          type="datetime-local"
-          value={attachedAt}
-          onChange={e => setAttachedAt(e.target.value)}
-          className="input-field text-xs"
-          required
-        />
-        <button
-          type="button"
-          onClick={add}
-          disabled={!fileName.trim() || !attachedAt}
-          className="btn-secondary justify-center text-xs disabled:opacity-40"
-        >
-          Add
-        </button>
+        </label>
       </div>
       {attachments.length > 0 && (
-        <div className="mt-3 space-y-1.5">
+        <div className="mt-4 space-y-2">
           {attachments.map(att => (
-            <div key={att.id} className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px]">
-              <span className="min-w-0 truncate font-semibold text-slate-800">{att.name}</span>
-              <span className="whitespace-nowrap text-slate-500">{formatDateTime(att.attachedAt)}</span>
+            <div
+              key={att.id}
+              className="flex flex-wrap items-center justify-between gap-3 rounded-xl border px-3 py-2.5 text-[11px]"
+              style={{ background: 'rgba(255,255,255,0.07)', borderColor: 'rgba(255,255,255,0.12)' }}
+            >
+              <div className="min-w-0">
+                <p className="flex min-w-0 items-center gap-2 truncate font-black text-slate-100">
+                  <Paperclip size={12} className="flex-shrink-0 text-[#F8E8B8]" />
+                  <span className="truncate">{att.name}</span>
+                </p>
+                <p className="mt-0.5 text-[10px] font-medium text-slate-400">
+                  {formatDateTime(att.attachedAt)}
+                  {formatFileSize(att.size) ? ` - ${formatFileSize(att.size)}` : ''}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => viewAttachment(att)}
+                  disabled={!att.dataUrl}
+                  className="flex items-center gap-1.5 rounded-lg bg-white px-2.5 py-1.5 text-[11px] font-black text-slate-900 transition-colors hover:bg-[#F8E8B8] disabled:cursor-not-allowed disabled:opacity-45"
+                >
+                  <Eye size={12} /> View
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onChange(attachments.filter(item => item.id !== att.id))}
+                  className="flex h-7 w-7 items-center justify-center rounded-lg border border-red-300/35 bg-red-500/10 text-red-200 transition-colors hover:bg-red-500/20"
+                  aria-label={`Remove ${att.name}`}
+                >
+                  <X size={12} />
+                </button>
+              </div>
             </div>
           ))}
         </div>
