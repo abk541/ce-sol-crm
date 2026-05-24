@@ -53,13 +53,8 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     label: 'Operations',
     items: [
-      { to: '/contracts',   icon: FileCheck2, label: 'Contract Admin' },
-      { to: '/fresh-award', icon: Trophy,     label: 'Fresh Awards' },
-    ],
-  },
-  {
-    label: 'Finance',
-    items: [
+      { to: '/contracts',            icon: FileCheck2, label: 'Contract Admin' },
+      { to: '/fresh-award',          icon: Trophy,     label: 'Fresh Awards' },
       { to: '/finance-projections', icon: DollarSign, label: 'Finance Projections' },
     ],
   },
@@ -90,4 +85,3 @@ export const ROUTE_LABELS = NAV_GROUPS.flatMap(group => group.items).reduce((acc
   acc[item.to] = item.topBarLabel ?? item.label
   return acc
 }, {} as Record<string, string>)
-
