@@ -27,7 +27,7 @@ function oppToDb(o: Opportunity): Record<string, unknown> {
   return {
     id: o.id,
     solicitation: o.solicitation,
-    solicitation_id: o.solicitationId,
+    solicitation_id: o.solicitationId?.trim(),
     client: o.client,
     type: o.type,
     naics_code: o.naicsCode,
@@ -56,6 +56,45 @@ function oppToDb(o: Opportunity): Record<string, unknown> {
     submitted_at: o.submittedAt ?? null,
     non_submission_report_id: o.nonSubmissionReportId ?? null,
     assigned_to: o.assignedTo ?? null,
+  }
+}
+
+export type OpportunityDuplicateCheckResult =
+  | { ok: true; duplicate: boolean; opportunityId?: string }
+  | { ok: false; error: unknown }
+
+export async function findActiveOpportunityDuplicate(
+  solicitationId: string,
+  excludeOpportunityId?: string,
+): Promise<OpportunityDuplicateCheckResult> {
+  if (!isSupabaseConnected || !supabase) {
+    return { ok: true, duplicate: false }
+  }
+
+  const normalized = solicitationId.trim()
+  if (!normalized) return { ok: true, duplicate: false }
+
+  try {
+    let query = supabase
+      .from('opportunities')
+      .select('id, solicitation_id, is_deleted')
+      .ilike('solicitation_id', normalized)
+      .or('is_deleted.is.null,is_deleted.eq.false')
+      .limit(1)
+
+    if (excludeOpportunityId) query = query.neq('id', excludeOpportunityId)
+
+    const { data, error } = await query
+    if (error) {
+      console.error('[db] findActiveOpportunityDuplicate error', error)
+      return { ok: false, error }
+    }
+
+    const duplicate = (data ?? []).find(row => !row.is_deleted)
+    return { ok: true, duplicate: !!duplicate, opportunityId: duplicate?.id as string | undefined }
+  } catch (err) {
+    console.error('[db] findActiveOpportunityDuplicate failed', err)
+    return { ok: false, error: err }
   }
 }
 

@@ -21,6 +21,7 @@ import {
   loadAllData,
   seedIfEmpty,
   seedEmployeesIfEmpty,
+  findActiveOpportunityDuplicate,
   upsertOpportunity,
   deleteOpportunityRecord,
   upsertSubcontractor,
@@ -246,6 +247,41 @@ function showDatabaseSaveError(recordLabel: string) {
   toast.error(`${recordLabel} was not saved to the database. Check Supabase connection and try again.`)
 }
 
+function normalizedSolicitationId(value?: string) {
+  return (value ?? '').trim().toLowerCase()
+}
+
+function hasLocalActiveSolicitationDuplicate(opportunities: Opportunity[], solicitationId: string, excludeOpportunityId?: string) {
+  const normalized = normalizedSolicitationId(solicitationId)
+  if (!normalized) return false
+  return opportunities.some(opp =>
+    opp.id !== excludeOpportunityId &&
+    !opp.isDeleted &&
+    normalizedSolicitationId(opp.solicitationId) === normalized
+  )
+}
+
+async function canUseSolicitationId(solicitationId: string, opportunities: Opportunity[], excludeOpportunityId?: string) {
+  const normalized = solicitationId.trim()
+  if (!normalized) return true
+
+  if (hasLocalActiveSolicitationDuplicate(opportunities, normalized, excludeOpportunityId)) {
+    toast.error(`An active opportunity with solicitation ID ${normalized} already exists.`)
+    return false
+  }
+
+  const duplicateCheck = await findActiveOpportunityDuplicate(normalized, excludeOpportunityId)
+  if (!duplicateCheck.ok) {
+    showDatabaseSaveError('Opportunity duplicate check')
+    return false
+  }
+  if (duplicateCheck.duplicate) {
+    toast.error(`An active opportunity with solicitation ID ${normalized} already exists.`)
+    return false
+  }
+  return true
+}
+
 export const useStore = create<AppState>()(
   persist(
     (set, get) => ({
@@ -340,7 +376,11 @@ export const useStore = create<AppState>()(
 
       // ── Opportunity management ──────────────────────────────────────
       createOpportunity: async (data) => {
-        const opp = normalizeOpportunityAssignmentStatus({ ...data, id: `o${Date.now()}` }, get().employees)
+        const solicitationId = data.solicitationId.trim()
+        const allowed = await canUseSolicitationId(solicitationId, get().opportunities)
+        if (!allowed) return false
+
+        const opp = normalizeOpportunityAssignmentStatus({ ...data, solicitationId, id: `o${Date.now()}` }, get().employees)
         const saved = await upsertOpportunity(opp)
         if (!saved) {
           showDatabaseSaveError('Opportunity')
@@ -362,6 +402,14 @@ export const useStore = create<AppState>()(
         if (data.status === 'CANCELED') {
           get().moveOpportunityToBDTracker(id, 'CANCELED', 'Canceled')
           return true
+        }
+
+        const current = get().opportunities.find(o => o.id === id)
+        const nextSolicitationId = data.solicitationId?.trim()
+        if (nextSolicitationId && normalizedSolicitationId(nextSolicitationId) !== normalizedSolicitationId(current?.solicitationId)) {
+          const allowed = await canUseSolicitationId(nextSolicitationId, get().opportunities, id)
+          if (!allowed) return false
+          data = { ...data, solicitationId: nextSolicitationId }
         }
 
         const previous = get().opportunities

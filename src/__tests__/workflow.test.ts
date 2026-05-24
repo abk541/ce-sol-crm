@@ -22,6 +22,7 @@ vi.mock('../lib/db', () => ({
   loadAllData: vi.fn().mockResolvedValue(null),
   seedIfEmpty: vi.fn().mockResolvedValue(null),
   clearBusinessData: vi.fn().mockResolvedValue(null),
+  findActiveOpportunityDuplicate: vi.fn().mockResolvedValue({ ok: true, duplicate: false }),
   upsertOpportunity: vi.fn().mockResolvedValue(true),
   deleteOpportunityRecord: vi.fn().mockResolvedValue(null),
   upsertSubcontractor: vi.fn().mockResolvedValue(null),
@@ -45,6 +46,7 @@ vi.mock('../lib/supabase', () => ({
 }))
 
 import { useStore } from '../store/useStore'
+import { findActiveOpportunityDuplicate, upsertOpportunity } from '../lib/db'
 import type { Opportunity, Contract, OppStatus, ContractStatus, Employee } from '../types'
 
 // ── Pipeline view filter (mirrors PipelinePage) ───────────────────────
@@ -110,6 +112,9 @@ const TEST_EMPLOYEES: Employee[] = [
 ]
 
 beforeEach(() => {
+  vi.clearAllMocks()
+  vi.mocked(findActiveOpportunityDuplicate).mockResolvedValue({ ok: true, duplicate: false })
+  vi.mocked(upsertOpportunity).mockResolvedValue(true)
   useStore.setState({
     opportunities: [],
     freshAwards: [],
@@ -126,6 +131,48 @@ beforeEach(() => {
     employees: TEST_EMPLOYEES,
     nonSubGraceHours: 0,
     nonSubGraceMinutes: 5,
+  })
+})
+
+describe('createOpportunity duplicate guard', () => {
+  it('blocks creating a second active opportunity with the same solicitation ID', async () => {
+    const existing = makeOpp({ id: 'existing-opp', solicitationId: 'FA4890-26-R-0001', isDeleted: false })
+    useStore.setState({ opportunities: [existing] })
+
+    const saved = await useStore.getState().createOpportunity(makeOpp({
+      id: 'new-opp',
+      solicitationId: ' fa4890-26-r-0001 ',
+      solicitation: 'Duplicate HVAC Maintenance Service',
+    }))
+
+    expect(saved).toBe(false)
+    expect(upsertOpportunity).not.toHaveBeenCalled()
+  })
+
+  it('allows recreating a solicitation ID when the existing opportunity was admin deleted', async () => {
+    const deleted = makeOpp({ id: 'deleted-opp', solicitationId: 'FA4890-26-R-0001', isDeleted: true })
+    useStore.setState({ opportunities: [deleted] })
+
+    const saved = await useStore.getState().createOpportunity(makeOpp({
+      id: 'new-opp',
+      solicitationId: 'FA4890-26-R-0001',
+    }))
+
+    expect(saved).toBe(true)
+    expect(upsertOpportunity).toHaveBeenCalledOnce()
+    expect(useStore.getState().opportunities.filter(o => !o.isDeleted && o.solicitationId === 'FA4890-26-R-0001')).toHaveLength(1)
+  })
+
+  it('blocks creation when Supabase already has an active solicitation ID', async () => {
+    vi.mocked(findActiveOpportunityDuplicate).mockResolvedValueOnce({ ok: true, duplicate: true, opportunityId: 'remote-opp' })
+
+    const saved = await useStore.getState().createOpportunity(makeOpp({
+      id: 'new-opp',
+      solicitationId: 'W912-REMOTE-DUP',
+    }))
+
+    expect(saved).toBe(false)
+    expect(upsertOpportunity).not.toHaveBeenCalled()
   })
 })
 
