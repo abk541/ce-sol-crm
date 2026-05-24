@@ -2361,75 +2361,95 @@ export default function PipelinePage() {
         onClose={() => setSelectedOpp(null)}
         title={selectedOpp?.solicitation ?? ''}
         subtitle={selectedOpp ? `${selectedOpp.solicitationId} - ${selectedOpp.client}` : ''}
-        width={980}
+        width={1080}
         placement="modal"
         showBackdrop
+        variant="premium"
       >
         {selectedOpp && (
           <>
-            <div className="flex gap-2 flex-wrap mb-5 rounded-2xl border border-slate-100 bg-white/5 p-3">
-              <PriorityBadge p={selectedOpp.priority} />
-              <span className="text-[10px] font-semibold text-indigo-600 bg-indigo-50 border border-indigo-100 px-1.5 py-0.5 rounded">{typeLabel(selectedOpp.type)}</span>
+            <div className="mb-6 rounded-3xl border border-[#D7BE7A]/20 bg-gradient-to-r from-[#102820]/90 via-[#0A2327]/90 to-[#0A1D2B]/90 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+              <div className="flex flex-wrap items-center gap-2">
+                <PriorityBadge p={selectedOpp.priority} />
+                <span className="rounded-lg border border-[#7DD3FC]/30 bg-[#7DD3FC]/10 px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-[#BAE6FD]">{typeLabel(selectedOpp.type)}</span>
+                <span className="rounded-lg border border-[#D7BE7A]/25 bg-[#D7BE7A]/10 px-2.5 py-1 font-mono text-[10px] font-bold text-[#F8FBF7]">{selectedOpp.solicitationId}</span>
+              </div>
+              <div className="mt-3 grid gap-3 text-xs text-slate-300 md:grid-cols-3">
+                <div className="min-w-0">
+                  <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">Agency</p>
+                  <p className="truncate font-semibold text-[#F8FBF7]" title={selectedOpp.client}>{selectedOpp.client || '-'}</p>
+                </div>
+                <div className="min-w-0">
+                  <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">Due</p>
+                  <p className="truncate font-semibold text-[#F8FBF7]">
+                    {new Date(selectedOpp.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} · {formatLocalDueTimeShared(selectedOpp.localTime, selectedOpp.timezone)}
+                  </p>
+                </div>
+                <div className="min-w-0">
+                  <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">Location</p>
+                  <p className="truncate font-semibold text-[#F8FBF7]" title={selectedOpp.location}>{selectedOpp.location || '-'}</p>
+                </div>
+              </div>
             </div>
 
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-              <DrawerSection title="Overview">
-                <DrawerField label="Client"    value={selectedOpp.client} />
-                <DrawerField label="Type"      value={typeLabel(selectedOpp.type)} />
-                <DrawerField label="Set-Aside" value={selectedOpp.setAside} />
-                <DrawerField label="NAICS"     value={selectedOpp.naicsCode} />
-                <DrawerField label="Location"  value={selectedOpp.location} />
-                <DrawerField label="Period"    value={selectedOpp.period} />
+              <DrawerSection title="Overview" variant="premium">
+                <DrawerField label="Client"    value={selectedOpp.client} variant="premium" />
+                <DrawerField label="Type"      value={typeLabel(selectedOpp.type)} variant="premium" />
+                <DrawerField label="Set-Aside" value={selectedOpp.setAside} variant="premium" />
+                <DrawerField label="NAICS"     value={selectedOpp.naicsCode} variant="premium" />
+                <DrawerField label="Location"  value={selectedOpp.location} variant="premium" />
+                <DrawerField label="Period"    value={selectedOpp.period} variant="premium" />
               </DrawerSection>
 
-              <DrawerSection title="Team">
+              <DrawerSection title="Team" variant="premium">
                 {(() => {
                   const chain = getAssignmentChain(employees, selectedOpp.assignedTo)
                   return (
                     <>
-                      <DrawerField label="Manager" value={chain.manager?.name || '-'} />
-                      <DrawerField label="Team Lead" value={chain.teamLead?.name || '-'} />
-                      <DrawerField label="Associate" value={chain.associate?.name || '-'} />
+                      <DrawerField label="Manager" value={chain.manager?.name || '-'} variant="premium" />
+                      <DrawerField label="Team Lead" value={chain.teamLead?.name || '-'} variant="premium" />
+                      <DrawerField label="Associate" value={chain.associate?.name || '-'} variant="premium" />
                     </>
                   )
                 })()}
               </DrawerSection>
 
-              <DrawerSection title="Schedule">
-                <DrawerField label="Due Date"  value={new Date(selectedOpp.dueDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })} />
-                <DrawerField label="Local Time" value={formatLocalDueTimeShared(selectedOpp.localTime, selectedOpp.timezone)} />
+              <DrawerSection title="Schedule" variant="premium">
+                <DrawerField label="Due Date"  value={new Date(selectedOpp.dueDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })} variant="premium" />
+                <DrawerField label="Local Time" value={formatLocalDueTimeShared(selectedOpp.localTime, selectedOpp.timezone)} variant="premium" />
                 {selectedOpp.localTime && (
                   <DrawerField label="Morocco (GMT+1)" value={
-                    <span className="text-indigo-600 font-semibold">
+                    <span className="font-bold text-[#7DD3FC]">
                       {formatMoroccoDisplay(selectedOpp.localTime, selectedOpp.timezone, selectedOpp.dueDate, selectedOpp.moroccoTime, selectedOpp.moroccoDate)}
                     </span>
-                  } />
+                  } variant="premium" />
                 )}
-                <DrawerField label="Captured On" value={selectedOpp.capturedOn} />
+                <DrawerField label="Captured On" value={selectedOpp.capturedOn} variant="premium" />
               </DrawerSection>
 
-              <DrawerSection title="Financials">
-                <DrawerField label="Contract Amount"  value={selectedOpp.contractAmount ? formatCurrency(selectedOpp.contractAmount) : '-'} />
-                <DrawerField label="Base Amount"      value={selectedOpp.baseAmount ? formatCurrency(selectedOpp.baseAmount) : '-'} />
-                <DrawerField label="Monthly Payment"  value={selectedOpp.monthlyPayment ? formatCurrency(selectedOpp.monthlyPayment) + '/mo' : '-'} />
+              <DrawerSection title="Financials" variant="premium">
+                <DrawerField label="Contract Amount"  value={selectedOpp.contractAmount ? formatCurrency(selectedOpp.contractAmount) : '-'} variant="premium" />
+                <DrawerField label="Base Amount"      value={selectedOpp.baseAmount ? formatCurrency(selectedOpp.baseAmount) : '-'} variant="premium" />
+                <DrawerField label="Monthly Payment"  value={selectedOpp.monthlyPayment ? formatCurrency(selectedOpp.monthlyPayment) + '/mo' : '-'} variant="premium" />
               </DrawerSection>
             </div>
 
             {selectedOpp.mandatoryEvents && (
-              <DrawerSection title="Mandatory Events">
-                <p className="py-2.5 text-sm text-slate-600 leading-6">{selectedOpp.mandatoryEvents}</p>
+              <DrawerSection title="Mandatory Events" variant="premium">
+                <p className="py-3 text-sm leading-6 text-slate-200">{selectedOpp.mandatoryEvents}</p>
               </DrawerSection>
             )}
 
             {selectedOpp.comments && selectedOpp.comments.length > 0 && (
-              <DrawerSection title={`Comments (${selectedOpp.comments.length})`}>
+              <DrawerSection title={`Comments (${selectedOpp.comments.length})`} variant="premium">
                 {selectedOpp.comments.map((c: Comment) => (
-                  <div key={c.id} className="py-2.5 border-b border-slate-50 last:border-0">
+                  <div key={c.id} className="border-b border-[#D7BE7A]/15 py-3 last:border-0">
                     <div className="flex items-center justify-between mb-0.5">
-                      <span className="text-xs font-semibold text-slate-700">{c.author}</span>
-                      <span className="text-[10px] text-slate-400">{formatDateTime(c.createdAt)}</span>
+                      <span className="text-xs font-bold text-[#F8FBF7]">{c.author}</span>
+                      <span className="text-[10px] font-medium text-slate-400">{formatDateTime(c.createdAt)}</span>
                     </div>
-                    <p className="text-xs text-slate-600">{c.text}</p>
+                    <p className="text-xs leading-5 text-slate-300">{c.text}</p>
                     <CommentAttachments attachments={c.attachments} />
                   </div>
                 ))}
@@ -2437,13 +2457,13 @@ export default function PipelinePage() {
             )}
 
             {selectedOpp.subcontractors && selectedOpp.subcontractors.length > 0 && (
-              <DrawerSection title={`Sourcing (${selectedOpp.subcontractors.length})`}>
+              <DrawerSection title={`Sourcing (${selectedOpp.subcontractors.length})`} variant="premium">
                 {selectedOpp.subcontractors.map(s => (
-                  <div key={s.id} className="py-2.5 border-b border-slate-50 last:border-0">
-                    <p className="text-sm font-semibold text-slate-800">{s.companyName}</p>
-                    <p className="text-xs text-slate-500">{s.contactName}</p>
+                  <div key={s.id} className="border-b border-[#D7BE7A]/15 py-3 last:border-0">
+                    <p className="text-sm font-bold text-[#F8FBF7]">{s.companyName}</p>
+                    <p className="text-xs text-slate-400">{s.contactName}</p>
                     {s.quoteFile && (
-                      <p className="text-[10px] text-indigo-600 mt-0.5 flex items-center gap-1">
+                      <p className="mt-1 flex items-center gap-1 text-[10px] font-semibold text-[#7DD3FC]">
                         <FileText size={9} /> {s.quoteFile}
                       </p>
                     )}
@@ -2452,7 +2472,7 @@ export default function PipelinePage() {
               </DrawerSection>
             )}
 
-            <div className="mt-4 flex gap-2 flex-wrap">
+            <div className="sticky bottom-0 -mx-6 -mb-5 mt-4 flex flex-wrap gap-2 border-t border-[#D7BE7A]/15 bg-[#07131F]/95 px-6 py-4 backdrop-blur">
               <button className="btn-secondary text-xs gap-1.5" onClick={() => { setSelectedOpp(null); setEditOpp(selectedOpp) }}>
                 <Edit2 size={12} /> Edit
               </button>
