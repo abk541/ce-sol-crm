@@ -5,7 +5,7 @@ import {
   AlertTriangle, ListChecks, ChevronRight, X, Save, Plus,
   ArrowRight, CheckCircle2, Info, MapPin, Calendar,
   Phone, Mail, Clock, Shield, FileText, Trash2, AlertCircle,
-  ChevronUp, ChevronDown, ChevronsUpDown, Pencil, Receipt,
+  ChevronUp, ChevronDown, ChevronsUpDown, Pencil, Receipt, Eye, Paperclip,
 } from 'lucide-react'
 import PeriodFilter, { type Period, filterByPeriod } from '../components/shared/PeriodFilter'
 import toast from 'react-hot-toast'
@@ -130,13 +130,74 @@ async function generateInvoiceFile(contract: Contract) {
   }
 }
 
-function createAttachment(name: string, attachedAt: string, uploadedBy: string): FileAttachment {
+function createAttachment(
+  name: string,
+  attachedAt: string,
+  uploadedBy: string,
+  fileData?: Pick<FileAttachment, 'dataUrl' | 'mimeType' | 'size'>,
+): FileAttachment {
   return {
     id: crypto.randomUUID(),
     name,
     attachedAt: new Date(attachedAt).toISOString(),
     uploadedBy,
+    ...fileData,
   }
+}
+
+function formatFileSize(size?: number) {
+  if (!size) return ''
+  if (size < 1024) return `${size} B`
+  if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
+
+function viewAttachment(att: FileAttachment) {
+  if (!att.dataUrl) {
+    toast.error('This attachment only has saved metadata. Re-upload it to make the file viewable.')
+    return
+  }
+  const win = window.open('', '_blank', 'noopener,noreferrer')
+  if (!win) {
+    toast.error('Popup was blocked. Allow popups to view attachments.')
+    return
+  }
+  win.document.write(`
+    <html>
+      <head>
+        <title>${escapeHtml(att.name)}</title>
+        <style>
+          body { margin: 0; background: #07131f; color: #f8fbf7; font-family: Inter, system-ui, sans-serif; }
+          header { padding: 14px 18px; border-bottom: 1px solid rgba(215,190,122,.22); display: flex; justify-content: space-between; gap: 16px; align-items: center; }
+          a { color: #d7be7a; font-weight: 700; text-decoration: none; }
+          iframe, img { width: 100%; height: calc(100vh - 58px); border: 0; object-fit: contain; display: block; }
+          .fallback { padding: 24px; }
+        </style>
+      </head>
+      <body>
+        <header>
+          <strong>${escapeHtml(att.name)}</strong>
+          <a href="${att.dataUrl}" download="${escapeHtml(att.name)}">Download</a>
+        </header>
+        ${
+          att.mimeType?.startsWith('image/')
+            ? `<img src="${att.dataUrl}" alt="${escapeHtml(att.name)}" />`
+            : att.mimeType === 'application/pdf'
+              ? `<iframe src="${att.dataUrl}" title="${escapeHtml(att.name)}"></iframe>`
+              : `<div class="fallback">Preview is not available for this file type. Use Download to open it.</div>`
+        }
+      </body>
+    </html>
+  `)
+  win.document.close()
 }
 
 function AttachmentPicker({
@@ -151,23 +212,42 @@ function AttachmentPicker({
   uploadedBy: string
 }) {
   const [fileName, setFileName] = useState('')
+  const [fileData, setFileData] = useState<Pick<FileAttachment, 'dataUrl' | 'mimeType' | 'size'> | undefined>()
   const [attachedAt, setAttachedAt] = useState(() => toDatetimeLocal(new Date().toISOString()))
 
   const add = () => {
     if (!fileName.trim() || !attachedAt) return
-    onChange([...attachments, createAttachment(fileName.trim(), attachedAt, uploadedBy)])
+    onChange([...attachments, createAttachment(fileName.trim(), attachedAt, uploadedBy, fileData)])
     setFileName('')
+    setFileData(undefined)
     setAttachedAt(toDatetimeLocal(new Date().toISOString()))
   }
 
   return (
-    <div className="rounded-xl border border-slate-200 bg-white/70 p-3">
-      <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-slate-500">{label}</p>
+    <div
+      className="rounded-xl border p-3"
+      style={{ background: 'rgba(255,255,255,0.06)', borderColor: 'rgba(215,190,122,0.24)' }}
+    >
+      <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-slate-200">{label}</p>
       <div className="grid gap-2 md:grid-cols-[1fr_180px_auto]">
         <input
           type="file"
-          onChange={e => setFileName(e.target.files?.[0]?.name ?? '')}
-          className="input-field text-xs"
+          onChange={e => {
+            const file = e.target.files?.[0]
+            setFileName(file?.name ?? '')
+            setFileData(undefined)
+            if (!file) return
+            const reader = new FileReader()
+            reader.onload = () => {
+              setFileData({
+                dataUrl: typeof reader.result === 'string' ? reader.result : undefined,
+                mimeType: file.type || undefined,
+                size: file.size,
+              })
+            }
+            reader.readAsDataURL(file)
+          }}
+          className="input-field text-xs file:mr-3 file:rounded-lg file:border-0 file:bg-[#D7BE7A] file:px-3 file:py-1.5 file:text-xs file:font-bold file:text-[#07131F]"
         />
         <input
           type="datetime-local"
@@ -188,9 +268,9 @@ function AttachmentPicker({
       {attachments.length > 0 && (
         <div className="mt-3 space-y-1.5">
           {attachments.map(att => (
-            <div key={att.id} className="flex items-center justify-between gap-2 rounded-lg border border-slate-100 bg-slate-50 px-2.5 py-1.5 text-[11px]">
-              <span className="min-w-0 truncate font-semibold text-slate-700">{att.name}</span>
-              <span className="whitespace-nowrap text-slate-400">{formatDateTime(att.attachedAt)}</span>
+            <div key={att.id} className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px]">
+              <span className="min-w-0 truncate font-semibold text-slate-800">{att.name}</span>
+              <span className="whitespace-nowrap text-slate-500">{formatDateTime(att.attachedAt)}</span>
             </div>
           ))}
         </div>
@@ -222,6 +302,7 @@ function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClo
     deadline: '',
     attachments: [] as FileAttachment[],
   })
+  const [openDeliverableAttachments, setOpenDeliverableAttachments] = useState<string | null>(null)
 
   // Terminate form
   const [showTerminate, setShowTerminate] = useState(false)
@@ -905,44 +986,99 @@ function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClo
             )}
             {deliverables.map((deliverable, index) => {
               const isOverdue = deliverable.deadline && new Date(`${deliverable.deadline}T23:59:59`) < new Date()
+              const attachmentCount = (deliverable.attachments || []).length
+              const attachmentsOpen = openDeliverableAttachments === deliverable.id
               return (
-              <div key={deliverable.id || index} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+              <div
+                key={deliverable.id || index}
+                className="rounded-2xl border p-4 shadow-sm"
+                style={{
+                  background: 'linear-gradient(180deg, rgba(255,255,255,0.10), rgba(255,255,255,0.045))',
+                  borderColor: 'rgba(215,190,122,0.26)',
+                }}
+              >
                 <div className="flex items-start gap-3">
-                  <div className="mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-500">
+                  <div
+                    className="mt-0.5 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl"
+                    style={{ background: 'rgba(99,102,241,0.18)', color: '#C7D2FE', border: '1px solid rgba(199,210,254,0.28)' }}
+                  >
                     <CheckCircle2 size={14} />
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-start justify-between gap-2">
                       <div>
-                        <p className="text-sm font-bold text-slate-800">{deliverable.title}</p>
-                        <p className="text-[10px] text-slate-400">
+                        <p className="text-base font-black text-slate-100">{deliverable.title}</p>
+                        <p className="mt-0.5 text-[11px] text-slate-400">
                           Added by {deliverable.createdBy || 'Unknown'}{deliverable.createdAt ? ` · ${formatDateTime(deliverable.createdAt)}` : ''}
                         </p>
                       </div>
-                      {isOverdue && (
-                        <span className="rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-bold text-red-600">Overdue</span>
-                      )}
+                      <div className="flex flex-wrap items-center gap-2">
+                        {isOverdue && (
+                          <span className="rounded-full bg-red-500/15 px-2 py-0.5 text-[10px] font-bold text-red-300">Overdue</span>
+                        )}
+                        <button
+                          type="button"
+                          disabled={attachmentCount === 0}
+                          onClick={() => setOpenDeliverableAttachments(prev => prev === deliverable.id ? null : deliverable.id)}
+                          className="flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-bold transition-all disabled:cursor-not-allowed disabled:opacity-45"
+                          style={{
+                            borderColor: 'rgba(215,190,122,0.34)',
+                            background: attachmentCount > 0 ? 'rgba(215,190,122,0.12)' : 'rgba(148,163,184,0.08)',
+                            color: attachmentCount > 0 ? '#F8E8B8' : '#94A3B8',
+                          }}
+                        >
+                          <Paperclip size={12} />
+                          {attachmentCount > 0 ? `View attachments (${attachmentCount})` : 'No attachments'}
+                        </button>
+                      </div>
                     </div>
                     <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                      <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                      <div
+                        className="rounded-xl border px-3 py-2.5"
+                        style={{ background: 'rgba(7,19,31,0.55)', borderColor: 'rgba(215,190,122,0.20)' }}
+                      >
                         <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Issuance Date</p>
-                        <p className="mt-0.5 text-xs font-semibold text-slate-700">{formatDate(deliverable.issuanceDate)}</p>
+                        <p className="mt-1 text-sm font-bold text-slate-100">{formatDate(deliverable.issuanceDate)}</p>
                       </div>
-                      <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                      <div
+                        className="rounded-xl border px-3 py-2.5"
+                        style={{ background: 'rgba(7,19,31,0.55)', borderColor: isOverdue ? 'rgba(248,113,113,0.42)' : 'rgba(215,190,122,0.20)' }}
+                      >
                         <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Deadline</p>
-                        <p className={`mt-0.5 text-xs font-semibold ${isOverdue ? 'text-red-600' : 'text-slate-700'}`}>
+                        <p className={`mt-1 text-sm font-bold ${isOverdue ? 'text-red-300' : 'text-slate-100'}`}>
                           {formatDate(deliverable.deadline)}
                         </p>
                       </div>
                     </div>
-                    {(deliverable.attachments || []).length > 0 && (
-                      <div className="mt-3 rounded-lg border border-slate-200 bg-white px-3 py-2">
-                        <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-slate-400">Attachments</p>
-                        <div className="space-y-1.5">
+                    {attachmentsOpen && (
+                      <div
+                        className="mt-3 rounded-xl border px-3 py-3"
+                        style={{ background: 'rgba(7,19,31,0.62)', borderColor: 'rgba(215,190,122,0.24)' }}
+                      >
+                        <p className="mb-2 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-slate-300">
+                          <Paperclip size={12} /> Attachments
+                        </p>
+                        <div className="space-y-2">
                           {(deliverable.attachments || []).map(att => (
-                            <div key={att.id} className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
-                              <span className="min-w-0 truncate font-semibold text-slate-700">{att.name}</span>
-                              <span className="whitespace-nowrap text-slate-400">{formatDateTime(att.attachedAt)}</span>
+                            <div
+                              key={att.id}
+                              className="flex flex-wrap items-center justify-between gap-3 rounded-lg border px-3 py-2"
+                              style={{ background: 'rgba(255,255,255,0.06)', borderColor: 'rgba(255,255,255,0.10)' }}
+                            >
+                              <div className="min-w-0">
+                                <p className="truncate text-xs font-bold text-slate-100">{att.name}</p>
+                                <p className="text-[10px] text-slate-400">
+                                  {formatDateTime(att.attachedAt)}
+                                  {formatFileSize(att.size) ? ` Â· ${formatFileSize(att.size)}` : ''}
+                                </p>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => viewAttachment(att)}
+                                className="flex items-center gap-1.5 rounded-lg bg-white px-2.5 py-1.5 text-[11px] font-black text-slate-900 transition-colors hover:bg-[#F8E8B8]"
+                              >
+                                <Eye size={12} /> View
+                              </button>
                             </div>
                           ))}
                         </div>
@@ -953,10 +1089,13 @@ function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClo
               </div>
               )
             })}
-            <div className="p-3 rounded-xl border border-dashed border-slate-300 bg-slate-50">
+            <div
+              className="rounded-2xl border border-dashed p-4"
+              style={{ background: 'rgba(255,255,255,0.055)', borderColor: 'rgba(215,190,122,0.28)' }}
+            >
               <div className="space-y-3">
                 <div>
-                  <label className="block text-[10px] font-semibold uppercase tracking-wide text-slate-500 mb-1">Deliverable *</label>
+                  <label className="block text-[10px] font-bold uppercase tracking-wide text-slate-200 mb-1.5">Deliverable *</label>
                   <input
                     className="input-field text-xs"
                     value={deliverableForm.title}
@@ -966,7 +1105,7 @@ function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClo
                 </div>
                 <div className="grid gap-2 sm:grid-cols-2">
                   <div>
-                    <label className="block text-[10px] font-semibold uppercase tracking-wide text-slate-500 mb-1">Issuance Date *</label>
+                    <label className="block text-[10px] font-bold uppercase tracking-wide text-slate-200 mb-1.5">Issuance Date *</label>
                     <input
                       type="date"
                       className="input-field text-xs"
@@ -975,7 +1114,7 @@ function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClo
                     />
                   </div>
                   <div>
-                    <label className="block text-[10px] font-semibold uppercase tracking-wide text-slate-500 mb-1">Deadline *</label>
+                    <label className="block text-[10px] font-bold uppercase tracking-wide text-slate-200 mb-1.5">Deadline *</label>
                     <input
                       type="date"
                       className="input-field text-xs"

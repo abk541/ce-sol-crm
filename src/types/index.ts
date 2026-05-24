@@ -48,6 +48,9 @@ export interface FileAttachment {
   name: string
   attachedAt: string
   uploadedBy: string
+  dataUrl?: string
+  mimeType?: string
+  size?: number
 }
 
 export interface Comment {

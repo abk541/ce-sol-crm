@@ -32,6 +32,9 @@ describe('contract deliverable helpers', () => {
         name: 'report-template.pdf',
         attachedAt: '2026-05-24T10:15:00.000Z',
         uploadedBy: 'manager',
+        dataUrl: 'data:application/pdf;base64,JVBERi0x',
+        mimeType: 'application/pdf',
+        size: 1024,
       }],
     }])
 
@@ -48,8 +51,10 @@ describe('contract deliverable helpers', () => {
         name: 'report-template.pdf',
         attachedAt: '2026-05-24T10:15:00.000Z',
         uploadedBy: 'manager',
+        dataUrl: 'data:application/pdf;base64,JVBERi0x',
+        mimeType: 'application/pdf',
+        size: 1024,
       }],
     })
   })
 })
-

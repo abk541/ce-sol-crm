@@ -8,12 +8,16 @@ function normalizeAttachment(value: unknown, index: number): FileAttachment | nu
   if (!isRecord(value)) return null
   const name = typeof value.name === 'string' ? value.name : ''
   if (!name.trim()) return null
-  return {
+  const attachment: FileAttachment = {
     id: typeof value.id === 'string' ? value.id : `attachment-${index}`,
     name,
     attachedAt: typeof value.attachedAt === 'string' ? value.attachedAt : '',
     uploadedBy: typeof value.uploadedBy === 'string' ? value.uploadedBy : '',
   }
+  if (typeof value.dataUrl === 'string') attachment.dataUrl = value.dataUrl
+  if (typeof value.mimeType === 'string') attachment.mimeType = value.mimeType
+  if (typeof value.size === 'number') attachment.size = value.size
+  return attachment
 }
 
 function legacyDeliverable(title: string, index: number): ContractDeliverable {
