@@ -3,29 +3,8 @@ import toast from 'react-hot-toast'
 import { useStore } from '../store/useStore'
 import type { Contract } from '../types'
 import { formatCurrency } from '../lib/utils'
-import {
-  canGenerateContractInvoice,
-  generateContractInvoicePdf,
-  invoiceAmountForContract,
-  subkMonthlyBillingRowsForContract,
-  subkQuoteSummaryForContract,
-} from '../lib/invoicePdf'
-
-function isActiveContract(contract: Contract) {
-  return !['ARCHIVED', 'TERMINATED', 'CANCELED'].includes(contract.status)
-}
-
-function subkQuoteSummary(contract: Contract) {
-  return subkQuoteSummaryForContract(contract)
-}
-
-function subkMonthlyBillingRows(contract: Contract) {
-  return subkMonthlyBillingRowsForContract(contract)
-}
-
-function invoiceAmountFor(contract: Contract) {
-  return invoiceAmountForContract(contract)
-}
+import { generateContractInvoicePdf } from '../lib/invoicePdf'
+import { getFinanceProjectionRow, getFinanceProjectionSummary } from '../lib/financeProjections'
 
 async function generateInvoiceFile(contract: Contract) {
   try {
@@ -41,12 +20,14 @@ async function generateInvoiceFile(contract: Contract) {
 
 export default function FinanceProjectionsPage() {
   const { contracts } = useStore()
-  const activeContracts = contracts.filter(isActiveContract)
-  const otjContracts = activeContracts.filter(c => c.type === 'OTJ')
-  const recurringContracts = activeContracts.filter(c => c.type === 'RECURRING')
-  const otjTotal = otjContracts.reduce((sum, c) => sum + (c.value || 0), 0)
-  const recurringMonthly = recurringContracts.reduce((sum, c) => sum + (c.monthlyPayment || 0), 0)
-  const projectedInvoiceTotal = activeContracts.reduce((sum, c) => sum + invoiceAmountFor(c), 0)
+  const {
+    activeContracts,
+    otjContracts,
+    recurringContracts,
+    otjTotal,
+    recurringMonthly,
+    projectedInvoiceTotal,
+  } = getFinanceProjectionSummary(contracts)
 
   return (
     <div className="p-6 page-enter space-y-4">
@@ -100,9 +81,7 @@ export default function FinanceProjectionsPage() {
                 </tr>
               )}
               {activeContracts.map(contract => {
-                const isRecurring = contract.type === 'RECURRING'
-                const invoiceReady = canGenerateContractInvoice(contract)
-                const subkRows = isRecurring ? subkMonthlyBillingRows(contract) : [subkQuoteSummary(contract)]
+                const { isRecurring, invoiceReady, invoiceAmount, subkRows } = getFinanceProjectionRow(contract)
                 return (
                   <tr key={contract.id}>
                     <td className="max-w-[260px]">
@@ -132,7 +111,7 @@ export default function FinanceProjectionsPage() {
                       ))}
                     </td>
                     <td className="whitespace-nowrap text-xs font-black text-emerald-600">
-                      {formatCurrency(invoiceAmountFor(contract))}
+                      {formatCurrency(invoiceAmount)}
                       <p className="text-[10px] font-semibold text-slate-400">{isRecurring ? 'per month' : 'total value'}</p>
                     </td>
                     <td>

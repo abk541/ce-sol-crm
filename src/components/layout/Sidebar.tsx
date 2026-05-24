@@ -1,73 +1,17 @@
 import { motion, AnimatePresence } from 'framer-motion'
 import { NavLink, useLocation } from 'react-router-dom'
-import {
-  LayoutDashboard, GitBranch, FileText, BarChart3,
-  FileCheck2, Bell, Users, Settings, ChevronLeft,
-  ChevronRight, Database, TrendingUp, Trophy,
-  LogOut, ChevronDown, ClipboardList, HeartPulse,
-  ListChecks, History, Building2, DollarSign,
-} from 'lucide-react'
+import { ChevronDown, ChevronLeft, ChevronRight, LogOut } from 'lucide-react'
 import { useState } from 'react'
 import { useStore } from '../../store/useStore'
 import { avatarColor } from '../../lib/utils'
 import { cn } from '../../lib/utils'
 import CompanyLogo from '../shared/CompanyLogo'
-
-const NAV = [
-  {
-    label: 'Overview',
-    items: [
-      { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-    ],
-  },
-  {
-    label: 'Business Dev',
-    items: [
-      { to: '/pipeline',          icon: GitBranch,     label: 'Contract Opportunities' },
-      { to: '/proposals',         icon: FileText,      label: 'Assign Opportunities' },
-      { to: '/bd-tracker',        icon: TrendingUp,    label: 'BD Tracker' },
-      { to: '/tracker',           icon: ListChecks,    label: 'Deletion Requests' },
-      { to: '/non-submissions',   icon: ClipboardList, label: 'Non-Submissions Report' },
-      { to: '/past-performances', icon: History,       label: 'Past Performances' },
-    ],
-  },
-  {
-    label: 'Operations',
-    items: [
-      { to: '/contracts',   icon: FileCheck2, label: 'Contract Admin' },
-      { to: '/fresh-award', icon: Trophy,     label: 'Fresh Awards' },
-    ],
-  },
-  {
-    label: 'Finance',
-    items: [
-      { to: '/finance-projections', icon: DollarSign, label: 'Finance Projections' },
-    ],
-  },
-  {
-    label: 'Databases',
-    items: [
-      { to: '/subk-database', icon: Building2, label: 'Subk Database' },
-      { to: '/database',      icon: Database,  label: 'INT-Database' },
-    ],
-  },
-  {
-    label: 'System',
-    items: [
-      { to: '/notifications', icon: Bell,       label: 'Notifications', badge: true },
-      { to: '/admin',         icon: Users,      label: 'Admin' },
-      { to: '/hr',            icon: HeartPulse, label: 'HR' },
-      { to: '/settings',      icon: Settings,   label: 'Settings' },
-    ],
-  },
-]
+import { DEFAULT_EXPANDED_NAV_GROUPS, NAV_GROUPS } from '../../config/navigation'
 
 export default function Sidebar() {
   const { sidebarCollapsed, toggleSidebar, currentUser, logout, notifications } = useStore()
   const location = useLocation()
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({
-    Overview: true, 'Business Dev': true, Operations: true, Finance: true, Databases: true, System: true,
-  })
+  const [expanded, setExpanded] = useState<Record<string, boolean>>(DEFAULT_EXPANDED_NAV_GROUPS)
   const unread = notifications.filter(n => !n.read).length
 
   const toggleGroup = (label: string) =>
@@ -118,7 +62,7 @@ export default function Sidebar() {
 
       {/* Nav */}
       <nav className="flex-1 overflow-y-auto px-2 py-3 space-y-0.5">
-        {NAV.map(group => (
+        {NAV_GROUPS.map(group => (
           <div key={group.label} className="mb-1">
             {!sidebarCollapsed && (
               <button
@@ -145,7 +89,7 @@ export default function Sidebar() {
                   className="space-y-0.5 overflow-hidden"
                 >
                   {group.items
-                    .filter(item => currentUser?.role !== 'ASSOCIATE' || item.to !== '/proposals')
+                    .filter(item => currentUser?.role !== 'ASSOCIATE' || !item.hiddenForAssociate)
                     .map(item => {
                     const isActive = location.pathname === item.to
                     return (

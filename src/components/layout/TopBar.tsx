@@ -30,25 +30,7 @@ import { useStore } from '../../store/useStore'
 import { avatarColor, formatCurrency } from '../../lib/utils'
 import { getAssignmentChain, ROLE_DISPLAY_LABELS } from '../../lib/team'
 import type { Contract, Employee, NotifType, Notification as AppNotification, Opportunity } from '../../types'
-
-const ROUTE_LABELS: Record<string, string> = {
-  '/dashboard':        'Dashboard',
-  '/pipeline':         'General Pipeline',
-  '/proposals':        'Assign Opportunities',
-  '/bd-tracker':       'BD Tracker',
-  '/tracker':          'Deletion Requests',
-  '/non-submissions':  'Non-Submissions Report',
-  '/contracts':        'Contract Admin',
-  '/finance-projections': 'Finance Projections',
-  '/fresh-award':      'Fresh Awards',
-  '/notifications':    'Notifications',
-  '/database':         'INT-Database',
-  '/admin':            'Admin',
-  '/hr':               'HR',
-  '/settings':         'Settings',
-  '/past-performances':'Past Performances',
-  '/subk-database':    'Subk Database',
-}
+import { ROUTE_LABELS } from '../../config/navigation'
 
 const TYPE_CONFIG: Record<NotifType, { icon: typeof Bell; color: string; label: string }> = {
   ASSIGNMENT:          { icon: UserPlus,       color: '#7DD3FC', label: 'Assignment' },
