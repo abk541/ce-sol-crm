@@ -8,8 +8,10 @@ import type {
   Contract,
   ContractPoC,
   FreshAward,
+  FileAttachment,
   GovernmentWarning,
   LockedSubcontractor,
+  LockedSubkDocuments,
   NonSubmissionReport,
   PastPerformance,
   Subcontractor,
@@ -254,7 +256,111 @@ function dbToPoc(row: Record<string, unknown>): ContractPoC {
   }
 }
 
+const LOCKED_SUBK_META_PREFIX = '__LOCKED_SUBK_META__:'
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value)
+}
+
+function normalizeStoredAttachment(value: unknown, index: number): FileAttachment | null {
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value) as unknown
+      if (isRecord(parsed)) return normalizeStoredAttachment(parsed, index)
+    } catch {
+      // Legacy attachment rows stored only the filename.
+    }
+    const name = value.trim()
+    if (!name) return null
+    return {
+      id: `legacy-attachment-${index}`,
+      name,
+      attachedAt: '',
+      uploadedBy: 'Legacy',
+    }
+  }
+
+  if (!isRecord(value)) return null
+  const name = typeof value.name === 'string' ? value.name.trim() : ''
+  if (!name) return null
+  const attachment: FileAttachment = {
+    id: typeof value.id === 'string' ? value.id : `attachment-${index}`,
+    name,
+    attachedAt: typeof value.attachedAt === 'string' ? value.attachedAt : '',
+    uploadedBy: typeof value.uploadedBy === 'string' ? value.uploadedBy : '',
+  }
+  if (typeof value.dataUrl === 'string') attachment.dataUrl = value.dataUrl
+  if (typeof value.mimeType === 'string') attachment.mimeType = value.mimeType
+  if (typeof value.size === 'number') attachment.size = value.size
+  return attachment
+}
+
+function normalizeStoredAttachments(value: unknown): FileAttachment[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .map((item, index) => normalizeStoredAttachment(item, index))
+    .filter(Boolean) as FileAttachment[]
+}
+
+function serializeStoredAttachments(value?: FileAttachment[] | null): string[] | null {
+  const normalized = normalizeStoredAttachments(value)
+  if (!normalized.length) return null
+  return normalized.map(att => JSON.stringify(att))
+}
+
+function attachmentNames(value?: FileAttachment[] | null): string[] | undefined {
+  const names = normalizeStoredAttachments(value).map(att => att.name)
+  return names.length ? names : undefined
+}
+
+function hasLockedSubDocuments(documents: LockedSubkDocuments) {
+  return Object.values(documents).some(list => Array.isArray(list) && list.length > 0)
+}
+
+function normalizeLockedSubDocuments(sub: LockedSubcontractor): LockedSubkDocuments {
+  return {
+    quote: normalizeStoredAttachments(sub.documents?.quote?.length ? sub.documents.quote : sub.quotes),
+    coi: normalizeStoredAttachments(sub.documents?.coi),
+    w9: normalizeStoredAttachments(sub.documents?.w9),
+    subAgreement: normalizeStoredAttachments(sub.documents?.subAgreement?.length ? sub.documents.subAgreement : sub.subAgreements),
+    invoice: normalizeStoredAttachments(sub.documents?.invoice?.length ? sub.documents.invoice : sub.invoices),
+  }
+}
+
+function encodeLockedSubNotes(notes: string | undefined, documents: LockedSubkDocuments): string | null {
+  const cleanNotes = notes?.trim() ?? ''
+  if (!hasLockedSubDocuments(documents)) return cleanNotes || null
+  return `${LOCKED_SUBK_META_PREFIX}${JSON.stringify({
+    notes: cleanNotes,
+    documents: {
+      coi: documents.coi ?? [],
+      w9: documents.w9 ?? [],
+    },
+  })}`
+}
+
+function decodeLockedSubNotes(value: unknown): { notes?: string; documents: Pick<LockedSubkDocuments, 'coi' | 'w9'> } {
+  if (typeof value !== 'string') return { documents: {} }
+  if (!value.startsWith(LOCKED_SUBK_META_PREFIX)) return { notes: value || undefined, documents: {} }
+
+  try {
+    const parsed = JSON.parse(value.slice(LOCKED_SUBK_META_PREFIX.length)) as unknown
+    if (!isRecord(parsed)) return { documents: {} }
+    const rawDocuments = isRecord(parsed.documents) ? parsed.documents : {}
+    return {
+      notes: typeof parsed.notes === 'string' ? parsed.notes : undefined,
+      documents: {
+        coi: normalizeStoredAttachments(rawDocuments.coi),
+        w9: normalizeStoredAttachments(rawDocuments.w9),
+      },
+    }
+  } catch {
+    return { documents: {} }
+  }
+}
+
 function lockedSubToDb(sub: LockedSubcontractor): Record<string, unknown> {
+  const documents = normalizeLockedSubDocuments(sub)
   return {
     id: sub.id,
     contract_id: sub.contractId,
@@ -265,16 +371,24 @@ function lockedSubToDb(sub: LockedSubcontractor): Record<string, unknown> {
     set_aside: sub.setAside ?? null,
     naics_code: sub.naicsCode ?? null,
     subk_database_id: sub.subkDatabaseId ?? null,
-    invoices: sub.invoices ?? null,
-    sub_agreements: sub.subAgreements ?? null,
-    quotes: sub.quotes ?? null,
-    notes: sub.notes ?? null,
+    invoices: serializeStoredAttachments(documents.invoice) ?? sub.invoices ?? null,
+    sub_agreements: serializeStoredAttachments(documents.subAgreement) ?? sub.subAgreements ?? null,
+    quotes: serializeStoredAttachments(documents.quote) ?? sub.quotes ?? null,
+    notes: encodeLockedSubNotes(sub.notes, documents),
     created_at: sub.createdAt,
     created_by: sub.createdBy,
   }
 }
 
 function dbToLockedSub(row: Record<string, unknown>): LockedSubcontractor {
+  const meta = decodeLockedSubNotes(row.notes)
+  const documents: LockedSubkDocuments = {
+    quote: normalizeStoredAttachments(row.quotes),
+    coi: meta.documents.coi ?? [],
+    w9: meta.documents.w9 ?? [],
+    subAgreement: normalizeStoredAttachments(row.sub_agreements),
+    invoice: normalizeStoredAttachments(row.invoices),
+  }
   return {
     id: row.id as string,
     contractId: row.contract_id as string,
@@ -285,10 +399,11 @@ function dbToLockedSub(row: Record<string, unknown>): LockedSubcontractor {
     setAside: row.set_aside as string | undefined,
     naicsCode: row.naics_code as string | undefined,
     subkDatabaseId: row.subk_database_id as string | undefined,
-    invoices: row.invoices as string[] | undefined,
-    subAgreements: row.sub_agreements as string[] | undefined,
-    quotes: row.quotes as string[] | undefined,
-    notes: row.notes as string | undefined,
+    invoices: attachmentNames(documents.invoice),
+    subAgreements: attachmentNames(documents.subAgreement),
+    quotes: attachmentNames(documents.quote),
+    documents,
+    notes: meta.notes,
     createdAt: row.created_at as string,
     createdBy: row.created_by as string,
   }

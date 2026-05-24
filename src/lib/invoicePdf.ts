@@ -1,5 +1,5 @@
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
-import type { Contract } from '../types'
+import type { Contract, FileAttachment } from '../types'
 
 function wrapText(text: string, maxChars: number) {
   const words = text.split(/\s+/).filter(Boolean)
@@ -48,9 +48,23 @@ export function canGenerateContractInvoice(contract: Contract) {
   return contract.type === 'RECURRING' || contract.status === 'PENDING_PAYMENT'
 }
 
+function storedAttachmentName(value: string) {
+  try {
+    const parsed = JSON.parse(value) as Partial<FileAttachment>
+    return typeof parsed.name === 'string' && parsed.name.trim() ? parsed.name : value
+  } catch {
+    return value
+  }
+}
+
+function attachmentNames(attachments?: FileAttachment[], legacyNames?: string[]) {
+  if (attachments?.length) return attachments.map(att => att.name)
+  return (legacyNames || []).map(storedAttachmentName)
+}
+
 export function subkQuoteSummaryForContract(contract: Contract) {
   const quotes = (contract.lockedSubcontractors || [])
-    .flatMap(sub => (sub.quotes || []).map(quote => `${sub.companyName}: ${quote}`))
+    .flatMap(sub => attachmentNames(sub.documents?.quote, sub.quotes).map(quote => `${sub.companyName}: ${quote}`))
 
   if (quotes.length === 0) return 'No locked subk quotes yet'
   return quotes.join(', ')
@@ -60,7 +74,8 @@ export function subkMonthlyBillingRowsForContract(contract: Contract) {
   const subs = contract.lockedSubcontractors || []
   if (subs.length === 0) return ['No locked subk billing rows yet']
   return subs.map(sub => {
-    const invoiceNote = (sub.invoices || []).length > 0 ? ` - invoices: ${(sub.invoices || []).join(', ')}` : ''
+    const invoices = attachmentNames(sub.documents?.invoice, sub.invoices)
+    const invoiceNote = invoices.length > 0 ? ` - invoices: ${invoices.join(', ')}` : ''
     return `${sub.companyName}: monthly billing to be confirmed${invoiceNote}`
   })
 }

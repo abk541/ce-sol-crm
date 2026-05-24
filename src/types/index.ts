@@ -53,6 +53,14 @@ export interface FileAttachment {
   size?: number
 }
 
+export interface LockedSubkDocuments {
+  quote?: FileAttachment[]
+  coi?: FileAttachment[]
+  w9?: FileAttachment[]
+  subAgreement?: FileAttachment[]
+  invoice?: FileAttachment[]
+}
+
 export interface Comment {
   id: string
   text: string
@@ -101,6 +109,7 @@ export interface LockedSubcontractor {
   invoices?: string[]
   subAgreements?: string[]
   quotes?: string[]
+  documents?: LockedSubkDocuments
   notes?: string
   createdAt: string
   createdBy: string

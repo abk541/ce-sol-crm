@@ -58,4 +58,40 @@ describe('contract invoice helpers', () => {
     expect(subkMonthlyBillingRowsForContract(contract)[0]).toContain('ABC Subk')
     expect(subkMonthlyBillingRowsForContract(contract)[0]).toContain('may-invoice.pdf')
   })
+
+  it('uses locked subk document attachment names when present', () => {
+    const contract = makeContract({
+      lockedSubcontractors: [{
+        id: 'sub-1',
+        contractId: 'contract-1',
+        companyName: 'Premium Subk',
+        contactName: 'Jane',
+        quotes: ['legacy-quote.pdf'],
+        invoices: ['legacy-invoice.pdf'],
+        documents: {
+          quote: [{
+            id: 'quote-1',
+            name: 'viewable-quote.pdf',
+            attachedAt: '2026-05-24T12:00:00.000Z',
+            uploadedBy: 'manager',
+            dataUrl: 'data:application/pdf;base64,JVBERi0xLjQ=',
+            mimeType: 'application/pdf',
+            size: 8,
+          }],
+          invoice: [{
+            id: 'invoice-1',
+            name: 'viewable-invoice.pdf',
+            attachedAt: '2026-05-24T12:00:00.000Z',
+            uploadedBy: 'manager',
+          }],
+        },
+        createdAt: '2026-05-01',
+        createdBy: 'manager',
+      }],
+    })
+
+    expect(subkQuoteSummaryForContract(contract)).toContain('Premium Subk: viewable-quote.pdf')
+    expect(subkQuoteSummaryForContract(contract)).not.toContain('legacy-quote.pdf')
+    expect(subkMonthlyBillingRowsForContract(contract)[0]).toContain('viewable-invoice.pdf')
+  })
 })

@@ -13,6 +13,7 @@ import { useStore } from '../store/useStore'
 import type {
   Contract, ContractStatus, ContractPoC, LockedSubcontractor,
   GovernmentWarning, GovWarningType, FreshAward, FileAttachment, Comment, ContractDeliverable,
+  LockedSubkDocuments, Subcontractor,
 } from '../types'
 import { formatCurrency } from '../lib/utils'
 import FloatingActionMenu from '../components/shared/FloatingActionMenu'
@@ -268,7 +269,7 @@ function AttachmentPicker({
       <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
         <div>
           <p className="text-[10px] font-bold uppercase tracking-wide text-[#F8E8B8]">{label}</p>
-          <p className="mt-1 text-[11px] font-medium text-slate-300">Select a file and it will be attached to this deliverable automatically.</p>
+          <p className="mt-1 text-[11px] font-medium text-slate-300">Select a file and it will be attached automatically.</p>
         </div>
         <span className="rounded-full border border-[#D7BE7A]/30 bg-[#D7BE7A]/10 px-2 py-1 text-[10px] font-bold text-[#F8E8B8]">
           {attachments.length} attached
@@ -364,9 +365,67 @@ const ROLE_COLOR_C: Record<string, { color: string; bg: string; border: string }
   ASSOCIATE:  { color: '#0E7490', bg: '#ECFEFF', border: '#A5F3FC' },
 }
 
-function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClose: () => void }) {
-  const { updateContract, addContractPoC, updateContractPoC, removeContractPoC, addLockedSubcontractor, addGovernmentWarning, updateGovernmentWarning, resolveGovernmentWarning, advanceContractStatus, terminateContract, currentUser, employees, opportunities } = useStore()
-  const [tab, setTab] = useState<'overview' | 'poc' | 'subk' | 'warnings' | 'deliverables'>('overview')
+type SubkDocumentKey = keyof Required<LockedSubkDocuments>
+
+const SUBK_DOCUMENT_SECTIONS: { key: SubkDocumentKey; label: string; hint: string }[] = [
+  { key: 'quote', label: 'Quote', hint: 'Pricing or offer received from the subcontractor.' },
+  { key: 'coi', label: 'COI', hint: 'Certificate of insurance.' },
+  { key: 'w9', label: 'W9', hint: 'Tax form for vendor setup.' },
+  { key: 'subAgreement', label: 'Subagreement', hint: 'Executed subcontract agreement.' },
+  { key: 'invoice', label: 'Invoice', hint: 'Subcontractor invoice for this contract.' },
+]
+
+function attachmentNamesFromList(attachments?: FileAttachment[]) {
+  return (attachments || []).map(att => att.name).filter(Boolean)
+}
+
+function legacyAttachments(names?: string[], uploadedBy = 'Legacy'): FileAttachment[] {
+  return (names || [])
+    .filter(Boolean)
+    .map((name, index) => ({
+      id: `legacy-subk-doc-${index}-${name}`,
+      name,
+      attachedAt: '',
+      uploadedBy,
+    }))
+}
+
+function getLockedSubDocuments(sub: LockedSubcontractor): LockedSubkDocuments {
+  return {
+    quote: sub.documents?.quote?.length ? sub.documents.quote : legacyAttachments(sub.quotes, sub.createdBy),
+    coi: sub.documents?.coi || [],
+    w9: sub.documents?.w9 || [],
+    subAgreement: sub.documents?.subAgreement?.length ? sub.documents.subAgreement : legacyAttachments(sub.subAgreements, sub.createdBy),
+    invoice: sub.documents?.invoice?.length ? sub.documents.invoice : legacyAttachments(sub.invoices, sub.createdBy),
+  }
+}
+
+function subkDocumentUpdate(documents: LockedSubkDocuments): Partial<LockedSubcontractor> {
+  return {
+    documents,
+    quotes: attachmentNamesFromList(documents.quote),
+    subAgreements: attachmentNamesFromList(documents.subAgreement),
+    invoices: attachmentNamesFromList(documents.invoice),
+  }
+}
+
+function subkDocumentTotal(documents: LockedSubkDocuments) {
+  return SUBK_DOCUMENT_SECTIONS.reduce((sum, section) => sum + (documents[section.key]?.length || 0), 0)
+}
+
+type ContractDrawerTab = 'overview' | 'poc' | 'subk' | 'lockSubk' | 'warnings' | 'deliverables'
+
+function ContractDetailDrawer({
+  contract,
+  initialTab = 'overview',
+  onClose,
+}: {
+  contract: Contract
+  initialTab?: ContractDrawerTab
+  onClose: () => void
+}) {
+  const { updateContract, addContractPoC, updateContractPoC, removeContractPoC, addLockedSubcontractor, updateLockedSubcontractor, addGovernmentWarning, updateGovernmentWarning, resolveGovernmentWarning, advanceContractStatus, terminateContract, currentUser, employees, opportunities, subcontractors } = useStore()
+  const [tab, setTab] = useState<ContractDrawerTab>(initialTab)
   const [deliverableForm, setDeliverableForm] = useState({
     title: '',
     issuanceDate: todayDateInput(),
@@ -385,9 +444,10 @@ function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClo
   const [editingPoCId, setEditingPoCId] = useState<string | null>(null)
   const [pocForm, setPocForm] = useState({ role: 'KO' as ContractPoC['role'], name: '', email: '', phone: '', notes: '' })
 
-  // Locked sub form
-  const [addingSub, setAddingSub] = useState(false)
-  const [subForm, setSubForm] = useState({ companyName: '', contactName: '', email: '', phone: '', setAside: '', notes: '' })
+  // Subk selection and locking
+  const [selectedSubkKey, setSelectedSubkKey] = useState('')
+  const [openSubkHistoryKey, setOpenSubkHistoryKey] = useState<string | null>(null)
+  const [subkDocumentDrafts, setSubkDocumentDrafts] = useState<LockedSubkDocuments>({})
 
   // Gov warning form
   const [addingWarning, setAddingWarning] = useState(false)
@@ -406,8 +466,54 @@ function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClo
   const nextStatus = STATUS_FLOW[contract.status]
   const meta = STATUS_META[contract.status]
   const sourceOpportunity = contract.opportunityId ? opportunities.find(o => o.id === contract.opportunityId) : undefined
-  const potentialQuoteSourcings = (sourceOpportunity?.subcontractors || []).filter(s => !!s.quoteFile)
-  const lockedQuoteFiles = new Set((contract.lockedSubcontractors || []).flatMap(s => s.quotes || []))
+  const sourcingEntries = subcontractors.length
+    ? subcontractors
+    : opportunities.flatMap(o => o.subcontractors || [])
+  const opportunityById = new Map(opportunities.map(o => [o.id, o]))
+  const subkCandidateMap = new Map<string, {
+    key: string
+    companyName: string
+    contactName: string
+    email: string
+    phone: string
+    setAside: string
+    naicsCode: string
+    notes: string
+    entries: Subcontractor[]
+    currentProject: boolean
+  }>()
+
+  sourcingEntries.forEach(entry => {
+    const companyName = entry.companyName?.trim()
+    if (!companyName) return
+    const key = `${companyName.toLowerCase()}|${(entry.email || '').toLowerCase()}`
+    const existing = subkCandidateMap.get(key)
+    if (existing) {
+      existing.entries.push(entry)
+      existing.currentProject = existing.currentProject || entry.opportunityId === contract.opportunityId
+      return
+    }
+    subkCandidateMap.set(key, {
+      key,
+      companyName,
+      contactName: entry.contactName,
+      email: entry.email,
+      phone: entry.phone,
+      setAside: entry.setAside,
+      naicsCode: entry.naicsCode,
+      notes: entry.notes,
+      entries: [entry],
+      currentProject: entry.opportunityId === contract.opportunityId,
+    })
+  })
+
+  const subkCandidates = Array.from(subkCandidateMap.values()).sort((a, b) => {
+    if (a.currentProject !== b.currentProject) return a.currentProject ? -1 : 1
+    return a.companyName.localeCompare(b.companyName)
+  })
+  const lockedSubkCompanyKeys = new Set((contract.lockedSubcontractors || []).map(sub => `${sub.companyName.toLowerCase()}|${(sub.email || '').toLowerCase()}`))
+  const selectedSubkCandidate = subkCandidates.find(candidate => candidate.key === selectedSubkKey)
+  const selectedSubkMissingDocs = SUBK_DOCUMENT_SECTIONS.filter(section => !(subkDocumentDrafts[section.key] || []).length)
   const invoiceReady = canGenerateContractInvoice(contract)
   const deliverables = normalizeContractDeliverables(contract.deliverables)
   const financeRows = contract.type === 'RECURRING'
@@ -461,7 +567,8 @@ function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClo
         {[
           { key: 'overview', label: 'Overview', icon: Info },
           { key: 'poc', label: `PoC (${(contract.pocs || []).length})`, icon: UserPlus },
-          { key: 'subk', label: `Potential Subk (${(contract.lockedSubcontractors || []).length + potentialQuoteSourcings.length})`, icon: Building2 },
+          { key: 'subk', label: `Potential Subk (${subkCandidates.length})`, icon: Building2 },
+          { key: 'lockSubk', label: `Lock Subk (${(contract.lockedSubcontractors || []).length})`, icon: Shield },
           { key: 'warnings', label: `Warnings (${(contract.governmentWarnings || []).filter(w => !w.resolvedAt).length})`, icon: AlertTriangle },
           { key: 'deliverables', label: `Deliverables`, icon: ListChecks },
         ].map(t => (
@@ -739,133 +846,275 @@ function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClo
           </div>
         )}
 
-        {/* LOCKED SUBK TAB */}
+        {/* POTENTIAL SUBK TAB */}
         {tab === 'subk' && (
           <div className="space-y-3">
-            {potentialQuoteSourcings.length > 0 && (
-              <div className="space-y-2">
-                <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Potential Sourcing With Quotes</p>
-                {potentialQuoteSourcings.map(sub => {
-                  const alreadyLocked = !!sub.quoteFile && lockedQuoteFiles.has(sub.quoteFile)
+            <div
+              className="rounded-2xl border p-4"
+              style={{ background: 'rgba(8,24,37,0.72)', borderColor: 'rgba(215,190,122,0.24)' }}
+            >
+              <p className="text-sm font-black text-slate-100">Potential subcontractors</p>
+              <p className="mt-1 text-xs text-slate-300">
+                Review subcontractors registered from sourcing, check previous projects, then choose one for this contract.
+              </p>
+            </div>
+
+            {subkCandidates.length === 0 && (
+              <p className="rounded-2xl border border-dashed border-[#D7BE7A]/25 py-8 text-center text-sm text-slate-400">
+                No sourcing subcontractors are registered yet.
+              </p>
+            )}
+
+            {subkCandidates.map(candidate => {
+              const isSelected = selectedSubkKey === candidate.key
+              const alreadyLocked = lockedSubkCompanyKeys.has(candidate.key)
+              const historyOpen = openSubkHistoryKey === candidate.key
+              const projects = candidate.entries.map(entry => {
+                const opp = opportunityById.get(entry.opportunityId)
+                return {
+                  id: entry.id,
+                  title: opp?.solicitation || 'Unknown opportunity',
+                  solicitationId: opp?.solicitationId || entry.opportunityId,
+                  capturedOn: opp?.capturedOn || entry.createdAt,
+                  quoteFile: entry.quoteFile,
+                }
+              })
+
+              return (
+                <div
+                  key={candidate.key}
+                  className="rounded-2xl border p-4 transition-all"
+                  style={{
+                    background: isSelected
+                      ? 'linear-gradient(135deg, rgba(35,113,112,0.24), rgba(215,190,122,0.13))'
+                      : 'rgba(255,255,255,0.055)',
+                    borderColor: isSelected ? 'rgba(215,190,122,0.46)' : 'rgba(215,190,122,0.20)',
+                  }}
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="truncate text-base font-black text-slate-100">{candidate.companyName}</p>
+                        {candidate.currentProject && (
+                          <span className="rounded-full border border-cyan-300/30 bg-cyan-400/10 px-2 py-0.5 text-[10px] font-bold text-cyan-100">
+                            Current project sourcing
+                          </span>
+                        )}
+                        {alreadyLocked && (
+                          <span className="rounded-full border border-emerald-300/30 bg-emerald-400/10 px-2 py-0.5 text-[10px] font-bold text-emerald-100">
+                            Locked
+                          </span>
+                        )}
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-300">
+                        {candidate.contactName && <span>{candidate.contactName}</span>}
+                        {candidate.email && <span className="flex items-center gap-1"><Mail size={11} /> {candidate.email}</span>}
+                        {candidate.phone && <span className="flex items-center gap-1"><Phone size={11} /> {candidate.phone}</span>}
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {candidate.setAside && (
+                          <span className="rounded-lg bg-white/8 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-slate-300">
+                            {candidate.setAside}
+                          </span>
+                        )}
+                        {candidate.naicsCode && (
+                          <span className="rounded-lg bg-white/8 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-slate-300">
+                            NAICS {candidate.naicsCode}
+                          </span>
+                        )}
+                        <span className="rounded-lg bg-white/8 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-slate-300">
+                          {projects.length} project{projects.length === 1 ? '' : 's'}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setOpenSubkHistoryKey(historyOpen ? null : candidate.key)}
+                        className="btn-secondary text-xs"
+                      >
+                        <Clock size={12} /> Projects worked before
+                      </button>
+                      <button
+                        type="button"
+                        disabled={alreadyLocked}
+                        onClick={() => {
+                          setSelectedSubkKey(candidate.key)
+                          setSubkDocumentDrafts({})
+                          setTab('lockSubk')
+                        }}
+                        className="btn-primary text-xs disabled:cursor-not-allowed disabled:opacity-45"
+                      >
+                        <CheckCircle2 size={12} /> Choose for this project
+                      </button>
+                    </div>
+                  </div>
+
+                  {historyOpen && (
+                    <div className="mt-4 rounded-xl border border-white/10 bg-black/15 p-3">
+                      <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-[#F8E8B8]">Project history</p>
+                      <div className="space-y-2">
+                        {projects.map(project => (
+                          <div key={project.id} className="rounded-lg border border-white/10 bg-white/5 px-3 py-2">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="min-w-0">
+                                <p className="truncate text-xs font-bold text-slate-100">{project.title}</p>
+                                <p className="text-[10px] text-slate-400">{project.solicitationId} - {formatDate(project.capturedOn)}</p>
+                              </div>
+                              {project.quoteFile && (
+                                <span className="flex items-center gap-1 rounded-lg bg-cyan-400/10 px-2 py-1 text-[10px] font-bold text-cyan-100">
+                                  <FileText size={10} /> Quote on file
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
+
+        {/* LOCK SUBK TAB */}
+        {tab === 'lockSubk' && (
+          <div className="space-y-4">
+            <div
+              className="rounded-2xl border p-4"
+              style={{ background: 'rgba(8,24,37,0.72)', borderColor: 'rgba(215,190,122,0.24)' }}
+            >
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm font-black text-slate-100">Lock subcontractor</p>
+                  <p className="mt-1 text-xs text-slate-300">
+                    Upload the recommended documents, then lock the selected subcontractor to this contract.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setTab('subk')}
+                  className="btn-secondary text-xs"
+                >
+                  Choose subcontractor
+                </button>
+              </div>
+            </div>
+
+            {selectedSubkCandidate ? (
+              <div
+                className="rounded-2xl border p-4"
+                style={{ background: 'rgba(255,255,255,0.055)', borderColor: 'rgba(215,190,122,0.24)' }}
+              >
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-xs font-bold uppercase tracking-wide text-[#F8E8B8]">Selected subcontractor</p>
+                    <p className="mt-1 truncate text-lg font-black text-slate-100">{selectedSubkCandidate.companyName}</p>
+                    <p className="text-xs text-slate-300">{selectedSubkCandidate.contactName || 'No contact listed'}</p>
+                  </div>
+                  {selectedSubkMissingDocs.length > 0 && (
+                    <span className="rounded-full border border-amber-300/35 bg-amber-400/10 px-3 py-1 text-[10px] font-bold text-amber-100">
+                      Missing recommended: {selectedSubkMissingDocs.map(section => section.label).join(', ')}
+                    </span>
+                  )}
+                </div>
+                <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                  {SUBK_DOCUMENT_SECTIONS.map(section => (
+                    <div key={section.key} className="rounded-2xl border border-white/10 bg-black/10 p-3">
+                      <div className="mb-2">
+                        <p className="text-xs font-black text-slate-100">{section.label}</p>
+                        <p className="text-[11px] text-slate-400">{section.hint}</p>
+                      </div>
+                      <AttachmentPicker
+                        label={`${section.label} files`}
+                        attachments={subkDocumentDrafts[section.key] || []}
+                        uploadedBy={currentUser?.username ?? currentUser?.name ?? 'unknown'}
+                        onChange={attachments => setSubkDocumentDrafts(prev => ({ ...prev, [section.key]: attachments }))}
+                      />
+                    </div>
+                  ))}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    addLockedSubcontractor(contract.id, {
+                      companyName: selectedSubkCandidate.companyName,
+                      contactName: selectedSubkCandidate.contactName,
+                      email: selectedSubkCandidate.email || undefined,
+                      phone: selectedSubkCandidate.phone || undefined,
+                      setAside: selectedSubkCandidate.setAside || undefined,
+                      naicsCode: selectedSubkCandidate.naicsCode || undefined,
+                      notes: selectedSubkCandidate.notes || undefined,
+                      ...subkDocumentUpdate(subkDocumentDrafts),
+                      createdAt: new Date().toISOString(),
+                      createdBy: currentUser?.username || currentUser?.name || 'current_user',
+                    })
+                    setSelectedSubkKey('')
+                    setSubkDocumentDrafts({})
+                    toast.success('Subcontractor locked to this contract')
+                  }}
+                  className="btn-primary mt-4 w-full justify-center text-xs"
+                >
+                  <Shield size={12} /> Lock Subk
+                </button>
+              </div>
+            ) : (
+              <p className="rounded-2xl border border-dashed border-[#D7BE7A]/25 py-8 text-center text-sm text-slate-400">
+                Choose a subcontractor from Potential Subk before locking documents.
+              </p>
+            )}
+
+            {(contract.lockedSubcontractors || []).length > 0 && (
+              <div className="space-y-3">
+                <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Locked subcontractors</p>
+                {(contract.lockedSubcontractors || []).map(sub => {
+                  const documents = getLockedSubDocuments(sub)
                   return (
-                    <div key={sub.id} className="p-4 rounded-xl bg-cyan-50 border border-cyan-200">
-                      <div className="flex items-start justify-between gap-3">
+                    <div
+                      key={sub.id}
+                      className="rounded-2xl border p-4"
+                      style={{ background: 'rgba(255,255,255,0.055)', borderColor: 'rgba(215,190,122,0.24)' }}
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-3">
                         <div className="min-w-0">
-                          <p className="text-sm font-bold text-slate-800 truncate">{sub.companyName}</p>
-                          <p className="text-xs text-slate-500">{sub.contactName || 'No contact listed'}</p>
-                          {sub.email && <p className="text-xs text-slate-500 flex items-center gap-1.5 mt-1"><Mail size={10} />{sub.email}</p>}
-                          <p className="text-[10px] text-cyan-700 mt-2 flex items-center gap-1">
-                            <FileText size={10} /> {sub.quoteFile}
-                          </p>
+                          <p className="truncate text-base font-black text-slate-100">{sub.companyName}</p>
+                          <p className="text-xs text-slate-300">{sub.contactName || 'No contact listed'}</p>
+                          {sub.email && <p className="mt-1 flex items-center gap-1.5 text-xs text-slate-400"><Mail size={10} />{sub.email}</p>}
                         </div>
-                        <button
-                          disabled={alreadyLocked}
-                          onClick={() => {
-                            addLockedSubcontractor(contract.id, {
-                              companyName: sub.companyName,
-                              contactName: sub.contactName,
-                              email: sub.email || undefined,
-                              phone: sub.phone || undefined,
-                              setAside: sub.setAside || undefined,
-                              naicsCode: sub.naicsCode || undefined,
-                              notes: sub.notes || undefined,
-                              quotes: sub.quoteFile ? [sub.quoteFile] : [],
-                              createdAt: new Date().toISOString(),
-                              createdBy: currentUser?.username || currentUser?.name || 'current_user',
-                            })
-                            toast.success('Sourcing locked to active contract')
-                          }}
-                          className="btn-secondary text-xs whitespace-nowrap disabled:opacity-40"
-                        >
-                          {alreadyLocked ? 'Locked' : 'Lock Quote'}
-                        </button>
+                        <span className="rounded-full border border-emerald-300/30 bg-emerald-400/10 px-3 py-1 text-[10px] font-bold text-emerald-100">
+                          {subkDocumentTotal(documents)} files
+                        </span>
+                      </div>
+                      <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                        {SUBK_DOCUMENT_SECTIONS.map(section => (
+                          <div key={section.key} className="rounded-2xl border border-white/10 bg-black/10 p-3">
+                            <div className="mb-2 flex items-start justify-between gap-2">
+                              <div>
+                                <p className="text-xs font-black text-slate-100">{section.label}</p>
+                                <p className="text-[11px] text-slate-400">{section.hint}</p>
+                              </div>
+                              <span className="rounded-full bg-white/8 px-2 py-0.5 text-[10px] font-bold text-slate-300">
+                                {(documents[section.key] || []).length}
+                              </span>
+                            </div>
+                            <AttachmentPicker
+                              label={`${section.label} files`}
+                              attachments={documents[section.key] || []}
+                              uploadedBy={currentUser?.username ?? currentUser?.name ?? 'unknown'}
+                              onChange={attachments => {
+                                const nextDocuments = { ...documents, [section.key]: attachments }
+                                updateLockedSubcontractor(contract.id, sub.id, subkDocumentUpdate(nextDocuments))
+                              }}
+                            />
+                          </div>
+                        ))}
                       </div>
                     </div>
                   )
                 })}
               </div>
-            )}
-
-            {(contract.lockedSubcontractors || []).length === 0 && potentialQuoteSourcings.length === 0 && !addingSub && (
-              <p className="text-sm text-slate-400 text-center py-8">No quoted sourcing entries found for this contract.</p>
-            )}
-            {(contract.lockedSubcontractors || []).map(sub => (
-              <div key={sub.id} className="p-4 rounded-xl bg-slate-50 border border-slate-200">
-                <div className="flex items-start justify-between mb-2">
-                  <div>
-                    <p className="text-sm font-bold text-slate-800">{sub.companyName}</p>
-                    <p className="text-xs text-slate-500">{sub.contactName}</p>
-                  </div>
-                  {sub.setAside && (
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-200 text-slate-600">{sub.setAside}</span>
-                  )}
-                </div>
-                {sub.email && <p className="text-xs text-slate-500 flex items-center gap-1.5"><Mail size={10} />{sub.email}</p>}
-                {sub.notes && <p className="text-xs text-slate-500 mt-1">{sub.notes}</p>}
-
-                {/* Attachments */}
-                <div className="mt-2 flex gap-2 flex-wrap">
-                  {[
-                    { label: 'Invoices', count: (sub.invoices || []).length },
-                    { label: 'Sub Agreements', count: (sub.subAgreements || []).length },
-                    { label: 'Quotes', count: (sub.quotes || []).length },
-                  ].map(att => (
-                    <div key={att.label} className="flex items-center gap-1 text-[10px] text-slate-500 bg-white border border-slate-200 rounded-lg px-2 py-1">
-                      <FileText size={9} /> {att.label} ({att.count})
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
-
-            {addingSub ? (
-              <div className="p-4 rounded-xl border border-indigo-200 bg-indigo-50 space-y-3">
-                <p className="text-xs font-bold text-indigo-700">Lock Sourcing</p>
-                <div className="grid grid-cols-2 gap-2">
-                  {[
-                    { label: 'Company Name *', key: 'companyName' },
-                    { label: 'Contact Name', key: 'contactName' },
-                    { label: 'Email', key: 'email' },
-                    { label: 'Phone', key: 'phone' },
-                    { label: 'Set-Aside', key: 'setAside' },
-                  ].map(f => (
-                    <div key={f.key}>
-                      <label className="block text-[10px] font-semibold text-slate-600 mb-0.5">{f.label}</label>
-                      <input value={(subForm as any)[f.key]} onChange={e => setSubForm(p => ({ ...p, [f.key]: e.target.value }))} className="input-field text-xs py-1.5 w-full" />
-                    </div>
-                  ))}
-                </div>
-                <div>
-                  <label className="block text-[10px] font-semibold text-slate-600 mb-0.5">Notes</label>
-                  <input value={subForm.notes} onChange={e => setSubForm(p => ({ ...p, notes: e.target.value }))} className="input-field text-xs py-1.5 w-full" />
-                </div>
-                <div className="flex gap-2">
-                  <button onClick={() => setAddingSub(false)} className="btn-secondary flex-1 text-xs py-1.5">Cancel</button>
-                  <button
-                    disabled={!subForm.companyName}
-                    onClick={() => {
-                      addLockedSubcontractor(contract.id, {
-                        companyName: subForm.companyName,
-                        contactName: subForm.contactName,
-                        email: subForm.email || undefined,
-                        phone: subForm.phone || undefined,
-                        setAside: subForm.setAside || undefined,
-                        notes: subForm.notes || undefined,
-                        createdAt: new Date().toISOString(),
-                        createdBy: 'current_user',
-                      })
-                      setSubForm({ companyName: '', contactName: '', email: '', phone: '', setAside: '', notes: '' })
-                      setAddingSub(false)
-                    }}
-                    className="btn-primary flex-1 text-xs py-1.5 disabled:opacity-40">
-                    Lock Sub
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <button onClick={() => setAddingSub(true)} className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-dashed border-slate-300 text-xs text-slate-500 hover:text-indigo-600 hover:border-indigo-400 transition-colors">
-                <Plus size={12} /> Lock Sourcing
-              </button>
             )}
           </div>
         )}
@@ -1521,6 +1770,7 @@ export default function ContractsPage() {
   const [tab, setTab] = useState<CTab>('ALL')
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<Contract | null>(null)
+  const [selectedInitialTab, setSelectedInitialTab] = useState<ContractDrawerTab>('overview')
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
   const [period, setPeriod] = useState<Period | null>(null)
   const [columnFilters, setColumnFilters] = useState<Record<string, string>>({})
@@ -1736,7 +1986,7 @@ export default function ContractsPage() {
                     initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: i * 0.03 }}
                     className="cursor-pointer"
-                    onClick={() => { setSelected(c); setMenuOpen(null) }}
+                    onClick={() => { setSelectedInitialTab('overview'); setSelected(c); setMenuOpen(null) }}
                   >
                     <td className="max-w-[180px]">
                       <p className="truncate text-xs font-semibold text-slate-800" title={c.title}>{c.title}</p>
@@ -1801,12 +2051,12 @@ export default function ContractsPage() {
                         trigger={<MoreHorizontal size={14} />}
                       >
                         {[
-                          { label: 'View Details', icon: ChevronRight, action: () => { setSelected(c); setMenuOpen(null) } },
-                          { label: 'Add PoC', icon: UserPlus, action: () => { setSelected(c); setMenuOpen(null) } },
-                          { label: 'Lock Subk', icon: Building2, action: () => { setSelected(c); setMenuOpen(null) } },
-                          { label: 'Issue Warning', icon: AlertTriangle, action: () => { setSelected(c); setMenuOpen(null) } },
+                          { label: 'View Details', icon: ChevronRight, tab: 'overview' as ContractDrawerTab },
+                          { label: 'Add PoC', icon: UserPlus, tab: 'poc' as ContractDrawerTab },
+                          { label: 'Lock Subk', icon: Building2, tab: 'lockSubk' as ContractDrawerTab },
+                          { label: 'Issue Warning', icon: AlertTriangle, tab: 'warnings' as ContractDrawerTab },
                         ].map(item => (
-                          <button key={item.label} onClick={item.action}
+                          <button key={item.label} onClick={() => { setSelectedInitialTab(item.tab); setSelected(c); setMenuOpen(null) }}
                             className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium transition-colors"
                             style={{ color: '#475569' }}
                             onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(0,0,0,0.04)'; (e.currentTarget as HTMLButtonElement).style.color = '#0F172A' }}
@@ -1835,7 +2085,9 @@ export default function ContractsPage() {
               style={{ background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)' } as React.CSSProperties}
               onClick={() => setSelected(null)} />
             <ContractDetailDrawer
+              key={selected.id}
               contract={contracts.find(c => c.id === selected.id) || selected}
+              initialTab={selectedInitialTab}
               onClose={() => setSelected(null)}
             />
           </>
