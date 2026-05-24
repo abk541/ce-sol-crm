@@ -5,7 +5,7 @@ import {
   AlertTriangle, ListChecks, ChevronRight, X, Save, Plus,
   ArrowRight, CheckCircle2, Info, MapPin, Calendar,
   Phone, Mail, Clock, Shield, FileText, Trash2, AlertCircle,
-  ChevronUp, ChevronDown, ChevronsUpDown, Pencil, Receipt, Eye, Paperclip,
+  ChevronUp, ChevronDown, ChevronsUpDown, Pencil, Receipt, Eye, Paperclip, Download,
 } from 'lucide-react'
 import PeriodFilter, { type Period, filterByPeriod } from '../components/shared/PeriodFilter'
 import toast from 'react-hot-toast'
@@ -152,14 +152,6 @@ function formatFileSize(size?: number) {
   return `${(size / (1024 * 1024)).toFixed(1)} MB`
 }
 
-function escapeHtml(value: string) {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-}
-
 function dataUrlToBlob(dataUrl: string, fallbackMimeType?: string) {
   const commaIndex = dataUrl.indexOf(',')
   if (commaIndex === -1) return null
@@ -167,74 +159,66 @@ function dataUrlToBlob(dataUrl: string, fallbackMimeType?: string) {
   const meta = dataUrl.slice(0, commaIndex)
   const body = dataUrl.slice(commaIndex + 1)
   const mimeType = meta.match(/^data:([^;]+)/i)?.[1] || fallbackMimeType || 'application/octet-stream'
-  const raw = meta.includes(';base64') ? atob(body) : decodeURIComponent(body)
+  let raw = ''
+  try {
+    raw = meta.includes(';base64') ? atob(body) : decodeURIComponent(body)
+  } catch {
+    return null
+  }
   const bytes = new Uint8Array(raw.length)
   for (let i = 0; i < raw.length; i += 1) bytes[i] = raw.charCodeAt(i)
   return new Blob([bytes], { type: mimeType })
 }
 
-function viewAttachment(att: FileAttachment) {
+function getAttachmentBlobUrl(att: FileAttachment) {
   if (!att.dataUrl) {
     toast.error('This attachment only has saved metadata. Re-upload it to make the file viewable.')
-    return
+    return null
   }
   const blob = dataUrlToBlob(att.dataUrl, att.mimeType)
   if (!blob) {
     toast.error('Attachment data could not be opened.')
-    return
+    return null
   }
+  return URL.createObjectURL(blob)
+}
 
-  const fileUrl = URL.createObjectURL(blob)
-  const mimeType = att.mimeType || blob.type
+function downloadAttachment(att: FileAttachment) {
+  const fileUrl = getAttachmentBlobUrl(att)
+  if (!fileUrl) return
+
+  const link = document.createElement('a')
+  link.href = fileUrl
+  link.download = att.name || 'attachment'
+  link.rel = 'noopener'
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  setTimeout(() => URL.revokeObjectURL(fileUrl), 60 * 1000)
+}
+
+function viewAttachment(att: FileAttachment) {
+  const fileUrl = getAttachmentBlobUrl(att)
+  if (!fileUrl) return
+
+  const mimeType = att.mimeType || ''
   const lowerName = att.name.toLowerCase()
   const isImage = mimeType.startsWith('image/') || /\.(png|jpe?g|gif|webp|avif|svg)$/i.test(lowerName)
   const isPdf = mimeType === 'application/pdf' || lowerName.endsWith('.pdf')
-  const previewMarkup = isImage
-    ? `<img src="${fileUrl}" alt="${escapeHtml(att.name)}" />`
-    : isPdf
-      ? `<iframe src="${fileUrl}" title="${escapeHtml(att.name)}"></iframe>`
-      : `<div class="fallback">
-          <p>Preview is not available for this file type.</p>
-          <a class="primary" href="${fileUrl}" download="${escapeHtml(att.name)}">Download file</a>
-        </div>`
-  const html = `
-    <!doctype html>
-    <html>
-      <head>
-        <meta charset="utf-8" />
-        <title>${escapeHtml(att.name)}</title>
-        <style>
-          * { box-sizing: border-box; }
-          body { margin: 0; background: #07131f; color: #f8fbf7; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-          header { min-height: 64px; padding: 14px 18px; border-bottom: 1px solid rgba(215,190,122,.24); display: flex; justify-content: space-between; gap: 16px; align-items: center; background: linear-gradient(90deg, #081827, #0b2a25); }
-          strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-          a { color: #07131f; background: #d7be7a; border-radius: 10px; padding: 9px 13px; font-weight: 800; text-decoration: none; white-space: nowrap; }
-          iframe, img { width: 100%; height: calc(100vh - 64px); border: 0; object-fit: contain; display: block; background: #0a1724; }
-          .fallback { min-height: calc(100vh - 64px); display: grid; place-items: center; gap: 14px; align-content: center; padding: 24px; color: #dbe7e2; }
-          .primary { display: inline-block; }
-        </style>
-      </head>
-      <body>
-        <header>
-          <strong>${escapeHtml(att.name)}</strong>
-          <a href="${fileUrl}" download="${escapeHtml(att.name)}">Download</a>
-        </header>
-        ${previewMarkup}
-      </body>
-    </html>
-  `
-  const previewUrl = URL.createObjectURL(new Blob([html], { type: 'text/html' }))
-  const win = window.open(previewUrl, '_blank', 'noopener,noreferrer')
+
+  if (!isImage && !isPdf) {
+    URL.revokeObjectURL(fileUrl)
+    downloadAttachment(att)
+    return
+  }
+
+  const win = window.open(fileUrl, '_blank')
   if (!win) {
     URL.revokeObjectURL(fileUrl)
-    URL.revokeObjectURL(previewUrl)
     toast.error('Popup was blocked. Allow popups to view attachments.')
     return
   }
-  setTimeout(() => {
-    URL.revokeObjectURL(fileUrl)
-    URL.revokeObjectURL(previewUrl)
-  }, 10 * 60 * 1000)
+  setTimeout(() => URL.revokeObjectURL(fileUrl), 10 * 60 * 1000)
 }
 
 function AttachmentPicker({
@@ -340,6 +324,14 @@ function AttachmentPicker({
                   className="flex items-center gap-1.5 rounded-lg bg-white px-2.5 py-1.5 text-[11px] font-black text-slate-900 transition-colors hover:bg-[#F8E8B8] disabled:cursor-not-allowed disabled:opacity-45"
                 >
                   <Eye size={12} /> View
+                </button>
+                <button
+                  type="button"
+                  onClick={() => downloadAttachment(att)}
+                  disabled={!att.dataUrl}
+                  className="flex items-center gap-1.5 rounded-lg border border-[#D7BE7A]/35 bg-[#D7BE7A]/15 px-2.5 py-1.5 text-[11px] font-black text-[#F8E8B8] transition-colors hover:bg-[#D7BE7A]/25 disabled:cursor-not-allowed disabled:opacity-45"
+                >
+                  <Download size={12} /> Download
                 </button>
                 <button
                   type="button"
@@ -1157,6 +1149,13 @@ function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClo
                                 className="flex items-center gap-1.5 rounded-lg bg-white px-2.5 py-1.5 text-[11px] font-black text-slate-900 transition-colors hover:bg-[#F8E8B8]"
                               >
                                 <Eye size={12} /> View
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => downloadAttachment(att)}
+                                className="flex items-center gap-1.5 rounded-lg border border-[#D7BE7A]/35 bg-[#D7BE7A]/15 px-2.5 py-1.5 text-[11px] font-black text-[#F8E8B8] transition-colors hover:bg-[#D7BE7A]/25"
+                              >
+                                <Download size={12} /> Download
                               </button>
                             </div>
                           ))}
