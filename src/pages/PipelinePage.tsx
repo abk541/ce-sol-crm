@@ -1080,6 +1080,110 @@ function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) 
   )
 }
 
+function DeleteOpportunityModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) {
+  const { currentUser, deletionRequests, requestDeletion } = useStore()
+  const [reason, setReason] = useState('')
+  const hasPendingDelete = deletionRequests.some(r => r.opportunityId === opp.id && r.status === 'PENDING')
+  const canDelete = currentUser?.role === 'BD_MANAGER'
+
+  const submit = () => {
+    if (!canDelete) {
+      toast.error('Only managers can delete opportunities.')
+      return
+    }
+    if (hasPendingDelete) {
+      toast.error('A deletion request is already pending for this opportunity.')
+      return
+    }
+    if (reason.trim().length < 10) {
+      toast.error('Please provide a reason before deleting.')
+      return
+    }
+
+    requestDeletion(opp.id, currentUser?.username ?? '', reason.trim())
+    toast.success('Deletion request submitted')
+    onClose()
+  }
+
+  return createPortal(
+    <motion.div
+      className="fixed inset-0 z-[10020] flex items-center justify-center bg-[#020617]/70 px-4 backdrop-blur-md"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      onMouseDown={onClose}
+    >
+      <motion.div
+        className="w-full max-w-lg overflow-hidden rounded-3xl border border-red-400/20 bg-[#07131F] shadow-[0_24px_80px_rgba(0,0,0,0.45)]"
+        initial={{ opacity: 0, y: 18, scale: 0.98 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={{ opacity: 0, y: 12, scale: 0.98 }}
+        onMouseDown={e => e.stopPropagation()}
+      >
+        <div className="border-b border-red-400/15 bg-gradient-to-r from-red-950/35 via-[#102820]/80 to-[#0A1D2B]/80 px-6 py-5">
+          <div className="flex items-start gap-3">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-red-300/25 bg-red-400/10 text-red-200">
+              <Trash2 size={18} />
+            </div>
+            <div className="min-w-0">
+              <p className="text-[10px] font-black uppercase tracking-[0.22em] text-red-200/80">Delete Opportunity</p>
+              <h2 className="mt-1 truncate text-lg font-black text-[#F8FBF7]" title={opp.solicitation}>
+                {opp.solicitation}
+              </h2>
+              <p className="mt-1 text-xs font-medium text-slate-400">{opp.solicitationId || 'No solicitation ID'}</p>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="ml-auto rounded-xl p-2 text-slate-400 transition-colors hover:bg-white/5 hover:text-white"
+              aria-label="Close delete dialog"
+            >
+              <X size={16} />
+            </button>
+          </div>
+        </div>
+
+        <div className="space-y-4 px-6 py-5">
+          <div className="rounded-2xl border border-red-400/15 bg-red-400/[0.08] px-4 py-3">
+            <p className="text-sm font-semibold text-red-100">
+              This creates an admin deletion request. The opportunity is only removed after approval.
+            </p>
+          </div>
+
+          <div>
+            <label className="mb-2 block text-[10px] font-black uppercase tracking-wide text-slate-400">
+              Reason for deletion
+            </label>
+            <textarea
+              value={reason}
+              onChange={e => setReason(e.target.value)}
+              rows={4}
+              className="input-field w-full resize-none"
+              placeholder="Explain why this opportunity should be deleted..."
+              autoFocus
+            />
+          </div>
+        </div>
+
+        <div className="flex items-center justify-end gap-3 border-t border-[#D7BE7A]/15 bg-[#06111D]/90 px-6 py-4">
+          <button type="button" onClick={onClose} className="btn-secondary">
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={submit}
+            disabled={hasPendingDelete || !canDelete}
+            className="flex items-center gap-1.5 rounded-xl border border-red-300/30 bg-red-500/15 px-4 py-2 text-sm font-black text-red-100 transition-all hover:bg-red-500/25 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Trash2 size={14} /> Delete
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>,
+    document.body,
+  )
+}
+
 // ── Sourcing Modal ────────────────────────────────────────────────────
 function parseSourcingComments(notes: string | undefined): Comment[] {
   if (!notes) return []
@@ -2058,7 +2162,7 @@ function ColumnFilterInput({
 }
 
 export default function PipelinePage() {
-  const { opportunities, employees, currentUser, moveOpportunityToBDTracker } = useStore()
+  const { opportunities, employees, currentUser, deletionRequests, moveOpportunityToBDTracker } = useStore()
 
   // ── Filter state ──
   const [columnFilters, setColumnFilters] = useState<ColumnFilters>(() => ({ ...EMPTY_COLUMN_FILTERS }))
@@ -2070,6 +2174,7 @@ export default function PipelinePage() {
   const [sourcingOpp, setSourcingOpp] = useState<Opportunity | null>(null)
   const [submitOpp, setSubmitOpp]     = useState<Opportunity | null>(null)
   const [selectedOpp, setSelectedOpp] = useState<Opportunity | null>(null)
+  const [deleteOpp, setDeleteOpp]     = useState<Opportunity | null>(null)
 
   // ── Sort state ──
   const [sort, setSort] = useState<{ key: SortKey; dir: SortDir }>({ key: 'dueDate', dir: 'asc' })
@@ -2080,6 +2185,10 @@ export default function PipelinePage() {
 
   const canSubmit = ['BD_MANAGER', 'TEAM_LEAD', 'ASSOCIATE'].includes(currentUser?.role ?? '')
   const canManageOpportunities = currentUser?.role === 'BD_MANAGER'
+  const pendingDeletionIds = useMemo(
+    () => new Set(deletionRequests.filter(r => r.status === 'PENDING').map(r => r.opportunityId)),
+    [deletionRequests],
+  )
 
   const filterOptions = useMemo(() => {
     const visibleOpps = opportunities.filter(o => !o.isDeleted && !o.nonSubmissionReportId && OPP_VIEW_STATUSES.includes(o.status as any) && isAssignedToAssociate(employees, o.assignedTo))
@@ -2147,6 +2256,18 @@ export default function PipelinePage() {
     }
     moveOpportunityToBDTracker(o.id, 'CANCELED', 'Canceled from Contract Opportunities')
     toast.success(`"${o.solicitation}" canceled.`)
+  }
+
+  const handleDelete = (o: Opportunity) => {
+    if (!canManageOpportunities) {
+      toast.error('Only managers can delete opportunities.')
+      return
+    }
+    if (pendingDeletionIds.has(o.id)) {
+      toast.error('A deletion request is already pending for this opportunity.')
+      return
+    }
+    setDeleteOpp(o)
   }
 
   return (
@@ -2327,10 +2448,20 @@ export default function PipelinePage() {
                           </button>
                         )}
                         {canManageOpportunities && (
-                          <button title="Cancel opportunity" onClick={() => handleCancel(o)}
-                            className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-red-600 hover:bg-red-50 transition-all">
-                            <Ban size={12} />
-                          </button>
+                          <>
+                            <button title="Cancel opportunity" onClick={() => handleCancel(o)}
+                              className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-red-600 hover:bg-red-50 transition-all">
+                              <Ban size={12} />
+                            </button>
+                            <button
+                              title={pendingDeletionIds.has(o.id) ? 'Deletion request pending' : 'Delete opportunity'}
+                              disabled={pendingDeletionIds.has(o.id)}
+                              onClick={() => handleDelete(o)}
+                              className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 transition-all hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-slate-400"
+                            >
+                              <Trash2 size={12} />
+                            </button>
+                          </>
                         )}
                       </div>
                     </td>
@@ -2485,9 +2616,18 @@ export default function PipelinePage() {
                 </button>
               )}
               {canManageOpportunities && (
-                <button className="btn-secondary text-xs gap-1.5 text-red-600 border-red-200 hover:bg-red-50" onClick={() => { setSelectedOpp(null); handleCancel(selectedOpp) }}>
-                  <Ban size={12} /> Cancel
-                </button>
+                <>
+                  <button className="btn-secondary text-xs gap-1.5 text-red-600 border-red-200 hover:bg-red-50" onClick={() => { setSelectedOpp(null); handleCancel(selectedOpp) }}>
+                    <Ban size={12} /> Cancel
+                  </button>
+                  <button
+                    className="btn-secondary text-xs gap-1.5 text-red-600 border-red-200 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
+                    disabled={pendingDeletionIds.has(selectedOpp.id)}
+                    onClick={() => { setSelectedOpp(null); handleDelete(selectedOpp) }}
+                  >
+                    <Trash2 size={12} /> Delete
+                  </button>
+                </>
               )}
             </div>
           </>
@@ -2500,6 +2640,7 @@ export default function PipelinePage() {
         {editOpp       && <EditModal opp={editOpp} onClose={() => setEditOpp(null)} />}
         {sourcingOpp   && <SourcingModal opp={sourcingOpp} onClose={() => setSourcingOpp(null)} />}
         {submitOpp     && <SubmitModal opp={submitOpp} onClose={() => setSubmitOpp(null)} />}
+        {deleteOpp     && <DeleteOpportunityModal opp={deleteOpp} onClose={() => setDeleteOpp(null)} />}
       </AnimatePresence>
     </div>
   )
