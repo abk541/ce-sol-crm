@@ -1350,6 +1350,28 @@ function ContractDetailDrawer({
                           <Paperclip size={12} />
                           {attachmentCount > 0 ? `View attachments (${attachmentCount})` : 'No attachments'}
                         </button>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const ok = window.confirm(`Delete deliverable "${deliverable.title}"?`)
+                            if (!ok) return
+                            const saved = await updateContract(contract.id, {
+                              deliverables: deliverables.filter(item => item.id !== deliverable.id),
+                            })
+                            if (saved) {
+                              setOpenDeliverableAttachments(prev => prev === deliverable.id ? null : prev)
+                              toast.success('Deliverable deleted')
+                            }
+                          }}
+                          className="flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-bold text-red-200 transition-colors hover:bg-red-500/15"
+                          style={{
+                            borderColor: 'rgba(248,113,113,0.38)',
+                            background: 'rgba(248,113,113,0.08)',
+                          }}
+                          aria-label={`Delete ${deliverable.title}`}
+                        >
+                          <Trash2 size={12} /> Delete
+                        </button>
                       </div>
                     </div>
                     <div className="mt-3 grid gap-2 sm:grid-cols-2">
