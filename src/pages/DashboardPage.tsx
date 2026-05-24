@@ -661,14 +661,12 @@ function AdminDashboard() {
   const navigate = useNavigate()
   const [period, setPeriod] = useState<Period | null>(null)
   const [leaderRole, setLeaderRole] = useState<'ALL' | 'BD_MANAGER' | 'TEAM_LEAD' | 'ASSOCIATE'>('ALL')
-  const [naicsFilter, setNaicsFilter] = useState('')
   const [activeKpi, setActiveKpi] = useState<KpiDetail | null>(null)
 
-  const opps = opportunities.filter(o => !o.isDeleted && (!naicsFilter || o.naicsCode.toLowerCase().includes(naicsFilter.toLowerCase())))
+  const opps = opportunities.filter(o => !o.isDeleted)
   const filteredOpps = opps.filter(o => filterByPeriod(o.submittedAt || o.dueDate, period))
   const filteredSubmissions = bdSubmissions.filter(s =>
-    filterByPeriod(s.submittedOn || s.dueDate, period) &&
-    (!naicsFilter || (opps.find(o => o.solicitationId === s.solicitationId)?.naicsCode || '').toLowerCase().includes(naicsFilter.toLowerCase()))
+    filterByPeriod(s.submittedOn || s.dueDate, period)
   )
 
   const monthSeries = Array.from({ length: 6 }, (_, offset) => {
@@ -786,15 +784,7 @@ function AdminDashboard() {
               Metrics from current opportunity and contract data.
             </p>
           </div>
-          <div className="flex items-center gap-3">
-            <input
-              value={naicsFilter}
-              onChange={e => setNaicsFilter(e.target.value)}
-              className="input-field w-44 py-2 text-xs"
-              placeholder="Filter by NAICS..."
-            />
-            <PeriodFilter value={period} onChange={setPeriod} />
-          </div>
+          <PeriodFilter value={period} onChange={setPeriod} />
         </div>
       </motion.div>
 
