@@ -12,7 +12,7 @@ import toast from 'react-hot-toast'
 import { useStore } from '../store/useStore'
 import type {
   Contract, ContractStatus, ContractPoC, LockedSubcontractor,
-  GovernmentWarning, GovWarningType, FreshAward, FileAttachment, Comment,
+  GovernmentWarning, GovWarningType, FreshAward, FileAttachment, Comment, ContractDeliverable,
 } from '../types'
 import { formatCurrency } from '../lib/utils'
 import FloatingActionMenu from '../components/shared/FloatingActionMenu'
@@ -23,6 +23,7 @@ import {
   subkMonthlyBillingRowsForContract,
   subkQuoteSummaryForContract,
 } from '../lib/invoicePdf'
+import { normalizeContractDeliverables } from '../lib/contractDeliverables'
 
 // ── Status config ───────────────────────────────────────────────────────
 const STATUS_META: Record<ContractStatus, { label: string; color: string; bg: string; border: string }> = {
@@ -90,6 +91,19 @@ function toDatetimeLocal(value: string) {
   if (!Number.isFinite(d.getTime())) return ''
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+function todayDateInput() {
+  const d = new Date()
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
+function formatDate(value: string) {
+  if (!value) return '-'
+  const d = new Date(`${value}T00:00:00`)
+  if (!Number.isFinite(d.getTime())) return value
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
 function subkQuoteSummary(contract: Contract) {
@@ -202,7 +216,12 @@ const ROLE_COLOR_C: Record<string, { color: string; bg: string; border: string }
 function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClose: () => void }) {
   const { updateContract, addContractPoC, updateContractPoC, removeContractPoC, addLockedSubcontractor, addGovernmentWarning, updateGovernmentWarning, resolveGovernmentWarning, advanceContractStatus, terminateContract, currentUser, employees, opportunities } = useStore()
   const [tab, setTab] = useState<'overview' | 'poc' | 'subk' | 'warnings' | 'deliverables'>('overview')
-  const [deliverableDraft, setDeliverableDraft] = useState('')
+  const [deliverableForm, setDeliverableForm] = useState({
+    title: '',
+    issuanceDate: todayDateInput(),
+    deadline: '',
+    attachments: [] as FileAttachment[],
+  })
 
   // Terminate form
   const [showTerminate, setShowTerminate] = useState(false)
@@ -238,6 +257,7 @@ function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClo
   const potentialQuoteSourcings = (sourceOpportunity?.subcontractors || []).filter(s => !!s.quoteFile)
   const lockedQuoteFiles = new Set((contract.lockedSubcontractors || []).flatMap(s => s.quotes || []))
   const invoiceReady = canGenerateContractInvoice(contract)
+  const deliverables = normalizeContractDeliverables(contract.deliverables)
   const financeRows = contract.type === 'RECURRING'
     ? [
         { label: 'Total Contract Value (Gov)', value: formatCurrency(contract.value || 0) },
@@ -880,42 +900,120 @@ function ContractDetailDrawer({ contract, onClose }: { contract: Contract; onClo
         {/* DELIVERABLES TAB */}
         {tab === 'deliverables' && (
           <div className="space-y-3">
-            {(contract.deliverables || []).length === 0 && (
+            {deliverables.length === 0 && (
               <p className="text-sm text-slate-400 text-center py-8">No deliverables tracked.</p>
             )}
-            {(contract.deliverables || []).map((d, i) => (
-              <div key={i} className="flex items-center gap-3 p-3 rounded-xl bg-slate-50 border border-slate-200">
-                <CheckCircle2 size={14} className="text-indigo-500 flex-shrink-0" />
-                <span className="text-sm text-slate-700">{d}</span>
+            {deliverables.map((deliverable, index) => {
+              const isOverdue = deliverable.deadline && new Date(`${deliverable.deadline}T23:59:59`) < new Date()
+              return (
+              <div key={deliverable.id || index} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <div className="flex items-start gap-3">
+                  <div className="mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-500">
+                    <CheckCircle2 size={14} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div>
+                        <p className="text-sm font-bold text-slate-800">{deliverable.title}</p>
+                        <p className="text-[10px] text-slate-400">
+                          Added by {deliverable.createdBy || 'Unknown'}{deliverable.createdAt ? ` · ${formatDateTime(deliverable.createdAt)}` : ''}
+                        </p>
+                      </div>
+                      {isOverdue && (
+                        <span className="rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-bold text-red-600">Overdue</span>
+                      )}
+                    </div>
+                    <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                      <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                        <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Issuance Date</p>
+                        <p className="mt-0.5 text-xs font-semibold text-slate-700">{formatDate(deliverable.issuanceDate)}</p>
+                      </div>
+                      <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                        <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Deadline</p>
+                        <p className={`mt-0.5 text-xs font-semibold ${isOverdue ? 'text-red-600' : 'text-slate-700'}`}>
+                          {formatDate(deliverable.deadline)}
+                        </p>
+                      </div>
+                    </div>
+                    {(deliverable.attachments || []).length > 0 && (
+                      <div className="mt-3 rounded-lg border border-slate-200 bg-white px-3 py-2">
+                        <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-slate-400">Attachments</p>
+                        <div className="space-y-1.5">
+                          {(deliverable.attachments || []).map(att => (
+                            <div key={att.id} className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                              <span className="min-w-0 truncate font-semibold text-slate-700">{att.name}</span>
+                              <span className="whitespace-nowrap text-slate-400">{formatDateTime(att.attachedAt)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
-            ))}
+              )
+            })}
             <div className="p-3 rounded-xl border border-dashed border-slate-300 bg-slate-50">
-              <div className="flex flex-col sm:flex-row gap-2">
-                <input
-                  className="input-field text-xs"
-                  value={deliverableDraft}
-                  onChange={e => setDeliverableDraft(e.target.value)}
-                  placeholder="Add deliverable..."
-                  onKeyDown={e => {
-                    if (e.key !== 'Enter') return
-                    const item = deliverableDraft.trim()
-                    if (!item) return
-                    updateContract(contract.id, { deliverables: [...(contract.deliverables || []), item] })
-                    setDeliverableDraft('')
-                  }}
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-[10px] font-semibold uppercase tracking-wide text-slate-500 mb-1">Deliverable *</label>
+                  <input
+                    className="input-field text-xs"
+                    value={deliverableForm.title}
+                    onChange={e => setDeliverableForm(p => ({ ...p, title: e.target.value }))}
+                    placeholder="Add deliverable..."
+                  />
+                </div>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <div>
+                    <label className="block text-[10px] font-semibold uppercase tracking-wide text-slate-500 mb-1">Issuance Date *</label>
+                    <input
+                      type="date"
+                      className="input-field text-xs"
+                      value={deliverableForm.issuanceDate}
+                      onChange={e => setDeliverableForm(p => ({ ...p, issuanceDate: e.target.value }))}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-semibold uppercase tracking-wide text-slate-500 mb-1">Deadline *</label>
+                    <input
+                      type="date"
+                      className="input-field text-xs"
+                      value={deliverableForm.deadline}
+                      onChange={e => setDeliverableForm(p => ({ ...p, deadline: e.target.value }))}
+                    />
+                  </div>
+                </div>
+                <AttachmentPicker
+                  label="Deliverable Attachments"
+                  attachments={deliverableForm.attachments}
+                  uploadedBy={currentUser?.username ?? currentUser?.name ?? 'unknown'}
+                  onChange={attachments => setDeliverableForm(p => ({ ...p, attachments }))}
                 />
                 <button
                   type="button"
-                  disabled={!deliverableDraft.trim()}
-                  onClick={() => {
-                    const item = deliverableDraft.trim()
-                    if (!item) return
-                    updateContract(contract.id, { deliverables: [...(contract.deliverables || []), item] })
-                    setDeliverableDraft('')
+                  disabled={!deliverableForm.title.trim() || !deliverableForm.issuanceDate || !deliverableForm.deadline}
+                  onClick={async () => {
+                    const nextDeliverable: ContractDeliverable = {
+                      id: crypto.randomUUID(),
+                      title: deliverableForm.title.trim(),
+                      issuanceDate: deliverableForm.issuanceDate,
+                      deadline: deliverableForm.deadline,
+                      attachments: deliverableForm.attachments,
+                      createdAt: new Date().toISOString(),
+                      createdBy: currentUser?.username ?? currentUser?.name ?? 'unknown',
+                    }
+                    const saved = await updateContract(contract.id, {
+                      deliverables: [...deliverables, nextDeliverable],
+                    })
+                    if (saved) {
+                      setDeliverableForm({ title: '', issuanceDate: todayDateInput(), deadline: '', attachments: [] })
+                      toast.success('Deliverable saved')
+                    }
                   }}
-                  className="btn-primary text-xs justify-center disabled:opacity-45 disabled:cursor-not-allowed"
+                  className="btn-primary w-full text-xs justify-center disabled:opacity-45 disabled:cursor-not-allowed"
                 >
-                  <Plus size={12} /> Add
+                  <Plus size={12} /> Add Deliverable
                 </button>
               </div>
             </div>

@@ -58,6 +58,16 @@ export interface Comment {
   attachments?: FileAttachment[]
 }
 
+export interface ContractDeliverable {
+  id: string
+  title: string
+  issuanceDate: string
+  deadline: string
+  attachments?: FileAttachment[]
+  createdAt: string
+  createdBy: string
+}
+
 // ── Subcontractor (on opportunity) ───────────────────────────────────
 export interface Subcontractor {
   id: string
@@ -244,7 +254,7 @@ export interface Contract {
   pocs?: ContractPoC[]
   lockedSubcontractors?: LockedSubcontractor[]
   governmentWarnings?: GovernmentWarning[]
-  deliverables?: string[]
+  deliverables?: ContractDeliverable[]
   terminationType?: 'T4C' | 'T4D' | 'CANCELED'
   terminationDate?: string
   terminationReason?: string

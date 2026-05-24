@@ -14,6 +14,10 @@ import type {
   PastPerformance,
   Subcontractor,
 } from '../types'
+import {
+  normalizeContractDeliverables,
+  serializeContractDeliverables,
+} from './contractDeliverables'
 
 // ── Opportunity mappers ──────────────────────────────────────────────────────
 
@@ -175,7 +179,7 @@ function contractToDb(c: Contract): Record<string, unknown> {
     follow_up_date: c.followUpDate ?? null,
     option_years: c.optionYears ?? null,
     option_year_deadline: c.optionYearDeadline ?? null,
-    deliverables: c.deliverables ?? null,
+    deliverables: serializeContractDeliverables(c.deliverables),
     termination_type: c.terminationType ?? null,
     termination_date: c.terminationDate ?? null,
     termination_reason: c.terminationReason ?? null,
@@ -210,7 +214,7 @@ function dbToContract(row: Record<string, unknown>): Partial<Contract> {
     followUpDate: row.follow_up_date as string | undefined,
     optionYears: row.option_years as number | undefined,
     optionYearDeadline: row.option_year_deadline as string | undefined,
-    deliverables: row.deliverables as string[] | undefined,
+    deliverables: normalizeContractDeliverables(row.deliverables),
     terminationType: row.termination_type as Contract['terminationType'],
     terminationDate: row.termination_date as string | undefined,
     terminationReason: row.termination_reason as string | undefined,
