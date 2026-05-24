@@ -160,44 +160,81 @@ function escapeHtml(value: string) {
     .replace(/"/g, '&quot;')
 }
 
+function dataUrlToBlob(dataUrl: string, fallbackMimeType?: string) {
+  const commaIndex = dataUrl.indexOf(',')
+  if (commaIndex === -1) return null
+
+  const meta = dataUrl.slice(0, commaIndex)
+  const body = dataUrl.slice(commaIndex + 1)
+  const mimeType = meta.match(/^data:([^;]+)/i)?.[1] || fallbackMimeType || 'application/octet-stream'
+  const raw = meta.includes(';base64') ? atob(body) : decodeURIComponent(body)
+  const bytes = new Uint8Array(raw.length)
+  for (let i = 0; i < raw.length; i += 1) bytes[i] = raw.charCodeAt(i)
+  return new Blob([bytes], { type: mimeType })
+}
+
 function viewAttachment(att: FileAttachment) {
   if (!att.dataUrl) {
     toast.error('This attachment only has saved metadata. Re-upload it to make the file viewable.')
     return
   }
-  const win = window.open('', '_blank', 'noopener,noreferrer')
-  if (!win) {
-    toast.error('Popup was blocked. Allow popups to view attachments.')
+  const blob = dataUrlToBlob(att.dataUrl, att.mimeType)
+  if (!blob) {
+    toast.error('Attachment data could not be opened.')
     return
   }
-  win.document.write(`
+
+  const fileUrl = URL.createObjectURL(blob)
+  const mimeType = att.mimeType || blob.type
+  const lowerName = att.name.toLowerCase()
+  const isImage = mimeType.startsWith('image/') || /\.(png|jpe?g|gif|webp|avif|svg)$/i.test(lowerName)
+  const isPdf = mimeType === 'application/pdf' || lowerName.endsWith('.pdf')
+  const previewMarkup = isImage
+    ? `<img src="${fileUrl}" alt="${escapeHtml(att.name)}" />`
+    : isPdf
+      ? `<iframe src="${fileUrl}" title="${escapeHtml(att.name)}"></iframe>`
+      : `<div class="fallback">
+          <p>Preview is not available for this file type.</p>
+          <a class="primary" href="${fileUrl}" download="${escapeHtml(att.name)}">Download file</a>
+        </div>`
+  const html = `
+    <!doctype html>
     <html>
       <head>
+        <meta charset="utf-8" />
         <title>${escapeHtml(att.name)}</title>
         <style>
-          body { margin: 0; background: #07131f; color: #f8fbf7; font-family: Inter, system-ui, sans-serif; }
-          header { padding: 14px 18px; border-bottom: 1px solid rgba(215,190,122,.22); display: flex; justify-content: space-between; gap: 16px; align-items: center; }
-          a { color: #d7be7a; font-weight: 700; text-decoration: none; }
-          iframe, img { width: 100%; height: calc(100vh - 58px); border: 0; object-fit: contain; display: block; }
-          .fallback { padding: 24px; }
+          * { box-sizing: border-box; }
+          body { margin: 0; background: #07131f; color: #f8fbf7; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+          header { min-height: 64px; padding: 14px 18px; border-bottom: 1px solid rgba(215,190,122,.24); display: flex; justify-content: space-between; gap: 16px; align-items: center; background: linear-gradient(90deg, #081827, #0b2a25); }
+          strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+          a { color: #07131f; background: #d7be7a; border-radius: 10px; padding: 9px 13px; font-weight: 800; text-decoration: none; white-space: nowrap; }
+          iframe, img { width: 100%; height: calc(100vh - 64px); border: 0; object-fit: contain; display: block; background: #0a1724; }
+          .fallback { min-height: calc(100vh - 64px); display: grid; place-items: center; gap: 14px; align-content: center; padding: 24px; color: #dbe7e2; }
+          .primary { display: inline-block; }
         </style>
       </head>
       <body>
         <header>
           <strong>${escapeHtml(att.name)}</strong>
-          <a href="${att.dataUrl}" download="${escapeHtml(att.name)}">Download</a>
+          <a href="${fileUrl}" download="${escapeHtml(att.name)}">Download</a>
         </header>
-        ${
-          att.mimeType?.startsWith('image/')
-            ? `<img src="${att.dataUrl}" alt="${escapeHtml(att.name)}" />`
-            : att.mimeType === 'application/pdf'
-              ? `<iframe src="${att.dataUrl}" title="${escapeHtml(att.name)}"></iframe>`
-              : `<div class="fallback">Preview is not available for this file type. Use Download to open it.</div>`
-        }
+        ${previewMarkup}
       </body>
     </html>
-  `)
-  win.document.close()
+  `
+  const previewUrl = URL.createObjectURL(new Blob([html], { type: 'text/html' }))
+  const win = window.open(previewUrl, '_blank', 'noopener,noreferrer')
+  if (!win) {
+    URL.revokeObjectURL(fileUrl)
+    URL.revokeObjectURL(previewUrl)
+    toast.error('Popup was blocked. Allow popups to view attachments.')
+    return
+  }
+  setTimeout(() => {
+    URL.revokeObjectURL(fileUrl)
+    URL.revokeObjectURL(previewUrl)
+  }, 10 * 60 * 1000)
 }
 
 function AttachmentPicker({
