@@ -6,6 +6,7 @@ interface HierarchyAssignPickerProps {
   value?: string           // currently selected employee id
   onChange: (employeeId: string) => void
   deadline?: string        // ISO date string (popEnd/dueDate) for conflict detection
+  excludeOpportunityId?: string
   label?: string
   allowedEmployeeIds?: string[]
 }
@@ -25,6 +26,7 @@ const ROLE_AVATAR_CLS: Record<HierarchyRole, string> = {
 }
 
 const ACTIVE_STATUSES_EXCLUDE = ['ARCHIVED', 'TERMINATED', 'CANCELED']
+const ACTIVE_OPPORTUNITY_STATUSES = ['ACTIVE', 'NEW_ASSIGNMENT', 'DISCUSSION']
 
 const COLUMN_DEFS: { role: HierarchyRole; header: string }[] = [
   { role: 'BD_MANAGER', header: 'Managers' },
@@ -66,10 +68,11 @@ export default function HierarchyAssignPicker({
   value,
   onChange,
   deadline,
+  excludeOpportunityId,
   label,
   allowedEmployeeIds,
 }: HierarchyAssignPickerProps) {
-  const { employees, contracts } = useStore()
+  const { employees, contracts, opportunities } = useStore()
   const allowedSet = useMemo(() => allowedEmployeeIds ? new Set(allowedEmployeeIds) : null, [allowedEmployeeIds])
   const visibleSet = useMemo(() => {
     if (!allowedSet) return null
@@ -90,30 +93,35 @@ export default function HierarchyAssignPicker({
     [employees, value]
   )
 
-  // Count active contracts per employee
-  const activeContractsByEmp = useMemo(() => {
-    const map: Record<string, number> = {}
-    for (const c of contracts) {
-      if (!c.assignedTo) continue
-      if (ACTIVE_STATUSES_EXCLUDE.includes(c.status)) continue
-      map[c.assignedTo] = (map[c.assignedTo] ?? 0) + 1
-    }
-    return map
-  }, [contracts])
+  const normalizeDate = (date?: string) => date ? date.slice(0, 10) : ''
+  const selectedDueDay = normalizeDate(deadline)
 
-  // Detect conflict: contracts for employee whose popEnd === deadline
-  const conflictsByEmp = useMemo(() => {
-    if (!deadline) return {} as Record<string, number>
-    const map: Record<string, number> = {}
+  const workloadByEmp = useMemo(() => {
+    const map: Record<string, { activeTotal: number; sameDueDay: number }> = {}
+    const add = (employeeId: string | undefined, dueDay?: string) => {
+      if (!employeeId) return
+      const entry = map[employeeId] ?? { activeTotal: 0, sameDueDay: 0 }
+      entry.activeTotal += 1
+      if (selectedDueDay && normalizeDate(dueDay) === selectedDueDay) entry.sameDueDay += 1
+      map[employeeId] = entry
+    }
+
+    for (const o of opportunities) {
+      if (!o.assignedTo) continue
+      if (o.id === excludeOpportunityId) continue
+      if (o.isDeleted || o.nonSubmissionReportId) continue
+      if (!ACTIVE_OPPORTUNITY_STATUSES.includes(o.status)) continue
+      add(o.assignedTo, o.dueDate)
+    }
+
     for (const c of contracts) {
       if (!c.assignedTo) continue
       if (ACTIVE_STATUSES_EXCLUDE.includes(c.status)) continue
-      if (c.popEnd === deadline) {
-        map[c.assignedTo] = (map[c.assignedTo] ?? 0) + 1
-      }
+      add(c.assignedTo, c.popEnd)
     }
+
     return map
-  }, [contracts, deadline])
+  }, [contracts, opportunities, selectedDueDay, excludeOpportunityId])
 
   // Get the list of employees for each column
   function getColumnItems(colIdx: number): { emp: Employee; enabled: boolean }[] {
@@ -182,8 +190,7 @@ export default function HierarchyAssignPicker({
                 )}
                 {items.map(({ emp, enabled }) => {
                   const isSelected = selIdInCol === emp.id
-                  const activeCount = activeContractsByEmp[emp.id] ?? 0
-                  const conflictCount = conflictsByEmp[emp.id] ?? 0
+                  const workload = workloadByEmp[emp.id] ?? { activeTotal: 0, sameDueDay: 0 }
 
                   return (
                     <button
@@ -214,19 +221,17 @@ export default function HierarchyAssignPicker({
                           {/* Role label */}
                           <p className="truncate text-[10px] font-medium text-slate-400">{ROLE_LABEL[emp.role]}</p>
 
-                          {/* Badges row */}
-                          <div className="flex items-center gap-1 mt-1 flex-wrap">
-                            {/* Active contracts badge */}
-                            <span className={`rounded-full border px-1.5 py-0.5 text-[9px] font-semibold ${activeCount > 0 ? 'border-[#D7BE7A]/30 bg-[#D7BE7A]/10 text-[#F8FBF7]' : 'border-white/10 bg-white/5 text-slate-400'}`}>
-                              {activeCount} active
-                            </span>
-
-                            {/* Conflict badge */}
-                            {conflictCount > 0 && (
-                              <span className="rounded-full border border-amber-300/35 bg-amber-300/20 px-1.5 py-0.5 text-[9px] font-bold text-amber-100">
-                                {conflictCount} end same day
+                          <div className="mt-2 space-y-0.5 text-[10px] font-semibold leading-4 text-slate-400">
+                            <p className="flex items-center justify-between gap-2">
+                              <span>Active assigned</span>
+                              <span className="font-black text-[#F8FBF7]">{workload.activeTotal}</span>
+                            </p>
+                            <p className="flex items-center justify-between gap-2">
+                              <span>Same due day</span>
+                              <span className={workload.sameDueDay > 0 ? 'font-black text-amber-200' : 'font-black text-slate-300'}>
+                                {workload.sameDueDay}
                               </span>
-                            )}
+                            </p>
                           </div>
                         </div>
                       </div>

@@ -1115,13 +1115,14 @@ function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) 
           <div>
             <p className="text-sm font-semibold text-slate-700 mb-1">Assign to a team member</p>
             <p className="text-xs text-slate-400 mb-4">
-              Select anyone in the hierarchy. The ⚠ badge shows when they already have a contract ending on the same due date.
+              Select anyone in the hierarchy. Workload lines show total active assignments and same due-day assignments.
             </p>
           </div>
           <HierarchyAssignPicker
             value={form.assignedTo}
             onChange={v => set('assignedTo', v)}
             deadline={form.dueDate || opp.dueDate || undefined}
+            excludeOpportunityId={opp.id}
             allowedEmployeeIds={allowedAssignees}
           />
         </div>
@@ -1986,8 +1987,8 @@ function CreateModal({ onClose }: { onClose: () => void }) {
           <div>
             <p className="text-sm font-semibold text-slate-700 mb-1">Assign to a team member</p>
             <p className="text-xs text-slate-400 mb-4">
-              Select anyone in the hierarchy. The ⚠ badge appears when they already have a contract ending on the same due date.
-              {!form.dueDate && <span className="text-amber-600 font-medium"> - Set a due date in the Schedule tab to enable conflict detection.</span>}
+              Select anyone in the hierarchy. Workload lines show total active assignments and same due-day assignments.
+              {!form.dueDate && <span className="text-amber-600 font-medium"> - Set a due date in the Schedule tab to enable same-day counts.</span>}
             </p>
           </div>
           <HierarchyAssignPicker

@@ -76,6 +76,7 @@ function AssignModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }
             value={selectedEmpId}
             onChange={setSelectedEmpId}
             deadline={opp.dueDate}
+            excludeOpportunityId={opp.id}
             allowedEmployeeIds={assignable.map(emp => emp.id)}
           />
         </div>
