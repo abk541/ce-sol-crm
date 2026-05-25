@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Trophy, UserPlus, ArrowRight, CheckCircle2, Clock,
@@ -17,10 +17,34 @@ const STATUS_META = {
   MOVED_TO_ACTIVE:    { label: 'Moved to Active',    color: '#15803D', bg: '#DCFCE7', border: '#86EFAC' },
 }
 
-const USERS_LIST = [
-  'MehdiY', 'Nissrine', 'MehdiA', 'Aymane', 'Maroua',
-  'Sirraj', 'Oussama', 'Anas', 'Zoubair', 'Mahmoud', 'Zakaria',
+type OperationsRole = 'OPERATIONS_MANAGER' | 'OPERATIONS_TEAM_LEAD' | 'CONTRACT_SPECIALIST'
+
+interface OperationsPerson {
+  id: string
+  name: string
+  role: OperationsRole
+  managerId: string | null
+}
+
+const OPERATIONS_PEOPLE: OperationsPerson[] = [
+  { id: 'ops-mgr-1', name: 'Nadia El Mansouri', role: 'OPERATIONS_MANAGER', managerId: null },
+  { id: 'ops-mgr-2', name: 'Youssef Benali', role: 'OPERATIONS_MANAGER', managerId: null },
+  { id: 'ops-tl-1', name: 'Salma Idrissi', role: 'OPERATIONS_TEAM_LEAD', managerId: 'ops-mgr-1' },
+  { id: 'ops-tl-2', name: 'Omar Haddad', role: 'OPERATIONS_TEAM_LEAD', managerId: 'ops-mgr-1' },
+  { id: 'ops-tl-3', name: 'Leila Berrada', role: 'OPERATIONS_TEAM_LEAD', managerId: 'ops-mgr-2' },
+  { id: 'ops-tl-4', name: 'Karim Alaoui', role: 'OPERATIONS_TEAM_LEAD', managerId: 'ops-mgr-2' },
+  { id: 'ops-cs-1', name: 'Hiba Amrani', role: 'CONTRACT_SPECIALIST', managerId: 'ops-tl-1' },
+  { id: 'ops-cs-2', name: 'Adam Chraibi', role: 'CONTRACT_SPECIALIST', managerId: 'ops-tl-1' },
+  { id: 'ops-cs-3', name: 'Ines Tazi', role: 'CONTRACT_SPECIALIST', managerId: 'ops-tl-2' },
+  { id: 'ops-cs-4', name: 'Rayan El Fassi', role: 'CONTRACT_SPECIALIST', managerId: 'ops-tl-2' },
+  { id: 'ops-cs-5', name: 'Sara Lahlou', role: 'CONTRACT_SPECIALIST', managerId: 'ops-tl-3' },
+  { id: 'ops-cs-6', name: 'Mehdi Skalli', role: 'CONTRACT_SPECIALIST', managerId: 'ops-tl-3' },
+  { id: 'ops-cs-7', name: 'Amine Belkadi', role: 'CONTRACT_SPECIALIST', managerId: 'ops-tl-4' },
+  { id: 'ops-cs-8', name: 'Meryem Rami', role: 'CONTRACT_SPECIALIST', managerId: 'ops-tl-4' },
 ]
+
+const OPERATION_MANAGERS = OPERATIONS_PEOPLE.filter(person => person.role === 'OPERATIONS_MANAGER')
+const operationPersonExists = (name?: string) => !!name && OPERATIONS_PEOPLE.some(person => person.name === name)
 
 interface AssignModalProps {
   award: FreshAward
@@ -30,13 +54,30 @@ interface AssignModalProps {
 }
 
 function AssignModal({ award, onClose, onAssign, onMove }: AssignModalProps) {
-  const [bdm, setBdm] = useState(award.assignedBDM || '')
-  const [bds, setBds] = useState(award.assignedBDS || '')
-  const [spm, setSpm] = useState(award.assignedSPM || '')
-  const [pm, setPm] = useState(award.assignedPM || '')
-  const [agent, setAgent] = useState(award.assignedSupportAgent || '')
+  const [operationsManager, setOperationsManager] = useState(operationPersonExists(award.assignedBDM) ? award.assignedBDM || '' : '')
+  const [operationsTeamLead, setOperationsTeamLead] = useState(operationPersonExists(award.assignedBDS) ? award.assignedBDS || '' : '')
+  const [contractSpecialist, setContractSpecialist] = useState(operationPersonExists(award.assignedSupportAgent) ? award.assignedSupportAgent || '' : '')
 
-  const allAssigned = bdm && bds && spm && pm
+  const selectedManager = OPERATION_MANAGERS.find(person => person.name === operationsManager)
+  const operationsTeamLeads = useMemo(
+    () => OPERATIONS_PEOPLE.filter(person =>
+      person.role === 'OPERATIONS_TEAM_LEAD' &&
+      !!selectedManager &&
+      person.managerId === selectedManager.id,
+    ),
+    [selectedManager],
+  )
+  const selectedTeamLead = operationsTeamLeads.find(person => person.name === operationsTeamLead)
+  const contractSpecialists = useMemo(
+    () => OPERATIONS_PEOPLE.filter(person =>
+      person.role === 'CONTRACT_SPECIALIST' &&
+      !!selectedTeamLead &&
+      person.managerId === selectedTeamLead.id,
+    ),
+    [selectedTeamLead],
+  )
+
+  const allAssigned = operationsManager && operationsTeamLead && contractSpecialist
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
@@ -54,7 +95,7 @@ function AssignModal({ award, onClose, onAssign, onMove }: AssignModalProps) {
             <UserPlus size={16} className="text-indigo-600" />
           </div>
           <div>
-            <h2 className="text-sm font-bold text-slate-800">Assign Team</h2>
+            <h2 className="text-sm font-bold text-slate-800">Assign Operations Team</h2>
             <p className="text-xs text-slate-500 truncate max-w-xs">{award.solicitation}</p>
           </div>
           <button onClick={onClose} className="ml-auto text-slate-400 hover:text-slate-600">
@@ -74,25 +115,42 @@ function AssignModal({ award, onClose, onAssign, onMove }: AssignModalProps) {
           {/* Assignment dropdowns */}
           <div className="grid grid-cols-2 gap-3">
             {[
-              { label: 'Manager *', value: bdm, setter: setBdm },
-              { label: 'Team Lead *', value: bds, setter: setBds },
-              { label: 'SPM *', value: spm, setter: setSpm },
-              { label: 'PM *',  value: pm,  setter: setPm  },
+              {
+                label: 'Operations Manager *',
+                value: operationsManager,
+                setter: (value: string) => {
+                  setOperationsManager(value)
+                  setOperationsTeamLead('')
+                  setContractSpecialist('')
+                },
+                options: OPERATION_MANAGERS,
+                placeholder: 'Select operations manager...',
+              },
+              {
+                label: 'Operations Team Lead *',
+                value: operationsTeamLead,
+                setter: (value: string) => {
+                  setOperationsTeamLead(value)
+                  setContractSpecialist('')
+                },
+                options: operationsTeamLeads,
+                placeholder: 'Select operations team lead...',
+              },
             ].map(f => (
               <div key={f.label}>
                 <label className="block text-xs font-semibold text-slate-600 mb-1">{f.label}</label>
                 <select value={f.value} onChange={e => f.setter(e.target.value)} className="input-field text-xs py-2 w-full">
-                  <option value="">— Select —</option>
-                  {USERS_LIST.map(u => <option key={u} value={u}>{u}</option>)}
+                  <option value="">{f.placeholder}</option>
+                  {f.options.map(employee => <option key={employee.id} value={employee.name}>{employee.name}</option>)}
                 </select>
               </div>
             ))}
           </div>
           <div>
-            <label className="block text-xs font-semibold text-slate-600 mb-1">Associate (optional)</label>
-            <select value={agent} onChange={e => setAgent(e.target.value)} className="input-field text-xs py-2 w-full">
-              <option value="">— None —</option>
-              {USERS_LIST.map(u => <option key={u} value={u}>{u}</option>)}
+            <label className="block text-xs font-semibold text-slate-600 mb-1">Contract Specialist *</label>
+            <select value={contractSpecialist} onChange={e => setContractSpecialist(e.target.value)} className="input-field text-xs py-2 w-full">
+              <option value="">Select contract specialist...</option>
+              {contractSpecialists.map(employee => <option key={employee.id} value={employee.name}>{employee.name}</option>)}
             </select>
           </div>
         </div>
@@ -104,9 +162,11 @@ function AssignModal({ award, onClose, onAssign, onMove }: AssignModalProps) {
             disabled={!allAssigned}
             onClick={() => {
               onAssign(award.id, {
-                assignedBDM: bdm, assignedBDS: bds,
-                assignedSPM: spm, assignedPM: pm,
-                assignedSupportAgent: agent || undefined,
+                assignedBDM: operationsManager,
+                assignedBDS: operationsTeamLead,
+                assignedSPM: undefined,
+                assignedPM: undefined,
+                assignedSupportAgent: contractSpecialist,
               })
               onClose()
             }}
@@ -217,7 +277,7 @@ export default function FreshAwardPage() {
                                 onMouseEnter={e => { e.currentTarget.style.background = 'rgba(0,0,0,0.04)'; e.currentTarget.style.color = '#0F172A' }}
                                 onMouseLeave={e => { e.currentTarget.style.background = ''; e.currentTarget.style.color = '#475569' }}
                               >
-                                Assign Team
+                                Assign Operations
                               </button>
                               {fa.status === 'ASSIGNED' && (
                                 <button
@@ -282,10 +342,9 @@ export default function FreshAwardPage() {
                   <div className="mb-4 p-2.5 rounded-lg bg-slate-50 border border-slate-200">
                     <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Team</p>
                     <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
-                      {fa.assignedBDM && <div><span className="text-slate-400">Manager:</span> <span className="font-semibold text-slate-700">{fa.assignedBDM}</span></div>}
-                      {fa.assignedBDS && <div><span className="text-slate-400">Team Lead:</span> <span className="font-semibold text-slate-700">{fa.assignedBDS}</span></div>}
-                      {fa.assignedSPM && <div><span className="text-slate-400">SPM:</span> <span className="font-semibold text-slate-700">{fa.assignedSPM}</span></div>}
-                      {fa.assignedPM && <div><span className="text-slate-400">PM:</span> <span className="font-semibold text-slate-700">{fa.assignedPM}</span></div>}
+                      {fa.assignedBDM && <div><span className="text-slate-400">Operations Manager:</span> <span className="font-semibold text-slate-700">{fa.assignedBDM}</span></div>}
+                      {fa.assignedBDS && <div><span className="text-slate-400">Operations Team Lead:</span> <span className="font-semibold text-slate-700">{fa.assignedBDS}</span></div>}
+                      {fa.assignedSupportAgent && <div><span className="text-slate-400">Contract Specialist:</span> <span className="font-semibold text-slate-700">{fa.assignedSupportAgent}</span></div>}
                     </div>
                   </div>
                 )}
@@ -303,7 +362,7 @@ export default function FreshAwardPage() {
                         className="flex-1 btn-secondary text-xs gap-1.5"
                       >
                         <UserPlus size={12} />
-                        {fa.status === 'PENDING_ASSIGNMENT' ? 'Assign Team' : 'Edit Assignment'}
+                        {fa.status === 'PENDING_ASSIGNMENT' ? 'Assign Operations' : 'Edit Assignment'}
                       </button>
                       {fa.status === 'ASSIGNED' && (
                         <button
