@@ -1930,6 +1930,8 @@ function RowMenu({
   onSubmit,
   onRequestDeletion,
   onCancel,
+  canManage,
+  deletionPending,
 }: {
   o: Opportunity
   canSubmit: boolean
@@ -1939,6 +1941,8 @@ function RowMenu({
   onSubmit: () => void
   onRequestDeletion: () => void
   onCancel: () => void
+  canManage: boolean
+  deletionPending: boolean
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const submittable = OPP_VIEW_STATUSES.includes(o.status as any)
@@ -1983,23 +1987,32 @@ function RowMenu({
                 <Send size={12} /> Submit
               </button>
             )}
-            <div className="my-1 border-t border-slate-100" />
-            <button
-              onClick={e => { e.stopPropagation(); setMenuOpen(false); onCancel() }}
-              className="w-full text-left px-3 py-2 text-xs font-semibold flex items-center gap-2 transition-colors"
-              style={{ color: '#DC2626' }}
-              onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(220,38,38,0.06)'; (e.currentTarget as HTMLButtonElement).style.color = '#DC2626' }}
-              onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = ''; (e.currentTarget as HTMLButtonElement).style.color = '#DC2626' }}>
-              <Ban size={12} /> Cancel
-            </button>
-            <button
-              onClick={e => { e.stopPropagation(); setMenuOpen(false); onRequestDeletion() }}
-              className="w-full text-left px-3 py-2 text-xs font-semibold flex items-center gap-2 transition-colors"
-              style={{ color: '#DC2626' }}
-              onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(220,38,38,0.06)'; (e.currentTarget as HTMLButtonElement).style.color = '#DC2626' }}
-              onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = ''; (e.currentTarget as HTMLButtonElement).style.color = '#DC2626' }}>
-              <Trash2 size={12} /> Request Deletion
-            </button>
+            {canManage && (
+              <>
+                <div className="my-1 border-t border-slate-100" />
+                <button
+                  onClick={e => { e.stopPropagation(); setMenuOpen(false); onCancel() }}
+                  className="w-full text-left px-3 py-2 text-xs font-semibold flex items-center gap-2 transition-colors"
+                  style={{ color: '#DC2626' }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(220,38,38,0.06)'; (e.currentTarget as HTMLButtonElement).style.color = '#DC2626' }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = ''; (e.currentTarget as HTMLButtonElement).style.color = '#DC2626' }}>
+                  <Ban size={12} /> Cancel
+                </button>
+                <button
+                  disabled={deletionPending}
+                  onClick={e => {
+                    e.stopPropagation()
+                    setMenuOpen(false)
+                    if (!deletionPending) onRequestDeletion()
+                  }}
+                  className="w-full text-left px-3 py-2 text-xs font-semibold flex items-center gap-2 transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+                  style={{ color: '#DC2626' }}
+                  onMouseEnter={e => { if (!deletionPending) { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(220,38,38,0.06)'; (e.currentTarget as HTMLButtonElement).style.color = '#DC2626' } }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = ''; (e.currentTarget as HTMLButtonElement).style.color = '#DC2626' }}>
+                  <Trash2 size={12} /> {deletionPending ? 'Deletion Pending' : 'Delete'}
+                </button>
+              </>
+            )}
     </FloatingActionMenu>
   )
 }
@@ -2096,7 +2109,7 @@ const COLUMN_FILTERS = [
   { key: 'solicitationId', label: 'ID',           placeholder: 'Any ID' },
   { key: 'solicitation',   label: 'Solicitation', placeholder: 'Any solicitation' },
   { key: 'setAside',       label: 'Set Aside',    placeholder: 'Any set aside' },
-  { key: 'localTime',      label: 'Local Time',   placeholder: 'Any local time' },
+  { key: 'localTime',      label: 'Due Date Time', placeholder: 'Any due date or time' },
   { key: 'location',       label: 'Location',     placeholder: 'Any location' },
   { key: 'manager',        label: 'Manager',      placeholder: 'Any manager' },
   { key: 'teamLead',       label: 'Team Lead',    placeholder: 'Any team lead' },
@@ -2117,7 +2130,11 @@ function getColumnFilterValue(o: Opportunity, key: ColumnFilterKey, employees: R
     case 'type':
       return typeLabel(o.type)
     case 'localTime':
-      return `${o.localTime ?? ''} ${o.timezone ?? ''}`.trim()
+      return [
+        o.dueDate,
+        formatLocalDueTimeShared(o.localTime, o.timezone),
+        formatMoroccoDisplay(o.localTime, o.timezone, o.dueDate, o.moroccoTime, o.moroccoDate),
+      ].filter(Boolean).join(' ')
     case 'manager':
       return chain.manager?.name ?? ''
     case 'teamLead':
@@ -2157,6 +2174,48 @@ function ColumnFilterInput({
       <datalist id={id}>
         {suggestions.map(s => <option key={s} value={s} />)}
       </datalist>
+    </div>
+  )
+}
+
+function DueDateTimeCell({ opp }: { opp: Opportunity }) {
+  const dueDateLabel = opp.dueDate
+    ? new Date(opp.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+    : '-'
+  const dueDateFull = opp.dueDate
+    ? new Date(opp.dueDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+    : '-'
+  const localTime = formatLocalDueTimeShared(opp.localTime, opp.timezone)
+  const moroccoTime = formatMoroccoDisplay(opp.localTime, opp.timezone, opp.dueDate, opp.moroccoTime, opp.moroccoDate)
+
+  return (
+    <div className="group relative inline-flex">
+      <div className={`min-w-[132px] rounded-xl border px-2.5 py-1.5 ${dueDateColor(opp.dueDate)} shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]`}>
+        <p className="text-xs font-bold leading-tight">{dueDateLabel}</p>
+        <p className="mt-0.5 flex items-center gap-1 text-[10px] font-semibold opacity-80">
+          <Clock size={10} /> {localTime}
+        </p>
+      </div>
+      <div className="pointer-events-none absolute left-0 top-[calc(100%+8px)] z-[90] w-72 translate-y-1 rounded-2xl border border-[#D7BE7A]/25 bg-[#06131F] p-3 text-left opacity-0 shadow-[0_18px_46px_rgba(0,0,0,0.38)] transition-all duration-150 group-hover:translate-y-0 group-hover:opacity-100">
+        <div className="mb-2 flex items-center justify-between gap-3 border-b border-white/10 pb-2">
+          <p className="text-[10px] font-black uppercase tracking-[0.18em] text-[#D7BE7A]">Due Date Time</p>
+          <Clock size={13} className="text-[#D7BE7A]" />
+        </div>
+        <div className="space-y-2 text-xs">
+          <div className="flex items-start justify-between gap-3">
+            <span className="text-slate-400">Due date</span>
+            <span className="text-right font-bold text-[#F8FBF7]">{dueDateFull}</span>
+          </div>
+          <div className="flex items-start justify-between gap-3">
+            <span className="text-slate-400">Source time</span>
+            <span className="text-right font-bold text-[#F8FBF7]">{localTime}</span>
+          </div>
+          <div className="rounded-xl border border-emerald-300/20 bg-emerald-300/10 p-2">
+            <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-200">Morocco time</p>
+            <p className="mt-0.5 text-sm font-black text-emerald-100">{moroccoTime}</p>
+          </div>
+        </div>
+      </div>
     </div>
   )
 }
@@ -2356,8 +2415,7 @@ export default function PipelinePage() {
                   { label: 'ID',          k: 'solicitationId' },
                   { label: 'Solicitation', k: 'solicitation' },
                   { label: 'Set Aside',   k: 'setAside' },
-                  { label: 'Due Date',    k: 'dueDate' },
-                  { label: 'Local Time', k: 'localTime', title: 'Hover a local time to see Morocco time' },
+                  { label: 'Due Date Time', k: 'dueDate', title: 'Hover a due date time to see Morocco time' },
                   { label: 'Location',    k: 'location' },
                   { label: 'Manager',     k: '' },
                   { label: 'Team Lead',   k: '' },
@@ -2399,17 +2457,7 @@ export default function PipelinePage() {
                     <td>
                       <span className="text-[10px] font-semibold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">{o.setAside}</span>
                     </td>
-                    <td>
-                      <span className={`text-xs px-1.5 py-0.5 rounded ${dueDateColor(o.dueDate)}`}>
-                        {new Date(o.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                      </span>
-                    </td>
-                    <td
-                      className="text-slate-500 text-xs whitespace-nowrap cursor-help"
-                      title={`Morocco time: ${formatMoroccoDisplay(o.localTime, o.timezone, o.dueDate, o.moroccoTime, o.moroccoDate)}`}
-                    >
-                      {formatLocalDueTimeShared(o.localTime, o.timezone)}
-                    </td>
+                    <td><DueDateTimeCell opp={o} /></td>
                     <td><span className="text-slate-500 text-xs">{o.location}</span></td>
                     {(() => {
                       const chain = getAssignmentChain(employees, o.assignedTo)
@@ -2419,51 +2467,25 @@ export default function PipelinePage() {
                           <td><span className="text-slate-600 text-xs">{chain.teamLead?.name || '-'}</span></td>
                           <td>
                             {chain.associate ? (
-                              <div className="flex flex-col gap-0.5">
-                                <span className="text-xs text-slate-700 font-medium whitespace-nowrap">{chain.associate.name}</span>
-                                <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full w-fit"
-                                  style={{ color: ROLE_COLOR.ASSOCIATE.color, background: ROLE_COLOR.ASSOCIATE.bg, border: `1px solid ${ROLE_COLOR.ASSOCIATE.border}` }}>
-                                  Associate
-                                </span>
-                              </div>
+                              <span className="text-xs text-slate-700 font-semibold whitespace-nowrap">{chain.associate.name}</span>
                             ) : <span className="text-slate-400 text-xs">-</span>}
                           </td>
                         </>
                       )
                     })()}
                     <td onClick={e => e.stopPropagation()}>
-                      <div className="flex items-center gap-1">
-                        <button title="Edit" onClick={() => setEditOpp(o)}
-                          className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition-all">
-                          <Edit2 size={12} />
-                        </button>
-                        <button title="Sourcing" onClick={() => setSourcingOpp(o)}
-                          className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-cyan-600 hover:bg-cyan-50 transition-all">
-                          <Users2 size={12} />
-                        </button>
-                        {canSubmit && OPP_VIEW_STATUSES.includes(o.status as any) && (
-                          <button title="Submit proposal" onClick={() => setSubmitOpp(o)}
-                            className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 transition-all">
-                            <Send size={12} />
-                          </button>
-                        )}
-                        {canManageOpportunities && (
-                          <>
-                            <button title="Cancel opportunity" onClick={() => handleCancel(o)}
-                              className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-red-600 hover:bg-red-50 transition-all">
-                              <Ban size={12} />
-                            </button>
-                            <button
-                              title={pendingDeletionIds.has(o.id) ? 'Deletion request pending' : 'Delete opportunity'}
-                              disabled={pendingDeletionIds.has(o.id)}
-                              onClick={() => handleDelete(o)}
-                              className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 transition-all hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-slate-400"
-                            >
-                              <Trash2 size={12} />
-                            </button>
-                          </>
-                        )}
-                      </div>
+                      <RowMenu
+                        o={o}
+                        canSubmit={canSubmit}
+                        onViewDetails={() => setSelectedOpp(o)}
+                        onEdit={() => setEditOpp(o)}
+                        onSourcing={() => setSourcingOpp(o)}
+                        onSubmit={() => setSubmitOpp(o)}
+                        onCancel={() => handleCancel(o)}
+                        onRequestDeletion={() => handleDelete(o)}
+                        canManage={canManageOpportunities}
+                        deletionPending={pendingDeletionIds.has(o.id)}
+                      />
                     </td>
                   </motion.tr>
                 ))}
