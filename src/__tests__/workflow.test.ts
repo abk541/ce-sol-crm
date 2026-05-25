@@ -628,6 +628,23 @@ describe('4 · FreshAward → Active Contract (moveFreshAwardToActive)', () => {
     expect(useStore.getState().freshAwards.some(f => f.id === 'fa1')).toBe(false)
   })
 
+  it('can assign operations team while moving directly to Contract Admin', () => {
+    useStore.setState({ freshAwards: [{ ...FA_BASE, status: 'PENDING_ASSIGNMENT' }], contracts: [] })
+
+    useStore.getState().moveFreshAwardToActive('fa1', {
+      assignedBDM: 'Nadia El Mansouri',
+      assignedBDS: 'Salma Idrissi',
+      assignedSupportAgent: 'Hiba Amrani',
+    })
+
+    const contract = useStore.getState().contracts[0]
+    expect(contract.status).toBe('KICK_OFF')
+    expect(contract.bdm).toBe('Nadia El Mansouri')
+    expect(contract.bds).toBe('Salma Idrissi')
+    expect(contract.supportAgent).toBe('Hiba Amrani')
+    expect(useStore.getState().freshAwards.some(f => f.id === 'fa1')).toBe(false)
+  })
+
   it('keeps the created contract linked to the original opportunity', () => {
     useStore.setState({ freshAwards: [FA_BASE], contracts: [] })
 

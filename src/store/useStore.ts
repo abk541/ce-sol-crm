@@ -114,7 +114,7 @@ interface AppState {
 
   // ── Fresh Awards ───────────────────────────────────────────────────
   assignFreshAward: (id: string, assignments: Partial<FreshAward>) => void
-  moveFreshAwardToActive: (id: string) => void
+  moveFreshAwardToActive: (id: string, assignments?: Partial<FreshAward>) => void
 
   // ── Past Performances ──────────────────────────────────────────────
   addPastPerformance: (pp: Omit<PastPerformance, 'id' | 'createdAt'>) => void
@@ -939,9 +939,14 @@ export const useStore = create<AppState>()(
         if (updatedFa) upsertFreshAward(updatedFa)
       },
 
-      moveFreshAwardToActive: (id) => {
-        const fa = get().freshAwards.find(f => f.id === id)
-        if (!fa) return
+      moveFreshAwardToActive: (id, assignments) => {
+        const existingFa = get().freshAwards.find(f => f.id === id)
+        if (!existingFa) return
+        const fa: FreshAward = {
+          ...existingFa,
+          ...assignments,
+          status: assignments ? 'ASSIGNED' : existingFa.status,
+        }
 
         // Generate the contract ID once so it stays consistent on both the
         // contract record AND the fresh award's contractId field.

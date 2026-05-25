@@ -49,11 +49,10 @@ const operationPersonExists = (name?: string) => !!name && OPERATIONS_PEOPLE.som
 interface AssignModalProps {
   award: FreshAward
   onClose: () => void
-  onAssign: (id: string, assignments: Partial<FreshAward>) => void
-  onMove: (id: string) => void
+  onMove: (id: string, assignments?: Partial<FreshAward>) => void
 }
 
-function AssignModal({ award, onClose, onAssign, onMove }: AssignModalProps) {
+function AssignModal({ award, onClose, onMove }: AssignModalProps) {
   const [operationsManager, setOperationsManager] = useState(operationPersonExists(award.assignedBDM) ? award.assignedBDM || '' : '')
   const [operationsTeamLead, setOperationsTeamLead] = useState(operationPersonExists(award.assignedBDS) ? award.assignedBDS || '' : '')
   const [contractSpecialist, setContractSpecialist] = useState(operationPersonExists(award.assignedSupportAgent) ? award.assignedSupportAgent || '' : '')
@@ -161,13 +160,15 @@ function AssignModal({ award, onClose, onAssign, onMove }: AssignModalProps) {
           <button
             disabled={!allAssigned}
             onClick={() => {
-              onAssign(award.id, {
+              const assignments = {
                 assignedBDM: operationsManager,
                 assignedBDS: operationsTeamLead,
                 assignedSPM: undefined,
                 assignedPM: undefined,
                 assignedSupportAgent: contractSpecialist,
-              })
+              }
+              onMove(award.id, assignments)
+              toast.success('Assigned and moved to Contract Admin')
               onClose()
             }}
             className="btn-primary flex-1 text-xs gap-1.5 disabled:opacity-40"
@@ -189,7 +190,7 @@ function AssignModal({ award, onClose, onAssign, onMove }: AssignModalProps) {
 }
 
 export default function FreshAwardPage() {
-  const { freshAwards, assignFreshAward, moveFreshAwardToActive } = useStore()
+  const { freshAwards, moveFreshAwardToActive } = useStore()
   const [selected, setSelected] = useState<FreshAward | null>(null)
   const [filter, setFilter] = useState<'ALL' | 'PENDING_ASSIGNMENT' | 'ASSIGNED' | 'MOVED_TO_ACTIVE'>('ALL')
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
@@ -387,7 +388,6 @@ export default function FreshAwardPage() {
           <AssignModal
             award={selected}
             onClose={() => setSelected(null)}
-            onAssign={assignFreshAward}
             onMove={moveFreshAwardToActive}
           />
         )}

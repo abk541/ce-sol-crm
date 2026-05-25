@@ -61,11 +61,10 @@ const SEV_COLORS = {
 }
 
 // ── Tab definitions ─────────────────────────────────────────────────────
-type CTab = 'ALL' | 'ACTIVE_GROUP' | 'KICK_OFF' | 'LOCKING_SUB' | 'PERFORMING' | 'PENDING_PAYMENT' | 'ARCHIVED' | 'TERMINATED'
+type CTab = 'ACTIVE_GROUP' | 'KICK_OFF' | 'LOCKING_SUB' | 'PERFORMING' | 'PENDING_PAYMENT' | 'ARCHIVED' | 'TERMINATED'
 
 const C_TABS: { key: CTab; label: string; statuses: ContractStatus[] }[] = [
-  { key: 'ALL',           label: 'All',            statuses: ['KICK_OFF','LOCKING_SUB','ACTIVE','ON_GOING','PERFORMING','PENDING_PAYMENT','ARCHIVED','TERMINATED','CANCELED'] },
-  { key: 'ACTIVE_GROUP',  label: 'Active',         statuses: ['ACTIVE','ON_GOING'] },
+  { key: 'ACTIVE_GROUP',  label: 'Active',         statuses: ['KICK_OFF','LOCKING_SUB','ACTIVE','ON_GOING','PERFORMING'] },
   { key: 'KICK_OFF',      label: 'Kick-Off',       statuses: ['KICK_OFF'] },
   { key: 'LOCKING_SUB',   label: 'Locking Sub',    statuses: ['LOCKING_SUB'] },
   { key: 'PERFORMING',    label: 'Performing',     statuses: ['PERFORMING'] },
@@ -1789,7 +1788,7 @@ function FreshAwardsTab() {
 
 export default function ContractsPage() {
   const { contracts, employees } = useStore()
-  const [tab, setTab] = useState<CTab>('ALL')
+  const [tab, setTab] = useState<CTab>('ACTIVE_GROUP')
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<Contract | null>(null)
   const [selectedInitialTab, setSelectedInitialTab] = useState<ContractDrawerTab>('overview')
