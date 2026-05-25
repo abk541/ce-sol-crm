@@ -2179,43 +2179,66 @@ function ColumnFilterInput({
 }
 
 function DueDateTimeCell({ opp }: { opp: Opportunity }) {
-  const dueDateLabel = opp.dueDate
-    ? new Date(opp.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-    : '-'
+  const [tooltip, setTooltip] = useState<{ top: number; left: number; placement: 'top' | 'bottom' } | null>(null)
   const dueDateFull = opp.dueDate
     ? new Date(opp.dueDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
     : '-'
   const samGovTime = formatLocalDueTimeShared(opp.localTime, opp.timezone)
   const localTime = formatMoroccoDisplay(opp.localTime, opp.timezone, opp.dueDate, opp.moroccoTime, opp.moroccoDate)
+  const sourceDateTime = opp.dueDate ? `${dueDateFull} at ${samGovTime}` : samGovTime
+
+  const showTooltip = (target: HTMLElement) => {
+    const rect = target.getBoundingClientRect()
+    const width = 320
+    const margin = 10
+    const left = Math.min(Math.max(margin, rect.left), window.innerWidth - width - margin)
+    const openUp = rect.bottom + 180 > window.innerHeight && rect.top > 190
+    setTooltip({
+      left,
+      top: openUp ? rect.top - 10 : rect.bottom + 10,
+      placement: openUp ? 'top' : 'bottom',
+    })
+  }
 
   return (
-    <div className="group relative inline-flex">
-      <div className={`min-w-[132px] rounded-xl border px-2.5 py-1.5 ${dueDateColor(opp.dueDate)} shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]`}>
-        <p className="text-xs font-bold leading-tight">{dueDateLabel}</p>
-        <p className="mt-0.5 flex items-center gap-1 text-[10px] font-semibold opacity-80">
-          <Clock size={10} /> {samGovTime}
-        </p>
+    <div className="inline-flex">
+      <div
+        className="inline-flex max-w-[250px] cursor-help items-center gap-1.5 text-xs font-semibold text-[#F8FBF7] transition-colors hover:text-[#D7BE7A]"
+        onMouseEnter={e => showTooltip(e.currentTarget)}
+        onMouseLeave={() => setTooltip(null)}
+        onFocus={e => showTooltip(e.currentTarget)}
+        onBlur={() => setTooltip(null)}
+        tabIndex={0}
+      >
+        <Clock size={12} className="flex-shrink-0 text-[#D7BE7A]" />
+        <span className="truncate" title={sourceDateTime}>{sourceDateTime}</span>
       </div>
-      <div className="pointer-events-none absolute left-0 top-[calc(100%+8px)] z-[90] w-72 translate-y-1 rounded-2xl border border-[#D7BE7A]/25 bg-[#06131F] p-3 text-left opacity-0 shadow-[0_18px_46px_rgba(0,0,0,0.38)] transition-all duration-150 group-hover:translate-y-0 group-hover:opacity-100">
-        <div className="mb-2 flex items-center justify-between gap-3 border-b border-white/10 pb-2">
-          <p className="text-[10px] font-black uppercase tracking-[0.18em] text-[#D7BE7A]">Local Time</p>
-          <Clock size={13} className="text-[#D7BE7A]" />
-        </div>
-        <div className="space-y-2 text-xs">
-          <div className="rounded-xl border border-emerald-300/20 bg-emerald-300/10 p-2">
-            <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-200">Morocco local time</p>
-            <p className="mt-0.5 text-sm font-black text-emerald-100">{localTime}</p>
+      {tooltip && createPortal(
+        <div
+          className="pointer-events-none fixed z-[100] w-80 rounded-2xl border border-[#D7BE7A]/25 bg-[#06131F] p-3 text-left shadow-[0_18px_46px_rgba(0,0,0,0.42)]"
+          style={{
+            left: tooltip.left,
+            top: tooltip.top,
+            transform: tooltip.placement === 'top' ? 'translateY(-100%)' : undefined,
+          }}
+        >
+          <div className="mb-2 flex items-center justify-between gap-3 border-b border-white/10 pb-2">
+            <p className="text-[10px] font-black uppercase tracking-[0.18em] text-[#D7BE7A]">Local Time</p>
+            <Clock size={13} className="text-[#D7BE7A]" />
           </div>
-          <div className="flex items-start justify-between gap-3">
-            <span className="text-slate-400">SAM.gov date</span>
-            <span className="text-right font-bold text-[#F8FBF7]">{dueDateFull}</span>
+          <div className="space-y-2 text-xs">
+            <div className="rounded-xl border border-emerald-300/20 bg-emerald-300/10 p-2">
+              <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-200">Morocco local time</p>
+              <p className="mt-0.5 text-sm font-black text-emerald-100">{localTime}</p>
+            </div>
+            <div className="flex items-start justify-between gap-3">
+              <span className="text-slate-400">SAM.gov original</span>
+              <span className="max-w-[190px] text-right font-bold text-[#F8FBF7]">{sourceDateTime}</span>
+            </div>
           </div>
-          <div className="flex items-start justify-between gap-3">
-            <span className="text-slate-400">SAM.gov time</span>
-            <span className="text-right font-bold text-[#F8FBF7]">{samGovTime}</span>
-          </div>
-        </div>
-      </div>
+        </div>,
+        document.body,
+      )}
     </div>
   )
 }
