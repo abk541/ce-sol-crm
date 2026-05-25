@@ -1,9 +1,10 @@
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
+import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Trophy, UserPlus, ArrowRight, CheckCircle2, Clock,
   Building2, DollarSign, MapPin, Calendar, Briefcase,
-  ChevronRight, X, Save, MoreHorizontal,
+  ChevronRight, X, Check, MoreHorizontal,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import type { FreshAward } from '../types'
@@ -44,7 +45,32 @@ const OPERATIONS_PEOPLE: OperationsPerson[] = [
 ]
 
 const OPERATION_MANAGERS = OPERATIONS_PEOPLE.filter(person => person.role === 'OPERATIONS_MANAGER')
-const operationPersonExists = (name?: string) => !!name && OPERATIONS_PEOPLE.some(person => person.name === name)
+
+const OPS_ROLE_LABEL: Record<OperationsRole, string> = {
+  OPERATIONS_MANAGER: 'Operations Manager',
+  OPERATIONS_TEAM_LEAD: 'Operations Team Lead',
+  CONTRACT_SPECIALIST: 'Contract Specialist',
+}
+
+const OPS_ROLE_AVATAR_CLS: Record<OperationsRole, string> = {
+  OPERATIONS_MANAGER: 'bg-[#102820] text-[#D7BE7A] border-[#D7BE7A]/40',
+  OPERATIONS_TEAM_LEAD: 'bg-[#0A1D2B] text-[#7DD3FC] border-[#7DD3FC]/35',
+  CONTRACT_SPECIALIST: 'bg-[#082F49] text-[#A5F3FC] border-[#A5F3FC]/35',
+}
+
+const OPS_COLUMN_DEFS: { role: OperationsRole; header: string }[] = [
+  { role: 'OPERATIONS_MANAGER', header: 'Operations Managers' },
+  { role: 'OPERATIONS_TEAM_LEAD', header: 'Operations Team Leads' },
+  { role: 'CONTRACT_SPECIALIST', header: 'Contract Specialists' },
+]
+
+const initials = (name: string) =>
+  name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map(part => part[0]?.toUpperCase())
+    .join('')
 
 interface AssignModalProps {
   award: FreshAward
@@ -52,140 +78,265 @@ interface AssignModalProps {
   onMove: (id: string, assignments?: Partial<FreshAward>) => void
 }
 
-function AssignModal({ award, onClose, onMove }: AssignModalProps) {
-  const [operationsManager, setOperationsManager] = useState(operationPersonExists(award.assignedBDM) ? award.assignedBDM || '' : '')
-  const [operationsTeamLead, setOperationsTeamLead] = useState(operationPersonExists(award.assignedBDS) ? award.assignedBDS || '' : '')
-  const [contractSpecialist, setContractSpecialist] = useState(operationPersonExists(award.assignedSupportAgent) ? award.assignedSupportAgent || '' : '')
+function OperationsAssignPicker({
+  managerId,
+  teamLeadId,
+  specialistId,
+  onManagerChange,
+  onTeamLeadChange,
+  onSpecialistChange,
+}: {
+  managerId: string
+  teamLeadId: string
+  specialistId: string
+  onManagerChange: (id: string) => void
+  onTeamLeadChange: (id: string) => void
+  onSpecialistChange: (id: string) => void
+}) {
+  const selectionChain = [managerId || undefined, teamLeadId || undefined, specialistId || undefined]
+  const selectedPerson = specialistId
+    ? OPERATIONS_PEOPLE.find(person => person.id === specialistId)
+    : teamLeadId
+      ? OPERATIONS_PEOPLE.find(person => person.id === teamLeadId)
+      : managerId
+        ? OPERATIONS_PEOPLE.find(person => person.id === managerId)
+        : undefined
 
-  const selectedManager = OPERATION_MANAGERS.find(person => person.name === operationsManager)
-  const operationsTeamLeads = useMemo(
-    () => OPERATIONS_PEOPLE.filter(person =>
-      person.role === 'OPERATIONS_TEAM_LEAD' &&
-      !!selectedManager &&
-      person.managerId === selectedManager.id,
-    ),
-    [selectedManager],
-  )
-  const selectedTeamLead = operationsTeamLeads.find(person => person.name === operationsTeamLead)
-  const contractSpecialists = useMemo(
-    () => OPERATIONS_PEOPLE.filter(person =>
-      person.role === 'CONTRACT_SPECIALIST' &&
-      !!selectedTeamLead &&
-      person.managerId === selectedTeamLead.id,
-    ),
-    [selectedTeamLead],
-  )
+  const getColumnItems = (colIdx: number) => {
+    const role = OPS_COLUMN_DEFS[colIdx].role
+    const allAtTier = OPERATIONS_PEOPLE.filter(person => person.role === role)
 
-  const allAssigned = operationsManager && operationsTeamLead && contractSpecialist
+    if (colIdx === 0) {
+      return allAtTier.map(person => ({ person, enabled: true }))
+    }
+
+    const parentId = selectionChain[colIdx - 1]
+    if (!parentId) {
+      return allAtTier.map(person => ({ person, enabled: false }))
+    }
+
+    return allAtTier
+      .filter(person => person.managerId === parentId)
+      .map(person => ({ person, enabled: true }))
+  }
+
+  const handleSelect = (person: OperationsPerson, enabled: boolean) => {
+    if (!enabled) return
+
+    if (person.role === 'OPERATIONS_MANAGER') {
+      onManagerChange(person.id)
+      onTeamLeadChange('')
+      onSpecialistChange('')
+      return
+    }
+
+    if (person.role === 'OPERATIONS_TEAM_LEAD') {
+      onTeamLeadChange(person.id)
+      onSpecialistChange('')
+      return
+    }
+
+    onSpecialistChange(person.id)
+  }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(8px)' }}>
+    <div>
+      <label className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-slate-400">
+        Select Operations Team
+      </label>
+
+      <div className="grid overflow-hidden rounded-2xl border border-[#D7BE7A]/20 bg-[#06131F]/90 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] md:grid-cols-3">
+        {OPS_COLUMN_DEFS.map((col, colIdx) => {
+          const items = getColumnItems(colIdx)
+          const selectedId = selectionChain[colIdx]
+
+          return (
+            <div
+              key={col.role}
+              className="min-w-0 border-b border-[#D7BE7A]/20 last:border-b-0 md:border-b-0 md:border-r md:last:border-r-0 md:border-[#D7BE7A]/20"
+            >
+              <div className="border-b border-[#D7BE7A]/20 bg-[#0A1D2B] px-4 py-3">
+                <p className="truncate text-[10px] font-black uppercase tracking-[0.16em] text-[#D7BE7A]">
+                  {col.header}
+                </p>
+              </div>
+
+              <div className="max-h-[min(34vh,320px)] min-h-[210px] overflow-y-auto">
+                {items.length === 0 && (
+                  <div className="px-3 py-8 text-center text-[11px] text-slate-500">No options</div>
+                )}
+                {items.map(({ person, enabled }) => {
+                  const isSelected = selectedId === person.id
+
+                  return (
+                    <button
+                      key={person.id}
+                      type="button"
+                      disabled={!enabled}
+                      onClick={() => handleSelect(person, enabled)}
+                      className={[
+                        'w-full border-b border-[#D7BE7A]/10 px-4 py-3 text-left transition-all last:border-b-0',
+                        enabled ? 'cursor-pointer hover:bg-[#D7BE7A]/10' : 'cursor-default opacity-35',
+                        isSelected ? 'border-l-2 border-l-[#D7BE7A] bg-[#D7BE7A]/20 shadow-[inset_0_0_0_1px_rgba(215,190,122,0.10)]' : '',
+                      ].join(' ')}
+                    >
+                      <div className="flex items-start gap-2">
+                        <div className={`flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full border text-[10px] font-bold ${OPS_ROLE_AVATAR_CLS[person.role]}`}>
+                          {initials(person.name)}
+                        </div>
+
+                        <div className="min-w-0 flex-1">
+                          <p className={`truncate text-sm font-bold ${isSelected ? 'text-[#F8FBF7]' : 'text-slate-100'}`}>
+                            {person.name}
+                          </p>
+                          <p className="truncate text-[10px] font-medium text-slate-400">{OPS_ROLE_LABEL[person.role]}</p>
+                          <div className="mt-1 flex flex-wrap items-center gap-1">
+                            <span className="rounded-full border border-white/10 bg-white/5 px-1.5 py-0.5 text-[9px] font-semibold text-slate-400">
+                              Operations
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+
+      {selectedPerson && (
+        <div
+          className="mt-3 flex items-center gap-3 rounded-2xl border px-4 py-3"
+          style={{ background: 'rgba(184,145,78,0.12)', borderColor: 'rgba(215,190,122,0.28)' }}
+        >
+          <div className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full border text-[10px] font-bold ${OPS_ROLE_AVATAR_CLS[selectedPerson.role]}`}>
+            {initials(selectedPerson.name)}
+          </div>
+          <p className="min-w-0 text-sm font-bold text-[#F8FBF7]">
+            Assigned to: {selectedPerson.name}
+            {' - '}{OPS_ROLE_LABEL[selectedPerson.role]}
+          </p>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function AssignModal({ award, onClose, onMove }: AssignModalProps) {
+  const existingManager = OPERATION_MANAGERS.find(person => person.name === award.assignedBDM)
+  const existingTeamLead = OPERATIONS_PEOPLE.find(person => person.role === 'OPERATIONS_TEAM_LEAD' && person.name === award.assignedBDS)
+  const existingSpecialist = OPERATIONS_PEOPLE.find(person => person.role === 'CONTRACT_SPECIALIST' && person.name === award.assignedSupportAgent)
+  const [operationsManagerId, setOperationsManagerId] = useState(existingManager?.id || '')
+  const [operationsTeamLeadId, setOperationsTeamLeadId] = useState(
+    existingTeamLead && existingTeamLead.managerId === existingManager?.id ? existingTeamLead.id : '',
+  )
+  const [contractSpecialistId, setContractSpecialistId] = useState(
+    existingSpecialist && existingSpecialist.managerId === existingTeamLead?.id ? existingSpecialist.id : '',
+  )
+
+  const selectedManager = OPERATIONS_PEOPLE.find(person => person.id === operationsManagerId)
+  const selectedTeamLead = OPERATIONS_PEOPLE.find(person => person.id === operationsTeamLeadId)
+  const selectedSpecialist = OPERATIONS_PEOPLE.find(person => person.id === contractSpecialistId)
+  const allAssigned = selectedManager && selectedTeamLead && selectedSpecialist
+
+  return createPortal(
+    <motion.div className="fixed inset-0 z-[80] grid place-items-center px-4 py-6"
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+      <div className="absolute inset-0 bg-[#020B12]/75 backdrop-blur-md" onClick={onClose} />
       <motion.div
-        initial={{ opacity: 0, scale: 0.96, y: 12 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.96, y: 12 }}
-        className="rounded-2xl w-full max-w-lg overflow-hidden"
-        style={{ background: 'var(--bg-card)', border: '1px solid var(--border-default)', boxShadow: '0 24px 80px rgba(0,0,0,0.15)' }}
+        initial={{ y: 16, scale: 0.98, opacity: 0 }} animate={{ y: 0, scale: 1, opacity: 1 }}
+        exit={{ y: 16, scale: 0.98, opacity: 0 }}
+        transition={{ type: 'spring', stiffness: 320, damping: 30 }}
+        className="relative z-10 flex max-h-[calc(100vh-4rem)] w-full max-w-5xl flex-col overflow-hidden rounded-3xl border border-[#D7BE7A]/25 bg-[#07131F] shadow-[0_28px_90px_rgba(0,0,0,0.48),0_0_0_1px_rgba(255,255,255,0.04)]"
       >
-        {/* Header */}
-        <div className="flex items-center gap-3 p-5 border-b" style={{ borderColor: 'var(--border-default)' }}>
-          <div className="w-9 h-9 rounded-xl bg-indigo-50 flex items-center justify-center">
-            <UserPlus size={16} className="text-indigo-600" />
+        <div className="flex items-start justify-between gap-4 border-b border-[#D7BE7A]/15 bg-gradient-to-r from-[#0B1B2A] via-[#0A2327] to-[#102820] px-6 py-5">
+          <div className="min-w-0 space-y-1">
+            <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#D7BE7A]">Assignment</p>
+            <h2 className="text-xl font-black tracking-tight text-[#F8FBF7]">Assign Fresh Award</h2>
+            <p className="max-w-3xl truncate text-sm text-slate-300" title={award.solicitation}>{award.solicitation}</p>
           </div>
-          <div>
-            <h2 className="text-sm font-bold text-slate-800">Assign Operations Team</h2>
-            <p className="text-xs text-slate-500 truncate max-w-xs">{award.solicitation}</p>
-          </div>
-          <button onClick={onClose} className="ml-auto text-slate-400 hover:text-slate-600">
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-slate-300 transition-all hover:border-[#D7BE7A]/35 hover:bg-[#D7BE7A]/10 hover:text-white"
+            aria-label="Close assignment modal"
+          >
             <X size={16} />
           </button>
         </div>
 
-        <div className="p-5 space-y-4">
-          {/* Award summary */}
-          <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 grid grid-cols-2 gap-2 text-xs">
-            <div><span className="text-slate-400">Client</span><p className="font-semibold text-slate-700">{award.client}</p></div>
-            <div><span className="text-slate-400">Value</span><p className="font-semibold text-emerald-600">{formatCurrency(award.contractAmount || 0)}</p></div>
-            <div><span className="text-slate-400">Type</span><p className="font-semibold text-slate-700">{award.type}</p></div>
-            <div><span className="text-slate-400">Set-Aside</span><p className="font-semibold text-slate-700">{award.setAside}</p></div>
+        <div className="flex-1 overflow-y-auto px-6 py-5">
+          <div className="mb-4 grid gap-3 rounded-2xl border border-[#D7BE7A]/20 bg-white/[0.035] p-4 text-xs text-slate-300 md:grid-cols-4">
+            <div className="min-w-0">
+              <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">Solicitation ID</p>
+              <p className="truncate font-mono text-[#F8FBF7]">{award.solicitationId || '-'}</p>
+            </div>
+            <div className="min-w-0">
+              <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">Agency</p>
+              <p className="truncate text-[#F8FBF7]">{award.client || '-'}</p>
+            </div>
+            <div className="min-w-0">
+              <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">Awarded Date</p>
+              <p className="truncate text-[#F8FBF7]">{award.awardedDate ? new Date(award.awardedDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '-'}</p>
+            </div>
+            <div className="min-w-0">
+              <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">Value</p>
+              <p className="truncate font-bold text-emerald-300">{formatCurrency(award.contractAmount || 0)}</p>
+            </div>
+            <div className="min-w-0">
+              <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">Type</p>
+              <p className="truncate text-[#F8FBF7]">{award.type || '-'}</p>
+            </div>
+            <div className="min-w-0">
+              <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">Set Aside</p>
+              <p className="truncate text-[#F8FBF7]">{award.setAside || '-'}</p>
+            </div>
+            <div className="min-w-0">
+              <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">NAICS</p>
+              <p className="truncate font-mono text-[#F8FBF7]">{award.naicsCode || '-'}</p>
+            </div>
+            <div className="min-w-0">
+              <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">Location</p>
+              <p className="truncate text-[#F8FBF7]">{award.location || '-'}</p>
+            </div>
           </div>
 
-          {/* Assignment dropdowns */}
-          <div className="grid grid-cols-2 gap-3">
-            {[
-              {
-                label: 'Operations Manager *',
-                value: operationsManager,
-                setter: (value: string) => {
-                  setOperationsManager(value)
-                  setOperationsTeamLead('')
-                  setContractSpecialist('')
-                },
-                options: OPERATION_MANAGERS,
-                placeholder: 'Select operations manager...',
-              },
-              {
-                label: 'Operations Team Lead *',
-                value: operationsTeamLead,
-                setter: (value: string) => {
-                  setOperationsTeamLead(value)
-                  setContractSpecialist('')
-                },
-                options: operationsTeamLeads,
-                placeholder: 'Select operations team lead...',
-              },
-            ].map(f => (
-              <div key={f.label}>
-                <label className="block text-xs font-semibold text-slate-600 mb-1">{f.label}</label>
-                <select value={f.value} onChange={e => f.setter(e.target.value)} className="input-field text-xs py-2 w-full">
-                  <option value="">{f.placeholder}</option>
-                  {f.options.map(employee => <option key={employee.id} value={employee.name}>{employee.name}</option>)}
-                </select>
-              </div>
-            ))}
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-slate-600 mb-1">Contract Specialist *</label>
-            <select value={contractSpecialist} onChange={e => setContractSpecialist(e.target.value)} className="input-field text-xs py-2 w-full">
-              <option value="">Select contract specialist...</option>
-              {contractSpecialists.map(employee => <option key={employee.id} value={employee.name}>{employee.name}</option>)}
-            </select>
-          </div>
+          <OperationsAssignPicker
+            managerId={operationsManagerId}
+            teamLeadId={operationsTeamLeadId}
+            specialistId={contractSpecialistId}
+            onManagerChange={setOperationsManagerId}
+            onTeamLeadChange={setOperationsTeamLeadId}
+            onSpecialistChange={setContractSpecialistId}
+          />
         </div>
 
-        {/* Footer */}
-        <div className="flex gap-2 p-5 border-t" style={{ borderColor: 'var(--border-default)' }}>
-          <button onClick={onClose} className="btn-secondary flex-1 text-xs">Cancel</button>
+        <div className="flex flex-col gap-3 border-t border-[#D7BE7A]/15 bg-[#07131F]/95 px-6 py-4 sm:flex-row">
+          <button type="button" onClick={onClose} className="btn-secondary flex-1 justify-center">Cancel</button>
           <button
             disabled={!allAssigned}
             onClick={() => {
               const assignments = {
-                assignedBDM: operationsManager,
-                assignedBDS: operationsTeamLead,
+                assignedBDM: selectedManager?.name,
+                assignedBDS: selectedTeamLead?.name,
                 assignedSPM: undefined,
                 assignedPM: undefined,
-                assignedSupportAgent: contractSpecialist,
+                assignedSupportAgent: selectedSpecialist?.name,
               }
               onMove(award.id, assignments)
               toast.success('Assigned and moved to Contract Admin')
               onClose()
             }}
-            className="btn-primary flex-1 text-xs gap-1.5 disabled:opacity-40"
+            className="btn-primary flex-1 justify-center disabled:opacity-40"
           >
-            <Save size={12} /> Save Assignment
+            <Check size={14} /> Confirm Assignment
           </button>
-          {award.status === 'ASSIGNED' && (
-            <button
-              onClick={() => { onMove(award.id); onClose() }}
-              className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-emerald-500 text-white hover:bg-emerald-600 transition-colors"
-            >
-              <ArrowRight size={12} /> Move to Active
-            </button>
-          )}
         </div>
       </motion.div>
-    </div>
+    </motion.div>,
+    document.body
   )
 }
 
