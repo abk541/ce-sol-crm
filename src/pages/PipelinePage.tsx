@@ -22,8 +22,11 @@ import FloatingActionMenu from '../components/shared/FloatingActionMenu'
 import {
   formatLocalDueTime as formatLocalDueTimeShared,
   formatMoroccoDueTime as formatMoroccoDueTimeShared,
+  ianaTimeZoneFromOffset,
+  isValidIanaTimeZone,
   normalizeUtcOffset,
   opportunityDeadlineTimeMs,
+  resolveIanaTimeZone,
   timezoneLabelFromOffset,
   utcToMoroccoClock,
 } from '../lib/timezone'
@@ -40,22 +43,60 @@ const TYPES_DISPLAY: { value: string; label: string }[] = [
 const SET_ASIDES = ['SB', 'SDVOSB', 'WOSB', 'HUBZone', 'VOSB', '8(a)', 'UNRES']
 const PRIORITIES: Priority[] = ['MEDIUM', 'HIGH', 'VERY_HIGH']
 const SAM_TIMEZONE_ALIASES: Record<string, string> = {
-  'EASTERN STANDARD TIME': 'EST',
-  'EASTERN DAYLIGHT TIME': 'EDT',
-  'CENTRAL STANDARD TIME': 'CST',
-  'CENTRAL DAYLIGHT TIME': 'CDT',
-  'MOUNTAIN STANDARD TIME': 'MST',
-  'MOUNTAIN DAYLIGHT TIME': 'MDT',
-  'PACIFIC STANDARD TIME': 'PST',
-  'PACIFIC DAYLIGHT TIME': 'PDT',
-  'HAWAII STANDARD TIME': 'HST',
-  'GREENWICH MEAN TIME': 'GMT',
+  EST: 'America/New_York',
+  EDT: 'America/New_York',
+  CST: 'America/Chicago',
+  CDT: 'America/Chicago',
+  MST: 'America/Denver',
+  MDT: 'America/Denver',
+  PST: 'America/Los_Angeles',
+  PDT: 'America/Los_Angeles',
+  HST: 'Pacific/Honolulu',
+  GMT: 'Europe/London',
+  UTC: 'UTC',
+  'EASTERN STANDARD TIME': 'America/New_York',
+  'EASTERN DAYLIGHT TIME': 'America/New_York',
+  'CENTRAL STANDARD TIME': 'America/Chicago',
+  'CENTRAL DAYLIGHT TIME': 'America/Chicago',
+  'MOUNTAIN STANDARD TIME': 'America/Denver',
+  'MOUNTAIN DAYLIGHT TIME': 'America/Denver',
+  'PACIFIC STANDARD TIME': 'America/Los_Angeles',
+  'PACIFIC DAYLIGHT TIME': 'America/Los_Angeles',
+  'HAWAII STANDARD TIME': 'Pacific/Honolulu',
+  'GREENWICH MEAN TIME': 'Europe/London',
 }
 
 // Pre-submission view statuses only
 const OPP_VIEW_STATUSES: OppStatus[] = ['ACTIVE', 'NEW_ASSIGNMENT', 'DISCUSSION']
 
-const TZ_ABBREVS = Object.keys(TIMEZONES)
+const FALLBACK_IANA_TIMEZONES = [
+  'Africa/Casablanca',
+  'UTC',
+  'Europe/London',
+  'Europe/Paris',
+  'America/New_York',
+  'America/Chicago',
+  'America/Denver',
+  'America/Los_Angeles',
+  'Pacific/Honolulu',
+  'Asia/Riyadh',
+  'Asia/Dubai',
+  'Asia/Amman',
+  'Asia/Tehran',
+  'Asia/Kolkata',
+  'Asia/Singapore',
+  'Asia/Tokyo',
+  'Australia/Sydney',
+  'Pacific/Auckland',
+]
+
+function getAllIanaTimeZones() {
+  const supported = (Intl as any).supportedValuesOf?.('timeZone') as string[] | undefined
+  const zones = supported?.length ? supported : FALLBACK_IANA_TIMEZONES
+  return Array.from(new Set(['Africa/Casablanca', 'UTC', ...zones])).filter(isValidIanaTimeZone)
+}
+
+const IANA_TIMEZONES = getAllIanaTimeZones()
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100, 0] // 0 = All
 function getBuildSamGovApiKey() {
@@ -262,12 +303,15 @@ function normaliseSamGovTimezone(value: unknown): string {
   if (!raw) return ''
 
   const upper = raw.toUpperCase()
-  if (TIMEZONES[upper]) return upper
   if (SAM_TIMEZONE_ALIASES[upper]) return SAM_TIMEZONE_ALIASES[upper]
+  if (isValidIanaTimeZone(raw)) return raw
+  if (raw === 'GMT+1' || raw === 'UTC+01:00' || raw === '+01:00') return 'Africa/Casablanca'
+  if (TIMEZONES[upper]) return TIMEZONES[upper]
+  if (TIMEZONES[raw]) return TIMEZONES[raw]
   if (/^(?:UTC|GMT)?[+-]\d{2}:?\d{2}$/i.test(raw)) {
-    return timezoneLabelFromOffset(normalizeUtcOffset(raw.replace(/^(?:UTC|GMT)/i, '')))
+    return ianaTimeZoneFromOffset(normalizeUtcOffset(raw.replace(/^(?:UTC|GMT)/i, '')))
   }
-  return TIMEZONES[raw] ? raw : ''
+  return ''
 }
 
 export function extractSamGovDeadlineTimezone(opp: any): string {
@@ -291,7 +335,7 @@ export function extractSamGovDeadlineTimezone(opp: any): string {
 export function parseSamGovDeadline(raw: string | undefined, specifiedTimezone = ''): {
   dueDate: string; localTime: string; timezone: string; moroccoDate: string; moroccoTime: string
 } {
-  const empty = { dueDate: '', localTime: '', timezone: 'GMT+1', moroccoDate: '', moroccoTime: '' }
+  const empty = { dueDate: '', localTime: '', timezone: 'Africa/Casablanca', moroccoDate: '', moroccoTime: '' }
   if (!raw) return empty
 
   const m = raw.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})(?::\d{2})?(?:\.\d+)?(Z|[+-]\d{2}:?\d{2})?/)
@@ -307,7 +351,7 @@ export function parseSamGovDeadline(raw: string | undefined, specifiedTimezone =
       return {
         dueDate: dateStr,
         localTime: formatTime12h(timeStr),
-        timezone: specifiedTimezone || timezoneLabelFromOffset(normalised),
+        timezone: specifiedTimezone || ianaTimeZoneFromOffset(normalised, new Date(raw)),
         moroccoDate,
         moroccoTime: formatTime12h(moroccoTime),
       }
@@ -317,7 +361,7 @@ export function parseSamGovDeadline(raw: string | undefined, specifiedTimezone =
     return {
       dueDate: dateStr,
       localTime: formatTime12h(timeStr),
-      timezone: 'GMT+1',
+      timezone: 'Africa/Casablanca',
       moroccoDate: dateStr,
       moroccoTime: formatTime12h(timeStr),
     }
@@ -332,7 +376,7 @@ export function parseSamGovDeadline(raw: string | undefined, specifiedTimezone =
   return {
     dueDate: utcDate,
     localTime: formatTime12h(utcTime),
-    timezone: 'GMT',
+    timezone: 'UTC',
     moroccoDate,
     moroccoTime: formatTime12h(moroccoTime),
   }
@@ -586,6 +630,76 @@ function formatMoroccoDisplay(
   moroccoDate: string | undefined,
 ): string {
   return formatMoroccoDueTimeShared({ localTime, timezone, dueDate, moroccoTime, moroccoDate })
+}
+
+function formatTimeInZone(timeZone: string, referenceDate: Date): string {
+  try {
+    return new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+      timeZoneName: 'short',
+    }).format(referenceDate)
+  } catch {
+    return ''
+  }
+}
+
+function TimezoneInput({
+  id,
+  value,
+  onChange,
+  reference,
+}: {
+  id: string
+  value?: string
+  onChange: (value: string) => void
+  reference: Partial<Opportunity>
+}) {
+  const referenceMs = useMemo(
+    () => opportunityDeadlineTimeMs(reference),
+    [reference.dueDate, reference.localTime, reference.timezone],
+  )
+  const referenceDate = useMemo(
+    () => new Date(referenceMs ?? Date.now()),
+    [referenceMs],
+  )
+  const selectedIana = resolveIanaTimeZone(value)
+  const selectedTime = selectedIana ? formatTimeInZone(selectedIana, referenceDate) : ''
+  const options = useMemo(() => {
+    const current = value && !IANA_TIMEZONES.includes(value) ? [value] : []
+    return [...current, ...IANA_TIMEZONES].map(zone => ({
+      zone,
+      label: resolveIanaTimeZone(zone)
+        ? `${zone} - ${formatTimeInZone(resolveIanaTimeZone(zone) || zone, referenceDate)}`
+        : `${zone} - imported fixed offset`,
+    }))
+  }, [referenceDate, value])
+
+  return (
+    <div className="space-y-1">
+      <input
+        value={value ?? ''}
+        list={id}
+        onChange={e => onChange(e.target.value)}
+        className="input-field"
+        placeholder="Type a timezone, e.g. America/New_York"
+      />
+      <datalist id={id}>
+        {options.map(option => (
+          <option key={option.zone} value={option.zone} label={option.label} />
+        ))}
+      </datalist>
+      <p className="text-[10px] font-medium text-slate-400">
+        {selectedIana && selectedTime
+          ? `${selectedIana} is ${selectedTime}${referenceMs === null ? ' now.' : ' for this deadline.'}`
+          : 'Type a real timezone name and choose a suggestion.'}
+      </p>
+    </div>
+  )
 }
 
 function NaicsInput({ value, onChange }: { value?: string; onChange: (value: string) => void }) {
@@ -941,13 +1055,12 @@ function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) 
             </div>
             <div>
               <label className={lbl}>Timezone</label>
-              <select
-                value={form.timezone ?? 'GMT+1'}
-                onChange={e => setForm(prev => applyScheduleFieldChange(prev, 'timezone', e.target.value))}
-                className="select-field"
-              >
-                {TZ_ABBREVS.map(t => <option key={t}>{t}</option>)}
-              </select>
+              <TimezoneInput
+                id="edit-opportunity-timezone-options"
+                value={form.timezone ?? 'Africa/Casablanca'}
+                reference={form}
+                onChange={value => setForm(prev => applyScheduleFieldChange(prev, 'timezone', value))}
+              />
             </div>
           </div>
           {form.localTime && (
@@ -1589,7 +1702,7 @@ function CreateModal({ onClose }: { onClose: () => void }) {
     period: new Date().toLocaleString('en-US', { month: 'short' }).toUpperCase() + ' ' + new Date().getFullYear(),
     capturedOn: new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }),
     bdm: '', bds: '', naicsCode: '', solicitationId: '', solicitation: '',
-    client: '', location: '', dueDate: '', localTime: '', timezone: 'GMT+1',
+    client: '', location: '', dueDate: '', localTime: '', timezone: 'Africa/Casablanca',
     comments: [], proposals: [], subcontractors: [], assignedTo: undefined,
   })
   const allowedAssignees = useMemo(
@@ -1813,13 +1926,12 @@ function CreateModal({ onClose }: { onClose: () => void }) {
             </div>
             <div>
               <label className={lbl}>Timezone</label>
-              <select
-                value={form.timezone ?? 'GMT+1'}
-                onChange={e => setForm(prev => applyScheduleFieldChange(prev, 'timezone', e.target.value))}
-                className="select-field"
-              >
-                {TZ_ABBREVS.map(t => <option key={t}>{t}</option>)}
-              </select>
+              <TimezoneInput
+                id="create-opportunity-timezone-options"
+                value={form.timezone ?? 'Africa/Casablanca'}
+                reference={form}
+                onChange={value => setForm(prev => applyScheduleFieldChange(prev, 'timezone', value))}
+              />
             </div>
           </div>
           {form.localTime && (

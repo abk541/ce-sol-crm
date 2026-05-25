@@ -101,7 +101,7 @@ describe('SAM.gov import API calls', () => {
     // Original SAM.gov local time is preserved as-is (formatted 12h)
     expect(mapped.dueDate).toBe('2026-05-27')
     expect(mapped.localTime).toBe('10:00 AM')
-    expect(mapped.timezone).toBe('UTC-05:00')
+    expect(mapped.timezone).toBe('America/Chicago')
 
     // Morocco equivalent computed from exact UTC offset (UTC 15:00 → Morocco 16:00 / 4:00 PM)
     expect(mapped.moroccoTime).toBe('4:00 PM')
@@ -158,7 +158,7 @@ describe('SAM.gov import API calls', () => {
     const result = parseSamGovDeadline('2026-05-27T23:59:00-04:00')
     expect(result.dueDate).toBe('2026-05-27')
     expect(result.localTime).toBe('11:59 PM')
-    expect(result.timezone).toBe('UTC-04:00')
+    expect(result.timezone).toBe('America/New_York')
     expect(result.moroccoDate).toBe('2026-05-28')
     expect(result.moroccoTime).toBe('4:59 AM')
   })
@@ -174,19 +174,19 @@ describe('SAM.gov import API calls', () => {
     const result = parseSamGovDeadline('2026-06-01T14:00:00Z')
     expect(result.dueDate).toBe('2026-06-01')
     expect(result.localTime).toBe('2:00 PM')
-    expect(result.timezone).toBe('GMT')
+    expect(result.timezone).toBe('UTC')
     expect(result.moroccoTime).toBe('3:00 PM')
     expect(result.moroccoDate).toBe('2026-06-01')
   })
 
-  it('preserves raw SAM.gov UTC offsets when no named timezone is provided', () => {
-    expect(parseSamGovDeadline('2026-01-15T10:00:00-05:00').timezone).toBe('UTC-05:00')
-    expect(parseSamGovDeadline('2026-07-15T10:00:00-04:00').timezone).toBe('UTC-04:00')
+  it('maps raw SAM.gov UTC offsets to real timezone names when no named timezone is provided', () => {
+    expect(parseSamGovDeadline('2026-01-15T10:00:00-05:00').timezone).toBe('America/New_York')
+    expect(parseSamGovDeadline('2026-07-15T10:00:00-04:00').timezone).toBe('America/New_York')
   })
 
   it('uses SAM.gov named deadline timezone fields when present', () => {
-    expect(extractSamGovDeadlineTimezone({ responseDeadLineTimeZone: 'Central Daylight Time' })).toBe('CDT')
-    expect(parseSamGovDeadline('2026-07-15T10:00:00-05:00', 'CDT').timezone).toBe('CDT')
+    expect(extractSamGovDeadlineTimezone({ responseDeadLineTimeZone: 'Central Daylight Time' })).toBe('America/Chicago')
+    expect(parseSamGovDeadline('2026-07-15T10:00:00-05:00', 'America/Chicago').timezone).toBe('America/Chicago')
   })
 
   it('treats timezone abbreviations as fixed offsets, not browser daylight guesses', () => {
@@ -221,8 +221,23 @@ describe('SAM.gov import API calls', () => {
     const changed = applyScheduleFieldChange(mapped, 'localTime', '11:30 AM')
 
     expect(changed.localTime).toBe('11:30 AM')
-    expect(changed.timezone).toBe('UTC-04:00')
+    expect(changed.timezone).toBe('America/New_York')
     expect(changed.moroccoTime).toBe('4:30 PM')
+    expect(changed.moroccoDate).toBe('2026-05-27')
+  })
+
+  it('keeps Morocco recomputation exact after mapping raw offsets to timezone names', () => {
+    const mapped = mapSamGovOpportunityToForm({
+      title: 'Central Deadline',
+      solicitationNumber: '36C26326Q0725',
+      subtierName: 'Veterans Health Administration',
+      responseDeadLine: '2026-05-27T10:00:00-05:00',
+    }, 'https://sam.gov/opp/example/view')
+
+    const changed = applyScheduleFieldChange(mapped, 'localTime', '11:00 AM')
+
+    expect(mapped.timezone).toBe('America/Chicago')
+    expect(changed.moroccoTime).toBe('5:00 PM')
     expect(changed.moroccoDate).toBe('2026-05-27')
   })
 
@@ -233,11 +248,11 @@ describe('SAM.gov import API calls', () => {
       timezone: 'GMT+1',
       moroccoTime: '10:00 AM',
       moroccoDate: '2026-05-27',
-    }, 'timezone', 'EDT')
+    }, 'timezone', 'America/New_York')
 
     expect(changed.localTime).toBe('10:00 AM')
     expect(changed.dueDate).toBe('2026-05-27')
-    expect(changed.timezone).toBe('EDT')
+    expect(changed.timezone).toBe('America/New_York')
     expect(changed.moroccoTime).toBe('3:00 PM')
     expect(changed.moroccoDate).toBe('2026-05-27')
   })

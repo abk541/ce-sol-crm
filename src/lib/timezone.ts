@@ -20,6 +20,43 @@ const FIXED_TIMEZONE_OFFSETS: Record<string, number> = {
   CET: 60,
 }
 
+const OFFSET_TIMEZONE_CANDIDATES: Record<string, string[]> = {
+  '-10:00': ['Pacific/Honolulu'],
+  '-09:00': ['America/Anchorage', 'Pacific/Gambier'],
+  '-08:00': ['America/Los_Angeles', 'America/Vancouver', 'Pacific/Pitcairn'],
+  '-07:00': ['America/Denver', 'America/Phoenix', 'America/Edmonton'],
+  '-06:00': ['America/Chicago', 'America/Regina', 'America/Mexico_City'],
+  '-05:00': ['America/New_York', 'America/Chicago', 'America/Bogota', 'America/Lima'],
+  '-04:00': ['America/New_York', 'America/Puerto_Rico', 'America/Halifax'],
+  '-03:00': ['America/Sao_Paulo', 'America/Argentina/Buenos_Aires'],
+  '-02:00': ['Atlantic/South_Georgia'],
+  '-01:00': ['Atlantic/Azores', 'Atlantic/Cape_Verde'],
+  '+00:00': ['Europe/London', 'UTC', 'Atlantic/Reykjavik'],
+  '+01:00': ['Africa/Casablanca', 'Europe/Paris', 'Europe/London'],
+  '+02:00': ['Europe/Athens', 'Africa/Cairo', 'Asia/Amman'],
+  '+03:00': ['Asia/Riyadh', 'Europe/Moscow', 'Africa/Nairobi'],
+  '+03:30': ['Asia/Tehran'],
+  '+04:00': ['Asia/Dubai'],
+  '+04:30': ['Asia/Kabul'],
+  '+05:00': ['Asia/Karachi'],
+  '+05:30': ['Asia/Kolkata'],
+  '+05:45': ['Asia/Kathmandu'],
+  '+06:00': ['Asia/Dhaka'],
+  '+06:30': ['Asia/Yangon'],
+  '+07:00': ['Asia/Bangkok'],
+  '+08:00': ['Asia/Singapore', 'Asia/Shanghai'],
+  '+08:45': ['Australia/Eucla'],
+  '+09:00': ['Asia/Tokyo', 'Asia/Seoul'],
+  '+09:30': ['Australia/Darwin', 'Australia/Adelaide'],
+  '+10:00': ['Australia/Sydney', 'Pacific/Guam'],
+  '+10:30': ['Australia/Lord_Howe'],
+  '+11:00': ['Pacific/Noumea'],
+  '+12:00': ['Pacific/Auckland', 'Pacific/Fiji'],
+  '+12:45': ['Pacific/Chatham'],
+  '+13:00': ['Pacific/Tongatapu'],
+  '+14:00': ['Pacific/Kiritimati'],
+}
+
 export function normalizeUtcOffset(offset: string | undefined): string {
   const raw = (offset ?? '').trim()
   if (!raw) return ''
@@ -33,6 +70,24 @@ export function timezoneLabelFromOffset(offset: string): string {
   const normalised = normalizeUtcOffset(offset)
   if (!normalised) return ''
   return normalised === '+00:00' ? 'GMT' : `UTC${normalised}`
+}
+
+export function isValidIanaTimeZone(timeZone: string | undefined): boolean {
+  if (!timeZone) return false
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone })
+    return true
+  } catch {
+    return false
+  }
+}
+
+export function resolveIanaTimeZone(timeZoneLabel: string | undefined): string | undefined {
+  const value = (timeZoneLabel ?? '').trim()
+  if (!value) return undefined
+  if (TIMEZONES[value]) return TIMEZONES[value]
+  if (isValidIanaTimeZone(value)) return value
+  return undefined
 }
 
 export function fixedOffsetMinutes(label: string | undefined): number | null {
@@ -115,6 +170,32 @@ function timeZoneOffsetMs(date: Date, timeZone: string): number {
   return asUtc - date.getTime()
 }
 
+function timeZoneOffsetMinutes(date: Date, timeZone: string): number | null {
+  try {
+    return Math.round(timeZoneOffsetMs(date, timeZone) / 60_000)
+  } catch {
+    return null
+  }
+}
+
+export function ianaTimeZoneFromOffset(offset: string, referenceDate = new Date()): string {
+  const normalised = normalizeUtcOffset(offset)
+  if (!normalised) return ''
+
+  const targetMinutes = fixedOffsetMinutes(timezoneLabelFromOffset(normalised))
+  const candidates = OFFSET_TIMEZONE_CANDIDATES[normalised] ?? []
+  if (targetMinutes !== null) {
+    const matchingCandidate = candidates.find(zone => timeZoneOffsetMinutes(referenceDate, zone) === targetMinutes)
+    if (matchingCandidate) return matchingCandidate
+
+    const supported = (Intl as any).supportedValuesOf?.('timeZone') as string[] | undefined
+    const matchingSupported = supported?.find(zone => timeZoneOffsetMinutes(referenceDate, zone) === targetMinutes)
+    if (matchingSupported) return matchingSupported
+  }
+
+  return candidates[0] || timezoneLabelFromOffset(normalised)
+}
+
 export function zonedDateTimeToUtc(date: string, time: string, timeZoneLabel: string | undefined): Date | null {
   if (!date || !isCompleteClockTime(time)) return null
 
@@ -129,7 +210,7 @@ export function zonedDateTimeToUtc(date: string, time: string, timeZoneLabel: st
     return new Date(utcGuessMs - offsetMinutes * 60_000)
   }
 
-  const ianaSource = timeZoneLabel ? TIMEZONES[timeZoneLabel] : undefined
+  const ianaSource = resolveIanaTimeZone(timeZoneLabel)
   if (!ianaSource) return null
 
   const utcGuess = new Date(utcGuessMs)
