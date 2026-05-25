@@ -223,6 +223,20 @@ describe('1 · submitOpportunity', () => {
     expect(updated?.monthlyPayment).toBe(10_000)
   })
 
+  it('stores submitted proposal file references', () => {
+    const opp = makeOpp({ id: 'opp1' })
+    useStore.setState({ opportunities: [opp] })
+
+    useStore.getState().submitOpportunity('opp1', {
+      proposals: ['technical-proposal.pdf', 'price-volume.pdf'],
+      assignedOpportunities: ['technical-proposal.pdf', 'price-volume.pdf'],
+    })
+
+    const updated = useStore.getState().opportunities.find(o => o.id === 'opp1')
+    expect(updated?.proposals).toEqual(['technical-proposal.pdf', 'price-volume.pdf'])
+    expect(updated?.assignedOpportunities).toEqual(['technical-proposal.pdf', 'price-volume.pdf'])
+  })
+
   it('removes opp from pipeline view (SUBMITTED ∉ OPP_VIEW_STATUSES)', () => {
     const opp = makeOpp({ id: 'opp1', status: 'ACTIVE' })
     useStore.setState({ opportunities: [opp] })

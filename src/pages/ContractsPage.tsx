@@ -412,7 +412,7 @@ function subkDocumentTotal(documents: LockedSubkDocuments) {
   return SUBK_DOCUMENT_SECTIONS.reduce((sum, section) => sum + (documents[section.key]?.length || 0), 0)
 }
 
-type ContractDrawerTab = 'overview' | 'poc' | 'subk' | 'lockSubk' | 'warnings' | 'deliverables'
+type ContractDrawerTab = 'overview' | 'proposal' | 'poc' | 'subk' | 'lockSubk' | 'warnings' | 'deliverables'
 
 function ContractDetailDrawer({
   contract,
@@ -465,6 +465,10 @@ function ContractDetailDrawer({
   const nextStatus = STATUS_FLOW[contract.status]
   const meta = STATUS_META[contract.status]
   const sourceOpportunity = contract.opportunityId ? opportunities.find(o => o.id === contract.opportunityId) : undefined
+  const proposalFiles = Array.from(new Set([
+    ...(sourceOpportunity?.proposals ?? []),
+    ...(sourceOpportunity?.assignedOpportunities ?? []),
+  ].map(name => name.trim()).filter(Boolean)))
   const sourcingEntries = subcontractors.length
     ? subcontractors
     : opportunities.flatMap(o => o.subcontractors || [])
@@ -565,6 +569,7 @@ function ContractDetailDrawer({
       <div className="flex-shrink-0 flex gap-0.5 px-3 py-2 overflow-x-auto" style={{ borderBottom: '1px solid var(--border-default)' }}>
         {[
           { key: 'overview', label: 'Overview', icon: Info },
+          { key: 'proposal', label: `Proposal Files (${proposalFiles.length})`, icon: FileText },
           { key: 'poc', label: `PoC (${(contract.pocs || []).length})`, icon: UserPlus },
           { key: 'subk', label: `Potential Subk (${subkCandidates.length})`, icon: Building2 },
           { key: 'lockSubk', label: `Lock Subk (${(contract.lockedSubcontractors || []).length})`, icon: Shield },
@@ -632,6 +637,46 @@ function ContractDetailDrawer({
                   </div>
                 ))}
               </div>
+            </div>
+
+            <div
+              className="rounded-xl border p-3"
+              style={{ background: 'rgba(8,24,37,0.72)', borderColor: 'rgba(215,190,122,0.24)' }}
+            >
+              <div className="mb-2 flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-wider text-[#F8E8B8]">Submitted Proposal</p>
+                  <p className="mt-0.5 text-[11px] text-slate-400">
+                    {sourceOpportunity?.submittedAt ? `Submitted ${formatDateTime(sourceOpportunity.submittedAt)}` : 'Linked from the source opportunity'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setTab('proposal')}
+                  className="btn-secondary gap-1 px-2.5 py-1 text-xs"
+                >
+                  <FileText size={12} /> Open
+                </button>
+              </div>
+              {proposalFiles.length > 0 ? (
+                <div className="space-y-1.5">
+                  {proposalFiles.slice(0, 2).map(file => (
+                    <div key={file} className="flex min-w-0 items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2">
+                      <Paperclip size={12} className="flex-shrink-0 text-[#F8E8B8]" />
+                      <span className="truncate text-xs font-bold text-slate-100">{file}</span>
+                    </div>
+                  ))}
+                  {proposalFiles.length > 2 && (
+                    <p className="text-[11px] font-semibold text-slate-400">
+                      + {proposalFiles.length - 2} more file reference{proposalFiles.length - 2 === 1 ? '' : 's'}
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <p className="rounded-lg border border-dashed border-white/10 px-3 py-3 text-xs text-slate-400">
+                  No proposal file reference is linked to this contract yet.
+                </p>
+              )}
             </div>
 
             {/* Details */}
@@ -731,6 +776,68 @@ function ContractDetailDrawer({
               >
                 <Trash2 size={12} /> Terminate Contract
               </button>
+            )}
+          </div>
+        )}
+
+        {/* PROPOSAL FILES TAB */}
+        {tab === 'proposal' && (
+          <div className="space-y-4">
+            <div
+              className="rounded-2xl border p-4"
+              style={{ background: 'rgba(8,24,37,0.72)', borderColor: 'rgba(215,190,122,0.24)' }}
+            >
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm font-black text-slate-100">Submitted proposal files</p>
+                  <p className="mt-1 text-xs text-slate-300">
+                    Proposal references captured when this opportunity was submitted.
+                  </p>
+                </div>
+                {sourceOpportunity && (
+                  <span className="rounded-full border border-[#D7BE7A]/30 bg-[#D7BE7A]/10 px-3 py-1 text-[10px] font-bold text-[#F8E8B8]">
+                    {sourceOpportunity.solicitationId}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {proposalFiles.length === 0 ? (
+              <div
+                className="rounded-2xl border border-dashed p-8 text-center"
+                style={{ background: 'rgba(255,255,255,0.04)', borderColor: 'rgba(215,190,122,0.22)' }}
+              >
+                <FileText size={24} className="mx-auto mb-3 text-slate-500" />
+                <p className="text-sm font-bold text-slate-200">No proposal files linked</p>
+                <p className="mt-1 text-xs text-slate-400">
+                  Submit proposal file references from Contract Opportunities and they will appear here once the opportunity becomes a contract.
+                </p>
+              </div>
+            ) : (
+              <div className="grid gap-3 md:grid-cols-2">
+                {proposalFiles.map((file, index) => (
+                  <div
+                    key={`${file}-${index}`}
+                    className="rounded-2xl border p-4"
+                    style={{ background: 'rgba(255,255,255,0.06)', borderColor: 'rgba(215,190,122,0.22)' }}
+                  >
+                    <div className="flex items-start gap-3">
+                      <div
+                        className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl"
+                        style={{ background: 'rgba(215,190,122,0.14)', color: '#F8E8B8', border: '1px solid rgba(215,190,122,0.30)' }}
+                      >
+                        <FileText size={16} />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-black text-slate-100" title={file}>{file}</p>
+                        <p className="mt-1 text-[11px] text-slate-400">
+                          {sourceOpportunity?.submittedAt ? `Submitted ${formatDateTime(sourceOpportunity.submittedAt)}` : 'Submitted proposal reference'}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
         )}
@@ -2107,6 +2214,7 @@ export default function ContractsPage() {
                       >
                         {[
                           { label: 'View Details', icon: ChevronRight, tab: 'overview' as ContractDrawerTab },
+                          { label: 'Proposal Files', icon: FileText, tab: 'proposal' as ContractDrawerTab },
                           { label: 'Add PoC', icon: UserPlus, tab: 'poc' as ContractDrawerTab },
                           { label: 'Lock Subk', icon: Building2, tab: 'lockSubk' as ContractDrawerTab },
                           { label: 'Issue Warning', icon: AlertTriangle, tab: 'warnings' as ContractDrawerTab },

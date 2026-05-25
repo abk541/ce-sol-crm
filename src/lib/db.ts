@@ -56,6 +56,8 @@ function oppToDb(o: Opportunity): Record<string, unknown> {
     submitted_at: o.submittedAt ?? null,
     non_submission_report_id: o.nonSubmissionReportId ?? null,
     assigned_to: o.assignedTo ?? null,
+    proposals: o.proposals ?? [],
+    assigned_opportunities: o.assignedOpportunities ?? o.proposals ?? [],
   }
 }
 
@@ -131,9 +133,10 @@ function dbToOpp(row: Record<string, unknown>): Partial<Opportunity> {
     submittedAt: row.submitted_at as string | undefined,
     nonSubmissionReportId: row.non_submission_report_id as string | undefined,
     assignedTo: row.assigned_to as string | undefined,
+    proposals: Array.isArray(row.proposals) ? row.proposals as string[] : [],
+    assignedOpportunities: Array.isArray(row.assigned_opportunities) ? row.assigned_opportunities as string[] : [],
     // Initialize nested arrays — loaded separately if needed
     comments: [],
-    proposals: [],
     subcontractors: [],
   }
 }

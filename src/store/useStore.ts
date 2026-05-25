@@ -85,7 +85,7 @@ interface AppState {
   createOpportunity: (o: Omit<Opportunity, 'id'>) => Promise<boolean>
   updateOpportunity: (id: string, data: Partial<Opportunity>) => Promise<boolean>
   assignOpportunity: (id: string, bdm: string, bds: string) => void
-  submitOpportunity: (id: string, values?: { contractAmount?: number; baseAmount?: number; monthlyPayment?: number }) => void
+  submitOpportunity: (id: string, values?: { contractAmount?: number; baseAmount?: number; monthlyPayment?: number; proposals?: string[]; assignedOpportunities?: string[] }) => void
   markOpportunityWon: (id: string) => void
   moveOpportunityToBDTracker: (id: string, status: BDSubmission['status'], comment?: string) => void
   syncDueOpportunities: () => void

@@ -1550,7 +1550,9 @@ function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () => void
 // ── Submit Modal ──────────────────────────────────────────────────────
 function SubmitModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) {
   const { submitOpportunity } = useStore()
-  const [proposals, setProposals] = useState<string[]>(opp.proposals ?? [])
+  const [proposals, setProposals] = useState<string[]>(() =>
+    Array.from(new Set([...(opp.proposals ?? []), ...(opp.assignedOpportunities ?? [])].filter(Boolean)))
+  )
   const [newFile, setNewFile] = useState('')
 
   // Financial fields vary by contract type
@@ -1577,7 +1579,7 @@ function SubmitModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }
     if (contractAmount) vals.contractAmount = parseFloat(contractAmount)
     if (yearlyValue)    vals.baseAmount     = parseFloat(yearlyValue)
     if (monthlyValue)   vals.monthlyPayment = parseFloat(monthlyValue)
-    submitOpportunity(opp.id, vals)
+    submitOpportunity(opp.id, { ...vals, proposals, assignedOpportunities: proposals })
     toast.success('Proposal submitted! Status updated.')
     onClose()
   }
