@@ -47,7 +47,6 @@ export const NAV_GROUPS: NavGroup[] = [
       { to: '/bd-tracker',        icon: TrendingUp,    label: 'BD Tracker' },
       { to: '/tracker',           icon: ListChecks,    label: 'Deletion Requests' },
       { to: '/non-submissions',   icon: ClipboardList, label: 'Non-Submissions Report' },
-      { to: '/past-performances', icon: History,       label: 'Past Performances' },
     ],
   },
   {
@@ -63,6 +62,7 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { to: '/subk-database', icon: Building2, label: 'Subk Database' },
       { to: '/database',      icon: Database,  label: 'INT-Database' },
+      { to: '/past-performances', icon: History, label: 'Past Performances' },
     ],
   },
   {
