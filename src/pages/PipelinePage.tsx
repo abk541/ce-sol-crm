@@ -2803,11 +2803,6 @@ export default function PipelinePage() {
                 <DrawerField label="Captured On" value={selectedOpp.capturedOn} variant="premium" />
               </DrawerSection>
 
-              <DrawerSection title="Financials" variant="premium">
-                <DrawerField label="Contract Amount"  value={selectedOpp.contractAmount ? formatCurrency(selectedOpp.contractAmount) : '-'} variant="premium" />
-                <DrawerField label="Base Amount"      value={selectedOpp.baseAmount ? formatCurrency(selectedOpp.baseAmount) : '-'} variant="premium" />
-                <DrawerField label="Monthly Payment"  value={selectedOpp.monthlyPayment ? formatCurrency(selectedOpp.monthlyPayment) + '/mo' : '-'} variant="premium" />
-              </DrawerSection>
             </div>
 
             {selectedOpp.mandatoryEvents && (
