@@ -1805,8 +1805,32 @@ export default function ContractsPage() {
 
   const tabDef = C_TABS.find(t => t.key === tab) ?? C_TABS[0]
 
+  const assignmentFor = (c: Contract) => {
+    const assignedEmployee = c.assignedTo ? employees.find(e => e.id === c.assignedTo) : null
+    const primaryName = assignedEmployee?.name || c.supportAgent || c.pm || c.spm || c.bds || c.bdm || ''
+    const primaryRole = assignedEmployee
+      ? (ROLE_LABEL_C[assignedEmployee.role] ?? assignedEmployee.role)
+      : c.supportAgent
+        ? 'Contract Specialist'
+        : c.pm
+          ? 'PM'
+          : c.spm
+            ? 'SPM'
+            : c.bds
+              ? 'Operations Team Lead'
+              : c.bdm
+                ? 'Operations Manager'
+                : ''
+    const secondary = [
+      c.bdm ? `Manager: ${c.bdm}` : '',
+      c.bds ? `Team Lead: ${c.bds}` : '',
+    ].filter(Boolean).join(' - ')
+
+    return { employee: assignedEmployee, primaryName, primaryRole, secondary }
+  }
+
   const rowValue = (c: Contract, key: string) => {
-    const assignee = c.assignedTo ? employees.find(e => e.id === c.assignedTo)?.name : ''
+    const assignment = assignmentFor(c)
     const activeWarnings = (c.governmentWarnings || []).filter(w => !w.resolvedAt).map(w => GOV_WARNING_META[w.type]?.label || w.type).join(', ')
     const values: Record<string, string> = {
       title: c.title,
@@ -1817,7 +1841,7 @@ export default function ContractsPage() {
       popStart: c.popStart,
       popEnd: c.popEnd,
       value: String(c.value ?? ''),
-      assigned: assignee || c.supportAgent || '',
+      assigned: [assignment.primaryName, assignment.primaryRole, assignment.secondary].filter(Boolean).join(' '),
       flags: activeWarnings,
       naicsCode: c.naicsCode,
       setAside: c.setAside ?? '',
@@ -1835,7 +1859,7 @@ export default function ContractsPage() {
     { key: 'naicsCode', label: 'NAICS' },
     { key: 'setAside', label: 'Set Aside' },
     { key: 'client', label: 'Client' },
-    { key: 'assigned', label: 'Assigned' },
+    { key: 'assigned', label: 'Assigned To' },
     { key: 'flags', label: 'Flags' },
   ] as const
 
@@ -1855,7 +1879,10 @@ export default function ContractsPage() {
         c.contractId.toLowerCase().includes(q) ||
         c.location.toLowerCase().includes(q) ||
         (c.spm ?? '').toLowerCase().includes(q) ||
-        (c.pm ?? '').toLowerCase().includes(q)
+        (c.pm ?? '').toLowerCase().includes(q) ||
+        (c.bdm ?? '').toLowerCase().includes(q) ||
+        (c.bds ?? '').toLowerCase().includes(q) ||
+        (c.supportAgent ?? '').toLowerCase().includes(q)
       )
     }
     if (period) list = list.filter(c => filterByPeriod(c.popEnd, period))
@@ -1985,7 +2012,7 @@ export default function ContractsPage() {
                 <SortHeader col="location" label="Location" currentKey={sortKey} dir={sortDir} onSort={handleSort} />
                 <th>POP</th>
                 <SortHeader col="value" label="Value" currentKey={sortKey} dir={sortDir} onSort={handleSort} />
-                <th>Assigned</th>
+                <th>Assigned To</th>
                 <th>Flags</th>
                 <th></th>
               </tr>
@@ -2033,16 +2060,23 @@ export default function ContractsPage() {
                     <td className="text-xs font-semibold text-emerald-600 whitespace-nowrap">{formatCurrency(c.value)}</td>
                     <td className="text-xs">
                       {(() => {
-                        const emp = c.assignedTo ? employees.find(e => e.id === c.assignedTo) : null
+                        const assignment = assignmentFor(c)
+                        const assignedEmployee = c.assignedTo ? employees.find(e => e.id === c.assignedTo) : null
+                        const emp = assignedEmployee || (assignment.primaryName ? { name: assignment.primaryName, role: 'ASSOCIATE' as const } : null)
                         if (!emp) return <span className="text-slate-400">—</span>
                         const rc = ROLE_COLOR_C[emp.role] ?? ROLE_COLOR_C.ASSOCIATE
                         return (
-                          <div className="flex flex-col gap-0.5">
-                            <span className="text-xs text-slate-700 font-medium whitespace-nowrap">{emp.name}</span>
+                          <div className="flex min-w-[180px] flex-col gap-1">
+                            <span className="text-xs text-slate-700 font-semibold whitespace-nowrap">{assignment.primaryName || emp.name}</span>
                             <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full w-fit"
                               style={{ color: rc.color, background: rc.bg, border: `1px solid ${rc.border}` }}>
-                              {ROLE_LABEL_C[emp.role] ?? emp.role}
+                              {assignment.primaryRole || (ROLE_LABEL_C[emp.role] ?? emp.role)}
                             </span>
+                            {assignment.secondary && (
+                              <span className="max-w-[220px] truncate text-[10px] text-slate-400" title={assignment.secondary}>
+                                {assignment.secondary}
+                              </span>
+                            )}
                           </div>
                         )
                       })()}
