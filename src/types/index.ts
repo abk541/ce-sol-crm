@@ -224,6 +224,7 @@ export interface Opportunity {
   comments: Comment[]
   assignedOpportunities?: string[]   // formerly "proposals"
   proposals?: string[]               // kept for legacy compat
+  proposalAttachments?: FileAttachment[]
   subcontractors?: Subcontractor[]
   period: string
   capturedOn: string

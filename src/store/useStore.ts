@@ -6,7 +6,7 @@ import type {
   NonSubmissionReport, DeletionRequest, FreshAward,
   PastPerformance, SubkDatabaseEntry, ActivityLog,
   ContractPoC, LockedSubcontractor, GovernmentWarning, Employee,
-  BDSubmission,
+  BDSubmission, FileAttachment,
 } from '../types'
 import {
   MOCK_USERS, MOCK_OPPORTUNITIES, MOCK_NOTIFICATIONS,
@@ -85,7 +85,7 @@ interface AppState {
   createOpportunity: (o: Omit<Opportunity, 'id'>) => Promise<boolean>
   updateOpportunity: (id: string, data: Partial<Opportunity>) => Promise<boolean>
   assignOpportunity: (id: string, bdm: string, bds: string) => void
-  submitOpportunity: (id: string, values?: { contractAmount?: number; baseAmount?: number; monthlyPayment?: number; proposals?: string[]; assignedOpportunities?: string[] }) => void
+  submitOpportunity: (id: string, values?: { contractAmount?: number; baseAmount?: number; monthlyPayment?: number; proposals?: string[]; assignedOpportunities?: string[]; proposalAttachments?: FileAttachment[] }) => void
   markOpportunityWon: (id: string) => void
   moveOpportunityToBDTracker: (id: string, status: BDSubmission['status'], comment?: string) => void
   syncDueOpportunities: () => void

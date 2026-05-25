@@ -47,7 +47,7 @@ vi.mock('../lib/supabase', () => ({
 
 import { useStore } from '../store/useStore'
 import { findActiveOpportunityDuplicate, upsertOpportunity } from '../lib/db'
-import type { Opportunity, Contract, OppStatus, ContractStatus, Employee } from '../types'
+import type { Opportunity, Contract, OppStatus, ContractStatus, Employee, FileAttachment } from '../types'
 
 // ── Pipeline view filter (mirrors PipelinePage) ───────────────────────
 const OPP_VIEW_STATUSES: OppStatus[] = ['ACTIVE', 'NEW_ASSIGNMENT', 'DISCUSSION']
@@ -225,16 +225,27 @@ describe('1 · submitOpportunity', () => {
 
   it('stores submitted proposal file references', () => {
     const opp = makeOpp({ id: 'opp1' })
+    const attachment: FileAttachment = {
+      id: 'proposal-file-1',
+      name: 'technical-proposal.pdf',
+      attachedAt: '2026-05-26T10:00:00.000Z',
+      uploadedBy: 'abk',
+      dataUrl: 'data:application/pdf;base64,AA==',
+      mimeType: 'application/pdf',
+      size: 1,
+    }
     useStore.setState({ opportunities: [opp] })
 
     useStore.getState().submitOpportunity('opp1', {
-      proposals: ['technical-proposal.pdf', 'price-volume.pdf'],
-      assignedOpportunities: ['technical-proposal.pdf', 'price-volume.pdf'],
+      proposals: ['technical-proposal.pdf'],
+      assignedOpportunities: ['technical-proposal.pdf'],
+      proposalAttachments: [attachment],
     })
 
     const updated = useStore.getState().opportunities.find(o => o.id === 'opp1')
-    expect(updated?.proposals).toEqual(['technical-proposal.pdf', 'price-volume.pdf'])
-    expect(updated?.assignedOpportunities).toEqual(['technical-proposal.pdf', 'price-volume.pdf'])
+    expect(updated?.proposals).toEqual(['technical-proposal.pdf'])
+    expect(updated?.assignedOpportunities).toEqual(['technical-proposal.pdf'])
+    expect(updated?.proposalAttachments).toEqual([attachment])
   })
 
   it('removes opp from pipeline view (SUBMITTED ∉ OPP_VIEW_STATUSES)', () => {

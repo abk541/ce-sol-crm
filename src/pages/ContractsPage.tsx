@@ -469,6 +469,16 @@ function ContractDetailDrawer({
     ...(sourceOpportunity?.proposals ?? []),
     ...(sourceOpportunity?.assignedOpportunities ?? []),
   ].map(name => name.trim()).filter(Boolean)))
+  const uploadedProposalAttachments = sourceOpportunity?.proposalAttachments ?? []
+  const uploadedProposalNames = new Set(uploadedProposalAttachments.map(att => att.name.trim()).filter(Boolean))
+  const proposalAttachments = [
+    ...uploadedProposalAttachments,
+    ...legacyAttachments(
+      proposalFiles.filter(name => !uploadedProposalNames.has(name)),
+      sourceOpportunity?.bdm || 'Submitted Proposal',
+    ),
+  ]
+  const proposalCount = proposalAttachments.length
   const sourcingEntries = subcontractors.length
     ? subcontractors
     : opportunities.flatMap(o => o.subcontractors || [])
@@ -569,7 +579,7 @@ function ContractDetailDrawer({
       <div className="flex-shrink-0 flex gap-0.5 px-3 py-2 overflow-x-auto" style={{ borderBottom: '1px solid var(--border-default)' }}>
         {[
           { key: 'overview', label: 'Overview', icon: Info },
-          { key: 'proposal', label: `Proposal Files (${proposalFiles.length})`, icon: FileText },
+          { key: 'proposal', label: `Proposal Files (${proposalCount})`, icon: FileText },
           { key: 'poc', label: `PoC (${(contract.pocs || []).length})`, icon: UserPlus },
           { key: 'subk', label: `Potential Subk (${subkCandidates.length})`, icon: Building2 },
           { key: 'lockSubk', label: `Lock Subk (${(contract.lockedSubcontractors || []).length})`, icon: Shield },
@@ -658,23 +668,23 @@ function ContractDetailDrawer({
                   <FileText size={12} /> Open
                 </button>
               </div>
-              {proposalFiles.length > 0 ? (
+              {proposalAttachments.length > 0 ? (
                 <div className="space-y-1.5">
-                  {proposalFiles.slice(0, 2).map(file => (
-                    <div key={file} className="flex min-w-0 items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2">
+                  {proposalAttachments.slice(0, 2).map(att => (
+                    <div key={att.id} className="flex min-w-0 items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2">
                       <Paperclip size={12} className="flex-shrink-0 text-[#F8E8B8]" />
-                      <span className="truncate text-xs font-bold text-slate-100">{file}</span>
+                      <span className="truncate text-xs font-bold text-slate-100">{att.name}</span>
                     </div>
                   ))}
-                  {proposalFiles.length > 2 && (
+                  {proposalAttachments.length > 2 && (
                     <p className="text-[11px] font-semibold text-slate-400">
-                      + {proposalFiles.length - 2} more file reference{proposalFiles.length - 2 === 1 ? '' : 's'}
+                      + {proposalAttachments.length - 2} more file{proposalAttachments.length - 2 === 1 ? '' : 's'}
                     </p>
                   )}
                 </div>
               ) : (
                 <p className="rounded-lg border border-dashed border-white/10 px-3 py-3 text-xs text-slate-400">
-                  No proposal file reference is linked to this contract yet.
+                  No proposal file is linked to this contract yet.
                 </p>
               )}
             </div>
@@ -802,7 +812,7 @@ function ContractDetailDrawer({
               </div>
             </div>
 
-            {proposalFiles.length === 0 ? (
+            {proposalAttachments.length === 0 ? (
               <div
                 className="rounded-2xl border border-dashed p-8 text-center"
                 style={{ background: 'rgba(255,255,255,0.04)', borderColor: 'rgba(215,190,122,0.22)' }}
@@ -815,9 +825,9 @@ function ContractDetailDrawer({
               </div>
             ) : (
               <div className="grid gap-3 md:grid-cols-2">
-                {proposalFiles.map((file, index) => (
+                {proposalAttachments.map((att, index) => (
                   <div
-                    key={`${file}-${index}`}
+                    key={`${att.id}-${index}`}
                     className="rounded-2xl border p-4"
                     style={{ background: 'rgba(255,255,255,0.06)', borderColor: 'rgba(215,190,122,0.22)' }}
                   >
@@ -829,10 +839,34 @@ function ContractDetailDrawer({
                         <FileText size={16} />
                       </div>
                       <div className="min-w-0">
-                        <p className="truncate text-sm font-black text-slate-100" title={file}>{file}</p>
+                        <p className="truncate text-sm font-black text-slate-100" title={att.name}>{att.name}</p>
                         <p className="mt-1 text-[11px] text-slate-400">
-                          {sourceOpportunity?.submittedAt ? `Submitted ${formatDateTime(sourceOpportunity.submittedAt)}` : 'Submitted proposal reference'}
+                          {att.attachedAt ? formatDateTime(att.attachedAt) : sourceOpportunity?.submittedAt ? `Submitted ${formatDateTime(sourceOpportunity.submittedAt)}` : 'Submitted proposal file'}
+                          {formatFileSize(att.size) ? ` - ${formatFileSize(att.size)}` : ''}
                         </p>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() => viewAttachment(att)}
+                            disabled={!att.dataUrl}
+                            className="flex items-center gap-1.5 rounded-lg bg-white px-2.5 py-1.5 text-[11px] font-black text-slate-900 transition-colors hover:bg-[#F8E8B8] disabled:cursor-not-allowed disabled:opacity-45"
+                          >
+                            <Eye size={12} /> View
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => downloadAttachment(att)}
+                            disabled={!att.dataUrl}
+                            className="flex items-center gap-1.5 rounded-lg border border-[#D7BE7A]/35 bg-[#D7BE7A]/15 px-2.5 py-1.5 text-[11px] font-black text-[#F8E8B8] transition-colors hover:bg-[#D7BE7A]/25 disabled:cursor-not-allowed disabled:opacity-45"
+                          >
+                            <Download size={12} /> Download
+                          </button>
+                          {!att.dataUrl && (
+                            <span className="rounded-lg border border-slate-500/25 bg-slate-500/10 px-2.5 py-1.5 text-[11px] font-bold text-slate-400">
+                              Metadata only
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>

@@ -1,11 +1,11 @@
-import { useState, useMemo } from 'react'
+import { useRef, useState, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Plus, X, ExternalLink, Loader,
   ChevronUp, ChevronDown, ChevronsUpDown,
   Edit2, Users2, Send, Trash2, Clock,
-  FileText, PlusCircle, Download, Filter, MoreHorizontal,
+  FileText, PlusCircle, Download, Filter, MoreHorizontal, Upload,
   Ban, ChevronLeft, ChevronRight,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
@@ -200,6 +200,41 @@ function toDatetimeLocal(value: string) {
   if (!Number.isFinite(d.getTime())) return ''
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+function formatFileSize(size?: number) {
+  if (!size) return ''
+  if (size < 1024) return `${size} B`
+  if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function legacyProposalAttachment(name: string, index: number, uploadedBy: string): FileAttachment {
+  return {
+    id: `legacy-proposal-${index}-${name}`,
+    name,
+    attachedAt: '',
+    uploadedBy,
+  }
+}
+
+function fileToProposalAttachment(file: File, attachedAt: string, uploadedBy: string): Promise<FileAttachment> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      resolve({
+        id: crypto.randomUUID(),
+        name: file.name,
+        attachedAt: new Date(attachedAt).toISOString(),
+        uploadedBy,
+        dataUrl: typeof reader.result === 'string' ? reader.result : undefined,
+        mimeType: file.type || undefined,
+        size: file.size,
+      })
+    }
+    reader.onerror = () => reject(new Error('File could not be read.'))
+    reader.readAsDataURL(file)
+  })
 }
 
 function CommentAttachmentPicker({
@@ -1549,11 +1584,16 @@ function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () => void
 
 // ── Submit Modal ──────────────────────────────────────────────────────
 function SubmitModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) {
-  const { submitOpportunity } = useStore()
-  const [proposals, setProposals] = useState<string[]>(() =>
-    Array.from(new Set([...(opp.proposals ?? []), ...(opp.assignedOpportunities ?? [])].filter(Boolean)))
-  )
-  const [newFile, setNewFile] = useState('')
+  const { submitOpportunity, currentUser } = useStore()
+  const uploadedBy = currentUser?.username ?? currentUser?.name ?? 'current_user'
+  const [proposalAttachments, setProposalAttachments] = useState<FileAttachment[]>(() => {
+    if (opp.proposalAttachments?.length) return opp.proposalAttachments
+    const legacyNames = Array.from(new Set([...(opp.proposals ?? []), ...(opp.assignedOpportunities ?? [])].filter(Boolean)))
+    return legacyNames.map((name, index) => legacyProposalAttachment(name, index, uploadedBy))
+  })
+  const [selectedProposalFile, setSelectedProposalFile] = useState<File | null>(null)
+  const [proposalAttachedAt, setProposalAttachedAt] = useState(() => toDatetimeLocal(new Date().toISOString()))
+  const proposalFileInputRef = useRef<HTMLInputElement>(null)
 
   // Financial fields vary by contract type
   const isOTJ       = opp.type === 'OTJ'
@@ -1572,14 +1612,33 @@ function SubmitModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }
     }
   }
 
-  const addFile = () => { if (!newFile.trim()) return; setProposals(p => [...p, newFile.trim()]); setNewFile('') }
+  const addFile = async () => {
+    if (!selectedProposalFile || !proposalAttachedAt) return
+    try {
+      const attachment = await fileToProposalAttachment(selectedProposalFile, proposalAttachedAt, uploadedBy)
+      setProposalAttachments(prev => [...prev, attachment])
+      setSelectedProposalFile(null)
+      setProposalAttachedAt(toDatetimeLocal(new Date().toISOString()))
+      if (proposalFileInputRef.current) proposalFileInputRef.current.value = ''
+      toast.success('Proposal file uploaded')
+    } catch (err) {
+      console.error(err)
+      toast.error('Proposal file could not be uploaded.')
+    }
+  }
 
   const confirm = () => {
     const vals: { contractAmount?: number; baseAmount?: number; monthlyPayment?: number } = {}
     if (contractAmount) vals.contractAmount = parseFloat(contractAmount)
     if (yearlyValue)    vals.baseAmount     = parseFloat(yearlyValue)
     if (monthlyValue)   vals.monthlyPayment = parseFloat(monthlyValue)
-    submitOpportunity(opp.id, { ...vals, proposals, assignedOpportunities: proposals })
+    const proposalNames = proposalAttachments.map(att => att.name).filter(Boolean)
+    submitOpportunity(opp.id, {
+      ...vals,
+      proposals: proposalNames,
+      assignedOpportunities: proposalNames,
+      proposalAttachments,
+    })
     toast.success('Proposal submitted! Status updated.')
     onClose()
   }
@@ -1661,23 +1720,48 @@ function SubmitModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }
 
         <div>
           <label className="block text-xs font-semibold text-slate-600 mb-2">Proposal Files</label>
-          {proposals.length === 0 && <p className="text-xs text-slate-400 mb-2">No files attached yet</p>}
-          <div className="space-y-1 mb-2">
-            {proposals.map((f, i) => (
-              <div key={i} className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-100">
+          {proposalAttachments.length === 0 && <p className="text-xs text-slate-400 mb-2">No files attached yet</p>}
+          <div className="space-y-1.5 mb-3">
+            {proposalAttachments.map((att, i) => (
+              <div key={att.id} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-50 border border-slate-100">
                 <FileText size={11} className="flex-shrink-0 text-slate-400" />
-                <span className="text-xs text-slate-700 flex-1 truncate">{f}</span>
-                <button onClick={() => setProposals(p => p.filter((_, j) => j !== i))} className="text-slate-400 hover:text-red-400 transition-colors">
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs text-slate-700 truncate font-semibold">{att.name}</p>
+                  <p className="text-[10px] text-slate-400">
+                    {att.attachedAt ? formatDateTime(att.attachedAt) : 'Saved file reference'}
+                    {formatFileSize(att.size) ? ` - ${formatFileSize(att.size)}` : ''}
+                  </p>
+                </div>
+                <button type="button" onClick={() => setProposalAttachments(p => p.filter((_, j) => j !== i))} className="text-slate-400 hover:text-red-400 transition-colors" aria-label={`Remove ${att.name}`}>
                   <X size={10} />
                 </button>
               </div>
             ))}
           </div>
-          <div className="flex gap-2">
-            <input value={newFile} onChange={e => setNewFile(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), addFile())}
-              className="input-field flex-1 text-xs" placeholder="e.g. Proposal_Final_v2.pdf" />
-            <button type="button" onClick={addFile} className="btn-secondary text-xs px-3">Add</button>
+          <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
+            <div className="grid gap-2 md:grid-cols-[1fr_170px_auto]">
+              <input
+                ref={proposalFileInputRef}
+                type="file"
+                onChange={e => setSelectedProposalFile(e.target.files?.[0] ?? null)}
+                className="input-field text-xs file:mr-3 file:rounded-lg file:border-0 file:bg-[#D7BE7A] file:px-3 file:py-1.5 file:text-xs file:font-bold file:text-[#07131F]"
+              />
+              <input
+                type="datetime-local"
+                value={proposalAttachedAt}
+                onChange={e => setProposalAttachedAt(e.target.value)}
+                className="input-field text-xs"
+                required
+              />
+              <button
+                type="button"
+                onClick={addFile}
+                disabled={!selectedProposalFile || !proposalAttachedAt}
+                className="btn-secondary justify-center text-xs px-3 disabled:opacity-40"
+              >
+                <Upload size={12} /> Add
+              </button>
+            </div>
           </div>
         </div>
 
@@ -1706,7 +1790,7 @@ function CreateModal({ onClose }: { onClose: () => void }) {
     capturedOn: new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }),
     bdm: '', bds: '', naicsCode: '', solicitationId: '', solicitation: '',
     client: '', location: '', dueDate: '', localTime: '', timezone: 'Africa/Casablanca',
-    comments: [], proposals: [], subcontractors: [], assignedTo: undefined,
+    comments: [], proposals: [], proposalAttachments: [], subcontractors: [], assignedTo: undefined,
   })
   const allowedAssignees = useMemo(
     () => assignableEmployeesForUser(employees, currentUser).map(employee => employee.id),

@@ -24,6 +24,9 @@ import {
 // ── Opportunity mappers ──────────────────────────────────────────────────────
 
 function oppToDb(o: Opportunity): Record<string, unknown> {
+  const proposalNames = o.proposals?.length ? o.proposals : attachmentNames(o.proposalAttachments) ?? []
+  const assignedOpportunityNames = o.assignedOpportunities?.length ? o.assignedOpportunities : proposalNames
+
   return {
     id: o.id,
     solicitation: o.solicitation,
@@ -56,8 +59,9 @@ function oppToDb(o: Opportunity): Record<string, unknown> {
     submitted_at: o.submittedAt ?? null,
     non_submission_report_id: o.nonSubmissionReportId ?? null,
     assigned_to: o.assignedTo ?? null,
-    proposals: o.proposals ?? [],
-    assigned_opportunities: o.assignedOpportunities ?? o.proposals ?? [],
+    proposals: proposalNames,
+    assigned_opportunities: assignedOpportunityNames,
+    proposal_attachments: normalizeStoredAttachments(o.proposalAttachments),
   }
 }
 
@@ -135,6 +139,7 @@ function dbToOpp(row: Record<string, unknown>): Partial<Opportunity> {
     assignedTo: row.assigned_to as string | undefined,
     proposals: Array.isArray(row.proposals) ? row.proposals as string[] : [],
     assignedOpportunities: Array.isArray(row.assigned_opportunities) ? row.assigned_opportunities as string[] : [],
+    proposalAttachments: normalizeStoredAttachments(row.proposal_attachments),
     // Initialize nested arrays — loaded separately if needed
     comments: [],
     subcontractors: [],
