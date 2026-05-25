@@ -2185,34 +2185,34 @@ function DueDateTimeCell({ opp }: { opp: Opportunity }) {
   const dueDateFull = opp.dueDate
     ? new Date(opp.dueDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
     : '-'
-  const localTime = formatLocalDueTimeShared(opp.localTime, opp.timezone)
-  const moroccoTime = formatMoroccoDisplay(opp.localTime, opp.timezone, opp.dueDate, opp.moroccoTime, opp.moroccoDate)
+  const samGovTime = formatLocalDueTimeShared(opp.localTime, opp.timezone)
+  const localTime = formatMoroccoDisplay(opp.localTime, opp.timezone, opp.dueDate, opp.moroccoTime, opp.moroccoDate)
 
   return (
     <div className="group relative inline-flex">
       <div className={`min-w-[132px] rounded-xl border px-2.5 py-1.5 ${dueDateColor(opp.dueDate)} shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]`}>
         <p className="text-xs font-bold leading-tight">{dueDateLabel}</p>
         <p className="mt-0.5 flex items-center gap-1 text-[10px] font-semibold opacity-80">
-          <Clock size={10} /> {localTime}
+          <Clock size={10} /> {samGovTime}
         </p>
       </div>
       <div className="pointer-events-none absolute left-0 top-[calc(100%+8px)] z-[90] w-72 translate-y-1 rounded-2xl border border-[#D7BE7A]/25 bg-[#06131F] p-3 text-left opacity-0 shadow-[0_18px_46px_rgba(0,0,0,0.38)] transition-all duration-150 group-hover:translate-y-0 group-hover:opacity-100">
         <div className="mb-2 flex items-center justify-between gap-3 border-b border-white/10 pb-2">
-          <p className="text-[10px] font-black uppercase tracking-[0.18em] text-[#D7BE7A]">Due Date Time</p>
+          <p className="text-[10px] font-black uppercase tracking-[0.18em] text-[#D7BE7A]">Local Time</p>
           <Clock size={13} className="text-[#D7BE7A]" />
         </div>
         <div className="space-y-2 text-xs">
+          <div className="rounded-xl border border-emerald-300/20 bg-emerald-300/10 p-2">
+            <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-200">Morocco local time</p>
+            <p className="mt-0.5 text-sm font-black text-emerald-100">{localTime}</p>
+          </div>
           <div className="flex items-start justify-between gap-3">
-            <span className="text-slate-400">Due date</span>
+            <span className="text-slate-400">SAM.gov date</span>
             <span className="text-right font-bold text-[#F8FBF7]">{dueDateFull}</span>
           </div>
           <div className="flex items-start justify-between gap-3">
-            <span className="text-slate-400">Source time</span>
-            <span className="text-right font-bold text-[#F8FBF7]">{localTime}</span>
-          </div>
-          <div className="rounded-xl border border-emerald-300/20 bg-emerald-300/10 p-2">
-            <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-200">Morocco time</p>
-            <p className="mt-0.5 text-sm font-black text-emerald-100">{moroccoTime}</p>
+            <span className="text-slate-400">SAM.gov time</span>
+            <span className="text-right font-bold text-[#F8FBF7]">{samGovTime}</span>
           </div>
         </div>
       </div>
