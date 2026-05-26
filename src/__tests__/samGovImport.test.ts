@@ -1,18 +1,19 @@
 import { describe, expect, it } from 'vitest'
 import {
   applyScheduleFieldChange,
+  formatOpportunityMoroccoDueDateTime,
+  formatOpportunitySourceDueDateTime,
+  timezoneCodeForDisplay,
+} from '../pages/PipelinePage'
+import {
   buildSamGovOpportunityEndpoint,
   extractSamGovAgency,
   extractSamGovDeadlineTimezone,
-  formatOpportunityMoroccoDueDateTime,
-  formatOpportunitySourceDueDateTime,
-  formatTime12h,
   getSamGovPostedRange,
   mapSamGovOpportunityToForm,
   parseSamGovDeadline,
-  timezoneCodeForDisplay,
-} from '../pages/PipelinePage'
-import { formatMoroccoDueTime, opportunityDeadlineTimeMs } from '../lib/timezone'
+} from '../lib/samGov'
+import { formatMoroccoDueTime, formatTime12h, opportunityDeadlineTimeMs } from '../lib/timezone'
 
 const NOW = new Date('2026-05-18T12:00:00Z')
 

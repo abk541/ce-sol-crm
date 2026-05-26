@@ -20,10 +20,11 @@ import PeriodFilter, { type Period, filterByPeriod } from '../components/shared/
 import HierarchyAssignPicker from '../components/shared/HierarchyAssignPicker'
 import FloatingActionMenu from '../components/shared/FloatingActionMenu'
 import {
+  formatTime12h,
   formatLocalDueTime as formatLocalDueTimeShared,
   formatMoroccoDueTime as formatMoroccoDueTimeShared,
   fixedOffsetMinutes,
-  ianaTimeZoneFromOffset,
+  isCompleteClockTime,
   isValidIanaTimeZone,
   normalizeUtcOffset,
   opportunityDeadlineTimeMs,
@@ -31,6 +32,10 @@ import {
   timezoneLabelFromOffset,
   utcToMoroccoClock,
 } from '../lib/timezone'
+import {
+  buildSamGovOpportunityEndpoint,
+  mapSamGovOpportunityToForm,
+} from '../lib/samGov'
 
 // ── Constants ─────────────────────────────────────────────────────────
 const TYPES_DISPLAY: { value: string; label: string }[] = [
@@ -43,29 +48,6 @@ const TYPES_DISPLAY: { value: string; label: string }[] = [
 ]
 const SET_ASIDES = ['SB', 'SDVOSB', 'WOSB', 'HUBZone', 'VOSB', '8(a)', 'UNRES']
 const PRIORITIES: Priority[] = ['MEDIUM', 'HIGH', 'VERY_HIGH']
-const SAM_TIMEZONE_ALIASES: Record<string, string> = {
-  EST: 'America/New_York',
-  EDT: 'America/New_York',
-  CST: 'America/Chicago',
-  CDT: 'America/Chicago',
-  MST: 'America/Denver',
-  MDT: 'America/Denver',
-  PST: 'America/Los_Angeles',
-  PDT: 'America/Los_Angeles',
-  HST: 'Pacific/Honolulu',
-  GMT: 'Europe/London',
-  UTC: 'UTC',
-  'EASTERN STANDARD TIME': 'America/New_York',
-  'EASTERN DAYLIGHT TIME': 'America/New_York',
-  'CENTRAL STANDARD TIME': 'America/Chicago',
-  'CENTRAL DAYLIGHT TIME': 'America/Chicago',
-  'MOUNTAIN STANDARD TIME': 'America/Denver',
-  'MOUNTAIN DAYLIGHT TIME': 'America/Denver',
-  'PACIFIC STANDARD TIME': 'America/Los_Angeles',
-  'PACIFIC DAYLIGHT TIME': 'America/Los_Angeles',
-  'HAWAII STANDARD TIME': 'Pacific/Honolulu',
-  'GREENWICH MEAN TIME': 'Europe/London',
-}
 
 // Pre-submission view statuses only
 const OPP_VIEW_STATUSES: OppStatus[] = ['ACTIVE', 'NEW_ASSIGNMENT', 'DISCUSSION']
@@ -84,61 +66,6 @@ const TIMEZONE_CODE_OPTIONS = Array.from(new Set([
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100, 0] // 0 = All
 function getBuildSamGovApiKey() {
   return ((import.meta.env.VITE_SAM_GOV_API_KEY as string | undefined) ?? '').trim()
-}
-
-export function formatSamGovDate(d: Date) {
-  const mm = String(d.getMonth() + 1).padStart(2, '0')
-  const dd = String(d.getDate()).padStart(2, '0')
-  return `${mm}/${dd}/${d.getFullYear()}`
-}
-
-function samGovEasternToday(now = new Date()) {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/New_York',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(now)
-  const value = (type: string) => parts.find(part => part.type === type)?.value ?? ''
-  return new Date(`${value('year')}-${value('month')}-${value('day')}T12:00:00Z`)
-}
-
-export function getSamGovPostedRange(now = new Date()) {
-  const postedTo = samGovEasternToday(now)
-  const postedFrom = new Date(postedTo)
-  postedFrom.setFullYear(postedTo.getFullYear() - 1)
-  postedFrom.setDate(postedFrom.getDate() + 1)
-  return {
-    postedFrom: formatSamGovDate(postedFrom),
-    postedTo: formatSamGovDate(postedTo),
-  }
-}
-
-export function buildSamGovOpportunityEndpoint(url: string, apiKey: string, now = new Date()) {
-  const trimmedUrl = url.trim()
-  const trimmedKey = apiKey.trim()
-  if (!trimmedUrl) throw new Error('SAM.gov URL is required.')
-  if (!trimmedKey) throw new Error('SAM.gov API key is required.')
-
-  const oppIdMatch = trimmedUrl.match(/\/opp\/([a-f0-9]{32})/i)
-  const solNumMatch = trimmedUrl.match(/[?&]q=([^&]+)/) || trimmedUrl.match(/\/([A-Z0-9\-]{6,})\/?(?:view)?$/i)
-  const solNum = solNumMatch ? decodeURIComponent(solNumMatch[1]).trim() : ''
-  if (!oppIdMatch && (!solNum || !/\d/.test(solNum))) {
-    throw new Error('Could not parse the SAM.gov URL. Paste the full URL from the opportunity page.')
-  }
-
-  const { postedFrom, postedTo } = getSamGovPostedRange(now)
-  const params = new URLSearchParams({
-    limit: '1',
-    offset: '0',
-    api_key: trimmedKey,
-    postedFrom,
-    postedTo,
-  })
-  if (oppIdMatch) params.set('noticeid', oppIdMatch[1])
-  else params.set('solnum', solNum)
-
-  return `https://api.sam.gov/opportunities/v2/search?${params.toString()}`
 }
 
 async function readSamGovError(res: Response) {
@@ -282,193 +209,6 @@ function CommentAttachments({ attachments }: { attachments?: FileAttachment[] })
   )
 }
 
-/**
- * Maps a fixed UTC-offset string (e.g. "-05:00") to a TIMEZONES abbreviation
- * key. US offsets pick the daylight or standard label that matches the actual
- * offset — e.g. -04:00 is EDT (Eastern Daylight), -05:00 is EST (Eastern
- * Standard). SAM.gov sends the explicit offset in effect at the deadline,
- * so this preserves the same abbreviation the SAM.gov UI shows.
- */
-function offsetToTzAbbrev(offset: string): string {
-  const MAP: Record<string, string> = {
-    Z: 'GMT', '+00:00': 'GMT', '-00:00': 'GMT',
-    '-04:00': 'EDT',   // Eastern Daylight (was incorrectly mapped to EST)
-    '-05:00': 'EST',   // Eastern Standard
-    '-06:00': 'CST',   // Central Standard (also CDT in some agencies — defaulting to CST)
-    '-07:00': 'MST',   // Mountain Standard (also PDT — defaulting to MST)
-    '-08:00': 'PST',   // Pacific Standard
-    '-09:00': 'PST',
-    '-10:00': 'HST',   // Hawaii (no DST)
-    '+01:00': 'GMT+1',
-    '+02:00': 'EET',
-    '+03:00': 'AST', '+03:30': 'IRT',
-  }
-  return MAP[offset] ?? offset   // keep raw offset when unknown
-}
-
-/** Adds exactly 1 hour (Morocco = UTC+1) to the given UTC milliseconds. */
-function utcPlusOneHour(utcMs: number): { moroccoDate: string; moroccoTime: string } {
-  const d = new Date(utcMs + 60 * 60 * 1000)
-  return {
-    moroccoDate: d.toISOString().slice(0, 10),
-    moroccoTime: `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`,
-  }
-}
-
-function normaliseSamGovTimezone(value: unknown): string {
-  if (typeof value !== 'string') return ''
-  const raw = value.trim()
-  if (!raw) return ''
-
-  const upper = raw.toUpperCase()
-  if (SAM_TIMEZONE_ALIASES[upper]) return SAM_TIMEZONE_ALIASES[upper]
-  if (isValidIanaTimeZone(raw)) return raw
-  if (raw === 'GMT+1' || raw === 'UTC+01:00' || raw === '+01:00') return 'Africa/Casablanca'
-  if (TIMEZONES[upper]) return TIMEZONES[upper]
-  if (TIMEZONES[raw]) return TIMEZONES[raw]
-  if (/^(?:UTC|GMT)?[+-]\d{2}:?\d{2}$/i.test(raw)) {
-    return ianaTimeZoneFromOffset(normalizeUtcOffset(raw.replace(/^(?:UTC|GMT)/i, '')))
-  }
-  return ''
-}
-
-export function extractSamGovDeadlineTimezone(opp: any): string {
-  const candidates = [
-    opp?.responseDeadLineTimeZone,
-    opp?.responseDeadlineTimeZone,
-    opp?.responseDeadLineTimezone,
-    opp?.responseDeadlineTimezone,
-    opp?.deadlineTimeZone,
-    opp?.deadlineTimezone,
-    opp?.timeZone,
-    opp?.timezone,
-  ]
-  for (const candidate of candidates) {
-    const normalised = normaliseSamGovTimezone(candidate)
-    if (normalised) return normalised
-  }
-  return ''
-}
-
-export function parseSamGovDeadline(raw: string | undefined, specifiedTimezone = ''): {
-  dueDate: string; localTime: string; timezone: string; moroccoDate: string; moroccoTime: string
-} {
-  const empty = { dueDate: '', localTime: '', timezone: 'Africa/Casablanca', moroccoDate: '', moroccoTime: '' }
-  if (!raw) return empty
-
-  const m = raw.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})(?::\d{2})?(?:\.\d+)?(Z|[+-]\d{2}:?\d{2})?/)
-  if (m) {
-    const dateStr = m[1]   // "2026-05-27"
-    const timeStr = m[2]   // "10:00" — local clock time as stated in the ISO string
-    const rawOff  = m[3] ?? ''
-
-    if (rawOff) {
-      // Normalise compact form e.g. "-0500" → "-05:00"
-      const normalised = normalizeUtcOffset(rawOff)
-      const { moroccoDate, moroccoTime } = utcToMoroccoClock(new Date(raw).getTime())
-      return {
-        dueDate: dateStr,
-        localTime: formatTime12h(timeStr),
-        timezone: specifiedTimezone || ianaTimeZoneFromOffset(normalised, new Date(raw)),
-        moroccoDate,
-        moroccoTime: formatTime12h(moroccoTime),
-      }
-    }
-
-    // No UTC offset present — treat local time as already in Morocco (GMT+1)
-    return {
-      dueDate: dateStr,
-      localTime: formatTime12h(timeStr),
-      timezone: 'Africa/Casablanca',
-      moroccoDate: dateStr,
-      moroccoTime: formatTime12h(timeStr),
-    }
-  }
-
-  // Fallback: let Date parse it and treat the result as UTC
-  const parsed = new Date(raw)
-  if (!Number.isFinite(parsed.getTime())) return empty
-  const utcDate = parsed.toISOString().slice(0, 10)
-  const utcTime = `${String(parsed.getUTCHours()).padStart(2, '0')}:${String(parsed.getUTCMinutes()).padStart(2, '0')}`
-  const { moroccoDate, moroccoTime } = utcToMoroccoClock(parsed.getTime())
-  return {
-    dueDate: utcDate,
-    localTime: formatTime12h(utcTime),
-    timezone: 'UTC',
-    moroccoDate,
-    moroccoTime: formatTime12h(moroccoTime),
-  }
-}
-
-/**
- * Extracts the Client / Agency name from a SAM.gov opportunity record.
- *
- * Priority (matches the SAM.gov UI):
- *   1. Sub-tier   — the field SAM.gov labels "Sub-tier"
- *   2. Department / Ind. Agency — when sub-tier is missing
- *
- * The v2 Opportunities API returns the agency hierarchy in any of three
- * shapes depending on endpoint and record age, so we probe all of them:
- *   • flat strings:    subtierName / departmentName
- *   • nested objects:  subTier.name / department.name
- *   • joined path:     fullParentPathName = "DEPT.SUBTIER.OFFICE"
- */
-export function extractSamGovAgency(opp: any): string {
-  const trim = (v: unknown) => (typeof v === 'string' ? v.trim() : '')
-  const pathParts: string[] = typeof opp?.fullParentPathName === 'string'
-    ? opp.fullParentPathName.split('.').map((p: string) => p.trim()).filter(Boolean)
-    : []
-
-  // 1. Sub-tier (preferred — labelled "Client / Agency" in our form)
-  const subTier =
-    trim(opp?.subTier) ||
-    trim(opp?.subTier?.name) ||
-    trim(opp?.subtierName) ||
-    (pathParts.length >= 2 ? pathParts[1] : '')
-  if (subTier) return subTier
-
-  // 2. Department / Ind. Agency (fallback)
-  const department =
-    trim(opp?.department) ||
-    trim(opp?.department?.name) ||
-    trim(opp?.departmentName) ||
-    (pathParts.length >= 1 ? pathParts[0] : '')
-  if (department) return department
-
-  // 3. Last-resort fallbacks (older response shapes)
-  return trim(opp?.organizationName) || trim(opp?.agencyName) || 'Unknown'
-}
-
-export function mapSamGovOpportunityToForm(opp: any, url: string) {
-  const setAsideMap: Record<string, string> = {
-    SBA: 'SB',
-    SDVOSBC: 'SDVOSB',
-    WOSB: 'WOSB',
-    HZC: 'HUBZone',
-    VOSB: 'VOSB',
-    '8AN': '8(a)',
-    NONE: 'UNRES',
-  }
-  const pop = opp.placeOfPerformance
-  const locationParts = [pop?.city?.name, pop?.state?.code].filter(Boolean)
-  const deadline = parseSamGovDeadline(opp.responseDeadLine, extractSamGovDeadlineTimezone(opp))
-  return {
-    solicitation: opp.title ?? '',
-    solicitationId: opp.solicitationNumber ?? '',
-    client: extractSamGovAgency(opp),
-    naicsCode: opp.naicsCode ?? '',
-    setAside: (setAsideMap[opp.typeOfSetAside ?? ''] ?? 'UNRES') as Opportunity['setAside'],
-    type: undefined,
-    location: locationParts.join(', '),
-    dueDate: deadline.dueDate,
-    localTime: deadline.localTime,
-    timezone: deadline.timezone,
-    moroccoTime: deadline.moroccoTime,
-    moroccoDate: deadline.moroccoDate,
-    link: url,
-  }
-}
-
 // ── Helpers ───────────────────────────────────────────────────────────
 function timeZoneOffsetMs(date: Date, timeZone: string): number {
   const parts = new Intl.DateTimeFormat('en-US', {
@@ -486,57 +226,11 @@ function timeZoneOffsetMs(date: Date, timeZone: string): number {
   return asUtc - date.getTime()
 }
 
-function parseClockTime(time: string | undefined) {
-  const value = (time || '').trim()
-  const twelve = value.match(/^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)$/i)
-  if (twelve) {
-    let hour = Number(twelve[1])
-    const minute = Number(twelve[2] ?? 0)
-    const marker = twelve[3].toUpperCase()
-    if (marker === 'PM' && hour < 12) hour += 12
-    if (marker === 'AM' && hour === 12) hour = 0
-    return { hour, minute }
-  }
-  const twentyFour = value.match(/^(\d{1,2}):(\d{2})$/)
-  if (twentyFour) return { hour: Number(twentyFour[1]), minute: Number(twentyFour[2]) }
-  return { hour: 0, minute: 0 }
-}
-
-function zonedDateTimeToUtc(date: string, time: string, timeZone: string): Date {
-  const [year, month, day] = date.split('-').map(Number)
-  const { hour, minute } = parseClockTime(time)
-  const utcGuess = new Date(Date.UTC(year, (month || 1) - 1, day || 1, hour || 0, minute || 0, 0))
-  const offset = timeZoneOffsetMs(utcGuess, timeZone)
-  return new Date(utcGuess.getTime() - offset)
-}
-
-/** Inverse of zonedDateTimeToUtc: returns the wall-clock date + 24h time in the target zone. */
-function utcToZonedClock(utc: Date, timeZone: string): { date: string; time24: string } {
-  const fmt = new Intl.DateTimeFormat('en-US', {
-    timeZone, year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', hour12: false,
-  })
-  const parts = fmt.formatToParts(utc)
-  const get = (t: string) => parts.find(p => p.type === t)?.value ?? '00'
-  // Intl's en-US locale can emit "24" for midnight; normalise to "00".
-  const h = get('hour') === '24' ? '00' : get('hour')
-  return {
-    date: `${get('year')}-${get('month')}-${get('day')}`,
-    time24: `${h}:${get('minute')}`,
-  }
-}
-
 function applyTimezoneChange(
   current: Partial<Opportunity>,
   newTz: string,
 ): Partial<Opportunity> {
   return syncMoroccoProjection({ ...current, timezone: newTz })
-}
-
-function isCompleteClockTime(time: string | undefined): boolean {
-  if (!time?.trim()) return false
-  const value = time.trim()
-  return /^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)$/i.test(value) || /^\d{1,2}:\d{2}$/.test(value)
 }
 
 export function syncMoroccoProjection(current: Partial<Opportunity>): Partial<Opportunity> {
@@ -565,73 +259,6 @@ export function applyScheduleFieldChange(
 ): Partial<Opportunity> {
   if (key === 'timezone') return applyTimezoneChange(current, value)
   return syncMoroccoProjection({ ...current, [key]: value })
-}
-
-/** Normalises any of "10:00", "10:00 AM", "5:30PM", "17:30" to canonical "h:MM AM/PM". */
-export function formatTime12h(time: string | undefined): string {
-  if (!time) return ''
-  const value = String(time).trim()
-  const twelve = value.match(/^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)$/i)
-  if (twelve) {
-    const h = Number(twelve[1])
-    const min = twelve[2] ?? '00'
-    return `${h}:${min} ${twelve[3].toUpperCase()}`
-  }
-  const twentyFour = value.match(/^(\d{1,2}):(\d{2})/)
-  if (twentyFour) {
-    const h = Number(twentyFour[1])
-    const min = twentyFour[2]
-    if (!Number.isFinite(h)) return value
-    const period = h >= 12 ? 'PM' : 'AM'
-    const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h
-    return `${h12}:${min} ${period}`
-  }
-  return value
-}
-
-function formatOpportunityTime(time: string | undefined, sourceTzAbbrev?: string, date?: string): string {
-  if (!time) return '-'
-  const ianaSource = sourceTzAbbrev ? TIMEZONES[sourceTzAbbrev] : undefined
-  try {
-    if (sourceTzAbbrev === 'GMT' || sourceTzAbbrev?.startsWith('UTC')) return formatLocalDueTimeShared(time, sourceTzAbbrev)
-    if (ianaSource && date) {
-      const utc = zonedDateTimeToUtc(date, time, ianaSource)
-      return new Intl.DateTimeFormat('en-US', {
-        timeZone: ianaSource,
-        month: 'short',
-        day: 'numeric',
-        hour: 'numeric',
-        minute: '2-digit',
-        hour12: true,
-        timeZoneName: 'short',
-      }).format(utc)
-    }
-    const { hour: h, minute: m } = parseClockTime(time)
-    const d = new Date()
-    d.setHours(h || 0, m || 0, 0, 0)
-    return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
-  } catch {
-    return `${time} ${sourceTzAbbrev ?? ''}`.trim()
-  }
-}
-
-function convertTime(time: string, sourceTzAbbrev: string, date?: string): string {
-  const ianaSource = TIMEZONES[sourceTzAbbrev]
-  if (!ianaSource || !time) return `${time} ${sourceTzAbbrev}`
-  try {
-    const actualUTC = zonedDateTimeToUtc(date || new Date().toISOString().slice(0, 10), time, ianaSource)
-    const moroccoStr = new Intl.DateTimeFormat('en-US', {
-      timeZone: 'Etc/GMT-1',
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: true,
-      timeZoneName: 'shortOffset',
-    }).format(actualUTC)
-    return `${moroccoStr} (Morocco)`
-  } catch { return `${time} ${sourceTzAbbrev}` }
 }
 
 /**
