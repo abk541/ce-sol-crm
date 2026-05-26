@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { useSearchParams } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Trophy, UserPlus, ArrowRight, CheckCircle2, Clock,
@@ -342,9 +343,19 @@ function AssignModal({ award, onClose, onMove }: AssignModalProps) {
 
 export default function FreshAwardPage() {
   const { freshAwards, moveFreshAwardToActive } = useStore()
+  const [searchParams] = useSearchParams()
+  const globalRecordId = searchParams.get('record')
   const [selected, setSelected] = useState<FreshAward | null>(null)
   const [filter, setFilter] = useState<'ALL' | 'PENDING_ASSIGNMENT' | 'ASSIGNED' | 'MOVED_TO_ACTIVE'>('ALL')
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!globalRecordId) return
+    const target = freshAwards.find(fa => fa.id === globalRecordId || fa.solicitationId === globalRecordId)
+    if (!target) return
+    setFilter(target.status)
+    setSelected(target)
+  }, [globalRecordId, freshAwards])
 
   const visible = freshAwards.filter(fa => filter === 'ALL' || fa.status === filter)
 

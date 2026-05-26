@@ -1,4 +1,5 @@
-import { useState, useMemo } from 'react'
+import { useEffect, useState, useMemo } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   ClipboardList, CheckCircle2, XCircle, Clock, AlertTriangle,
@@ -263,11 +264,13 @@ function ReportCard({
 }
 
 // ── Dropped Opportunities Table ────────────────────────────────────────
-function DroppedOpportunitiesTab() {
+function DroppedOpportunitiesTab({ targetId }: { targetId?: string | null }) {
   const { opportunities, nonSubReports } = useStore()
   const dropped = useMemo(
-    () => opportunities.filter(o => o.status === 'DROPPED' && !o.isDeleted),
-    [opportunities]
+    () => opportunities
+      .filter(o => o.status === 'DROPPED' && !o.isDeleted)
+      .filter(o => !targetId || o.id === targetId || o.solicitationId === targetId),
+    [opportunities, targetId]
   )
 
   return (
@@ -306,7 +309,8 @@ function DroppedOpportunitiesTab() {
                   return (
                     <motion.tr key={o.id}
                       initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: i * 0.03 }}>
+                      transition={{ delay: i * 0.03 }}
+                      className={targetId ? 'ring-1 ring-[#D7BE7A] ring-inset bg-[#D7BE7A]/10' : undefined}>
                       <td>
                         {o.priority && (
                           <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
@@ -365,6 +369,9 @@ function DroppedOpportunitiesTab() {
 // ── Main Page ──────────────────────────────────────────────────────────
 export default function NonSubmissionsPage() {
   const { nonSubReports, opportunities, currentUser, reviewNonSubReport } = useStore()
+  const [searchParams] = useSearchParams()
+  const globalRecordId = searchParams.get('record')
+  const globalTab = searchParams.get('tab')
   const [pageTab, setPageTab] = useState<'reports' | 'dropped'>('reports')
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<'ALL' | 'PENDING' | 'APPROVED' | 'DECLINED'>('ALL')
@@ -373,6 +380,16 @@ export default function NonSubmissionsPage() {
 
   const isManager = ['BD_MANAGER', 'TEAM_LEAD'].includes(currentUser?.role ?? '')
   const isAgent = !isManager
+
+  useEffect(() => {
+    if (globalTab === 'dropped' || globalTab === 'reports') setPageTab(globalTab)
+    if (!globalRecordId) return
+    const target = opportunities.find(o => o.id === globalRecordId || o.solicitationId === globalRecordId)
+    if (target) {
+      setSearch(target.solicitation)
+      if (target.status === 'DROPPED') setPageTab('dropped')
+    }
+  }, [globalRecordId, globalTab, opportunities])
 
   const droppedCount = useMemo(
     () => opportunities.filter(o => o.status === 'DROPPED' && !o.isDeleted).length,
@@ -542,7 +559,7 @@ export default function NonSubmissionsPage() {
       )}
 
       {/* ── Dropped Tab ── */}
-      {pageTab === 'dropped' && <DroppedOpportunitiesTab />}
+      {pageTab === 'dropped' && <DroppedOpportunitiesTab targetId={globalRecordId} />}
 
       {/* Modals */}
       <AnimatePresence>

@@ -1,4 +1,5 @@
-import { useState, useMemo } from 'react'
+import { useEffect, useState, useMemo } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   History, Search, Download, FileText,
@@ -228,6 +229,8 @@ function DetailDrawerPP({ pp, onClose, onExport }: { pp: PastPerformance; onClos
 
 export default function PastPerformancesPage() {
   const { contracts } = useStore()
+  const [searchParams] = useSearchParams()
+  const globalRecordId = searchParams.get('record')
   const [search, setSearch] = useState('')
   const [source, setSource] = useState<'ACTIVE' | 'COMPLETED'>('ACTIVE')
   const [selected, setSelected] = useState<PastPerformance | null>(null)
@@ -274,6 +277,18 @@ export default function PastPerformancesPage() {
       pp.naicsCode.includes(q)
     )
   }, [sourceRows, search])
+
+  useEffect(() => {
+    if (!globalRecordId) return
+    const target = sourceRows.find(pp =>
+      pp.id === globalRecordId ||
+      pp.contractId === globalRecordId ||
+      pp.contractNumber === globalRecordId
+    )
+    if (!target) return
+    setSearch('')
+    setSelected(target)
+  }, [globalRecordId, sourceRows])
 
   const totalValue = sourceRows.reduce((s, p) => s + p.value, 0)
 

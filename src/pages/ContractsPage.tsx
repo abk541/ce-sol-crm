@@ -1,4 +1,5 @@
-import { useState, useMemo, useRef } from 'react'
+import { useEffect, useState, useMemo, useRef } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Search, MoreHorizontal, FileCheck2, UserPlus, Building2,
@@ -2272,6 +2273,8 @@ function FreshAwardsTab() {
 
 export default function ContractsPage() {
   const { contracts, employees } = useStore()
+  const [searchParams] = useSearchParams()
+  const globalRecordId = searchParams.get('record')
   const [tab, setTab] = useState<CTab>('ACTIVE_GROUP')
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<Contract | null>(null)
@@ -2289,6 +2292,19 @@ export default function ContractsPage() {
   }
 
   const tabDef = C_TABS.find(t => t.key === tab) ?? C_TABS[0]
+
+  useEffect(() => {
+    if (!globalRecordId) return
+    const target = contracts.find(c => c.id === globalRecordId || c.contractId === globalRecordId || c.contractNumber === globalRecordId)
+    if (!target) return
+
+    setTab(C_TABS.find(t => t.statuses.includes(target.status))?.key ?? 'ACTIVE_GROUP')
+    setSearch('')
+    setPeriod(null)
+    setColumnFilters({})
+    setSelectedInitialTab('overview')
+    setSelected(target)
+  }, [globalRecordId, contracts])
 
   const assignmentFor = (c: Contract) => {
     const assignedEmployee = c.assignedTo ? employees.find(e => e.id === c.assignedTo) : null

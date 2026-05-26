@@ -1,5 +1,7 @@
 ﻿import { useState, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
+import { useEffect } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
   ListChecks, Send, Trash2, CheckCircle2, XCircle,
   ChevronDown, AlertTriangle, Search, Clock, RotateCcw, MoreHorizontal,
@@ -147,6 +149,9 @@ function Paginator({ total, perPage, page, onPage, onPerPage }: {
 
 export default function TrackerPage() {
   const { opportunities, deletionRequests, reviewDeletionRequest, currentUser } = useStore()
+  const [searchParams] = useSearchParams()
+  const globalRecordId = searchParams.get('record')
+  const globalTab = searchParams.get('tab')
   const [tab, setTab] = useState<'submitted' | 'deleted' | 'pending'>('deleted')
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<Opportunity | null>(null)
@@ -156,6 +161,15 @@ export default function TrackerPage() {
 
   const isAdmin = currentUser?.role === 'BD_MANAGER'
   const isManager = ['BD_MANAGER', 'TEAM_LEAD'].includes(currentUser?.role ?? '')
+
+  useEffect(() => {
+    if (globalTab === 'deleted' || globalTab === 'pending') setTab(globalTab)
+    if (!globalRecordId) return
+    const target = opportunities.find(o => o.id === globalRecordId || o.solicitationId === globalRecordId)
+    if (!target) return
+    setSearch(target.solicitation)
+    setSelected(target)
+  }, [globalRecordId, globalTab, opportunities])
 
   const submitted = useMemo(() =>
     opportunities.filter(o =>

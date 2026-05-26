@@ -1,5 +1,6 @@
-import { useRef, useState, useMemo } from 'react'
+import { useEffect, useRef, useState, useMemo } from 'react'
 import { createPortal } from 'react-dom'
+import { useSearchParams } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Plus, X, ExternalLink, Loader,
@@ -2109,6 +2110,8 @@ function DueDateTimeCell({ opp }: { opp: Opportunity }) {
 
 export default function PipelinePage() {
   const { opportunities, employees, currentUser, deletionRequests, moveOpportunityToBDTracker } = useStore()
+  const [searchParams] = useSearchParams()
+  const globalRecordId = searchParams.get('record')
 
   // ── Filter state ──
   const [columnFilters, setColumnFilters] = useState<ColumnFilters>(() => ({ ...EMPTY_COLUMN_FILTERS }))
@@ -2135,6 +2138,16 @@ export default function PipelinePage() {
     () => new Set(deletionRequests.filter(r => r.status === 'PENDING').map(r => r.opportunityId)),
     [deletionRequests],
   )
+
+  useEffect(() => {
+    if (!globalRecordId) return
+    const target = opportunities.find(o => o.id === globalRecordId || o.solicitationId === globalRecordId)
+    if (!target) return
+    setColumnFilters({ ...EMPTY_COLUMN_FILTERS })
+    setDueDateRange(null)
+    setPage(1)
+    setSelectedOpp(target)
+  }, [globalRecordId, opportunities])
 
   const filterOptions = useMemo(() => {
     const visibleOpps = opportunities.filter(o => !o.isDeleted && !o.nonSubmissionReportId && OPP_VIEW_STATUSES.includes(o.status as any) && isAssignedToAssociate(employees, o.assignedTo))

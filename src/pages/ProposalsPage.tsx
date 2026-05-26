@@ -1,5 +1,6 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { useSearchParams } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Check, UserPlus, X } from 'lucide-react'
 import { useStore } from '../store/useStore'
@@ -96,6 +97,8 @@ function AssignModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }
 
 export default function ProposalsPage() {
   const { opportunities, employees, currentUser } = useStore()
+  const [searchParams] = useSearchParams()
+  const globalRecordId = searchParams.get('record')
   const [assignTarget, setAssignTarget] = useState<Opportunity | null>(null)
   const assignable = useMemo(() => assignableEmployeesForUser(employees, currentUser), [employees, currentUser])
   const canAssign = currentUser?.role !== 'ASSOCIATE'
@@ -111,6 +114,12 @@ export default function ProposalsPage() {
       .sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime()),
     [opportunities, employees]
   )
+
+  useEffect(() => {
+    if (!globalRecordId) return
+    const target = rows.find(o => o.id === globalRecordId || o.solicitationId === globalRecordId)
+    if (target) setAssignTarget(target)
+  }, [globalRecordId, rows])
 
   if (!canAssign) {
     return (

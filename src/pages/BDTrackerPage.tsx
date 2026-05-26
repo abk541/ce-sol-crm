@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { Filter, MoreHorizontal, Search, TrendingUp } from 'lucide-react'
 import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
@@ -99,6 +100,9 @@ function FilterInput({
 
 export default function BDTrackerPage() {
   const { bdSubmissions, updateBDSubmission, opportunities, employees } = useStore()
+  const [searchParams] = useSearchParams()
+  const globalRecordId = searchParams.get('record')
+  const globalTab = searchParams.get('tab') as BDTab | null
   const [tab, setTab] = useState<BDTab>('SUBMITTED')
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
   const [period, setPeriod] = useState<Period | null>(null)
@@ -106,6 +110,21 @@ export default function BDTrackerPage() {
   const [filters, setFilters] = useState<Filters>(() => ({ ...EMPTY_FILTERS }))
   const [page, setPage] = useState(1)
   const [perPage, setPerPage] = useState<PerPageOption>(25)
+
+  useEffect(() => {
+    const target = globalRecordId
+      ? bdSubmissions.find(row => String(row.id) === globalRecordId || row.solicitationId === globalRecordId)
+      : undefined
+    const targetTab = target?.status || (globalTab && BD_TABS.some(t => t.key === globalTab) ? globalTab : null)
+
+    if (targetTab) setTab(targetTab)
+    if (target) {
+      setSearch(target.solicitationId || target.solicitation)
+      setFilters({ ...EMPTY_FILTERS })
+      setPeriod(null)
+      setPage(1)
+    }
+  }, [globalRecordId, globalTab, bdSubmissions])
 
   const filterOptions = useMemo(() => {
     return FILTERS.reduce((acc, filter) => {
@@ -314,8 +333,15 @@ export default function BDTrackerPage() {
                   const meta = STATUS_META[s.status]
                   const opp = rowOpportunity(s, opportunities)
                   const chain = getAssignmentChain(employees, opp?.assignedTo)
+                  const isGlobalTarget = globalRecordId && (String(s.id) === globalRecordId || s.solicitationId === globalRecordId)
                   return (
-                    <motion.tr key={s.id} initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.02 }}>
+                    <motion.tr
+                      key={s.id}
+                      initial={{ opacity: 0, y: 4 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: i * 0.02 }}
+                      className={isGlobalTarget ? 'ring-1 ring-[#D7BE7A] ring-inset bg-[#D7BE7A]/10' : undefined}
+                    >
                       <td className="text-xs text-slate-600">{s.submittedOn}</td>
                       <td className="font-mono text-xs font-semibold text-indigo-600">{s.solicitationId}</td>
                       <td className="max-w-[240px]"><p className="truncate text-xs font-medium text-slate-800">{s.solicitation}</p></td>

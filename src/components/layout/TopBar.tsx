@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -15,6 +15,7 @@ import {
   ExternalLink,
   FileBarChart,
   FileCheck2,
+  GitBranch,
   Info,
   Search,
   ShieldAlert,
@@ -31,6 +32,7 @@ import { avatarColor, formatCurrency } from '../../lib/utils'
 import { getAssignmentChain, ROLE_DISPLAY_LABELS } from '../../lib/team'
 import type { Contract, Employee, NotifType, Notification as AppNotification, Opportunity } from '../../types'
 import { ROUTE_LABELS } from '../../config/navigation'
+import { buildGlobalSearchResults, type GlobalSearchResult } from '../../lib/globalSearch'
 
 const TYPE_CONFIG: Record<NotifType, { icon: typeof Bell; color: string; label: string }> = {
   ASSIGNMENT:          { icon: UserPlus,       color: '#7DD3FC', label: 'Assignment' },
@@ -110,9 +112,16 @@ export default function TopBar() {
     contracts,
     opportunities,
     employees,
+    freshAwards,
+    bdSubmissions,
+    nonSubReports,
+    pastPerformances,
   } = useStore()
   const location = useLocation()
   const navigate = useNavigate()
+  const searchInputRef = useRef<HTMLInputElement>(null)
+  const [globalSearch, setGlobalSearch] = useState('')
+  const [showGlobalSearch, setShowGlobalSearch] = useState(false)
   const [showNotifications, setShowNotifications] = useState(false)
   const [selectedNotification, setSelectedNotification] = useState<AppNotification | null>(null)
 
@@ -127,6 +136,42 @@ export default function TopBar() {
   const selectedContext = selectedNotification
     ? resolveNotificationContext(selectedNotification, contracts, opportunities, employees)
     : null
+  const globalSearchResults = useMemo(
+    () => buildGlobalSearchResults(globalSearch, {
+      opportunities,
+      contracts,
+      freshAwards,
+      bdSubmissions,
+      nonSubReports,
+      pastPerformances,
+      employees,
+    }),
+    [globalSearch, opportunities, contracts, freshAwards, bdSubmissions, nonSubReports, pastPerformances, employees],
+  )
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault()
+        searchInputRef.current?.focus()
+        setShowGlobalSearch(true)
+      }
+      if (event.key === 'Escape') setShowGlobalSearch(false)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
+
+  const openGlobalSearchResult = (result: GlobalSearchResult) => {
+    navigate(result.route)
+    setGlobalSearch('')
+    setShowGlobalSearch(false)
+  }
+
+  const submitGlobalSearch = () => {
+    const first = globalSearchResults[0]
+    if (first) openGlobalSearchResult(first)
+  }
 
   const openRelatedRecord = () => {
     if (!selectedContext) return
@@ -160,9 +205,84 @@ export default function TopBar() {
         <div className="relative">
           <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <input
+            ref={searchInputRef}
+            value={globalSearch}
+            onChange={e => {
+              setGlobalSearch(e.target.value)
+              setShowGlobalSearch(true)
+            }}
+            onFocus={() => setShowGlobalSearch(true)}
+            onKeyDown={e => {
+              if (e.key === 'Enter') submitGlobalSearch()
+              if (e.key === 'Escape') setShowGlobalSearch(false)
+            }}
             className="input-field pl-9 py-2 text-xs"
             placeholder="Search opportunities, contracts... (Ctrl+K)"
           />
+          <AnimatePresence>
+            {showGlobalSearch && globalSearch.trim().length >= 2 && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setShowGlobalSearch(false)} />
+                <motion.div
+                  initial={{ opacity: 0, y: -6, scale: 0.98 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -6, scale: 0.98 }}
+                  transition={{ duration: 0.14 }}
+                  className="absolute left-0 top-11 z-50 w-[min(34rem,calc(100vw-2rem))] overflow-hidden rounded-2xl border shadow-2xl"
+                  style={{
+                    background: 'linear-gradient(180deg, rgba(16,40,32,0.98), rgba(7,19,31,0.98))',
+                    borderColor: 'rgba(215,190,122,0.24)',
+                    boxShadow: '0 24px 70px rgba(0,0,0,0.44)',
+                  }}
+                >
+                  <div className="border-b border-[#D7BE7A]/15 px-4 py-3">
+                    <p className="text-xs font-black text-slate-100">Global Search</p>
+                    <p className="mt-0.5 text-[11px] text-slate-400">Open the exact tab where the record currently lives.</p>
+                  </div>
+
+                  <div className="max-h-[28rem] overflow-y-auto p-2">
+                    {globalSearchResults.length === 0 ? (
+                      <div className="px-4 py-8 text-center">
+                        <Search size={20} className="mx-auto mb-2 text-slate-500" />
+                        <p className="text-sm font-semibold text-slate-300">No matching records.</p>
+                        <p className="mt-1 text-xs text-slate-500">Try the solicitation title, ID, agency, location, or assignee.</p>
+                      </div>
+                    ) : (
+                      globalSearchResults.map(result => (
+                        <button
+                          key={result.id}
+                          type="button"
+                          onClick={() => openGlobalSearchResult(result)}
+                          className="group w-full rounded-xl border border-transparent px-3 py-3 text-left transition-all hover:border-[#D7BE7A]/25 hover:bg-white/5"
+                        >
+                          <div className="flex items-start gap-3">
+                            <div className="mt-0.5 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl border border-[#D7BE7A]/18 bg-white/[0.055] text-[#D7BE7A]">
+                              {result.kind === 'contract' ? <FileCheck2 size={15} /> :
+                                result.kind === 'fresh_award' ? <Trophy size={15} /> :
+                                result.kind === 'bd_submission' ? <TrendingUp size={15} /> :
+                                result.kind === 'non_submission' ? <ClipboardList size={15} /> :
+                                result.kind === 'past_performance' ? <FileBarChart size={15} /> :
+                                <GitBranch size={15} />}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-start justify-between gap-3">
+                                <p className="truncate text-xs font-black text-slate-100">{result.title}</p>
+                                <span className="shrink-0 rounded-full border border-[#D7BE7A]/20 bg-[#D7BE7A]/10 px-2 py-0.5 text-[9px] font-black uppercase tracking-wide text-[#D7BE7A]">
+                                  Open
+                                </span>
+                              </div>
+                              <p className="mt-0.5 truncate text-[11px] text-slate-400">{result.subtitle}</p>
+                              <p className="mt-1 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">{result.meta}</p>
+                            </div>
+                          </div>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </motion.div>
+              </>
+            )}
+          </AnimatePresence>
         </div>
       </div>
 
