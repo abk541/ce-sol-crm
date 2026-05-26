@@ -1097,7 +1097,7 @@ function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) 
       {/* ── Schedule tab ── */}
       {tab === 'schedule' && (
         <div className="space-y-5">
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-2 gap-4">
             <div>
               <label className={lbl}>Due Date *</label>
               <input
@@ -1105,21 +1105,6 @@ function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) 
                 value={form.dueDate ?? ''}
                 onChange={e => setForm(prev => applyScheduleFieldChange(prev, 'dueDate', e.target.value))}
                 className="input-field"
-              />
-            </div>
-            <div>
-              <label className={lbl}>Local Time (HH:MM)</label>
-              <input
-                value={form.localTime ?? ''}
-                onChange={e => setForm(prev => applyScheduleFieldChange(prev, 'localTime', e.target.value))}
-                onBlur={e => {
-                  const normalised = formatTime12h(e.target.value.trim())
-                  if (normalised && normalised !== e.target.value) {
-                    setForm(prev => applyScheduleFieldChange(prev, 'localTime', normalised))
-                  }
-                }}
-                className="input-field"
-                placeholder="5:00 PM"
               />
             </div>
             <div>
@@ -2021,7 +2006,7 @@ function CreateModal({ onClose }: { onClose: () => void }) {
       {/* ── Schedule tab ── */}
       {tab === 'schedule' && (
         <div className="space-y-5">
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-2 gap-4">
             <div>
               <label className={lbl}>Due Date *</label>
               <input
@@ -2029,21 +2014,6 @@ function CreateModal({ onClose }: { onClose: () => void }) {
                 value={form.dueDate ?? ''}
                 onChange={e => setForm(prev => applyScheduleFieldChange(prev, 'dueDate', e.target.value))}
                 className="input-field"
-              />
-            </div>
-            <div>
-              <label className={lbl}>Local Time (HH:MM)</label>
-              <input
-                value={form.localTime ?? ''}
-                onChange={e => setForm(prev => applyScheduleFieldChange(prev, 'localTime', e.target.value))}
-                onBlur={e => {
-                  const normalised = formatTime12h(e.target.value.trim())
-                  if (normalised && normalised !== e.target.value) {
-                    setForm(prev => applyScheduleFieldChange(prev, 'localTime', normalised))
-                  }
-                }}
-                className="input-field"
-                placeholder="5:00 PM"
               />
             </div>
             <div>
