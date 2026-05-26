@@ -412,7 +412,7 @@ function subkDocumentTotal(documents: LockedSubkDocuments) {
   return SUBK_DOCUMENT_SECTIONS.reduce((sum, section) => sum + (documents[section.key]?.length || 0), 0)
 }
 
-type ContractDrawerTab = 'overview' | 'proposal' | 'pop' | 'poc' | 'subk' | 'lockSubk' | 'warnings' | 'deliverables'
+type ContractDrawerTab = 'overview' | 'pop' | 'poc' | 'subk' | 'lockSubk' | 'warnings' | 'deliverables'
 
 function ContractDetailDrawer({
   contract,
@@ -545,13 +545,13 @@ function ContractDetailDrawer({
       ]
 
   return (
-    <div className="fixed inset-0 z-[51] flex items-center justify-center p-4 sm:p-6" style={{ pointerEvents: 'none' }}>
+    <div className="fixed inset-0 z-[51] flex items-start justify-center overflow-y-auto p-2 sm:p-4" style={{ pointerEvents: 'none' }}>
       <motion.div
         initial={{ opacity: 0, scale: 0.96, y: 20 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.96, y: 20 }}
         transition={{ type: 'spring', stiffness: 300, damping: 28 }}
-        className="w-full max-w-5xl max-h-[90vh] flex flex-col rounded-2xl overflow-hidden"
+        className="my-2 flex max-h-[calc(100vh-1rem)] w-full max-w-6xl flex-col overflow-hidden rounded-2xl sm:my-3 sm:max-h-[calc(100vh-1.5rem)]"
         style={{
           background: 'var(--bg-card)',
           border: '1px solid var(--border-default)',
@@ -583,7 +583,6 @@ function ContractDetailDrawer({
       <div className="flex-shrink-0 flex gap-0.5 px-3 py-2 overflow-x-auto" style={{ borderBottom: '1px solid var(--border-default)' }}>
         {[
           { key: 'overview', label: 'Overview', icon: Info },
-          { key: 'proposal', label: `Proposal Files (${proposalCount})`, icon: FileText },
           { key: 'pop', label: 'POP', icon: Calendar },
           { key: 'poc', label: `PoC (${(contract.pocs || []).length})`, icon: UserPlus },
           { key: 'subk', label: `Potential Subk (${subkCandidates.length})`, icon: Building2 },
@@ -660,32 +659,49 @@ function ContractDetailDrawer({
             >
               <div className="mb-2 flex items-start justify-between gap-3">
                 <div>
-                  <p className="text-xs font-bold uppercase tracking-wider text-[#F8E8B8]">Submitted Proposal</p>
+                  <p className="text-xs font-bold uppercase tracking-wider text-[#F8E8B8]">Submitted Proposal Files</p>
                   <p className="mt-0.5 text-[11px] text-slate-400">
                     {sourceOpportunity?.submittedAt ? `Submitted ${formatDateTime(sourceOpportunity.submittedAt)}` : 'Linked from the source opportunity'}
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setTab('proposal')}
-                  className="btn-secondary gap-1 px-2.5 py-1 text-xs"
-                >
-                  <FileText size={12} /> Open
-                </button>
+                <span className="rounded-full border border-[#D7BE7A]/30 bg-[#D7BE7A]/10 px-2.5 py-1 text-[10px] font-bold text-[#F8E8B8]">
+                  {proposalCount} file{proposalCount === 1 ? '' : 's'}
+                </span>
               </div>
               {proposalAttachments.length > 0 ? (
                 <div className="space-y-1.5">
-                  {proposalAttachments.slice(0, 2).map(att => (
-                    <div key={att.id} className="flex min-w-0 items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2">
-                      <Paperclip size={12} className="flex-shrink-0 text-[#F8E8B8]" />
-                      <span className="truncate text-xs font-bold text-slate-100">{att.name}</span>
+                  {proposalAttachments.map(att => (
+                    <div key={att.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2">
+                      <div className="flex min-w-0 flex-1 items-center gap-2">
+                        <Paperclip size={12} className="flex-shrink-0 text-[#F8E8B8]" />
+                        <div className="min-w-0">
+                          <p className="truncate text-xs font-bold text-slate-100" title={att.name}>{att.name}</p>
+                          <p className="text-[10px] text-slate-400">
+                            {att.attachedAt ? formatDateTime(att.attachedAt) : sourceOpportunity?.submittedAt ? `Submitted ${formatDateTime(sourceOpportunity.submittedAt)}` : 'Submitted proposal file'}
+                            {formatFileSize(att.size) ? ` - ${formatFileSize(att.size)}` : ''}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex flex-shrink-0 items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => viewAttachment(att)}
+                          disabled={!att.dataUrl}
+                          className="flex items-center gap-1.5 rounded-lg bg-white px-2.5 py-1.5 text-[11px] font-black text-slate-900 transition-colors hover:bg-[#F8E8B8] disabled:cursor-not-allowed disabled:opacity-45"
+                        >
+                          <Eye size={12} /> View
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => downloadAttachment(att)}
+                          disabled={!att.dataUrl}
+                          className="flex items-center gap-1.5 rounded-lg border border-[#D7BE7A]/35 bg-[#D7BE7A]/15 px-2.5 py-1.5 text-[11px] font-black text-[#F8E8B8] transition-colors hover:bg-[#D7BE7A]/25 disabled:cursor-not-allowed disabled:opacity-45"
+                        >
+                          <Download size={12} /> Download
+                        </button>
+                      </div>
                     </div>
                   ))}
-                  {proposalAttachments.length > 2 && (
-                    <p className="text-[11px] font-semibold text-slate-400">
-                      + {proposalAttachments.length - 2} more file{proposalAttachments.length - 2 === 1 ? '' : 's'}
-                    </p>
-                  )}
                 </div>
               ) : (
                 <p className="rounded-lg border border-dashed border-white/10 px-3 py-3 text-xs text-slate-400">
@@ -898,92 +914,6 @@ function ContractDetailDrawer({
                 </button>
               </div>
             </div>
-          </div>
-        )}
-
-        {/* PROPOSAL FILES TAB */}
-        {tab === 'proposal' && (
-          <div className="space-y-4">
-            <div
-              className="rounded-2xl border p-4"
-              style={{ background: 'rgba(8,24,37,0.72)', borderColor: 'rgba(215,190,122,0.24)' }}
-            >
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <p className="text-sm font-black text-slate-100">Submitted proposal files</p>
-                  <p className="mt-1 text-xs text-slate-300">
-                    Proposal references captured when this opportunity was submitted.
-                  </p>
-                </div>
-                {sourceOpportunity && (
-                  <span className="rounded-full border border-[#D7BE7A]/30 bg-[#D7BE7A]/10 px-3 py-1 text-[10px] font-bold text-[#F8E8B8]">
-                    {sourceOpportunity.solicitationId}
-                  </span>
-                )}
-              </div>
-            </div>
-
-            {proposalAttachments.length === 0 ? (
-              <div
-                className="rounded-2xl border border-dashed p-8 text-center"
-                style={{ background: 'rgba(255,255,255,0.04)', borderColor: 'rgba(215,190,122,0.22)' }}
-              >
-                <FileText size={24} className="mx-auto mb-3 text-slate-500" />
-                <p className="text-sm font-bold text-slate-200">No proposal files linked</p>
-                <p className="mt-1 text-xs text-slate-400">
-                  Submit proposal file references from Contract Opportunities and they will appear here once the opportunity becomes a contract.
-                </p>
-              </div>
-            ) : (
-              <div className="grid gap-3 md:grid-cols-2">
-                {proposalAttachments.map((att, index) => (
-                  <div
-                    key={`${att.id}-${index}`}
-                    className="rounded-2xl border p-4"
-                    style={{ background: 'rgba(255,255,255,0.06)', borderColor: 'rgba(215,190,122,0.22)' }}
-                  >
-                    <div className="flex items-start gap-3">
-                      <div
-                        className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl"
-                        style={{ background: 'rgba(215,190,122,0.14)', color: '#F8E8B8', border: '1px solid rgba(215,190,122,0.30)' }}
-                      >
-                        <FileText size={16} />
-                      </div>
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-black text-slate-100" title={att.name}>{att.name}</p>
-                        <p className="mt-1 text-[11px] text-slate-400">
-                          {att.attachedAt ? formatDateTime(att.attachedAt) : sourceOpportunity?.submittedAt ? `Submitted ${formatDateTime(sourceOpportunity.submittedAt)}` : 'Submitted proposal file'}
-                          {formatFileSize(att.size) ? ` - ${formatFileSize(att.size)}` : ''}
-                        </p>
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          <button
-                            type="button"
-                            onClick={() => viewAttachment(att)}
-                            disabled={!att.dataUrl}
-                            className="flex items-center gap-1.5 rounded-lg bg-white px-2.5 py-1.5 text-[11px] font-black text-slate-900 transition-colors hover:bg-[#F8E8B8] disabled:cursor-not-allowed disabled:opacity-45"
-                          >
-                            <Eye size={12} /> View
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => downloadAttachment(att)}
-                            disabled={!att.dataUrl}
-                            className="flex items-center gap-1.5 rounded-lg border border-[#D7BE7A]/35 bg-[#D7BE7A]/15 px-2.5 py-1.5 text-[11px] font-black text-[#F8E8B8] transition-colors hover:bg-[#D7BE7A]/25 disabled:cursor-not-allowed disabled:opacity-45"
-                          >
-                            <Download size={12} /> Download
-                          </button>
-                          {!att.dataUrl && (
-                            <span className="rounded-lg border border-slate-500/25 bg-slate-500/10 px-2.5 py-1.5 text-[11px] font-bold text-slate-400">
-                              Metadata only
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
         )}
 
@@ -2359,7 +2289,6 @@ export default function ContractsPage() {
                       >
                         {[
                           { label: 'View Details', icon: ChevronRight, tab: 'overview' as ContractDrawerTab },
-                          { label: 'Proposal Files', icon: FileText, tab: 'proposal' as ContractDrawerTab },
                           { label: 'Edit POP', icon: Calendar, tab: 'pop' as ContractDrawerTab },
                           { label: 'Add PoC', icon: UserPlus, tab: 'poc' as ContractDrawerTab },
                           { label: 'Lock Subk', icon: Building2, tab: 'lockSubk' as ContractDrawerTab },
