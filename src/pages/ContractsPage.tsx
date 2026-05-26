@@ -442,7 +442,7 @@ function ContractDetailDrawer({
   onClose: () => void
   onOpenSourcing?: (opp: Opportunity) => void
 }) {
-  const { updateContract, addContractPoC, updateContractPoC, removeContractPoC, addLockedSubcontractor, updateLockedSubcontractor, addGovernmentWarning, updateGovernmentWarning, resolveGovernmentWarning, advanceContractStatus, terminateContract, currentUser, employees, opportunities, subcontractors } = useStore()
+  const { updateContract, addContractPoC, updateContractPoC, removeContractPoC, addLockedSubcontractor, updateLockedSubcontractor, addGovernmentWarning, updateGovernmentWarning, removeGovernmentWarning, resolveGovernmentWarning, advanceContractStatus, terminateContract, currentUser, employees, opportunities, subcontractors } = useStore()
   const [tab, setTab] = useState<ContractDrawerTab>(initialTab)
   const [deliverableForm, setDeliverableForm] = useState({
     title: '',
@@ -482,6 +482,13 @@ function ContractDetailDrawer({
     attachments: [] as FileAttachment[],
   })
   const [warningCommentDrafts, setWarningCommentDrafts] = useState<Record<string, string>>({})
+  const [editingWarningId, setEditingWarningId] = useState<string | null>(null)
+  const [warningEditForm, setWarningEditForm] = useState({
+    type: 'CURE_NOTICE' as GovWarningType,
+    issuedDate: '',
+    description: '',
+  })
+  const [confirmDeleteWarningId, setConfirmDeleteWarningId] = useState<string | null>(null)
 
   // Edit status
   const [editingStatus, setEditingStatus] = useState(false)
@@ -1447,20 +1454,148 @@ function ContractDetailDrawer({
             {(contract.governmentWarnings || []).map(w => {
               const sev = SEV_COLORS[w.severity]
               const commentDraft = warningCommentDrafts[w.id] ?? ''
+              const isEditingWarning = editingWarningId === w.id
+              const isConfirmingDelete = confirmDeleteWarningId === w.id
               return (
                 <div key={w.id} className="p-4 rounded-xl border"
                   style={{ background: sev.bg, borderColor: sev.color + '40' }}>
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-bold" style={{ color: sev.color }}>
-                      {GOV_WARNING_META[w.type]?.label || w.type}
-                    </span>
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full"
-                      style={{ background: sev.color + '20', color: sev.color }}>
-                      {w.severity}
-                    </span>
+                  <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-xs font-bold" style={{ color: sev.color }}>
+                        {GOV_WARNING_META[w.type]?.label || w.type}
+                      </span>
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full"
+                        style={{ background: sev.color + '20', color: sev.color }}>
+                        {w.severity}
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <button
+                        type="button"
+                        className="flex items-center gap-1 rounded-lg border border-slate-300/70 bg-white/65 px-2 py-1 text-[10px] font-bold text-slate-600 transition-colors hover:bg-white"
+                        onClick={() => {
+                          setConfirmDeleteWarningId(null)
+                          setEditingWarningId(w.id)
+                          setWarningEditForm({
+                            type: w.type,
+                            issuedDate: w.issuedDate,
+                            description: w.description,
+                          })
+                        }}
+                      >
+                        <Pencil size={10} /> Edit
+                      </button>
+                      <button
+                        type="button"
+                        className="flex items-center gap-1 rounded-lg border border-red-300 bg-red-50 px-2 py-1 text-[10px] font-bold text-red-600 transition-colors hover:bg-red-100"
+                        onClick={() => {
+                          setEditingWarningId(null)
+                          setConfirmDeleteWarningId(w.id)
+                        }}
+                      >
+                        <Trash2 size={10} /> Delete
+                      </button>
+                    </div>
                   </div>
-                  <p className="text-xs text-slate-700 mb-1">{w.description}</p>
-                  <p className="text-[10px] text-slate-500">Issued: {w.issuedDate}</p>
+
+                  {isEditingWarning ? (
+                    <div className="mb-3 space-y-2 rounded-lg bg-white/65 p-3">
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        <div>
+                          <label className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-500">Type</label>
+                          <select
+                            value={warningEditForm.type}
+                            onChange={e => setWarningEditForm(prev => ({ ...prev, type: e.target.value as GovWarningType }))}
+                            className="input-field w-full py-1.5 text-xs"
+                          >
+                            {(Object.keys(GOV_WARNING_META) as GovWarningType[]).map(t => (
+                              <option key={t} value={t}>{GOV_WARNING_META[t].label}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-500">Issued Date</label>
+                          <input
+                            type="date"
+                            value={warningEditForm.issuedDate}
+                            onChange={e => setWarningEditForm(prev => ({ ...prev, issuedDate: e.target.value }))}
+                            className="input-field w-full py-1.5 text-xs"
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-500">Description</label>
+                        <textarea
+                          rows={2}
+                          value={warningEditForm.description}
+                          onChange={e => setWarningEditForm(prev => ({ ...prev, description: e.target.value }))}
+                          className="input-field w-full resize-none py-1.5 text-xs"
+                        />
+                      </div>
+                      <div className="flex flex-wrap justify-end gap-2">
+                        <button
+                          type="button"
+                          className="btn-secondary text-xs"
+                          onClick={() => setEditingWarningId(null)}
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          disabled={!warningEditForm.issuedDate || !warningEditForm.description.trim()}
+                          className="btn-primary text-xs disabled:cursor-not-allowed disabled:opacity-45"
+                          onClick={() => {
+                            const severity = GOV_WARNING_META[warningEditForm.type].severity
+                            updateGovernmentWarning(contract.id, w.id, {
+                              type: warningEditForm.type,
+                              issuedDate: warningEditForm.issuedDate,
+                              description: warningEditForm.description.trim(),
+                              severity,
+                            })
+                            setEditingWarningId(null)
+                            toast.success('Warning updated')
+                          }}
+                        >
+                          <Save size={12} /> Save Changes
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <p className="text-xs text-slate-700 mb-1">{w.description}</p>
+                      <p className="text-[10px] text-slate-500">Issued: {w.issuedDate}</p>
+                    </>
+                  )}
+
+                  {isConfirmingDelete && (
+                    <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-xs font-semibold text-red-700">Delete this warning permanently?</p>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            className="btn-secondary py-1 text-xs"
+                            onClick={() => setConfirmDeleteWarningId(null)}
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            className="flex items-center gap-1.5 rounded-lg bg-red-600 px-3 py-1.5 text-xs font-bold text-white transition-colors hover:bg-red-700"
+                            onClick={() => {
+                              removeGovernmentWarning(contract.id, w.id)
+                              setConfirmDeleteWarningId(null)
+                              if (editingWarningId === w.id) setEditingWarningId(null)
+                              toast.success('Warning deleted')
+                            }}
+                          >
+                            <Trash2 size={12} /> Delete
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   {(w.attachments || []).length > 0 && (
                     <div className="mt-3 space-y-1.5 rounded-lg bg-white/60 p-2">
                       <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Attachments</p>

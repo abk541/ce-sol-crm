@@ -32,6 +32,7 @@ vi.mock('../lib/db', () => ({
   deleteContractPoC: vi.fn().mockResolvedValue(null),
   upsertLockedSubcontractor: vi.fn().mockResolvedValue(null),
   upsertGovernmentWarning: vi.fn().mockResolvedValue(null),
+  deleteGovernmentWarningRecord: vi.fn().mockResolvedValue(null),
   upsertFreshAward: vi.fn().mockResolvedValue(null),
   deleteFreshAwardRecord: vi.fn().mockResolvedValue(null),
   upsertPastPerformance: vi.fn().mockResolvedValue(null),
@@ -958,5 +959,26 @@ describe('10 · Assignment queue readiness', () => {
     const updated = useStore.getState().opportunities.find(o => o.id === 'opp-associate-ready')
     expect(updated?.assignedTo).toBe('associate')
     expect(updated?.status).toBe('ACTIVE')
+  })
+})
+
+describe('11 - Government warning management', () => {
+  it('removes a warning from its contract', () => {
+    const c = makeContract({
+      id: 'c-warning',
+      governmentWarnings: [{
+        id: 'gw1',
+        contractId: 'c-warning',
+        type: 'CURE_NOTICE',
+        issuedDate: '2026-05-26',
+        description: 'Missing report',
+        severity: 'RED',
+      }],
+    })
+    useStore.setState({ contracts: [c] })
+
+    useStore.getState().removeGovernmentWarning('c-warning', 'gw1')
+
+    expect(useStore.getState().contracts[0].governmentWarnings).toEqual([])
   })
 })

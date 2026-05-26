@@ -31,6 +31,7 @@ import {
   deleteContractPoC,
   upsertLockedSubcontractor,
   upsertGovernmentWarning,
+  deleteGovernmentWarningRecord,
   upsertFreshAward,
   deleteFreshAwardRecord,
   upsertPastPerformance,
@@ -101,6 +102,7 @@ interface AppState {
   updateLockedSubcontractor: (contractId: string, subId: string, data: Partial<LockedSubcontractor>) => void
   addGovernmentWarning: (contractId: string, warning: Omit<GovernmentWarning, 'id' | 'contractId'>) => void
   updateGovernmentWarning: (contractId: string, warningId: string, data: Partial<GovernmentWarning>) => void
+  removeGovernmentWarning: (contractId: string, warningId: string) => void
   resolveGovernmentWarning: (contractId: string, warningId: string, note: string) => void
   advanceContractStatus: (id: string) => void
 
@@ -757,6 +759,20 @@ export const useStore = create<AppState>()(
         }))
         const updated = get().contracts.find(c => c.id === contractId)?.governmentWarnings?.find(w => w.id === warningId)
         if (updated) upsertGovernmentWarning(updated)
+      },
+
+      removeGovernmentWarning: (contractId, warningId) => {
+        set(s => ({
+          contracts: s.contracts.map(c =>
+            c.id === contractId
+              ? {
+                  ...c,
+                  governmentWarnings: (c.governmentWarnings || []).filter(w => w.id !== warningId)
+                }
+              : c
+          )
+        }))
+        deleteGovernmentWarningRecord(warningId)
       },
 
       resolveGovernmentWarning: (contractId, warningId, note) => {

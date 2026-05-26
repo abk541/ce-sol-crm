@@ -956,6 +956,16 @@ export async function upsertGovernmentWarning(warning: GovernmentWarning): Promi
   }
 }
 
+export async function deleteGovernmentWarningRecord(id: string): Promise<void> {
+  if (!isSupabaseConnected || !supabase) return
+  try {
+    const { error } = await supabase.from('government_warnings').delete().eq('id', id)
+    if (error) console.error('[db] deleteGovernmentWarning error', error)
+  } catch (err) {
+    console.error('[db] deleteGovernmentWarning failed', err)
+  }
+}
+
 export async function upsertFreshAward(fa: FreshAward): Promise<void> {
   if (!isSupabaseConnected || !supabase) return
   try {
