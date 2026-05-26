@@ -413,6 +413,22 @@ function subkDocumentTotal(documents: LockedSubkDocuments) {
   return SUBK_DOCUMENT_SECTIONS.reduce((sum, section) => sum + (documents[section.key]?.length || 0), 0)
 }
 
+function subkCompanyKey(companyName = '', email = '') {
+  return `${companyName.trim().toLowerCase()}|${email.trim().toLowerCase()}`
+}
+
+function hasSourcingQuote(entry: Subcontractor) {
+  return Boolean(entry.quoteFile?.trim())
+}
+
+function uniqueSourcingEntries(entries: Subcontractor[]) {
+  const byId = new Map<string, Subcontractor>()
+  entries.forEach(entry => {
+    if (!byId.has(entry.id)) byId.set(entry.id, entry)
+  })
+  return Array.from(byId.values())
+}
+
 type ContractDrawerTab = 'overview' | 'pop' | 'poc' | 'subk' | 'lockSubk' | 'warnings' | 'deliverables'
 
 function ContractDetailDrawer({
@@ -487,9 +503,19 @@ function ContractDetailDrawer({
     ),
   ]
   const proposalCount = proposalAttachments.length
-  const sourcingEntries = subcontractors.length
-    ? subcontractors
-    : opportunities.flatMap(o => o.subcontractors || [])
+  const allSourcingEntries = uniqueSourcingEntries([
+    ...subcontractors,
+    ...opportunities.flatMap(o => o.subcontractors || []),
+  ])
+  const sourceOpportunitySourcing = allSourcingEntries.filter(entry =>
+    entry.opportunityId === contract.opportunityId && hasSourcingQuote(entry)
+  )
+  const sourcingHistoryByKey = new Map<string, Subcontractor[]>()
+  allSourcingEntries.forEach(entry => {
+    const key = subkCompanyKey(entry.companyName, entry.email)
+    if (!entry.companyName?.trim()) return
+    sourcingHistoryByKey.set(key, [...(sourcingHistoryByKey.get(key) || []), entry])
+  })
   const opportunityById = new Map(opportunities.map(o => [o.id, o]))
   const subkCandidateMap = new Map<string, {
     key: string
@@ -502,16 +528,19 @@ function ContractDetailDrawer({
     notes: string
     entries: Subcontractor[]
     currentProject: boolean
+    fromContractAdmin: boolean
+    contractSourceQuote: boolean
   }>()
 
-  sourcingEntries.forEach(entry => {
+  sourceOpportunitySourcing.forEach(entry => {
     const companyName = entry.companyName?.trim()
     if (!companyName) return
-    const key = `${companyName.toLowerCase()}|${(entry.email || '').toLowerCase()}`
+    const key = subkCompanyKey(companyName, entry.email)
     const existing = subkCandidateMap.get(key)
     if (existing) {
-      existing.entries.push(entry)
-      existing.currentProject = existing.currentProject || entry.opportunityId === contract.opportunityId
+      existing.entries = sourcingHistoryByKey.get(key) || existing.entries
+      existing.currentProject = true
+      existing.contractSourceQuote = true
       return
     }
     subkCandidateMap.set(key, {
@@ -523,16 +552,46 @@ function ContractDetailDrawer({
       setAside: entry.setAside,
       naicsCode: entry.naicsCode,
       notes: entry.notes,
-      entries: [entry],
-      currentProject: entry.opportunityId === contract.opportunityId,
+      entries: sourcingHistoryByKey.get(key) || [entry],
+      currentProject: true,
+      fromContractAdmin: false,
+      contractSourceQuote: true,
+    })
+  })
+
+  ;(contract.lockedSubcontractors || []).forEach(sub => {
+    const companyName = sub.companyName?.trim()
+    if (!companyName) return
+    const key = subkCompanyKey(companyName, sub.email || '')
+    const existing = subkCandidateMap.get(key)
+    if (existing) {
+      existing.fromContractAdmin = true
+      if (!existing.entries.length) existing.entries = sourcingHistoryByKey.get(key) || []
+      return
+    }
+    subkCandidateMap.set(key, {
+      key,
+      companyName,
+      contactName: sub.contactName,
+      email: sub.email || '',
+      phone: sub.phone || '',
+      setAside: sub.setAside || '',
+      naicsCode: sub.naicsCode || '',
+      notes: sub.notes || '',
+      entries: sourcingHistoryByKey.get(key) || [],
+      currentProject: false,
+      fromContractAdmin: true,
+      contractSourceQuote: false,
     })
   })
 
   const subkCandidates = Array.from(subkCandidateMap.values()).sort((a, b) => {
+    if (a.contractSourceQuote !== b.contractSourceQuote) return a.contractSourceQuote ? -1 : 1
+    if (a.fromContractAdmin !== b.fromContractAdmin) return a.fromContractAdmin ? -1 : 1
     if (a.currentProject !== b.currentProject) return a.currentProject ? -1 : 1
     return a.companyName.localeCompare(b.companyName)
   })
-  const lockedSubkCompanyKeys = new Set((contract.lockedSubcontractors || []).map(sub => `${sub.companyName.toLowerCase()}|${(sub.email || '').toLowerCase()}`))
+  const lockedSubkCompanyKeys = new Set((contract.lockedSubcontractors || []).map(sub => subkCompanyKey(sub.companyName, sub.email || '')))
   const selectedSubkCandidate = subkCandidates.find(candidate => candidate.key === selectedSubkKey)
   const selectedSubkMissingDocs = SUBK_DOCUMENT_SECTIONS.filter(section => !(subkDocumentDrafts[section.key] || []).length)
   const invoiceReady = canGenerateContractInvoice(contract)
@@ -590,7 +649,7 @@ function ContractDetailDrawer({
           { key: 'pop', label: 'POP', icon: Calendar },
           { key: 'poc', label: `PoC (${(contract.pocs || []).length})`, icon: UserPlus },
           { key: 'subk', label: `Potential Subk (${subkCandidates.length})`, icon: Building2 },
-          { key: 'lockSubk', label: `Lock Subk (${(contract.lockedSubcontractors || []).length})`, icon: Shield },
+          { key: 'lockSubk', label: `Locked Subk (${(contract.lockedSubcontractors || []).length})`, icon: Shield },
           { key: 'warnings', label: `Warnings (${(contract.governmentWarnings || []).filter(w => !w.resolvedAt).length})`, icon: AlertTriangle },
           { key: 'deliverables', label: `Deliverables`, icon: ListChecks },
         ].map(t => (
@@ -1110,13 +1169,13 @@ function ContractDetailDrawer({
             >
               <p className="text-sm font-black text-slate-100">Potential subcontractors</p>
               <p className="mt-1 text-xs text-slate-300">
-                Review subcontractors registered from sourcing, check previous projects, then choose one for this contract.
+                Review quote-backed subcontractors linked to this contract, plus subcontractors already added in Contract Admin.
               </p>
             </div>
 
             {subkCandidates.length === 0 && (
               <p className="rounded-2xl border border-dashed border-[#D7BE7A]/25 py-8 text-center text-sm text-slate-400">
-                No sourcing subcontractors are registered yet.
+                No quote-backed sourcing is linked to this contract yet.
               </p>
             )}
 
@@ -1150,9 +1209,14 @@ function ContractDetailDrawer({
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
                         <p className="truncate text-base font-black text-slate-100">{candidate.companyName}</p>
-                        {candidate.currentProject && (
+                        {candidate.contractSourceQuote && (
                           <span className="rounded-full border border-cyan-300/30 bg-cyan-400/10 px-2 py-0.5 text-[10px] font-bold text-cyan-100">
-                            Current project sourcing
+                            Linked quote
+                          </span>
+                        )}
+                        {candidate.fromContractAdmin && (
+                          <span className="rounded-full border border-[#D7BE7A]/30 bg-[#D7BE7A]/10 px-2 py-0.5 text-[10px] font-bold text-[#F8E8B8]">
+                            Added in Contract Admin
                           </span>
                         )}
                         {alreadyLocked && (
@@ -1233,7 +1297,7 @@ function ContractDetailDrawer({
           </div>
         )}
 
-        {/* LOCK SUBK TAB */}
+        {/* LOCKED SUBK TAB */}
         {tab === 'lockSubk' && (
           <div className="space-y-4">
             <div
@@ -1242,7 +1306,7 @@ function ContractDetailDrawer({
             >
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <p className="text-sm font-black text-slate-100">Lock subcontractor</p>
+                  <p className="text-sm font-black text-slate-100">Locked subcontractors</p>
                   <p className="mt-1 text-xs text-slate-300">
                     Upload the recommended documents, then lock the selected subcontractor to this contract.
                   </p>
@@ -1312,7 +1376,7 @@ function ContractDetailDrawer({
                   }}
                   className="btn-primary mt-4 w-full justify-center text-xs"
                 >
-                  <Shield size={12} /> Lock Subk
+                  <Shield size={12} /> Lock Subcontractor
                 </button>
               </div>
             ) : (
@@ -2366,7 +2430,7 @@ export default function ContractsPage() {
                           { label: 'View Details', icon: ChevronRight, tab: 'overview' as ContractDrawerTab },
                           { label: 'Edit POP', icon: Calendar, tab: 'pop' as ContractDrawerTab },
                           { label: 'Add PoC', icon: UserPlus, tab: 'poc' as ContractDrawerTab },
-                          { label: 'Lock Subk', icon: Building2, tab: 'lockSubk' as ContractDrawerTab },
+                          { label: 'Locked Subk', icon: Building2, tab: 'lockSubk' as ContractDrawerTab },
                           { label: 'Issue Warning', icon: AlertTriangle, tab: 'warnings' as ContractDrawerTab },
                         ].map(item => (
                           <button key={item.label} onClick={() => { setSelectedInitialTab(item.tab); setSelected(c); setMenuOpen(null) }}
