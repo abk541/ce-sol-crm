@@ -241,6 +241,7 @@ export interface Opportunity {
 export interface Contract {
   id: string
   contractId: string
+  contractNumber?: string
   title: string
   type: ContractType
   financeType?: ContractFinanceType

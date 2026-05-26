@@ -436,6 +436,7 @@ function ContractDetailDrawer({
     startDate: contract.popStart || '',
     endDate: contract.popEnd || '',
   })
+  const [contractNumberDraft, setContractNumberDraft] = useState(contract.contractNumber || '')
 
   // Terminate form
   const [showTerminate, setShowTerminate] = useState(false)
@@ -630,6 +631,49 @@ function ContractDetailDrawer({
               )}
             </div>
 
+            <div
+              className="rounded-xl border p-3"
+              style={{ background: 'rgba(255,255,255,0.055)', borderColor: 'rgba(215,190,122,0.24)' }}
+            >
+              <div className="mb-2 flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-wider text-[#F8E8B8]">Contract Number</p>
+                  <p className="mt-0.5 text-[11px] text-slate-400">Manual contract number assigned for this contract.</p>
+                </div>
+                {contract.contractNumber && (
+                  <span className="rounded-full border border-[#D7BE7A]/30 bg-[#D7BE7A]/10 px-2.5 py-1 font-mono text-[10px] font-bold text-[#F8E8B8]">
+                    {contract.contractNumber}
+                  </span>
+                )}
+              </div>
+              <div className="grid gap-2 sm:grid-cols-[1fr_auto_auto]">
+                <input
+                  className="input-field text-xs"
+                  value={contractNumberDraft}
+                  onChange={e => setContractNumberDraft(e.target.value)}
+                  placeholder="Enter contract number manually..."
+                />
+                <button
+                  type="button"
+                  className="btn-secondary justify-center text-xs"
+                  onClick={() => setContractNumberDraft(contract.contractNumber || '')}
+                >
+                  Reset
+                </button>
+                <button
+                  type="button"
+                  disabled={contractNumberDraft.trim() === (contract.contractNumber || '')}
+                  className="btn-primary justify-center text-xs disabled:cursor-not-allowed disabled:opacity-45"
+                  onClick={async () => {
+                    const saved = await updateContract(contract.id, { contractNumber: contractNumberDraft.trim() || undefined })
+                    if (saved) toast.success('Contract number saved')
+                  }}
+                >
+                  <Save size={12} /> Save Number
+                </button>
+              </div>
+            </div>
+
             <div className="rounded-xl border border-slate-200 bg-white p-3">
               <div className="mb-2 flex items-center justify-between gap-2">
                 <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Finance Projection</p>
@@ -714,6 +758,7 @@ function ContractDetailDrawer({
             <div className="space-y-2 text-sm">
               {[
                 { icon: MapPin, label: 'Location', value: contract.location },
+                { icon: FileText, label: 'Number', value: contract.contractNumber || '—' },
                 { icon: Calendar, label: 'POP', value: `${formatDate(contract.popStart)} - ${formatDate(contract.popEnd)}` },
                 { icon: FileText, label: 'Type', value: `${contract.type}${contract.financeType ? ` · ${contract.financeType}` : ''}` },
                 { icon: Shield, label: 'Set-Aside', value: contract.setAside || '—' },

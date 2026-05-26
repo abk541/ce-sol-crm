@@ -205,6 +205,7 @@ function contractToDb(c: Contract): Record<string, unknown> {
   return {
     id: c.id,
     contract_id: c.contractId,
+    contract_number: c.contractNumber ?? null,
     title: c.title,
     type: c.type,
     finance_type: c.financeType ?? null,
@@ -240,6 +241,7 @@ function dbToContract(row: Record<string, unknown>): Partial<Contract> {
   return {
     id: row.id as string,
     contractId: row.contract_id as string,
+    contractNumber: row.contract_number as string | undefined,
     title: row.title as string,
     type: row.type as Contract['type'],
     financeType: row.finance_type as Contract['financeType'],
