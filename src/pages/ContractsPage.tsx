@@ -13,7 +13,7 @@ import { useStore } from '../store/useStore'
 import type {
   Contract, ContractStatus, ContractPoC, LockedSubcontractor,
   GovernmentWarning, GovWarningType, FreshAward, FileAttachment, Comment, ContractDeliverable,
-  LockedSubkDocuments, Subcontractor,
+  LockedSubkDocuments, Subcontractor, Opportunity,
 } from '../types'
 import { formatCurrency } from '../lib/utils'
 import FloatingActionMenu from '../components/shared/FloatingActionMenu'
@@ -25,6 +25,7 @@ import {
   subkQuoteSummaryForContract,
 } from '../lib/invoicePdf'
 import { normalizeContractDeliverables } from '../lib/contractDeliverables'
+import { SourcingModal } from './PipelinePage'
 
 // ── Status config ───────────────────────────────────────────────────────
 const STATUS_META: Record<ContractStatus, { label: string; color: string; bg: string; border: string }> = {
@@ -418,10 +419,12 @@ function ContractDetailDrawer({
   contract,
   initialTab = 'overview',
   onClose,
+  onOpenSourcing,
 }: {
   contract: Contract
   initialTab?: ContractDrawerTab
   onClose: () => void
+  onOpenSourcing?: (opp: Opportunity) => void
 }) {
   const { updateContract, addContractPoC, updateContractPoC, removeContractPoC, addLockedSubcontractor, updateLockedSubcontractor, addGovernmentWarning, updateGovernmentWarning, resolveGovernmentWarning, advanceContractStatus, terminateContract, currentUser, employees, opportunities, subcontractors } = useStore()
   const [tab, setTab] = useState<ContractDrawerTab>(initialTab)
@@ -752,6 +755,32 @@ function ContractDetailDrawer({
                   No proposal file is linked to this contract yet.
                 </p>
               )}
+            </div>
+
+            <div
+              className="rounded-xl border p-3"
+              style={{ background: 'rgba(255,255,255,0.055)', borderColor: 'rgba(215,190,122,0.24)' }}
+            >
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-wider text-[#F8E8B8]">Sourcing</p>
+                  <p className="mt-0.5 text-[11px] text-slate-400">
+                    Add or edit sourcing entries for the source opportunity.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  disabled={!sourceOpportunity}
+                  title={sourceOpportunity ? 'Open sourcing for this contract opportunity' : 'No source opportunity is linked to this contract.'}
+                  className="btn-secondary justify-center gap-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-45"
+                  onClick={() => {
+                    if (!sourceOpportunity) return
+                    onOpenSourcing?.(sourceOpportunity)
+                  }}
+                >
+                  <Building2 size={12} /> Sourcing
+                </button>
+              </div>
             </div>
 
             {/* Details */}
@@ -2019,6 +2048,7 @@ export default function ContractsPage() {
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<Contract | null>(null)
   const [selectedInitialTab, setSelectedInitialTab] = useState<ContractDrawerTab>('overview')
+  const [sourcingOpp, setSourcingOpp] = useState<Opportunity | null>(null)
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
   const [period, setPeriod] = useState<Period | null>(null)
   const [columnFilters, setColumnFilters] = useState<Record<string, string>>({})
@@ -2372,10 +2402,18 @@ export default function ContractsPage() {
               contract={contracts.find(c => c.id === selected.id) || selected}
               initialTab={selectedInitialTab}
               onClose={() => setSelected(null)}
+              onOpenSourcing={opp => {
+                setSelected(null)
+                setSourcingOpp(opp)
+              }}
             />
           </>
         )}
       </AnimatePresence>
+
+      {sourcingOpp && (
+        <SourcingModal opp={sourcingOpp} onClose={() => setSourcingOpp(null)} />
+      )}
 
     </div>
   )

@@ -1349,7 +1349,7 @@ function serializeSourcingComments(comments: Comment[]) {
   return JSON.stringify(comments)
 }
 
-function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) {
+export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) {
   const { subcontractors, addSubcontractor, updateSubcontractor, deleteSubcontractor, currentUser } = useStore()
   const [tab, setTab] = useState<'list' | 'add'>('list')
   const [form, setForm] = useState({ companyName: '', contactName: '', email: '', phone: '', comment: '', quoteFile: '' })
