@@ -412,7 +412,7 @@ function subkDocumentTotal(documents: LockedSubkDocuments) {
   return SUBK_DOCUMENT_SECTIONS.reduce((sum, section) => sum + (documents[section.key]?.length || 0), 0)
 }
 
-type ContractDrawerTab = 'overview' | 'proposal' | 'poc' | 'subk' | 'lockSubk' | 'warnings' | 'deliverables'
+type ContractDrawerTab = 'overview' | 'proposal' | 'pop' | 'poc' | 'subk' | 'lockSubk' | 'warnings' | 'deliverables'
 
 function ContractDetailDrawer({
   contract,
@@ -432,6 +432,10 @@ function ContractDetailDrawer({
     attachments: [] as FileAttachment[],
   })
   const [openDeliverableAttachments, setOpenDeliverableAttachments] = useState<string | null>(null)
+  const [popForm, setPopForm] = useState({
+    startDate: contract.popStart || '',
+    endDate: contract.popEnd || '',
+  })
 
   // Terminate form
   const [showTerminate, setShowTerminate] = useState(false)
@@ -580,6 +584,7 @@ function ContractDetailDrawer({
         {[
           { key: 'overview', label: 'Overview', icon: Info },
           { key: 'proposal', label: `Proposal Files (${proposalCount})`, icon: FileText },
+          { key: 'pop', label: 'POP', icon: Calendar },
           { key: 'poc', label: `PoC (${(contract.pocs || []).length})`, icon: UserPlus },
           { key: 'subk', label: `Potential Subk (${subkCandidates.length})`, icon: Building2 },
           { key: 'lockSubk', label: `Lock Subk (${(contract.lockedSubcontractors || []).length})`, icon: Shield },
@@ -693,7 +698,7 @@ function ContractDetailDrawer({
             <div className="space-y-2 text-sm">
               {[
                 { icon: MapPin, label: 'Location', value: contract.location },
-                { icon: Calendar, label: 'PoP', value: `${contract.popStart} → ${contract.popEnd}` },
+                { icon: Calendar, label: 'POP', value: `${formatDate(contract.popStart)} - ${formatDate(contract.popEnd)}` },
                 { icon: FileText, label: 'Type', value: `${contract.type}${contract.financeType ? ` · ${contract.financeType}` : ''}` },
                 { icon: Shield, label: 'Set-Aside', value: contract.setAside || '—' },
                 { icon: Building2, label: 'Client', value: contract.client || '—' },
@@ -787,6 +792,112 @@ function ContractDetailDrawer({
                 <Trash2 size={12} /> Terminate Contract
               </button>
             )}
+          </div>
+        )}
+
+        {/* POP TAB */}
+        {tab === 'pop' && (
+          <div className="space-y-4">
+            <div
+              className="rounded-2xl border p-4"
+              style={{
+                background: 'linear-gradient(135deg, rgba(15,46,54,0.94), rgba(7,19,31,0.96))',
+                borderColor: 'rgba(215,190,122,0.26)',
+              }}
+            >
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm font-black text-slate-100">Period of Performance</p>
+                  <p className="mt-1 text-xs leading-5 text-slate-300">
+                    Enter the start and end dates manually for this active contract.
+                  </p>
+                </div>
+                <span className="rounded-full border border-[#D7BE7A]/30 bg-[#D7BE7A]/10 px-3 py-1 text-[10px] font-bold text-[#F8E8B8]">
+                  {contract.contractId}
+                </span>
+              </div>
+            </div>
+
+            <div
+              className="rounded-2xl border p-4"
+              style={{ background: 'rgba(255,255,255,0.055)', borderColor: 'rgba(215,190,122,0.24)' }}
+            >
+              <div className="grid gap-3 md:grid-cols-2">
+                <div>
+                  <label className="mb-1.5 block text-[10px] font-bold uppercase tracking-wide text-slate-200">
+                    Start Date *
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    className="input-field text-xs"
+                    value={popForm.startDate}
+                    onChange={e => setPopForm(prev => ({ ...prev, startDate: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-[10px] font-bold uppercase tracking-wide text-slate-200">
+                    End Date *
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    className="input-field text-xs"
+                    value={popForm.endDate}
+                    onChange={e => setPopForm(prev => ({ ...prev, endDate: e.target.value }))}
+                  />
+                </div>
+              </div>
+
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                <div
+                  className="rounded-xl border px-3 py-3"
+                  style={{ background: 'rgba(7,19,31,0.55)', borderColor: 'rgba(215,190,122,0.18)' }}
+                >
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Current Start</p>
+                  <p className="mt-1 text-sm font-black text-slate-100">{formatDate(contract.popStart)}</p>
+                </div>
+                <div
+                  className="rounded-xl border px-3 py-3"
+                  style={{ background: 'rgba(7,19,31,0.55)', borderColor: 'rgba(215,190,122,0.18)' }}
+                >
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Current End</p>
+                  <p className="mt-1 text-sm font-black text-slate-100">{formatDate(contract.popEnd)}</p>
+                </div>
+              </div>
+
+              <div className="mt-4 flex flex-wrap gap-2 border-t border-[#D7BE7A]/15 pt-4">
+                <button
+                  type="button"
+                  className="btn-secondary justify-center"
+                  onClick={() => setPopForm({ startDate: contract.popStart || '', endDate: contract.popEnd || '' })}
+                >
+                  Reset
+                </button>
+                <button
+                  type="button"
+                  disabled={!popForm.startDate || !popForm.endDate}
+                  className="btn-primary justify-center disabled:cursor-not-allowed disabled:opacity-45"
+                  onClick={async () => {
+                    if (!popForm.startDate || !popForm.endDate) {
+                      toast.error('POP start date and end date are required.')
+                      return
+                    }
+                    if (new Date(`${popForm.startDate}T00:00:00`).getTime() > new Date(`${popForm.endDate}T00:00:00`).getTime()) {
+                      toast.error('POP start date must be before the end date.')
+                      return
+                    }
+                    const saved = await updateContract(contract.id, {
+                      popStart: popForm.startDate,
+                      popEnd: popForm.endDate,
+                    })
+                    if (saved) toast.success('Period of performance saved')
+                  }}
+                >
+                  <Save size={13} /> Save POP
+                </button>
+              </div>
+            </div>
           </div>
         )}
 
@@ -2249,6 +2360,7 @@ export default function ContractsPage() {
                         {[
                           { label: 'View Details', icon: ChevronRight, tab: 'overview' as ContractDrawerTab },
                           { label: 'Proposal Files', icon: FileText, tab: 'proposal' as ContractDrawerTab },
+                          { label: 'Edit POP', icon: Calendar, tab: 'pop' as ContractDrawerTab },
                           { label: 'Add PoC', icon: UserPlus, tab: 'poc' as ContractDrawerTab },
                           { label: 'Lock Subk', icon: Building2, tab: 'lockSubk' as ContractDrawerTab },
                           { label: 'Issue Warning', icon: AlertTriangle, tab: 'warnings' as ContractDrawerTab },
