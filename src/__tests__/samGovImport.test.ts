@@ -4,6 +4,8 @@ import {
   buildSamGovOpportunityEndpoint,
   extractSamGovAgency,
   extractSamGovDeadlineTimezone,
+  formatOpportunityMoroccoDueDateTime,
+  formatOpportunitySourceDueDateTime,
   formatTime12h,
   getSamGovPostedRange,
   mapSamGovOpportunityToForm,
@@ -278,6 +280,37 @@ describe('SAM.gov import API calls', () => {
     expect(timezoneCodeForDisplay('America/Chicago', new Date('2026-05-27T15:00:00Z'))).toBe('CDT')
     expect(timezoneCodeForDisplay('Africa/Casablanca', new Date('2026-05-27T12:00:00Z'))).toBe('GMT+1')
     expect(timezoneCodeForDisplay('Asia/Riyadh', new Date('2026-05-27T12:00:00Z'))).toBe('KSA')
+  })
+
+  it('formats the table source deadline without appending an empty time', () => {
+    expect(formatOpportunitySourceDueDateTime({
+      dueDate: '2026-05-28',
+      localTime: '',
+      timezone: 'EDT',
+    })).toBe('May 28, 2026')
+  })
+
+  it('keeps the table source deadline on timezone codes and Morocco conversion stable', () => {
+    const opp = {
+      dueDate: '2026-05-28',
+      localTime: '10:00 AM',
+      timezone: 'America/New_York',
+      moroccoTime: '3:00 PM',
+      moroccoDate: '2026-05-28',
+    }
+
+    expect(formatOpportunitySourceDueDateTime(opp)).toBe('May 28, 2026 at 10:00 AM EDT')
+    expect(formatOpportunityMoroccoDueDateTime(opp)).toBe('3:00 PM GMT+1')
+  })
+
+  it('uses stored Morocco import time if the source time is unavailable', () => {
+    expect(formatOpportunityMoroccoDueDateTime({
+      dueDate: '2026-05-28',
+      localTime: '',
+      timezone: 'America/New_York',
+      moroccoTime: '3:00 PM',
+      moroccoDate: '2026-05-28',
+    })).toBe('3:00 PM GMT+1')
   })
 
   it('normalises any clock-time variant into canonical 12h AM/PM', () => {

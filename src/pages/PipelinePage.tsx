@@ -647,6 +647,16 @@ function formatMoroccoDisplay(
   moroccoTime: string | undefined,
   moroccoDate: string | undefined,
 ): string {
+  if (!isCompleteClockTime(localTime)) {
+    if (moroccoTime && moroccoDate) {
+      const crossesMidnight = dueDate && moroccoDate !== dueDate
+      const dateSuffix = crossesMidnight
+        ? ` (${new Date(`${moroccoDate}T12:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })})`
+        : ''
+      return `${formatTime12h(moroccoTime)}${dateSuffix} GMT+1`
+    }
+    return 'Source time not available'
+  }
   return formatMoroccoDueTimeShared({ localTime, timezone, dueDate, moroccoTime, moroccoDate })
 }
 
@@ -2353,9 +2363,8 @@ function getColumnFilterValue(o: Opportunity, key: ColumnFilterKey, employees: R
       return typeLabel(o.type)
     case 'localTime':
       return [
-        o.dueDate,
-        formatLocalDueTimeShared(o.localTime, o.timezone),
-        formatMoroccoDisplay(o.localTime, o.timezone, o.dueDate, o.moroccoTime, o.moroccoDate),
+        formatOpportunitySourceDueDateTime(o),
+        formatOpportunityMoroccoDueDateTime(o),
       ].filter(Boolean).join(' ')
     case 'manager':
       return chain.manager?.name ?? ''
@@ -2400,14 +2409,38 @@ function ColumnFilterInput({
   )
 }
 
+function dueDateLabel(dueDate: string | undefined): string {
+  if (!dueDate) return '-'
+  return new Date(dueDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+}
+
+function dueDateReference(opp: Pick<Opportunity, 'dueDate' | 'localTime' | 'timezone'>): Date {
+  const utcMs = opportunityDeadlineTimeMs(opp)
+  if (utcMs !== null) return new Date(utcMs)
+  if (opp.dueDate) return new Date(`${opp.dueDate}T12:00:00Z`)
+  return new Date()
+}
+
+export function formatOpportunitySourceDueDateTime(
+  opp: Pick<Opportunity, 'dueDate' | 'localTime' | 'timezone'>,
+): string {
+  const date = dueDateLabel(opp.dueDate)
+  if (!isCompleteClockTime(opp.localTime)) return date
+  const timezoneCode = timezoneCodeForDisplay(opp.timezone, dueDateReference(opp)) || opp.timezone
+  const time = formatLocalDueTimeShared(opp.localTime, timezoneCode)
+  return opp.dueDate ? `${date} at ${time}` : time
+}
+
+export function formatOpportunityMoroccoDueDateTime(
+  opp: Pick<Opportunity, 'dueDate' | 'localTime' | 'timezone' | 'moroccoTime' | 'moroccoDate'>,
+): string {
+  return formatMoroccoDisplay(opp.localTime, opp.timezone, opp.dueDate, opp.moroccoTime, opp.moroccoDate)
+}
+
 function DueDateTimeCell({ opp }: { opp: Opportunity }) {
   const [tooltip, setTooltip] = useState<{ top: number; left: number; placement: 'top' | 'bottom' } | null>(null)
-  const dueDateFull = opp.dueDate
-    ? new Date(opp.dueDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
-    : '-'
-  const samGovTime = formatLocalDueTimeShared(opp.localTime, opp.timezone)
-  const localTime = formatMoroccoDisplay(opp.localTime, opp.timezone, opp.dueDate, opp.moroccoTime, opp.moroccoDate)
-  const sourceDateTime = opp.dueDate ? `${dueDateFull} at ${samGovTime}` : samGovTime
+  const localTime = formatOpportunityMoroccoDueDateTime(opp)
+  const sourceDateTime = formatOpportunitySourceDueDateTime(opp)
 
   const showTooltip = (target: HTMLElement) => {
     const rect = target.getBoundingClientRect()
@@ -2780,7 +2813,7 @@ export default function PipelinePage() {
                 <div className="min-w-0">
                   <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">Due</p>
                   <p className="truncate font-semibold text-[#F8FBF7]">
-                    {new Date(selectedOpp.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} · {formatLocalDueTimeShared(selectedOpp.localTime, selectedOpp.timezone)}
+                    {formatOpportunitySourceDueDateTime(selectedOpp)}
                   </p>
                 </div>
                 <div className="min-w-0">
@@ -2815,14 +2848,12 @@ export default function PipelinePage() {
 
               <DrawerSection title="Schedule" variant="premium">
                 <DrawerField label="Due Date"  value={new Date(selectedOpp.dueDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })} variant="premium" />
-                <DrawerField label="Local Time" value={formatLocalDueTimeShared(selectedOpp.localTime, selectedOpp.timezone)} variant="premium" />
-                {selectedOpp.localTime && (
-                  <DrawerField label="Morocco (GMT+1)" value={
-                    <span className="font-bold text-[#7DD3FC]">
-                      {formatMoroccoDisplay(selectedOpp.localTime, selectedOpp.timezone, selectedOpp.dueDate, selectedOpp.moroccoTime, selectedOpp.moroccoDate)}
-                    </span>
-                  } variant="premium" />
-                )}
+                <DrawerField label="Source Time" value={formatOpportunitySourceDueDateTime(selectedOpp)} variant="premium" />
+                <DrawerField label="Morocco (GMT+1)" value={
+                  <span className="font-bold text-[#7DD3FC]">
+                    {formatOpportunityMoroccoDueDateTime(selectedOpp)}
+                  </span>
+                } variant="premium" />
                 <DrawerField label="Captured On" value={selectedOpp.capturedOn} variant="premium" />
               </DrawerSection>
 
