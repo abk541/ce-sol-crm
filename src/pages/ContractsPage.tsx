@@ -477,6 +477,7 @@ function ContractDetailDrawer({
   const [warnForm, setWarnForm] = useState({
     type: 'CURE_NOTICE' as GovWarningType,
     issuedDate: '',
+    deadline: '',
     description: '',
     comment: '',
     attachments: [] as FileAttachment[],
@@ -486,6 +487,7 @@ function ContractDetailDrawer({
   const [warningEditForm, setWarningEditForm] = useState({
     type: 'CURE_NOTICE' as GovWarningType,
     issuedDate: '',
+    deadline: '',
     description: '',
   })
   const [confirmDeleteWarningId, setConfirmDeleteWarningId] = useState<string | null>(null)
@@ -1479,6 +1481,7 @@ function ContractDetailDrawer({
                           setWarningEditForm({
                             type: w.type,
                             issuedDate: w.issuedDate,
+                            deadline: w.deadline || '',
                             description: w.description,
                           })
                         }}
@@ -1500,7 +1503,7 @@ function ContractDetailDrawer({
 
                   {isEditingWarning ? (
                     <div className="mb-3 space-y-2 rounded-lg bg-white/65 p-3">
-                      <div className="grid gap-2 sm:grid-cols-2">
+                      <div className="grid gap-2 lg:grid-cols-3">
                         <div>
                           <label className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-500">Type</label>
                           <select
@@ -1514,11 +1517,20 @@ function ContractDetailDrawer({
                           </select>
                         </div>
                         <div>
-                          <label className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-500">Issued Date</label>
+                          <label className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-500">Issuance Date</label>
                           <input
                             type="date"
                             value={warningEditForm.issuedDate}
                             onChange={e => setWarningEditForm(prev => ({ ...prev, issuedDate: e.target.value }))}
+                            className="input-field w-full py-1.5 text-xs"
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-500">Deadline</label>
+                          <input
+                            type="date"
+                            value={warningEditForm.deadline}
+                            onChange={e => setWarningEditForm(prev => ({ ...prev, deadline: e.target.value }))}
                             className="input-field w-full py-1.5 text-xs"
                           />
                         </div>
@@ -1542,13 +1554,14 @@ function ContractDetailDrawer({
                         </button>
                         <button
                           type="button"
-                          disabled={!warningEditForm.issuedDate || !warningEditForm.description.trim()}
+                          disabled={!warningEditForm.issuedDate || !warningEditForm.deadline || !warningEditForm.description.trim()}
                           className="btn-primary text-xs disabled:cursor-not-allowed disabled:opacity-45"
                           onClick={() => {
                             const severity = GOV_WARNING_META[warningEditForm.type].severity
                             updateGovernmentWarning(contract.id, w.id, {
                               type: warningEditForm.type,
                               issuedDate: warningEditForm.issuedDate,
+                              deadline: warningEditForm.deadline,
                               description: warningEditForm.description.trim(),
                               severity,
                             })
@@ -1563,7 +1576,16 @@ function ContractDetailDrawer({
                   ) : (
                     <>
                       <p className="text-xs text-slate-700 mb-1">{w.description}</p>
-                      <p className="text-[10px] text-slate-500">Issued: {w.issuedDate}</p>
+                      <div className="mt-2 grid gap-2 text-[10px] sm:grid-cols-2">
+                        <div className="rounded-lg border border-white/65 bg-white/55 px-2 py-1.5">
+                          <span className="block font-bold uppercase tracking-wide text-slate-500">Issuance Date</span>
+                          <span className="font-semibold text-slate-700">{formatDate(w.issuedDate)}</span>
+                        </div>
+                        <div className="rounded-lg border border-white/65 bg-white/55 px-2 py-1.5">
+                          <span className="block font-bold uppercase tracking-wide text-slate-500">Deadline</span>
+                          <span className="font-semibold text-slate-700">{formatDate(w.deadline || '')}</span>
+                        </div>
+                      </div>
                     </>
                   )}
 
@@ -1698,9 +1720,15 @@ function ContractDetailDrawer({
                     ))}
                   </select>
                 </div>
-                <div>
-                  <label className="block text-[10px] font-semibold text-slate-600 mb-0.5">Issued Date</label>
-                  <input type="date" value={warnForm.issuedDate} onChange={e => setWarnForm(p => ({ ...p, issuedDate: e.target.value }))} className="input-field text-xs py-1.5 w-full" />
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <div>
+                    <label className="block text-[10px] font-semibold text-slate-600 mb-0.5">Issuance Date</label>
+                    <input type="date" value={warnForm.issuedDate} onChange={e => setWarnForm(p => ({ ...p, issuedDate: e.target.value }))} className="input-field text-xs py-1.5 w-full" />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-semibold text-slate-600 mb-0.5">Deadline</label>
+                    <input type="date" value={warnForm.deadline} onChange={e => setWarnForm(p => ({ ...p, deadline: e.target.value }))} className="input-field text-xs py-1.5 w-full" />
+                  </div>
                 </div>
                 <div>
                   <label className="block text-[10px] font-semibold text-slate-600 mb-0.5">Description *</label>
@@ -1718,12 +1746,13 @@ function ContractDetailDrawer({
                 <div className="flex gap-2">
                   <button onClick={() => setAddingWarning(false)} className="btn-secondary flex-1 text-xs py-1.5">Cancel</button>
                   <button
-                    disabled={!warnForm.description || !warnForm.issuedDate}
+                    disabled={!warnForm.description || !warnForm.issuedDate || !warnForm.deadline}
                     onClick={() => {
                       const severity = GOV_WARNING_META[warnForm.type].severity
                       addGovernmentWarning(contract.id, {
                         type: warnForm.type,
                         issuedDate: warnForm.issuedDate,
+                        deadline: warnForm.deadline,
                         description: warnForm.description,
                         severity,
                         attachments: warnForm.attachments,
@@ -1736,7 +1765,7 @@ function ContractDetailDrawer({
                             }]
                           : [],
                       })
-                      setWarnForm({ type: 'CURE_NOTICE', issuedDate: '', description: '', comment: '', attachments: [] })
+                      setWarnForm({ type: 'CURE_NOTICE', issuedDate: '', deadline: '', description: '', comment: '', attachments: [] })
                       setAddingWarning(false)
                     }}
                     className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-red-500 text-white hover:bg-red-600 transition-colors disabled:opacity-40">

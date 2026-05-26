@@ -162,6 +162,7 @@ export interface GovernmentWarning {
   contractId: string
   type: GovWarningType
   issuedDate: string
+  deadline?: string
   description: string
   severity: 'RED' | 'YELLOW' | 'INFO'
   attachments?: FileAttachment[]

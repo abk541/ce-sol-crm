@@ -971,6 +971,7 @@ describe('11 - Government warning management', () => {
         contractId: 'c-warning',
         type: 'CURE_NOTICE',
         issuedDate: '2026-05-26',
+        deadline: '2026-05-30',
         description: 'Missing report',
         severity: 'RED',
       }],
@@ -980,5 +981,30 @@ describe('11 - Government warning management', () => {
     useStore.getState().removeGovernmentWarning('c-warning', 'gw1')
 
     expect(useStore.getState().contracts[0].governmentWarnings).toEqual([])
+  })
+
+  it('updates warning issuance and deadline dates', () => {
+    const c = makeContract({
+      id: 'c-warning-edit',
+      governmentWarnings: [{
+        id: 'gw1',
+        contractId: 'c-warning-edit',
+        type: 'CURE_NOTICE',
+        issuedDate: '2026-05-26',
+        deadline: '2026-05-30',
+        description: 'Missing report',
+        severity: 'RED',
+      }],
+    })
+    useStore.setState({ contracts: [c] })
+
+    useStore.getState().updateGovernmentWarning('c-warning-edit', 'gw1', {
+      issuedDate: '2026-06-01',
+      deadline: '2026-06-10',
+    })
+
+    const warning = useStore.getState().contracts[0].governmentWarnings?.[0]
+    expect(warning?.issuedDate).toBe('2026-06-01')
+    expect(warning?.deadline).toBe('2026-06-10')
   })
 })

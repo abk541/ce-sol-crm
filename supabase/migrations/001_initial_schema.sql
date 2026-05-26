@@ -146,6 +146,7 @@ CREATE TABLE IF NOT EXISTS public.government_warnings (
   contract_id  TEXT NOT NULL REFERENCES public.contracts(id) ON DELETE CASCADE,
   type         TEXT NOT NULL CHECK (type IN ('CURE_NOTICE','LETTER_OF_CONCERN','NCR','SHOW_CAUSE','STOP_WORK_ORDER')),
   issued_date  TEXT,
+  deadline     TEXT,
   description  TEXT,
   severity     TEXT CHECK (severity IN ('RED','YELLOW','INFO')),
   resolved_at  TIMESTAMPTZ,
