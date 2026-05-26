@@ -8,6 +8,7 @@ import {
   getSamGovPostedRange,
   mapSamGovOpportunityToForm,
   parseSamGovDeadline,
+  timezoneCodeForDisplay,
 } from '../pages/PipelinePage'
 import { formatMoroccoDueTime, opportunityDeadlineTimeMs } from '../lib/timezone'
 
@@ -270,6 +271,13 @@ describe('SAM.gov import API calls', () => {
     expect(changed.dueDate).toBe('2026-05-28')
     expect(changed.moroccoTime).toBe('4:30 AM')
     expect(changed.moroccoDate).toBe('2026-05-29')
+  })
+
+  it('shows imported timezone values as short codes for the form dropdown', () => {
+    expect(timezoneCodeForDisplay('America/New_York', new Date('2026-05-27T14:00:00Z'))).toBe('EDT')
+    expect(timezoneCodeForDisplay('America/Chicago', new Date('2026-05-27T15:00:00Z'))).toBe('CDT')
+    expect(timezoneCodeForDisplay('Africa/Casablanca', new Date('2026-05-27T12:00:00Z'))).toBe('GMT+1')
+    expect(timezoneCodeForDisplay('Asia/Riyadh', new Date('2026-05-27T12:00:00Z'))).toBe('KSA')
   })
 
   it('normalises any clock-time variant into canonical 12h AM/PM', () => {

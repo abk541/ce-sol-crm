@@ -22,6 +22,7 @@ import FloatingActionMenu from '../components/shared/FloatingActionMenu'
 import {
   formatLocalDueTime as formatLocalDueTimeShared,
   formatMoroccoDueTime as formatMoroccoDueTimeShared,
+  fixedOffsetMinutes,
   ianaTimeZoneFromOffset,
   isValidIanaTimeZone,
   normalizeUtcOffset,
@@ -69,34 +70,16 @@ const SAM_TIMEZONE_ALIASES: Record<string, string> = {
 // Pre-submission view statuses only
 const OPP_VIEW_STATUSES: OppStatus[] = ['ACTIVE', 'NEW_ASSIGNMENT', 'DISCUSSION']
 
-const FALLBACK_IANA_TIMEZONES = [
-  'Africa/Casablanca',
-  'UTC',
-  'Europe/London',
-  'Europe/Paris',
-  'America/New_York',
-  'America/Chicago',
-  'America/Denver',
-  'America/Los_Angeles',
-  'Pacific/Honolulu',
-  'Asia/Riyadh',
-  'Asia/Dubai',
-  'Asia/Amman',
-  'Asia/Tehran',
-  'Asia/Kolkata',
-  'Asia/Singapore',
-  'Asia/Tokyo',
-  'Australia/Sydney',
-  'Pacific/Auckland',
+const PREFERRED_TIMEZONE_CODES = [
+  'EDT', 'EST', 'CDT', 'CST', 'MDT', 'MST', 'PDT', 'PST', 'AKDT', 'AKST', 'HST',
+  'GMT', 'UTC', 'GMT+1', 'KSA', 'AST', 'GST', 'CET', 'CEST', 'EET', 'EEST',
+  'IRT', 'IRST', 'IST', 'SGT', 'JST', 'AEST', 'AEDT', 'NZST', 'NZDT',
 ]
 
-function getAllIanaTimeZones() {
-  const supported = (Intl as any).supportedValuesOf?.('timeZone') as string[] | undefined
-  const zones = supported?.length ? supported : FALLBACK_IANA_TIMEZONES
-  return Array.from(new Set(['Africa/Casablanca', 'UTC', ...zones])).filter(isValidIanaTimeZone)
-}
-
-const IANA_TIMEZONES = getAllIanaTimeZones()
+const TIMEZONE_CODE_OPTIONS = Array.from(new Set([
+  ...PREFERRED_TIMEZONE_CODES,
+  ...Object.keys(TIMEZONES),
+])).filter(code => code && (TIMEZONES[code] || fixedOffsetMinutes(code) !== null))
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100, 0] // 0 = All
 function getBuildSamGovApiKey() {
@@ -683,6 +666,49 @@ function formatTimeInZone(timeZone: string, referenceDate: Date): string {
   }
 }
 
+function formatTimeWithFixedOffset(referenceDate: Date, offsetMinutes: number): string {
+  const shifted = new Date(referenceDate.getTime() + offsetMinutes * 60_000)
+  return `${shifted.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })}, ${formatTime12h(`${String(shifted.getUTCHours()).padStart(2, '0')}:${String(shifted.getUTCMinutes()).padStart(2, '0')}`)}`
+}
+
+function formatTimezoneCodeTime(code: string, referenceDate: Date): string {
+  const fixedOffset = fixedOffsetMinutes(code)
+  if (fixedOffset !== null) return formatTimeWithFixedOffset(referenceDate, fixedOffset)
+
+  const zone = resolveIanaTimeZone(code)
+  if (!zone) return ''
+  return formatTimeInZone(zone, referenceDate).replace(/\s[A-Z]{2,5}(?:[+-]\d+)?$/, '')
+}
+
+export function timezoneCodeForDisplay(value: string | undefined, referenceDate = new Date()): string {
+  const raw = (value ?? '').trim()
+  if (!raw) return 'GMT+1'
+  const upper = raw.toUpperCase()
+  if (TIMEZONE_CODE_OPTIONS.includes(raw)) return raw
+  if (TIMEZONE_CODE_OPTIONS.includes(upper)) return upper
+
+  const matchingMappedCodes = TIMEZONE_CODE_OPTIONS.filter(code => TIMEZONES[code] === raw)
+  const offset = isValidIanaTimeZone(raw)
+    ? Math.round(timeZoneOffsetMs(referenceDate, raw) / 60_000)
+    : null
+
+  if (matchingMappedCodes.length) {
+    const exact = offset === null ? undefined : matchingMappedCodes.find(code => fixedOffsetMinutes(code) === offset)
+    return exact ?? matchingMappedCodes[0]
+  }
+
+  if (offset !== null) {
+    const exactOffsetCode = TIMEZONE_CODE_OPTIONS.find(code => fixedOffsetMinutes(code) === offset)
+    if (exactOffsetCode) return exactOffsetCode
+  }
+
+  const normalisedOffset = normalizeUtcOffset(raw.replace(/^(?:UTC|GMT)/i, ''))
+  const offsetLabel = timezoneLabelFromOffset(normalisedOffset)
+  if (TIMEZONE_CODE_OPTIONS.includes(offsetLabel)) return offsetLabel
+
+  return ''
+}
+
 function TimezoneInput({
   id,
   value,
@@ -702,36 +728,33 @@ function TimezoneInput({
     () => new Date(referenceMs ?? Date.now()),
     [referenceMs],
   )
-  const selectedIana = resolveIanaTimeZone(value)
-  const selectedTime = selectedIana ? formatTimeInZone(selectedIana, referenceDate) : ''
-  const options = useMemo(() => {
-    const current = value && !IANA_TIMEZONES.includes(value) ? [value] : []
-    return [...current, ...IANA_TIMEZONES].map(zone => ({
-      zone,
-      label: resolveIanaTimeZone(zone)
-        ? `${zone} - ${formatTimeInZone(resolveIanaTimeZone(zone) || zone, referenceDate)}`
-        : `${zone} - imported fixed offset`,
-    }))
-  }, [referenceDate, value])
+  const selectedCode = timezoneCodeForDisplay(value, referenceDate)
+  const selectedTime = selectedCode ? formatTimezoneCodeTime(selectedCode, referenceDate) : ''
+  const options = useMemo(() => TIMEZONE_CODE_OPTIONS.map(code => {
+    const codeTime = formatTimezoneCodeTime(code, referenceDate)
+    return {
+      code,
+      label: `${code}${codeTime ? ` - ${codeTime}` : ''}`,
+    }
+  }), [referenceDate])
 
   return (
     <div className="space-y-1">
-      <input
-        value={value ?? ''}
-        list={id}
+      <select
+        id={id}
+        value={selectedCode}
         onChange={e => onChange(e.target.value)}
-        className="input-field"
-        placeholder="Type a timezone, e.g. America/New_York"
-      />
-      <datalist id={id}>
+        className="select-field"
+      >
+        <option value="">Select code...</option>
         {options.map(option => (
-          <option key={option.zone} value={option.zone} label={option.label} />
+          <option key={option.code} value={option.code}>{option.label}</option>
         ))}
-      </datalist>
+      </select>
       <p className="text-[10px] font-medium text-slate-400">
-        {selectedIana && selectedTime
-          ? `${selectedIana} is ${selectedTime}${referenceMs === null ? ' now.' : ' for this deadline.'}`
-          : 'Type a real timezone name and choose a suggestion.'}
+        {selectedCode && selectedTime
+          ? `${selectedCode}: ${selectedTime}${referenceMs === null ? ' now.' : ' for this deadline.'}`
+          : 'Choose the source timezone code shown on SAM.gov.'}
       </p>
     </div>
   )

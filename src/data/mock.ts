@@ -44,16 +44,24 @@ export const TIMEZONES: Record<string, string> = {
   // US standard time
   'EST': 'America/New_York',   'CST': 'America/Chicago',
   'MST': 'America/Denver',     'PST': 'America/Los_Angeles',
-  'HST': 'Pacific/Honolulu',
+  'AKST': 'America/Anchorage', 'HST': 'Pacific/Honolulu',
   // US daylight time — same IANA zones (which already handle DST automatically),
   // but exposed as distinct dropdown options so SAM.gov-imported deadlines can
   // be labelled with the same abbreviation the SAM.gov UI shows.
   'EDT': 'America/New_York',   'CDT': 'America/Chicago',
   'MDT': 'America/Denver',     'PDT': 'America/Los_Angeles',
+  'AKDT': 'America/Anchorage',
   // International
-  'AST': 'Asia/Riyadh',
-  'EET': 'Asia/Amman',         'IRT': 'Asia/Tehran',
+  'KSA': 'Asia/Riyadh',        'AST': 'Asia/Riyadh',
+  'GST': 'Asia/Dubai',
+  'EET': 'Asia/Amman',         'EEST': 'Asia/Amman',
+  'IRT': 'Asia/Tehran',        'IRST': 'Asia/Tehran',
   'GMT': 'Europe/London',      'CET': 'Europe/Paris',
+  'BST': 'Europe/London',      'CEST': 'Europe/Paris',
+  'IST': 'Asia/Kolkata',       'SGT': 'Asia/Singapore',
+  'JST': 'Asia/Tokyo',
+  'AEST': 'Australia/Sydney',  'AEDT': 'Australia/Sydney',
+  'NZST': 'Pacific/Auckland',  'NZDT': 'Pacific/Auckland',
   'GMT+1': 'Etc/GMT-1',
   // Fixed UTC offsets from SAM.gov responseDeadLine values. These preserve
   // the source deadline offset exactly when SAM.gov does not provide a named
