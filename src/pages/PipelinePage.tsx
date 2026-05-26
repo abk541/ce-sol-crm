@@ -655,7 +655,7 @@ function formatMoroccoDisplay(
         : ''
       return `${formatTime12h(moroccoTime)}${dateSuffix} GMT+1`
     }
-    return 'Source time not available'
+    return ''
   }
   return formatMoroccoDueTimeShared({ localTime, timezone, dueDate, moroccoTime, moroccoDate })
 }
@@ -985,6 +985,7 @@ function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) 
     if (!form.solicitation?.trim()) { toast.error('Solicitation title is required'); setTab('details'); return }
     if (!form.type) { toast.error('Contract type is required'); setTab('details'); return }
     if (!form.dueDate) { toast.error('Due date is required'); setTab('schedule'); return }
+    if (!isCompleteClockTime(form.localTime)) { toast.error('Due time is required for Morocco time conversion'); setTab('schedule'); return }
     if (form.assignedTo && form.assignedTo !== opp.assignedTo && !allowedAssignees.includes(form.assignedTo)) {
       toast.error('You can only assign opportunities inside your team.')
       setTab('assign')
@@ -1901,6 +1902,7 @@ function CreateModal({ onClose }: { onClose: () => void }) {
     if (!form.solicitation?.trim()) { toast.error('Solicitation title is required'); setTab('details'); return }
     if (!form.type) { toast.error('Contract type is required'); setTab('details'); return }
     if (!form.dueDate) { toast.error('Due date is required'); setTab('schedule'); return }
+    if (!isCompleteClockTime(form.localTime)) { toast.error('Due time is required for Morocco time conversion'); setTab('schedule'); return }
     if (form.assignedTo && !allowedAssignees.includes(form.assignedTo)) {
       toast.error('You can only assign opportunities inside your team.')
       setTab('assign')
@@ -2441,6 +2443,7 @@ function DueDateTimeCell({ opp }: { opp: Opportunity }) {
   const [tooltip, setTooltip] = useState<{ top: number; left: number; placement: 'top' | 'bottom' } | null>(null)
   const localTime = formatOpportunityMoroccoDueDateTime(opp)
   const sourceDateTime = formatOpportunitySourceDueDateTime(opp)
+  const hasSourceClock = isCompleteClockTime(opp.localTime)
 
   const showTooltip = (target: HTMLElement) => {
     const rect = target.getBoundingClientRect()
@@ -2482,10 +2485,19 @@ function DueDateTimeCell({ opp }: { opp: Opportunity }) {
             <Clock size={13} className="text-[#D7BE7A]" />
           </div>
           <div className="space-y-2 text-xs">
-            <div className="rounded-xl border border-emerald-300/20 bg-emerald-300/10 p-2">
-              <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-200">Morocco local time</p>
-              <p className="mt-0.5 text-sm font-black text-emerald-100">{localTime}</p>
-            </div>
+            {localTime ? (
+              <div className="rounded-xl border border-emerald-300/20 bg-emerald-300/10 p-2">
+                <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-200">Morocco local time</p>
+                <p className="mt-0.5 text-sm font-black text-emerald-100">{localTime}</p>
+              </div>
+            ) : (
+              <div className="rounded-xl border border-amber-300/20 bg-amber-300/10 p-2">
+                <p className="text-[10px] font-bold uppercase tracking-wide text-amber-200">Conversion unavailable</p>
+                <p className="mt-0.5 text-sm font-black text-amber-50">
+                  {hasSourceClock ? 'Check the source timezone.' : 'Add the source due time to calculate GMT+1.'}
+                </p>
+              </div>
+            )}
             <div className="flex items-start justify-between gap-3">
               <span className="text-slate-400">SAM.gov original</span>
               <span className="max-w-[190px] text-right font-bold text-[#F8FBF7]">{sourceDateTime}</span>
@@ -2849,11 +2861,13 @@ export default function PipelinePage() {
               <DrawerSection title="Schedule" variant="premium">
                 <DrawerField label="Due Date"  value={new Date(selectedOpp.dueDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })} variant="premium" />
                 <DrawerField label="Source Time" value={formatOpportunitySourceDueDateTime(selectedOpp)} variant="premium" />
-                <DrawerField label="Morocco (GMT+1)" value={
-                  <span className="font-bold text-[#7DD3FC]">
-                    {formatOpportunityMoroccoDueDateTime(selectedOpp)}
-                  </span>
-                } variant="premium" />
+                {formatOpportunityMoroccoDueDateTime(selectedOpp) && (
+                  <DrawerField label="Morocco (GMT+1)" value={
+                    <span className="font-bold text-[#7DD3FC]">
+                      {formatOpportunityMoroccoDueDateTime(selectedOpp)}
+                    </span>
+                  } variant="premium" />
+                )}
                 <DrawerField label="Captured On" value={selectedOpp.capturedOn} variant="premium" />
               </DrawerSection>
 

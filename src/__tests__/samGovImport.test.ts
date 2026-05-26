@@ -313,6 +313,16 @@ describe('SAM.gov import API calls', () => {
     })).toBe('3:00 PM GMT+1')
   })
 
+  it('does not invent a Morocco conversion when no source time exists', () => {
+    expect(formatOpportunityMoroccoDueDateTime({
+      dueDate: '2026-05-28',
+      localTime: '',
+      timezone: 'America/New_York',
+      moroccoTime: '',
+      moroccoDate: '',
+    })).toBe('')
+  })
+
   it('normalises any clock-time variant into canonical 12h AM/PM', () => {
     expect(formatTime12h('10:00')).toBe('10:00 AM')      // 24h → 12h
     expect(formatTime12h('17:30')).toBe('5:30 PM')       // 24h → 12h
