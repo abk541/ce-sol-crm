@@ -7,6 +7,11 @@ import type {
 
 export const MOCK_USERS: User[] = [
   { id:'u0', name:'ABK Manager', email:'abk@cesolutionplus.com', username:'abk', role:'CAPTURE_MANAGER', avatar:'AB', status:'active', firstLogin:false, mfaEnabled:true, createdAt:'2024-01-01', password:'abk123' },
+  { id:'u-capture-manager', name:'Capture Manager', email:'capture.manager@cesolutionplus.com', username:'capture.manager', role:'CAPTURE_MANAGER', avatar:'CM', status:'active', firstLogin:false, mfaEnabled:true, createdAt:'2026-05-28', password:'capture123' },
+  { id:'u-bd-manager', name:'BD Manager', email:'bd.manager@cesolutionplus.com', username:'bd.manager', role:'BD_MANAGER', avatar:'BM', status:'active', firstLogin:false, mfaEnabled:true, createdAt:'2026-05-28', password:'bdmanager123' },
+  { id:'u-bd-team-lead', name:'BD Team Lead', email:'bd.teamlead@cesolutionplus.com', username:'bd.teamlead', role:'TEAM_LEAD', avatar:'BT', status:'active', firstLogin:false, mfaEnabled:true, createdAt:'2026-05-28', password:'teamlead123' },
+  { id:'u-associate', name:'Associate User', email:'associate@cesolutionplus.com', username:'associate', role:'ASSOCIATE', avatar:'AU', status:'active', firstLogin:false, mfaEnabled:true, createdAt:'2026-05-28', password:'associate123' },
+  { id:'u-ops-manager', name:'Operations Manager', email:'ops.manager@cesolutionplus.com', username:'ops.manager', role:'OPS_MANAGER', avatar:'OM', status:'active', firstLogin:false, mfaEnabled:true, createdAt:'2026-05-28', password:'opsmanager123' },
 ]
 
 // ── Empty business data (start from scratch) ───────────────────────────

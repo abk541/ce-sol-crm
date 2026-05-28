@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { MOCK_USERS } from '../data/mock'
 import { hasPermission } from '../lib/permissions'
 import type { Role, User } from '../types'
 
@@ -18,6 +19,19 @@ function user(role: Role): User {
 }
 
 describe('role permissions', () => {
+  it('seeds one login account for each app role', () => {
+    const seededRoles = new Set(MOCK_USERS.map(user => user.role))
+
+    expect(seededRoles).toEqual(new Set<Role>([
+      'CAPTURE_MANAGER',
+      'BD_MANAGER',
+      'TEAM_LEAD',
+      'ASSOCIATE',
+      'OPS_MANAGER',
+    ]))
+    expect(MOCK_USERS.every(user => user.email && user.password && user.status === 'active')).toBe(true)
+  })
+
   it('gives Capture Manager full control', () => {
     const captureManager = user('CAPTURE_MANAGER')
 

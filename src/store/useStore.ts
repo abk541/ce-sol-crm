@@ -259,6 +259,18 @@ function normalizePersistedUserRole<T>(value: T): T {
   return value
 }
 
+function mergeSeedUsers(users: unknown): User[] {
+  const existing = Array.isArray(users) ? users.map(normalizePersistedUserRole as (value: User) => User) : []
+  const byEmail = new Map(existing.map(user => [user.email.toLowerCase(), user]))
+
+  MOCK_USERS.forEach(seedUser => {
+    const key = seedUser.email.toLowerCase()
+    if (!byEmail.has(key)) byEmail.set(key, seedUser)
+  })
+
+  return Array.from(byEmail.values())
+}
+
 function normalizedSolicitationId(value?: string) {
   return (value ?? '').trim().toLowerCase()
 }
@@ -1416,8 +1428,8 @@ export const useStore = create<AppState>()(
     }),
     {
       name: 'ces-crm-store',
-      // v6: persist configurable non-submission grace timing.
-      version: 7,
+      // v8: add seeded accounts for every role.
+      version: 8,
       migrate: (persistedState: unknown, fromVersion: number) => {
         const s = persistedState as Record<string, unknown>
         if (fromVersion < 4) {
@@ -1451,7 +1463,7 @@ export const useStore = create<AppState>()(
         return {
           ...s,
           currentUser: normalizePersistedUserRole(s.currentUser),
-          users: Array.isArray(s.users) ? s.users.map(normalizePersistedUserRole) : s.users,
+          users: mergeSeedUsers(s.users),
           accessNoticeAccepted: Boolean(s.accessNoticeAccepted),
           nonSubGraceHours: Number(s.nonSubGraceHours ?? 0),
           nonSubGraceMinutes: Number(s.nonSubGraceMinutes ?? 5),
