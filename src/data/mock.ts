@@ -2,7 +2,8 @@ import type {
   User, Opportunity, Contract, BDSubmission,
   Notification, Subcontractor, NonSubmissionReport,
   DeletionRequest, AgentStats, FreshAward, PastPerformance,
-  SubkDatabaseEntry, ActivityLog, Employee,
+  SubkDatabaseEntry, ActivityLog, Employee, CompanyCertification,
+  EmployeeRequest,
 } from '../types'
 
 export const MOCK_USERS: User[] = [
@@ -26,6 +27,8 @@ export const MOCK_FRESH_AWARDS: FreshAward[] = []
 export const MOCK_PAST_PERFORMANCES: PastPerformance[] = []
 export const MOCK_SUBK_DATABASE: SubkDatabaseEntry[] = []
 export const MOCK_ACTIVITY_LOGS: ActivityLog[] = []
+export const MOCK_COMPANY_CERTIFICATIONS: CompanyCertification[] = []
+export const MOCK_EMPLOYEE_REQUESTS: EmployeeRequest[] = []
 
 export const TEAM_STATS: {
   user: string

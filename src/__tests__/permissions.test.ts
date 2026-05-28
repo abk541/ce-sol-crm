@@ -41,6 +41,9 @@ describe('role permissions', () => {
     expect(hasPermission(captureManager, 'nonSubmission:review')).toBe(true)
     expect(hasPermission(captureManager, 'admin:manageUsers')).toBe(true)
     expect(hasPermission(captureManager, 'operations:manage')).toBe(true)
+    expect(hasPermission(captureManager, 'hr:viewCertifications')).toBe(true)
+    expect(hasPermission(captureManager, 'hr:manageCertifications')).toBe(true)
+    expect(hasPermission(captureManager, 'hr:reviewRequests')).toBe(true)
   })
 
   it('keeps BD Manager below Capture Manager authority', () => {
@@ -56,6 +59,9 @@ describe('role permissions', () => {
     expect(hasPermission(bdManager, 'nonSubmission:viewAll')).toBe(false)
     expect(hasPermission(bdManager, 'nonSubmission:review')).toBe(false)
     expect(hasPermission(bdManager, 'contract:edit')).toBe(false)
+    expect(hasPermission(bdManager, 'hr:viewCertifications')).toBe(true)
+    expect(hasPermission(bdManager, 'hr:manageCertifications')).toBe(false)
+    expect(hasPermission(bdManager, 'hr:reviewRequests')).toBe(false)
   })
 
   it('lets BD Team Leads submit and assign without admin approvals', () => {
@@ -70,6 +76,9 @@ describe('role permissions', () => {
     expect(hasPermission(teamLead, 'opportunity:create')).toBe(false)
     expect(hasPermission(teamLead, 'opportunity:deleteApprove')).toBe(false)
     expect(hasPermission(teamLead, 'nonSubmission:review')).toBe(false)
+    expect(hasPermission(teamLead, 'hr:viewCertifications')).toBe(true)
+    expect(hasPermission(teamLead, 'hr:manageCertifications')).toBe(false)
+    expect(hasPermission(teamLead, 'hr:reviewRequests')).toBe(false)
   })
 
   it('keeps Associates limited to proposal submission and sourcing', () => {
@@ -83,6 +92,9 @@ describe('role permissions', () => {
     expect(hasPermission(associate, 'opportunity:assign')).toBe(false)
     expect(hasPermission(associate, 'opportunity:deleteRequest')).toBe(false)
     expect(hasPermission(associate, 'nonSubmission:submit')).toBe(false)
+    expect(hasPermission(associate, 'hr:viewCertifications')).toBe(true)
+    expect(hasPermission(associate, 'hr:manageCertifications')).toBe(false)
+    expect(hasPermission(associate, 'hr:reviewRequests')).toBe(false)
   })
 
   it('limits Operations Manager to operations-side controls', () => {
@@ -95,5 +107,8 @@ describe('role permissions', () => {
     expect(hasPermission(opsManager, 'opportunity:create')).toBe(false)
     expect(hasPermission(opsManager, 'opportunity:cancel')).toBe(false)
     expect(hasPermission(opsManager, 'opportunity:submitProposal')).toBe(false)
+    expect(hasPermission(opsManager, 'hr:viewCertifications')).toBe(true)
+    expect(hasPermission(opsManager, 'hr:manageCertifications')).toBe(false)
+    expect(hasPermission(opsManager, 'hr:reviewRequests')).toBe(false)
   })
 })

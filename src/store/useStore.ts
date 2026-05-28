@@ -6,14 +6,15 @@ import type {
   NonSubmissionReport, DeletionRequest, FreshAward,
   PastPerformance, SubkDatabaseEntry, ActivityLog,
   ContractPoC, LockedSubcontractor, GovernmentWarning, Employee,
-  BDSubmission, FileAttachment,
+  BDSubmission, FileAttachment, CompanyCertification, EmployeeRequest,
+  CompanyCertificationStatus, EmployeeRequestStatus,
 } from '../types'
 import {
   MOCK_USERS, MOCK_OPPORTUNITIES, MOCK_NOTIFICATIONS,
   MOCK_SUBCONTRACTORS, MOCK_NON_SUB_REPORTS, MOCK_DELETION_REQUESTS,
   MOCK_CONTRACTS, MOCK_FRESH_AWARDS, MOCK_PAST_PERFORMANCES,
   MOCK_SUBK_DATABASE, MOCK_ACTIVITY_LOGS, MOCK_EMPLOYEES,
-  MOCK_BD_SUBMISSIONS,
+  MOCK_BD_SUBMISSIONS, MOCK_COMPANY_CERTIFICATIONS, MOCK_EMPLOYEE_REQUESTS,
 } from '../data/mock'
 import { isSupabaseConnected } from '../lib/supabase'
 import { opportunityDeadlineTimeMs } from '../lib/timezone'
@@ -65,6 +66,8 @@ interface AppState {
   activityLogs: ActivityLog[]
   employees: Employee[]
   bdSubmissions: BDSubmission[]
+  companyCertifications: CompanyCertification[]
+  employeeRequests: EmployeeRequest[]
 
   // UI
   sidebarCollapsed: boolean
@@ -82,6 +85,11 @@ interface AppState {
   createUser: (u: Omit<User, 'id' | 'createdAt'>) => void
   updateUser: (id: string, data: Partial<User>) => void
   deleteUser: (id: string) => void
+  addCompanyCertification: (data: Omit<CompanyCertification, 'id' | 'createdAt' | 'updatedAt' | 'createdBy' | 'status'> & { status?: CompanyCertificationStatus }) => void
+  updateCompanyCertification: (id: string, data: Partial<CompanyCertification>) => void
+  deleteCompanyCertification: (id: string) => void
+  submitEmployeeRequest: (data: Omit<EmployeeRequest, 'id' | 'requesterId' | 'requesterName' | 'requesterEmail' | 'status' | 'submittedAt'>) => void
+  reviewEmployeeRequest: (id: string, status: EmployeeRequestStatus, reviewNote?: string) => void
 
   // ── Opportunity management ─────────────────────────────────────────
   createOpportunity: (o: Omit<Opportunity, 'id'>) => Promise<boolean>
@@ -215,6 +223,17 @@ function todayLabel() {
   return new Date().toISOString().split('T')[0]
 }
 
+function certificationStatus(expirationDate?: string): CompanyCertificationStatus {
+  if (!expirationDate) return 'ACTIVE'
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const expires = new Date(`${expirationDate}T00:00:00`)
+  if (Number.isNaN(expires.getTime())) return 'ACTIVE'
+  if (expires < today) return 'EXPIRED'
+  const daysUntilExpiration = Math.ceil((expires.getTime() - today.getTime()) / (24 * 60 * 60 * 1000))
+  return daysUntilExpiration <= 45 ? 'EXPIRING' : 'ACTIVE'
+}
+
 function bdStatusToOpportunityStatus(status: BDSubmission['status']): Opportunity['status'] {
   if (status === 'DISCUSSING') return 'DISCUSSION'
   if (status === 'AWARDED') return 'WON'
@@ -328,6 +347,8 @@ export const useStore = create<AppState>()(
       activityLogs: MOCK_ACTIVITY_LOGS,
       employees: MOCK_EMPLOYEES,
       bdSubmissions: MOCK_BD_SUBMISSIONS,
+      companyCertifications: MOCK_COMPANY_CERTIFICATIONS,
+      employeeRequests: MOCK_EMPLOYEE_REQUESTS,
       sidebarCollapsed: false,
       nonSubGraceHours: 0,
       nonSubGraceMinutes: 5,
@@ -417,6 +438,117 @@ export const useStore = create<AppState>()(
       },
 
       // ── Opportunity management ──────────────────────────────────────
+      addCompanyCertification: (data) => {
+        const user = get().currentUser
+        if (!hasPermission(user, 'hr:manageCertifications')) {
+          toast.error('Only the Capture Manager can manage company certifications.')
+          return
+        }
+        const cert: CompanyCertification = {
+          ...data,
+          id: `cert${Date.now()}`,
+          status: data.status ?? certificationStatus(data.expirationDate),
+          createdAt: new Date().toISOString(),
+          createdBy: user?.name ?? 'System',
+        }
+        set(s => ({ companyCertifications: [cert, ...s.companyCertifications] }))
+        get().logActivity({
+          action: `Added company certification: ${cert.name}`,
+          user: user?.name || 'System',
+          userRole: user?.role || 'CAPTURE_MANAGER',
+          entityType: 'hr',
+          entityId: cert.id,
+          entityName: cert.name,
+        })
+      },
+
+      updateCompanyCertification: (id, data) => {
+        const user = get().currentUser
+        if (!hasPermission(user, 'hr:manageCertifications')) {
+          toast.error('Only the Capture Manager can manage company certifications.')
+          return
+        }
+        set(s => ({
+          companyCertifications: s.companyCertifications.map(cert =>
+            cert.id === id
+              ? {
+                  ...cert,
+                  ...data,
+                  status: data.status ?? certificationStatus(data.expirationDate ?? cert.expirationDate),
+                  updatedAt: new Date().toISOString(),
+                }
+              : cert
+          )
+        }))
+      },
+
+      deleteCompanyCertification: (id) => {
+        const user = get().currentUser
+        if (!hasPermission(user, 'hr:manageCertifications')) {
+          toast.error('Only the Capture Manager can manage company certifications.')
+          return
+        }
+        const cert = get().companyCertifications.find(item => item.id === id)
+        set(s => ({ companyCertifications: s.companyCertifications.filter(item => item.id !== id) }))
+        if (cert) {
+          get().logActivity({
+            action: `Deleted company certification: ${cert.name}`,
+            user: user?.name || 'System',
+            userRole: user?.role || 'CAPTURE_MANAGER',
+            entityType: 'hr',
+            entityId: cert.id,
+            entityName: cert.name,
+          })
+        }
+      },
+
+      submitEmployeeRequest: (data) => {
+        const user = get().currentUser
+        if (!user) {
+          toast.error('Please log in before submitting an HR request.')
+          return
+        }
+        const request: EmployeeRequest = {
+          ...data,
+          id: `hrreq${Date.now()}`,
+          requesterId: user.id,
+          requesterName: user.name,
+          requesterEmail: user.email,
+          status: 'PENDING',
+          submittedAt: new Date().toISOString(),
+        }
+        set(s => ({ employeeRequests: [request, ...s.employeeRequests] }))
+        get().addNotification({
+          type: 'SYSTEM',
+          title: 'HR request submitted',
+          message: `${user.name} submitted "${request.title}".`,
+          read: false,
+          relatedId: request.id,
+          targetRole: 'CAPTURE_MANAGER',
+        })
+      },
+
+      reviewEmployeeRequest: (id, status, reviewNote = '') => {
+        const user = get().currentUser
+        if (!hasPermission(user, 'hr:reviewRequests')) {
+          toast.error('Only the Capture Manager can review HR requests.')
+          return
+        }
+        set(s => ({
+          employeeRequests: s.employeeRequests.map(request =>
+            request.id === id
+              ? {
+                  ...request,
+                  status,
+                  reviewNote,
+                  reviewedAt: new Date().toISOString(),
+                  reviewedBy: user?.name || 'System',
+                }
+              : request
+          )
+        }))
+      },
+
       createOpportunity: async (data) => {
         if (!hasPermission(get().currentUser, 'opportunity:create')) {
           toast.error('Only the Capture Manager can add new opportunities.')
@@ -1428,8 +1560,8 @@ export const useStore = create<AppState>()(
     }),
     {
       name: 'ces-crm-store',
-      // v8: add seeded accounts for every role.
-      version: 8,
+      // v9: add HR certifications and employee requests.
+      version: 9,
       migrate: (persistedState: unknown, fromVersion: number) => {
         const s = persistedState as Record<string, unknown>
         if (fromVersion < 4) {
@@ -1454,6 +1586,8 @@ export const useStore = create<AppState>()(
             notifications:   [],
             activityLogs:    [],
             subkDatabase:    [],
+            companyCertifications: [],
+            employeeRequests: [],
             needsPurge:      false,
             dbReady:         false,
             nonSubGraceHours: 0,
@@ -1467,6 +1601,8 @@ export const useStore = create<AppState>()(
           accessNoticeAccepted: Boolean(s.accessNoticeAccepted),
           nonSubGraceHours: Number(s.nonSubGraceHours ?? 0),
           nonSubGraceMinutes: Number(s.nonSubGraceMinutes ?? 5),
+          companyCertifications: Array.isArray(s.companyCertifications) ? s.companyCertifications : [],
+          employeeRequests: Array.isArray(s.employeeRequests) ? s.employeeRequests : [],
           needsPurge: false,
           dbReady: false,
         }
@@ -1495,6 +1631,8 @@ export const useStore = create<AppState>()(
         employees:         s.employees,
         activityLogs:      s.activityLogs,
         subkDatabase:      s.subkDatabase,
+        companyCertifications: s.companyCertifications,
+        employeeRequests:  s.employeeRequests,
         notifications:     s.notifications,
         needsPurge:        false,
         dbReady:           false,

@@ -15,6 +15,7 @@ import ContractsPage from './pages/ContractsPage'
 import FinanceProjectionsPage from './pages/FinanceProjectionsPage'
 import NotificationsPage from './pages/NotificationsPage'
 import AdminPage from './pages/AdminPage'
+import HRPage from './pages/HRPage'
 import TrackerPage from './pages/TrackerPage'
 import NonSubmissionsPage from './pages/NonSubmissionsPage'
 import PastPerformancesPage from './pages/PastPerformancesPage'
@@ -117,7 +118,7 @@ export default function App() {
           <Route path="notifications"     element={<NotificationsPage />} />
           <Route path="database"          element={<PermissionGuard permission="admin:manageUsers"><PlaceholderPage title="INT-Database" /></PermissionGuard>} />
           <Route path="admin"             element={<PermissionGuard permission="admin:manageUsers"><AdminPage /></PermissionGuard>} />
-          <Route path="hr"                element={<PlaceholderPage title="HR" />} />
+          <Route path="hr"                element={<PermissionGuard permission="hr:viewCertifications"><HRPage /></PermissionGuard>} />
           <Route path="settings"          element={<PlaceholderPage title="Settings" />} />
         </Route>
 

@@ -354,13 +354,51 @@ export interface PastPerformance {
   createdBy: string
 }
 
-// ── Activity Log ──────────────────────────────────────────────────────
+// HR
+export type CompanyCertificationStatus = 'ACTIVE' | 'EXPIRING' | 'EXPIRED'
+
+export interface CompanyCertification {
+  id: string
+  name: string
+  issuer: string
+  certificateNumber: string
+  issuedDate: string
+  expirationDate?: string
+  status: CompanyCertificationStatus
+  notes?: string
+  attachments?: FileAttachment[]
+  createdAt: string
+  updatedAt?: string
+  createdBy: string
+}
+
+export type EmployeeRequestType = 'TIME_OFF' | 'DOCUMENT' | 'CERTIFICATION' | 'PAYROLL' | 'ACCESS' | 'OTHER'
+export type EmployeeRequestStatus = 'PENDING' | 'IN_REVIEW' | 'APPROVED' | 'DECLINED'
+
+export interface EmployeeRequest {
+  id: string
+  requesterId: string
+  requesterName: string
+  requesterEmail: string
+  type: EmployeeRequestType
+  title: string
+  details: string
+  status: EmployeeRequestStatus
+  priority: 'LOW' | 'MEDIUM' | 'HIGH'
+  submittedAt: string
+  reviewedAt?: string
+  reviewedBy?: string
+  reviewNote?: string
+  attachments?: FileAttachment[]
+}
+
+// Activity Log
 export interface ActivityLog {
   id: string
   action: string
   user: string
   userRole: Role
-  entityType: 'opportunity' | 'contract' | 'subcontractor' | 'user' | 'report' | 'fresh_award' | 'past_performance'
+  entityType: 'opportunity' | 'contract' | 'subcontractor' | 'user' | 'report' | 'fresh_award' | 'past_performance' | 'hr'
   entityId?: string
   entityName?: string
   createdAt: string
