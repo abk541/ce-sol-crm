@@ -37,6 +37,7 @@ import {
   buildSamGovOpportunityEndpoint,
   mapSamGovOpportunityToForm,
 } from '../lib/samGov'
+import { hasPermission } from '../lib/permissions'
 
 // ── Constants ─────────────────────────────────────────────────────────
 const TYPES_DISPLAY: { value: string; label: string }[] = [
@@ -599,7 +600,9 @@ function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) 
   const [newCommentAttachments, setNewCommentAttachments] = useState<FileAttachment[]>([])
   const [saving, setSaving] = useState(false)
 
-  const isManager = currentUser?.role === 'BD_MANAGER'
+  const canEditDetails = hasPermission(currentUser, 'opportunity:edit')
+  const canComment = hasPermission(currentUser, 'opportunity:comment')
+  const canRequestDelete = hasPermission(currentUser, 'opportunity:deleteRequest')
   const hasPendingDelete = deletionRequests.some(r => r.opportunityId === opp.id && r.status === 'PENDING')
   const allowedAssignees = useMemo(() => {
     const ids = assignableEmployeesForUser(employees, currentUser).map(employee => employee.id)
@@ -609,7 +612,40 @@ function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) 
   const set = (k: keyof Opportunity, v: any) => setForm(p => ({ ...p, [k]: v }))
   const lbl = 'block text-xs font-semibold text-slate-500 mb-1.5'
 
+  useEffect(() => {
+    if (!canEditDetails && canComment) setTab('comments')
+  }, [canComment, canEditDetails])
+
   const handleSave = async () => {
+    if (!canEditDetails) {
+      if (!canComment) {
+        toast.error('You do not have permission to edit this opportunity.')
+        return
+      }
+      if (!newComment.trim()) {
+        toast.error('Add a comment before saving.')
+        setTab('comments')
+        return
+      }
+      const updatedComments = [
+        ...(opp.comments ?? []),
+        {
+          id: crypto.randomUUID(),
+          text: newComment.trim(),
+          author: currentUser?.username ?? 'unknown',
+          createdAt: new Date().toISOString(),
+          attachments: newCommentAttachments,
+        },
+      ]
+      setSaving(true)
+      const saved = await updateOpportunity(opp.id, { comments: updatedComments })
+      setSaving(false)
+      if (saved) {
+        toast.success('Comment added')
+        onClose()
+      }
+      return
+    }
     if (!form.solicitation?.trim()) { toast.error('Solicitation title is required'); setTab('details'); return }
     if (!form.type) { toast.error('Contract type is required'); setTab('details'); return }
     if (!form.dueDate) { toast.error('Due date is required'); setTab('schedule'); return }
@@ -653,7 +689,7 @@ function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) 
       onClose={onClose}
       footer={
         <div className="flex items-center gap-3">
-          {isManager && !hasPendingDelete && (
+          {canRequestDelete && !hasPendingDelete && (
             <button type="button" onClick={() => setShowDeleteReq(v => !v)}
               className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold text-red-600 bg-red-50 border border-red-200 hover:bg-red-100 transition-colors">
               <Trash2 size={12} /> Request Deletion
@@ -663,7 +699,7 @@ function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) 
             <button type="button" onClick={onClose} className="btn-secondary">Cancel</button>
             <button type="button" onClick={handleSave} disabled={saving} className="btn-primary disabled:opacity-50">
               {saving && <Loader size={13} className="animate-spin" />}
-              {saving ? 'Saving...' : 'Save Changes'}
+              {saving ? 'Saving...' : canEditDetails ? 'Save Changes' : 'Save Comment'}
             </button>
           </div>
         </div>
@@ -849,7 +885,7 @@ function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) 
                 uploadedBy={currentUser?.username ?? currentUser?.name ?? 'unknown'}
               />
             </div>
-            <p className="text-[10px] text-slate-400 mt-1">Comment will be saved when you click "Save Changes".</p>
+            <p className="text-[10px] text-slate-400 mt-1">Comment will be saved when you click "{canEditDetails ? 'Save Changes' : 'Save Comment'}".</p>
           </div>
         </div>
       )}
@@ -880,11 +916,11 @@ function DeleteOpportunityModal({ opp, onClose }: { opp: Opportunity; onClose: (
   const { currentUser, deletionRequests, requestDeletion } = useStore()
   const [reason, setReason] = useState('')
   const hasPendingDelete = deletionRequests.some(r => r.opportunityId === opp.id && r.status === 'PENDING')
-  const canDelete = currentUser?.role === 'BD_MANAGER'
+  const canDelete = hasPermission(currentUser, 'opportunity:deleteRequest')
 
   const submit = () => {
     if (!canDelete) {
-      toast.error('Only managers can delete opportunities.')
+      toast.error('You do not have permission to request opportunity deletion.')
       return
     }
     if (hasPendingDelete) {
@@ -1762,18 +1798,22 @@ function RowMenu({
   onSubmit,
   onRequestDeletion,
   onCancel,
-  canManage,
+  canEdit,
+  canCancel,
+  canRequestDeletion,
   deletionPending,
 }: {
   o: Opportunity
   canSubmit: boolean
+  canEdit: boolean
+  canCancel: boolean
+  canRequestDeletion: boolean
   onViewDetails: () => void
   onEdit: () => void
   onSourcing: () => void
   onSubmit: () => void
   onRequestDeletion: () => void
   onCancel: () => void
-  canManage: boolean
   deletionPending: boolean
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
@@ -1793,14 +1833,16 @@ function RowMenu({
               onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = ''; (e.currentTarget as HTMLButtonElement).style.color = '#475569' }}>
               <ExternalLink size={12} /> View Details
             </button>
-            <button
-              onClick={e => { e.stopPropagation(); setMenuOpen(false); onEdit() }}
-              className="w-full text-left px-3 py-2 text-xs font-semibold flex items-center gap-2 transition-colors"
-              style={{ color: '#475569' }}
-              onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(0,0,0,0.04)'; (e.currentTarget as HTMLButtonElement).style.color = '#0F172A' }}
-              onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = ''; (e.currentTarget as HTMLButtonElement).style.color = '#475569' }}>
-              <Edit2 size={12} /> Edit
-            </button>
+            {canEdit && (
+              <button
+                onClick={e => { e.stopPropagation(); setMenuOpen(false); onEdit() }}
+                className="w-full text-left px-3 py-2 text-xs font-semibold flex items-center gap-2 transition-colors"
+                style={{ color: '#475569' }}
+                onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(0,0,0,0.04)'; (e.currentTarget as HTMLButtonElement).style.color = '#0F172A' }}
+                onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = ''; (e.currentTarget as HTMLButtonElement).style.color = '#475569' }}>
+                <Edit2 size={12} /> Edit / Comment
+              </button>
+            )}
             <button
               onClick={e => { e.stopPropagation(); setMenuOpen(false); onSourcing() }}
               className="w-full text-left px-3 py-2 text-xs font-semibold flex items-center gap-2 transition-colors"
@@ -1819,30 +1861,34 @@ function RowMenu({
                 <Send size={12} /> Submit
               </button>
             )}
-            {canManage && (
+            {(canCancel || canRequestDeletion) && (
               <>
                 <div className="my-1 border-t border-slate-100" />
-                <button
-                  onClick={e => { e.stopPropagation(); setMenuOpen(false); onCancel() }}
-                  className="w-full text-left px-3 py-2 text-xs font-semibold flex items-center gap-2 transition-colors"
-                  style={{ color: '#DC2626' }}
-                  onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(220,38,38,0.06)'; (e.currentTarget as HTMLButtonElement).style.color = '#DC2626' }}
-                  onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = ''; (e.currentTarget as HTMLButtonElement).style.color = '#DC2626' }}>
-                  <Ban size={12} /> Cancel
-                </button>
-                <button
-                  disabled={deletionPending}
-                  onClick={e => {
-                    e.stopPropagation()
-                    setMenuOpen(false)
-                    if (!deletionPending) onRequestDeletion()
-                  }}
-                  className="w-full text-left px-3 py-2 text-xs font-semibold flex items-center gap-2 transition-colors disabled:cursor-not-allowed disabled:opacity-40"
-                  style={{ color: '#DC2626' }}
-                  onMouseEnter={e => { if (!deletionPending) { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(220,38,38,0.06)'; (e.currentTarget as HTMLButtonElement).style.color = '#DC2626' } }}
-                  onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = ''; (e.currentTarget as HTMLButtonElement).style.color = '#DC2626' }}>
-                  <Trash2 size={12} /> {deletionPending ? 'Deletion Pending' : 'Delete'}
-                </button>
+                {canCancel && (
+                  <button
+                    onClick={e => { e.stopPropagation(); setMenuOpen(false); onCancel() }}
+                    className="w-full text-left px-3 py-2 text-xs font-semibold flex items-center gap-2 transition-colors"
+                    style={{ color: '#DC2626' }}
+                    onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(220,38,38,0.06)'; (e.currentTarget as HTMLButtonElement).style.color = '#DC2626' }}
+                    onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = ''; (e.currentTarget as HTMLButtonElement).style.color = '#DC2626' }}>
+                    <Ban size={12} /> Cancel
+                  </button>
+                )}
+                {canRequestDeletion && (
+                  <button
+                    disabled={deletionPending}
+                    onClick={e => {
+                      e.stopPropagation()
+                      setMenuOpen(false)
+                      if (!deletionPending) onRequestDeletion()
+                    }}
+                    className="w-full text-left px-3 py-2 text-xs font-semibold flex items-center gap-2 transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+                    style={{ color: '#DC2626' }}
+                    onMouseEnter={e => { if (!deletionPending) { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(220,38,38,0.06)'; (e.currentTarget as HTMLButtonElement).style.color = '#DC2626' } }}
+                    onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = ''; (e.currentTarget as HTMLButtonElement).style.color = '#DC2626' }}>
+                    <Trash2 size={12} /> {deletionPending ? 'Deletion Pending' : 'Delete'}
+                  </button>
+                )}
               </>
             )}
     </FloatingActionMenu>
@@ -2132,8 +2178,13 @@ export default function PipelinePage() {
   const [page, setPage]         = useState(1)
   const [pageSize, setPageSize] = useState(25)
 
-  const canSubmit = ['BD_MANAGER', 'TEAM_LEAD', 'ASSOCIATE'].includes(currentUser?.role ?? '')
-  const canManageOpportunities = currentUser?.role === 'BD_MANAGER'
+  const canCreateOpportunity = hasPermission(currentUser, 'opportunity:create')
+  const canSubmit = hasPermission(currentUser, 'opportunity:submitProposal')
+  const canEditOpportunities = hasPermission(currentUser, 'opportunity:edit')
+  const canCommentOpportunities = hasPermission(currentUser, 'opportunity:comment')
+  const canCancelOpportunities = hasPermission(currentUser, 'opportunity:cancel')
+  const canRequestDeletion = hasPermission(currentUser, 'opportunity:deleteRequest')
+  const canOpenEditModal = canEditOpportunities || canCommentOpportunities
   const pendingDeletionIds = useMemo(
     () => new Set(deletionRequests.filter(r => r.status === 'PENDING').map(r => r.opportunityId)),
     [deletionRequests],
@@ -2209,8 +2260,8 @@ export default function PipelinePage() {
   const hasFilters = !!dueDateRange || Object.values(columnFilters).some(v => v.trim())
 
   const handleCancel = (o: Opportunity) => {
-    if (!canManageOpportunities) {
-      toast.error('Only managers can cancel opportunities.')
+    if (!canCancelOpportunities) {
+      toast.error('Only the Capture Manager can cancel contract opportunities.')
       return
     }
     moveOpportunityToBDTracker(o.id, 'CANCELED', 'Canceled from Contract Opportunities')
@@ -2218,8 +2269,8 @@ export default function PipelinePage() {
   }
 
   const handleDelete = (o: Opportunity) => {
-    if (!canManageOpportunities) {
-      toast.error('Only managers can delete opportunities.')
+    if (!canRequestDeletion) {
+      toast.error('You do not have permission to request opportunity deletion.')
       return
     }
     if (pendingDeletionIds.has(o.id)) {
@@ -2239,9 +2290,11 @@ export default function PipelinePage() {
           <p className="text-slate-500 text-sm mt-0.5">{filtered.length} opportunities</p>
         </div>
         <div className="flex items-center gap-3">
-          <button onClick={() => setShowCreate(true)} className="btn-primary">
-            <Plus size={14} /> New Opportunity
-          </button>
+          {canCreateOpportunity && (
+            <button onClick={() => setShowCreate(true)} className="btn-primary">
+              <Plus size={14} /> New Opportunity
+            </button>
+          )}
         </div>
       </div>
 
@@ -2383,7 +2436,9 @@ export default function PipelinePage() {
                         onSubmit={() => setSubmitOpp(o)}
                         onCancel={() => handleCancel(o)}
                         onRequestDeletion={() => handleDelete(o)}
-                        canManage={canManageOpportunities}
+                        canEdit={canOpenEditModal}
+                        canCancel={canCancelOpportunities}
+                        canRequestDeletion={canRequestDeletion}
                         deletionPending={pendingDeletionIds.has(o.id)}
                       />
                     </td>
@@ -2521,9 +2576,11 @@ export default function PipelinePage() {
             )}
 
             <div className="sticky bottom-0 -mx-6 -mb-5 mt-4 flex flex-wrap gap-2 border-t border-[#D7BE7A]/15 bg-[#07131F]/95 px-6 py-4 backdrop-blur">
-              <button className="btn-secondary text-xs gap-1.5" onClick={() => { setSelectedOpp(null); setEditOpp(selectedOpp) }}>
-                <Edit2 size={12} /> Edit
-              </button>
+              {canOpenEditModal && (
+                <button className="btn-secondary text-xs gap-1.5" onClick={() => { setSelectedOpp(null); setEditOpp(selectedOpp) }}>
+                  <Edit2 size={12} /> {canEditOpportunities ? 'Edit' : 'Comment'}
+                </button>
+              )}
               <button className="btn-secondary text-xs gap-1.5" onClick={() => { setSelectedOpp(null); setSourcingOpp(selectedOpp) }}>
                 <Users2 size={12} /> Sourcing
               </button>
@@ -2532,11 +2589,14 @@ export default function PipelinePage() {
                   <Send size={12} /> Submit Proposal
                 </button>
               )}
-              {canManageOpportunities && (
+              {(canCancelOpportunities || canRequestDeletion) && (
                 <>
-                  <button className="btn-secondary text-xs gap-1.5 text-red-600 border-red-200 hover:bg-red-50" onClick={() => { setSelectedOpp(null); handleCancel(selectedOpp) }}>
-                    <Ban size={12} /> Cancel
-                  </button>
+                  {canCancelOpportunities && (
+                    <button className="btn-secondary text-xs gap-1.5 text-red-600 border-red-200 hover:bg-red-50" onClick={() => { setSelectedOpp(null); handleCancel(selectedOpp) }}>
+                      <Ban size={12} /> Cancel
+                    </button>
+                  )}
+                  {canRequestDeletion && (
                   <button
                     className="btn-secondary text-xs gap-1.5 text-red-600 border-red-200 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
                     disabled={pendingDeletionIds.has(selectedOpp.id)}
@@ -2544,6 +2604,7 @@ export default function PipelinePage() {
                   >
                     <Trash2 size={12} /> Delete
                   </button>
+                  )}
                 </>
               )}
             </div>

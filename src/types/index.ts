@@ -10,7 +10,12 @@ export interface Employee {
   avatar: string             // 2-letter initials
 }
 
-export type Role = 'BD_MANAGER' | 'TEAM_LEAD' | 'ASSOCIATE'
+export type Role =
+  | 'CAPTURE_MANAGER'
+  | 'BD_MANAGER'
+  | 'TEAM_LEAD'
+  | 'ASSOCIATE'
+  | 'OPS_MANAGER'
 
 export interface User {
   id: string

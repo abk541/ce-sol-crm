@@ -63,6 +63,7 @@ export function findEmployeeForUser(employees: Employee[], user?: User | null): 
 
 export function assignableEmployeesForUser(employees: Employee[], user?: User | null): Employee[] {
   if (!user) return []
+  if (user.role === 'CAPTURE_MANAGER') return employees
   if (user.role === 'ASSOCIATE') return []
 
   const currentEmployee = findEmployeeForUser(employees, user)

@@ -33,6 +33,7 @@ import { getAssignmentChain, ROLE_DISPLAY_LABELS } from '../../lib/team'
 import type { Contract, Employee, NotifType, Notification as AppNotification, Opportunity } from '../../types'
 import { ROUTE_LABELS } from '../../config/navigation'
 import { buildGlobalSearchResults, type GlobalSearchResult } from '../../lib/globalSearch'
+import { ROLE_LABELS } from '../../lib/permissions'
 
 const TYPE_CONFIG: Record<NotifType, { icon: typeof Bell; color: string; label: string }> = {
   ASSIGNMENT:          { icon: UserPlus,       color: '#7DD3FC', label: 'Assignment' },
@@ -405,7 +406,7 @@ export default function TopBar() {
           <div className="flex items-center gap-2.5 cursor-pointer group">
             <div className="text-right hidden sm:block">
               <p className="text-xs font-semibold text-stone-100 leading-none group-hover:text-[#D7BE7A] transition-colors">{currentUser.name}</p>
-              <p className="text-[10px] text-stone-400 mt-0.5 font-medium">{currentUser.role}</p>
+              <p className="text-[10px] text-stone-400 mt-0.5 font-medium">{ROLE_LABELS[currentUser.role]}</p>
             </div>
             <div className={`w-8 h-8 rounded-xl flex items-center justify-center text-xs font-bold text-white bg-gradient-to-br ${avatarColor(currentUser.avatar)} ring-2 ring-white shadow-sm`}>
               {currentUser.avatar.slice(0, 2)}

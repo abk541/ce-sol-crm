@@ -18,6 +18,7 @@ import PeriodFilter, { type Period, filterByPeriod } from '../components/shared/
 import { formatCurrency, avatarColor } from '../lib/utils'
 import { useNavigate } from 'react-router-dom'
 import { getAssignmentChain } from '../lib/team'
+import { hasAnyPermission, hasPermission, ROLE_LABELS } from '../lib/permissions'
 
 const stagger = { animate: { transition: { staggerChildren: 0.05 } } }
 const fadeUp = {
@@ -424,7 +425,7 @@ function AgentDashboard() {
             <h1 className="text-2xl font-black text-slate-900">
               {currentUser?.name.split(' ')[0]}'s Command Center
             </h1>
-            <p className="text-slate-500 text-sm mt-0.5">{currentUser?.role} - current workload and submission activity</p>
+            <p className="text-slate-500 text-sm mt-0.5">{currentUser ? ROLE_LABELS[currentUser.role] : 'User'} - current workload and submission activity</p>
           </div>
           <motion.div
             className="px-3 py-1.5 rounded-lg text-xs font-black tracking-wider"
@@ -497,7 +498,7 @@ function AgentDashboard() {
             </motion.div>
             <div>
               <p className="text-slate-800 font-bold text-sm">{currentUser?.name}</p>
-              <p className="text-slate-500 text-xs">{myStats.role}</p>
+              <p className="text-slate-500 text-xs">{currentUser ? ROLE_LABELS[currentUser.role] : myStats.role}</p>
               <div className="mt-2 flex items-center gap-1.5">
                 <motion.div animate={myStats.streak > 5 ? { scale: [1, 1.2, 1] } : {}}
                   transition={{ duration: 1.2, repeat: Infinity }}>
@@ -1159,7 +1160,7 @@ function AdminDashboard() {
         </motion.div>
 
         {/* Activity Log (admin only) */}
-        {currentUser?.role === 'BD_MANAGER' && (
+        {hasPermission(currentUser, 'admin:manageUsers') && (
           <motion.div variants={fadeUp} className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
             <div className="px-4 py-3.5 border-b border-slate-100 flex items-center justify-between">
               <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
@@ -1219,6 +1220,6 @@ function AdminDashboard() {
 
 export default function DashboardPage() {
   const { currentUser } = useStore()
-  const isManager = ['BD_MANAGER', 'TEAM_LEAD'].includes(currentUser?.role ?? '')
-  return isManager ? <AdminDashboard /> : <AgentDashboard />
+  const seesCompanyDashboard = hasAnyPermission(currentUser, ['admin:manageUsers', 'opportunity:assign', 'operations:manage'])
+  return seesCompanyDashboard ? <AdminDashboard /> : <AgentDashboard />
 }

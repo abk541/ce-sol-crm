@@ -8,6 +8,7 @@ import type { Opportunity } from '../types'
 import toast from 'react-hot-toast'
 import HierarchyAssignPicker from '../components/shared/HierarchyAssignPicker'
 import { assignableEmployeesForUser, isAssignedToAssociate } from '../lib/team'
+import { hasPermission } from '../lib/permissions'
 
 const ASSIGNABLE_STATUSES = ['ACTIVE', 'NEW_ASSIGNMENT', 'DISCUSSION'] as const
 
@@ -101,7 +102,7 @@ export default function ProposalsPage() {
   const globalRecordId = searchParams.get('record')
   const [assignTarget, setAssignTarget] = useState<Opportunity | null>(null)
   const assignable = useMemo(() => assignableEmployeesForUser(employees, currentUser), [employees, currentUser])
-  const canAssign = currentUser?.role !== 'ASSOCIATE'
+  const canAssign = hasPermission(currentUser, 'opportunity:assign')
 
   const rows = useMemo(() =>
     opportunities

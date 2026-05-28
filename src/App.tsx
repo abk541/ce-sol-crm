@@ -21,6 +21,7 @@ import PastPerformancesPage from './pages/PastPerformancesPage'
 import FreshAwardPage from './pages/FreshAwardPage'
 import SubkDatabasePage from './pages/SubkDatabasePage'
 import PlaceholderPage from './pages/PlaceholderPage'
+import { hasAnyPermission, hasPermission, type Permission } from './lib/permissions'
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, needsFirstLogin, needsMFASetup } = useStore()
@@ -35,6 +36,23 @@ function AccessNoticeGuard({ children }: { children: React.ReactNode }) {
   const hasValidatedCredentials = isAuthenticated || needsFirstLogin || needsMFASetup || !!currentUser
   if (!hasValidatedCredentials) return <Navigate to="/login" replace />
   if (!accessNoticeAccepted) return <Navigate to="/access-notice" replace />
+  return <>{children}</>
+}
+
+function PermissionGuard({
+  children,
+  permission,
+  anyOf,
+}: {
+  children: React.ReactNode
+  permission?: Permission
+  anyOf?: Permission[]
+}) {
+  const currentUser = useStore(s => s.currentUser)
+  const allowed = permission
+    ? hasPermission(currentUser, permission)
+    : hasAnyPermission(currentUser, anyOf ?? [])
+  if (!allowed) return <Navigate to="/dashboard" replace />
   return <>{children}</>
 }
 
@@ -84,21 +102,21 @@ export default function App() {
         <Route path="/" element={<AccessNoticeGuard><AuthGuard><Layout /></AuthGuard></AccessNoticeGuard>}>
           <Route index element={<Navigate to="/dashboard" replace />} />
           <Route path="dashboard"     element={<DashboardPage />} />
-          <Route path="pipeline"      element={<PipelinePage />} />
-          <Route path="proposals"     element={<ProposalsPage />} />
-          <Route path="bd-tracker"    element={<BDTrackerPage />} />
-          <Route path="contracts"     element={<ContractsPage />} />
-          <Route path="finance-projections" element={<FinanceProjectionsPage />} />
+          <Route path="pipeline"      element={<PermissionGuard permission="opportunity:read"><PipelinePage /></PermissionGuard>} />
+          <Route path="proposals"     element={<PermissionGuard permission="opportunity:assign"><ProposalsPage /></PermissionGuard>} />
+          <Route path="bd-tracker"    element={<PermissionGuard anyOf={['admin:manageUsers', 'opportunity:assign']}><BDTrackerPage /></PermissionGuard>} />
+          <Route path="contracts"     element={<PermissionGuard permission="contract:read"><ContractsPage /></PermissionGuard>} />
+          <Route path="finance-projections" element={<PermissionGuard permission="operations:manage"><FinanceProjectionsPage /></PermissionGuard>} />
           <Route path="idiq"          element={<Navigate to="/contracts" replace />} />
           <Route path="bpas"          element={<Navigate to="/contracts" replace />} />
-          <Route path="tracker"             element={<TrackerPage />} />
-          <Route path="non-submissions"   element={<NonSubmissionsPage />} />
-          <Route path="past-performances" element={<PastPerformancesPage />} />
-          <Route path="fresh-award"       element={<FreshAwardPage />} />
-          <Route path="subk-database"     element={<SubkDatabasePage />} />
+          <Route path="tracker"             element={<PermissionGuard permission="opportunity:deleteApprove"><TrackerPage /></PermissionGuard>} />
+          <Route path="non-submissions"   element={<PermissionGuard permission="nonSubmission:viewAll"><NonSubmissionsPage /></PermissionGuard>} />
+          <Route path="past-performances" element={<PermissionGuard permission="contract:read"><PastPerformancesPage /></PermissionGuard>} />
+          <Route path="fresh-award"       element={<PermissionGuard permission="operations:manage"><FreshAwardPage /></PermissionGuard>} />
+          <Route path="subk-database"     element={<PermissionGuard anyOf={['sourcing:read', 'operations:manage']}><SubkDatabasePage /></PermissionGuard>} />
           <Route path="notifications"     element={<NotificationsPage />} />
-          <Route path="database"          element={<PlaceholderPage title="INT-Database" />} />
-          <Route path="admin"             element={<AdminPage />} />
+          <Route path="database"          element={<PermissionGuard permission="admin:manageUsers"><PlaceholderPage title="INT-Database" /></PermissionGuard>} />
+          <Route path="admin"             element={<PermissionGuard permission="admin:manageUsers"><AdminPage /></PermissionGuard>} />
           <Route path="hr"                element={<PlaceholderPage title="HR" />} />
           <Route path="settings"          element={<PlaceholderPage title="Settings" />} />
         </Route>

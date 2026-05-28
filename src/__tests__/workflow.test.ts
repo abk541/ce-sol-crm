@@ -99,9 +99,9 @@ function makeContract(overrides: Partial<Contract> = {}): Contract {
 }
 
 // ── Reset store data before every test ───────────────────────────────
-const BD_MANAGER_USER = {
-  id: 'u-bd-manager', name: 'BD Manager', email: 'manager@ces.com',
-  username: 'manager', role: 'BD_MANAGER' as const, avatar: 'BM',
+const CAPTURE_MANAGER_USER = {
+  id: 'u-capture-manager', name: 'Capture Manager', email: 'capture@ces.com',
+  username: 'capture', role: 'CAPTURE_MANAGER' as const, avatar: 'CM',
   status: 'active' as const, firstLogin: false, mfaEnabled: true,
   createdAt: '2026-01-01',
 }
@@ -126,7 +126,7 @@ beforeEach(() => {
     deletionRequests: [],
     notifications: [],
     activityLogs: [],
-    currentUser: BD_MANAGER_USER,
+    currentUser: CAPTURE_MANAGER_USER,
     isAuthenticated: true,
     loginTimestamp: Date.now(),
     employees: TEST_EMPLOYEES,

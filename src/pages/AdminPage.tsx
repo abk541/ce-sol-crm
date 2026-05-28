@@ -4,13 +4,16 @@ import { Plus, Pencil, Trash2, X, Check, Shield, Search, Clock, Save } from 'luc
 import { useStore } from '../store/useStore'
 import type { User, Role } from '../types'
 import { avatarColor } from '../lib/utils'
+import { hasPermission, ROLE_LABELS } from '../lib/permissions'
 import toast from 'react-hot-toast'
 
-const ROLES: Role[] = ['BD_MANAGER', 'TEAM_LEAD', 'ASSOCIATE']
+const ROLES: Role[] = ['CAPTURE_MANAGER', 'BD_MANAGER', 'TEAM_LEAD', 'ASSOCIATE', 'OPS_MANAGER']
 const ROLE_BADGE: Record<Role, string> = {
-  BD_MANAGER: 'bg-indigo-500/15 text-indigo-400 border-indigo-500/25',
-  TEAM_LEAD:  'bg-violet-500/15 text-violet-400 border-violet-500/25',
-  ASSOCIATE:  'bg-emerald-500/15 text-emerald-400 border-emerald-500/25',
+  CAPTURE_MANAGER: 'bg-amber-500/15 text-amber-300 border-amber-500/25',
+  BD_MANAGER:      'bg-indigo-500/15 text-indigo-400 border-indigo-500/25',
+  TEAM_LEAD:       'bg-violet-500/15 text-violet-400 border-violet-500/25',
+  ASSOCIATE:       'bg-emerald-500/15 text-emerald-400 border-emerald-500/25',
+  OPS_MANAGER:     'bg-cyan-500/15 text-cyan-300 border-cyan-500/25',
 }
 
 type FormState = {
@@ -86,7 +89,7 @@ function UserModal({ user, onClose }: { user: User | null; onClose: () => void }
               <label className="text-xs text-slate-500 block mb-1">Role *</label>
               <select value={form.role} onChange={e => setForm(p => ({ ...p, role: e.target.value as Role }))}
                 className="select-field">
-                {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+                {ROLES.map(r => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
               </select>
             </div>
             <div>
@@ -123,6 +126,16 @@ export default function AdminPage() {
   const [modal, setModal] = useState<'create' | User | null>(null)
   const [graceHours, setGraceHours] = useState(String(nonSubGraceHours))
   const [graceMinutes, setGraceMinutes] = useState(String(nonSubGraceMinutes))
+
+  if (!hasPermission(currentUser, 'admin:manageUsers')) {
+    return (
+      <div className="p-6 page-enter">
+        <div className="glass rounded-2xl p-8 text-center text-sm text-slate-400">
+          Admin controls are only available to the Capture Manager.
+        </div>
+      </div>
+    )
+  }
 
   const filtered = users.filter(u =>
     !search ||
@@ -206,7 +219,7 @@ export default function AdminPage() {
           return (
             <div key={r} className="glass rounded-xl p-3 text-center">
               <p className="text-lg font-bold text-white">{count}</p>
-              <p className={`badge ${ROLE_BADGE[r]} text-[9px] mt-1 justify-center border`}>{r}</p>
+              <p className={`badge ${ROLE_BADGE[r]} text-[9px] mt-1 justify-center border`}>{ROLE_LABELS[r]}</p>
             </div>
           )
         })}
@@ -250,7 +263,7 @@ export default function AdminPage() {
                   <td className="text-indigo-400 text-xs font-mono">@{u.username}</td>
                   <td className="text-slate-400 text-xs">{u.email}</td>
                   <td>
-                    <span className={`badge border text-[10px] ${ROLE_BADGE[u.role]}`}>{u.role}</span>
+                    <span className={`badge border text-[10px] ${ROLE_BADGE[u.role]}`}>{ROLE_LABELS[u.role]}</span>
                   </td>
                   <td>
                     <span className={`badge text-[10px] ${u.status === 'active' ? 'badge-active' : 'badge-canceled'}`}>

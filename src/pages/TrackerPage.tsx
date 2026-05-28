@@ -14,6 +14,7 @@ import toast from 'react-hot-toast'
 import DetailDrawer, { DrawerSection, DrawerField } from '../components/shared/DetailDrawer'
 import type { Opportunity } from '../types'
 import FloatingActionMenu from '../components/shared/FloatingActionMenu'
+import { hasPermission } from '../lib/permissions'
 
 const stagger = { animate: { transition: { staggerChildren: 0.05 } } }
 const fadeUp = {
@@ -51,9 +52,9 @@ function StatusBadge({ status }: { status: string }) {
 function StatusDropdown({ oppId, current, canEdit }: { oppId: string; current: OppStatus; canEdit: boolean }) {
   const [open, setOpen] = useState(false)
   const { updateOpportunity, markOpportunityWon, freshAwards, currentUser } = useStore()
-  const isAdmin = ['BD_MANAGER', 'TEAM_LEAD'].includes(currentUser?.role ?? '')
+  const canEditStatus = hasPermission(currentUser, 'opportunity:edit')
 
-  if (!isAdmin || !canEdit) return <StatusBadge status={current} />
+  if (!canEditStatus || !canEdit) return <StatusBadge status={current} />
 
   // Only show statuses that differ from current and are valid submission-workflow transitions
   const options = EDITABLE_STATUSES.filter(s => s !== current)
@@ -159,8 +160,8 @@ export default function TrackerPage() {
   const [page, setPage] = useState(1)
   const [perPage, setPerPage] = useState<PerPage>(25)
 
-  const isAdmin = currentUser?.role === 'BD_MANAGER'
-  const isManager = ['BD_MANAGER', 'TEAM_LEAD'].includes(currentUser?.role ?? '')
+  const isAdmin = hasPermission(currentUser, 'opportunity:deleteApprove')
+  const isManager = hasPermission(currentUser, 'opportunity:edit')
 
   useEffect(() => {
     if (globalTab === 'deleted' || globalTab === 'pending') setTab(globalTab)

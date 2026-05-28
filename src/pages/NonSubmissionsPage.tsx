@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import toast from 'react-hot-toast'
+import { hasPermission } from '../lib/permissions'
 
 const stagger = { animate: { transition: { staggerChildren: 0.05 } } }
 const fadeUp = {
@@ -378,8 +379,8 @@ export default function NonSubmissionsPage() {
   const [submitFor, setSubmitFor] = useState<{ id: string; name: string } | null>(null)
   const [reviewId, setReviewId] = useState<string | null>(null)
 
-  const isManager = ['BD_MANAGER', 'TEAM_LEAD'].includes(currentUser?.role ?? '')
-  const isAgent = !isManager
+  const canReviewReports = hasPermission(currentUser, 'nonSubmission:review')
+  const isAgent = !canReviewReports
 
   useEffect(() => {
     if (globalTab === 'dropped' || globalTab === 'reports') setPageTab(globalTab)
@@ -546,7 +547,7 @@ export default function NonSubmissionsPage() {
                     key={r.id}
                     r={r}
                     opp={opp}
-                    isManager={isManager}
+                    isManager={canReviewReports}
                     onReview={() => setReviewId(r.id)}
                     onApprove={() => { reviewNonSubReport(r.id, 'APPROVED', 'Approved', currentUser?.username ?? ''); toast.success('Report approved → NOT_SUBMITTED') }}
                     onDecline={() => { reviewNonSubReport(r.id, 'DECLINED', 'Declined', currentUser?.username ?? ''); toast.success('Report declined → DROPPED') }}

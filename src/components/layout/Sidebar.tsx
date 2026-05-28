@@ -7,6 +7,23 @@ import { avatarColor } from '../../lib/utils'
 import { cn } from '../../lib/utils'
 import CompanyLogo from '../shared/CompanyLogo'
 import { DEFAULT_EXPANDED_NAV_GROUPS, NAV_GROUPS } from '../../config/navigation'
+import { hasAnyPermission, hasPermission, ROLE_LABELS } from '../../lib/permissions'
+
+function canSeeNavItem(user: ReturnType<typeof useStore.getState>['currentUser'], to: string) {
+  if (to === '/pipeline') return hasPermission(user, 'opportunity:read')
+  if (to === '/proposals') return hasPermission(user, 'opportunity:assign')
+  if (to === '/bd-tracker') return hasAnyPermission(user, ['admin:manageUsers', 'opportunity:assign'])
+  if (to === '/tracker') return hasPermission(user, 'opportunity:deleteApprove')
+  if (to === '/non-submissions') return hasPermission(user, 'nonSubmission:viewAll')
+  if (to === '/contracts') return hasPermission(user, 'contract:read')
+  if (to === '/fresh-award' || to === '/finance-projections') return hasPermission(user, 'operations:manage')
+  if (to === '/subk-database') return hasAnyPermission(user, ['sourcing:read', 'operations:manage'])
+  if (to === '/database') return hasPermission(user, 'admin:manageUsers')
+  if (to === '/past-performances') return hasPermission(user, 'contract:read')
+  if (to === '/admin') return hasPermission(user, 'admin:manageUsers')
+  if (to === '/hr') return hasPermission(user, 'hr:viewCertifications')
+  return true
+}
 
 export default function Sidebar() {
   const { sidebarCollapsed, toggleSidebar, currentUser, logout, notifications } = useStore()
@@ -62,7 +79,10 @@ export default function Sidebar() {
 
       {/* Nav */}
       <nav className="flex-1 overflow-y-auto px-2 py-3 space-y-0.5">
-        {NAV_GROUPS.map(group => (
+        {NAV_GROUPS.map(group => {
+          const visibleItems = group.items.filter(item => canSeeNavItem(currentUser, item.to))
+          if (visibleItems.length === 0) return null
+          return (
           <div key={group.label} className="mb-1">
             {!sidebarCollapsed && (
               <button
@@ -88,9 +108,7 @@ export default function Sidebar() {
                   transition={{ duration: 0.18 }}
                   className="space-y-0.5 overflow-hidden"
                 >
-                  {group.items
-                    .filter(item => currentUser?.role !== 'ASSOCIATE' || !item.hiddenForAssociate)
-                    .map(item => {
+                  {visibleItems.map(item => {
                     const isActive = location.pathname === item.to
                     return (
                       <NavLink key={item.to} to={item.to}>
@@ -131,7 +149,8 @@ export default function Sidebar() {
               )}
             </AnimatePresence>
           </div>
-        ))}
+          )
+        })}
       </nav>
 
       {/* User profile */}
@@ -152,7 +171,7 @@ export default function Sidebar() {
           {!sidebarCollapsed && (
             <div className="flex-1 min-w-0">
               <p className="text-[13px] font-semibold text-stone-100 truncate">{currentUser.name}</p>
-              <p className="text-[10px] text-stone-400 font-medium truncate">{currentUser.role}</p>
+              <p className="text-[10px] text-stone-400 font-medium truncate">{ROLE_LABELS[currentUser.role]}</p>
             </div>
           )}
           <button

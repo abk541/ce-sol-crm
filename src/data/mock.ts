@@ -6,7 +6,7 @@ import type {
 } from '../types'
 
 export const MOCK_USERS: User[] = [
-  { id:'u0', name:'ABK Manager', email:'abk@cesolutionplus.com', username:'abk', role:'BD_MANAGER', avatar:'AB', status:'active', firstLogin:false, mfaEnabled:true, createdAt:'2024-01-01', password:'abk123' },
+  { id:'u0', name:'ABK Manager', email:'abk@cesolutionplus.com', username:'abk', role:'CAPTURE_MANAGER', avatar:'AB', status:'active', firstLogin:false, mfaEnabled:true, createdAt:'2024-01-01', password:'abk123' },
 ]
 
 // ── Empty business data (start from scratch) ───────────────────────────

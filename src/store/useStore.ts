@@ -40,6 +40,7 @@ import {
   upsertBDSubmission,
 } from '../lib/db'
 import { getAssignmentChain, isAssignedToAssociate } from '../lib/team'
+import { hasPermission } from '../lib/permissions'
 
 interface AppState {
   // Auth
@@ -249,6 +250,15 @@ function showDatabaseSaveError(recordLabel: string) {
   toast.error(`${recordLabel} was not saved to the database. Check Supabase connection and try again.`)
 }
 
+function normalizePersistedUserRole<T>(value: T): T {
+  if (!value || typeof value !== 'object') return value
+  const user = value as Record<string, unknown>
+  if (user.id === 'u0' || user.email === 'abk@cesolutionplus.com' || user.username === 'abk') {
+    return { ...user, role: 'CAPTURE_MANAGER' } as T
+  }
+  return value
+}
+
 function normalizedSolicitationId(value?: string) {
   return (value ?? '').trim().toLowerCase()
 }
@@ -360,24 +370,46 @@ export const useStore = create<AppState>()(
       },
 
       // ── User management ─────────────────────────────────────────────
-      createUser: (data) => set(s => ({
-        users: [...s.users, {
-          ...data,
-          id: `u${Date.now()}`,
-          createdAt: new Date().toISOString().split('T')[0],
-        }]
-      })),
+      createUser: (data) => {
+        if (!hasPermission(get().currentUser, 'admin:manageUsers')) {
+          toast.error('Only the Capture Manager can manage users.')
+          return
+        }
+        set(s => ({
+          users: [...s.users, {
+            ...data,
+            id: `u${Date.now()}`,
+            createdAt: new Date().toISOString().split('T')[0],
+          }]
+        }))
+      },
 
-      updateUser: (id, data) => set(s => ({
-        users: s.users.map(u => u.id === id ? { ...u, ...data } : u)
-      })),
+      updateUser: (id, data) => {
+        if (!hasPermission(get().currentUser, 'admin:manageUsers')) {
+          toast.error('Only the Capture Manager can manage users.')
+          return
+        }
+        set(s => ({
+          users: s.users.map(u => u.id === id ? { ...u, ...data } : u)
+        }))
+      },
 
-      deleteUser: (id) => set(s => ({
-        users: s.users.filter(u => u.id !== id)
-      })),
+      deleteUser: (id) => {
+        if (!hasPermission(get().currentUser, 'admin:manageUsers')) {
+          toast.error('Only the Capture Manager can manage users.')
+          return
+        }
+        set(s => ({
+          users: s.users.filter(u => u.id !== id)
+        }))
+      },
 
       // ── Opportunity management ──────────────────────────────────────
       createOpportunity: async (data) => {
+        if (!hasPermission(get().currentUser, 'opportunity:create')) {
+          toast.error('Only the Capture Manager can add new opportunities.')
+          return false
+        }
         const solicitationId = data.solicitationId.trim()
         const allowed = await canUseSolicitationId(solicitationId, get().opportunities)
         if (!allowed) return false
@@ -402,8 +434,21 @@ export const useStore = create<AppState>()(
 
       updateOpportunity: async (id, data) => {
         if (data.status === 'CANCELED') {
+          if (!hasPermission(get().currentUser, 'opportunity:cancel')) {
+            toast.error('Only the Capture Manager can cancel opportunities.')
+            return false
+          }
           get().moveOpportunityToBDTracker(id, 'CANCELED', 'Canceled')
           return true
+        }
+
+        const changeKeys = Object.keys(data)
+        const isCommentOnlyUpdate = changeKeys.length > 0 && changeKeys.every(key => key === 'comments')
+        if (!hasPermission(get().currentUser, 'opportunity:edit')) {
+          if (!(isCommentOnlyUpdate && hasPermission(get().currentUser, 'opportunity:comment'))) {
+            toast.error('You do not have permission to edit opportunity details.')
+            return false
+          }
         }
 
         const current = get().opportunities.find(o => o.id === id)
@@ -450,6 +495,10 @@ export const useStore = create<AppState>()(
       },
 
       submitOpportunity: (id, values) => {
+        if (!hasPermission(get().currentUser, 'opportunity:submitProposal')) {
+          toast.error('You do not have permission to submit proposals.')
+          return
+        }
         set(s => ({
           opportunities: s.opportunities.map(o =>
             o.id === id ? { ...o, status: 'SUBMITTED', submittedAt: new Date().toISOString(), ...values } : o
@@ -477,6 +526,10 @@ export const useStore = create<AppState>()(
       },
 
       moveOpportunityToBDTracker: (id, status, comment) => {
+        if (status === 'CANCELED' && !hasPermission(get().currentUser, 'opportunity:cancel')) {
+          toast.error('Only the Capture Manager can cancel contract opportunities.')
+          return
+        }
         const opp = get().opportunities.find(o => o.id === id)
         if (!opp) return
 
@@ -577,7 +630,7 @@ export const useStore = create<AppState>()(
         get().logActivity({
           action: `Opportunity marked WON → Fresh Award created: ${opp.solicitation}`,
           user: get().currentUser?.name || 'System',
-          userRole: get().currentUser?.role || 'BD_MANAGER',
+          userRole: get().currentUser?.role || 'CAPTURE_MANAGER',
           entityType: 'opportunity',
           entityId: opp.id,
           entityName: opp.solicitation,
@@ -626,7 +679,7 @@ export const useStore = create<AppState>()(
             message: `${updatedOpp?.solicitation ?? 'An opportunity'} passed the configured non-submission window and moved to Non-Submission Reports.`,
             read: false,
             relatedId: report.opportunityId,
-            targetRole: 'BD_MANAGER',
+            targetRole: 'CAPTURE_MANAGER',
           })
         })
       },
@@ -892,7 +945,7 @@ export const useStore = create<AppState>()(
         get().logActivity({
           action: `Contract terminated (${type}) → archived to Past Performances: ${contract.title}`,
           user: get().currentUser?.name || 'System',
-          userRole: get().currentUser?.role || 'BD_MANAGER',
+          userRole: get().currentUser?.role || 'CAPTURE_MANAGER',
           entityType: 'contract',
           entityId: contract.id,
           entityName: contract.title,
@@ -901,6 +954,10 @@ export const useStore = create<AppState>()(
 
       // ── Subcontractor management ────────────────────────────────────
       addSubcontractor: (data) => {
+        if (!hasPermission(get().currentUser, 'sourcing:write')) {
+          toast.error('You do not have permission to update sourcing.')
+          return
+        }
         const sub: Subcontractor = {
           ...data,
           id: `sc${Date.now()}`,
@@ -918,6 +975,10 @@ export const useStore = create<AppState>()(
       },
 
       updateSubcontractor: (id, data) => {
+        if (!hasPermission(get().currentUser, 'sourcing:write')) {
+          toast.error('You do not have permission to update sourcing.')
+          return
+        }
         set(s => ({
           subcontractors: s.subcontractors.map(sc => sc.id === id ? { ...sc, ...data } : sc),
           opportunities: s.opportunities.map(o => ({
@@ -930,6 +991,10 @@ export const useStore = create<AppState>()(
       },
 
       deleteSubcontractor: (id) => {
+        if (!hasPermission(get().currentUser, 'sourcing:write')) {
+          toast.error('You do not have permission to update sourcing.')
+          return
+        }
         const sub = get().subcontractors.find(sc => sc.id === id)
         set(s => ({ subcontractors: s.subcontractors.filter(sc => sc.id !== id) }))
         if (sub) {
@@ -1009,7 +1074,7 @@ export const useStore = create<AppState>()(
         get().logActivity({
           action: `Moved Fresh Award to Active Contract: ${fa.solicitation}`,
           user: get().currentUser?.name || 'System',
-          userRole: get().currentUser?.role || 'BD_MANAGER',
+          userRole: get().currentUser?.role || 'CAPTURE_MANAGER',
           entityType: 'fresh_award',
           entityId: id,
           entityName: fa.solicitation,
@@ -1086,6 +1151,10 @@ export const useStore = create<AppState>()(
 
       // ── Non-submission reports ──────────────────────────────────────
       submitNonSubReport: (data) => {
+        if (!hasPermission(get().currentUser, 'nonSubmission:submit')) {
+          toast.error('You do not have permission to submit non-submission reports.')
+          return
+        }
         const report: NonSubmissionReport = {
           ...data,
           id: `nsr${Date.now()}`,
@@ -1107,11 +1176,15 @@ export const useStore = create<AppState>()(
           message: `A non-submission report has been submitted for review.`,
           read: false,
           relatedId: data.opportunityId,
-          targetRole: 'BD_MANAGER',
+          targetRole: 'CAPTURE_MANAGER',
         })
       },
 
       reviewNonSubReport: (id, action, reviewNote, reviewedBy) => {
+        if (!hasPermission(get().currentUser, 'nonSubmission:review')) {
+          toast.error('Only the Capture Manager can approve or decline non-submission reports.')
+          return
+        }
         set(s => ({
           nonSubReports: s.nonSubReports.map(r =>
             r.id === id
@@ -1146,6 +1219,10 @@ export const useStore = create<AppState>()(
 
       // ── Deletion requests ───────────────────────────────────────────
       requestDeletion: (opportunityId, requestedBy, reason) => {
+        if (!hasPermission(get().currentUser, 'opportunity:deleteRequest')) {
+          toast.error('You do not have permission to request opportunity deletion.')
+          return
+        }
         const req: DeletionRequest = {
           id: `dr${Date.now()}`,
           opportunityId,
@@ -1169,11 +1246,15 @@ export const useStore = create<AppState>()(
           message: `A deletion request has been submitted and is awaiting admin approval.`,
           read: false,
           relatedId: opportunityId,
-          targetRole: 'BD_MANAGER',
+          targetRole: 'CAPTURE_MANAGER',
         })
       },
 
       reviewDeletionRequest: (id, action, reviewedBy) => {
+        if (!hasPermission(get().currentUser, 'opportunity:deleteApprove')) {
+          toast.error('Only the Capture Manager can approve deletion requests.')
+          return
+        }
         set(s => ({
           deletionRequests: s.deletionRequests.map(r =>
             r.id === id
@@ -1227,6 +1308,10 @@ export const useStore = create<AppState>()(
 
       // ── Employee assignment ─────────────────────────────────────────
       assignOpportunityToEmployee: (opportunityId, employeeId) => {
+        if (!hasPermission(get().currentUser, 'opportunity:assign')) {
+          toast.error('You do not have permission to assign opportunities.')
+          return
+        }
         set(s => ({
           opportunities: s.opportunities.map(o =>
             o.id === opportunityId
@@ -1332,7 +1417,7 @@ export const useStore = create<AppState>()(
     {
       name: 'ces-crm-store',
       // v6: persist configurable non-submission grace timing.
-      version: 6,
+      version: 7,
       migrate: (persistedState: unknown, fromVersion: number) => {
         const s = persistedState as Record<string, unknown>
         if (fromVersion < 4) {
@@ -1365,6 +1450,8 @@ export const useStore = create<AppState>()(
         }
         return {
           ...s,
+          currentUser: normalizePersistedUserRole(s.currentUser),
+          users: Array.isArray(s.users) ? s.users.map(normalizePersistedUserRole) : s.users,
           accessNoticeAccepted: Boolean(s.accessNoticeAccepted),
           nonSubGraceHours: Number(s.nonSubGraceHours ?? 0),
           nonSubGraceMinutes: Number(s.nonSubGraceMinutes ?? 5),
