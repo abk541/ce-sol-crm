@@ -35,10 +35,6 @@ const COLUMN_DEFS: { role: HierarchyRole; header: string }[] = [
 const EMPTY_WORKLOAD = {
   activeTotal: 0,
   sameDueDay: 0,
-  directActive: 0,
-  directSameDueDay: 0,
-  subordinateActive: 0,
-  subordinateSameDueDay: 0,
 }
 
 // Given a selected employee id, derive the chain of selected ids at each tier
@@ -178,7 +174,6 @@ export default function HierarchyAssignPicker({
                 {items.map(({ emp, enabled }) => {
                   const isSelected = selIdInCol === emp.id
                   const workload = workloadByEmp[emp.id] ?? EMPTY_WORKLOAD
-                  const isTeamOwner = emp.role !== 'ASSOCIATE'
 
                   return (
                     <button
@@ -209,35 +204,18 @@ export default function HierarchyAssignPicker({
                           {/* Role label */}
                           <p className="truncate text-[10px] font-medium text-slate-400">{ROLE_LABEL[emp.role]}</p>
 
-                          {isTeamOwner ? (
-                            <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-0.5 text-[10px] font-semibold leading-4 text-slate-400">
-                              <span>Own active</span>
-                              <span className="text-right font-black text-[#F8FBF7]">{workload.directActive}</span>
-                              <span>Own same day</span>
-                              <span className={workload.directSameDueDay > 0 ? 'text-right font-black text-amber-200' : 'text-right font-black text-slate-300'}>
-                                {workload.directSameDueDay}
+                          <div className="mt-2 space-y-0.5 text-[10px] font-semibold leading-4 text-slate-400">
+                            <p className="flex items-center justify-between gap-2">
+                              <span>Active</span>
+                              <span className="font-black text-[#F8FBF7]">{workload.activeTotal}</span>
+                            </p>
+                            <p className="flex items-center justify-between gap-2">
+                              <span>Same day</span>
+                              <span className={workload.sameDueDay > 0 ? 'font-black text-amber-200' : 'font-black text-slate-300'}>
+                                {workload.sameDueDay}
                               </span>
-                              <span>Subordinates active</span>
-                              <span className="text-right font-black text-[#F8FBF7]">{workload.subordinateActive}</span>
-                              <span>Subordinates same day</span>
-                              <span className={workload.subordinateSameDueDay > 0 ? 'text-right font-black text-amber-200' : 'text-right font-black text-slate-300'}>
-                                {workload.subordinateSameDueDay}
-                              </span>
-                            </div>
-                          ) : (
-                            <div className="mt-2 space-y-0.5 text-[10px] font-semibold leading-4 text-slate-400">
-                              <p className="flex items-center justify-between gap-2">
-                                <span>Assigned active</span>
-                                <span className="font-black text-[#F8FBF7]">{workload.activeTotal}</span>
-                              </p>
-                              <p className="flex items-center justify-between gap-2">
-                                <span>Assigned same day</span>
-                                <span className={workload.sameDueDay > 0 ? 'font-black text-amber-200' : 'font-black text-slate-300'}>
-                                  {workload.sameDueDay}
-                                </span>
-                              </p>
-                            </div>
-                          )}
+                            </p>
+                          </div>
                         </div>
                       </div>
                     </button>

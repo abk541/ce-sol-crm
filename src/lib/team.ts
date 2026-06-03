@@ -16,10 +16,6 @@ export interface AssignmentChain {
 export interface AssignmentWorkload {
   activeTotal: number
   sameDueDay: number
-  directActive: number
-  directSameDueDay: number
-  subordinateActive: number
-  subordinateSameDueDay: number
 }
 
 const ACTIVE_STATUSES_EXCLUDE: Contract['status'][] = ['ARCHIVED', 'TERMINATED', 'CANCELED']
@@ -28,10 +24,6 @@ const ACTIVE_OPPORTUNITY_STATUSES: Opportunity['status'][] = ['ACTIVE', 'NEW_ASS
 const EMPTY_ASSIGNMENT_WORKLOAD: AssignmentWorkload = {
   activeTotal: 0,
   sameDueDay: 0,
-  directActive: 0,
-  directSameDueDay: 0,
-  subordinateActive: 0,
-  subordinateSameDueDay: 0,
 }
 
 function emptyAssignmentWorkload(): AssignmentWorkload {
@@ -158,10 +150,8 @@ export function assignmentWorkloadByEmployee({
     if (!employeeId) return
     const entry = directWorkload[employeeId] ?? emptyAssignmentWorkload()
     entry.activeTotal += 1
-    entry.directActive += 1
     if (normalizedSelectedDueDay && normalizeDate(dueDay) === normalizedSelectedDueDay) {
       entry.sameDueDay += 1
-      entry.directSameDueDay += 1
     }
     directWorkload[employeeId] = entry
   }
@@ -181,28 +171,14 @@ export function assignmentWorkloadByEmployee({
   }
 
   return employees.reduce<Record<string, AssignmentWorkload>>((map, employee) => {
-    const direct = directWorkload[employee.id] ?? emptyAssignmentWorkload()
-    const subordinateIds = teamMemberIdsForWorkload(employees, employee.id).filter(id => id !== employee.id)
-    const subordinates = subordinateIds.reduce<AssignmentWorkload>((total, id) => {
+    const responsibleIds = teamMemberIdsForWorkload(employees, employee.id)
+    map[employee.id] = responsibleIds.reduce<AssignmentWorkload>((total, id) => {
       const workload = directWorkload[id] ?? EMPTY_ASSIGNMENT_WORKLOAD
       return {
         activeTotal: total.activeTotal + workload.activeTotal,
         sameDueDay: total.sameDueDay + workload.sameDueDay,
-        directActive: 0,
-        directSameDueDay: 0,
-        subordinateActive: total.subordinateActive + workload.activeTotal,
-        subordinateSameDueDay: total.subordinateSameDueDay + workload.sameDueDay,
       }
     }, emptyAssignmentWorkload())
-
-    map[employee.id] = {
-      activeTotal: direct.activeTotal + subordinates.activeTotal,
-      sameDueDay: direct.sameDueDay + subordinates.sameDueDay,
-      directActive: direct.activeTotal,
-      directSameDueDay: direct.sameDueDay,
-      subordinateActive: subordinates.subordinateActive,
-      subordinateSameDueDay: subordinates.subordinateSameDueDay,
-    }
     return map
   }, {})
 }
