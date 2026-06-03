@@ -649,7 +649,6 @@ function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) 
     if (!form.solicitation?.trim()) { toast.error('Solicitation title is required'); setTab('details'); return }
     if (!form.type) { toast.error('Contract type is required'); setTab('details'); return }
     if (!form.dueDate) { toast.error('Due date is required'); setTab('schedule'); return }
-    if (!isCompleteClockTime(form.localTime)) { toast.error('Due time is required for Morocco time conversion'); setTab('schedule'); return }
     if (form.assignedTo && form.assignedTo !== opp.assignedTo && !allowedAssignees.includes(form.assignedTo)) {
       toast.error('You can only assign opportunities inside your team.')
       setTab('assign')
@@ -1551,7 +1550,6 @@ function CreateModal({ onClose }: { onClose: () => void }) {
     if (!form.solicitation?.trim()) { toast.error('Solicitation title is required'); setTab('details'); return }
     if (!form.type) { toast.error('Contract type is required'); setTab('details'); return }
     if (!form.dueDate) { toast.error('Due date is required'); setTab('schedule'); return }
-    if (!isCompleteClockTime(form.localTime)) { toast.error('Due time is required for Morocco time conversion'); setTab('schedule'); return }
     if (form.assignedTo && !allowedAssignees.includes(form.assignedTo)) {
       toast.error('You can only assign opportunities inside your team.')
       setTab('assign')
