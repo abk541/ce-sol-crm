@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { useStore } from '../../store/useStore'
 import type { Employee, HierarchyRole } from '../../types'
+import { assignmentWorkloadByEmployee } from '../../lib/team'
 
 interface HierarchyAssignPickerProps {
   value?: string           // currently selected employee id
@@ -24,9 +25,6 @@ const ROLE_AVATAR_CLS: Record<HierarchyRole, string> = {
   TEAM_LEAD:  'bg-[#0A1D2B] text-[#7DD3FC] border-[#7DD3FC]/35',
   ASSOCIATE:  'bg-[#082F49] text-[#A5F3FC] border-[#A5F3FC]/35',
 }
-
-const ACTIVE_STATUSES_EXCLUDE = ['ARCHIVED', 'TERMINATED', 'CANCELED']
-const ACTIVE_OPPORTUNITY_STATUSES = ['ACTIVE', 'NEW_ASSIGNMENT', 'DISCUSSION']
 
 const COLUMN_DEFS: { role: HierarchyRole; header: string }[] = [
   { role: 'BD_MANAGER', header: 'Managers' },
@@ -93,35 +91,15 @@ export default function HierarchyAssignPicker({
     [employees, value]
   )
 
-  const normalizeDate = (date?: string) => date ? date.slice(0, 10) : ''
-  const selectedDueDay = normalizeDate(deadline)
-
   const workloadByEmp = useMemo(() => {
-    const map: Record<string, { activeTotal: number; sameDueDay: number }> = {}
-    const add = (employeeId: string | undefined, dueDay?: string) => {
-      if (!employeeId) return
-      const entry = map[employeeId] ?? { activeTotal: 0, sameDueDay: 0 }
-      entry.activeTotal += 1
-      if (selectedDueDay && normalizeDate(dueDay) === selectedDueDay) entry.sameDueDay += 1
-      map[employeeId] = entry
-    }
-
-    for (const o of opportunities) {
-      if (!o.assignedTo) continue
-      if (o.id === excludeOpportunityId) continue
-      if (o.isDeleted || o.nonSubmissionReportId) continue
-      if (!ACTIVE_OPPORTUNITY_STATUSES.includes(o.status)) continue
-      add(o.assignedTo, o.dueDate)
-    }
-
-    for (const c of contracts) {
-      if (!c.assignedTo) continue
-      if (ACTIVE_STATUSES_EXCLUDE.includes(c.status)) continue
-      add(c.assignedTo, c.popEnd)
-    }
-
-    return map
-  }, [contracts, opportunities, selectedDueDay, excludeOpportunityId])
+    return assignmentWorkloadByEmployee({
+      employees,
+      opportunities,
+      contracts,
+      selectedDueDay: deadline,
+      excludeOpportunityId,
+    })
+  }, [contracts, employees, opportunities, deadline, excludeOpportunityId])
 
   // Get the list of employees for each column
   function getColumnItems(colIdx: number): { emp: Employee; enabled: boolean }[] {
@@ -191,6 +169,7 @@ export default function HierarchyAssignPicker({
                 {items.map(({ emp, enabled }) => {
                   const isSelected = selIdInCol === emp.id
                   const workload = workloadByEmp[emp.id] ?? { activeTotal: 0, sameDueDay: 0 }
+                  const scopeLabel = emp.role === 'ASSOCIATE' ? 'Assigned' : 'Team'
 
                   return (
                     <button
@@ -223,11 +202,11 @@ export default function HierarchyAssignPicker({
 
                           <div className="mt-2 space-y-0.5 text-[10px] font-semibold leading-4 text-slate-400">
                             <p className="flex items-center justify-between gap-2">
-                              <span>Active assigned</span>
+                              <span>{scopeLabel} active</span>
                               <span className="font-black text-[#F8FBF7]">{workload.activeTotal}</span>
                             </p>
                             <p className="flex items-center justify-between gap-2">
-                              <span>Same due day</span>
+                              <span>{scopeLabel} same day</span>
                               <span className={workload.sameDueDay > 0 ? 'font-black text-amber-200' : 'font-black text-slate-300'}>
                                 {workload.sameDueDay}
                               </span>
