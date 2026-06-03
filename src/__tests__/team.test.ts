@@ -53,9 +53,30 @@ describe('assignment hierarchy helpers', () => {
     expect(teamMemberIdsForWorkload(employees, 'tl')).toEqual(['tl', 'assoc'])
     expect(teamMemberIdsForWorkload(employees, 'assoc')).toEqual(['assoc'])
 
-    expect(workloads.assoc).toEqual({ activeTotal: 2, sameDueDay: 2 })
-    expect(workloads.tl).toEqual({ activeTotal: 4, sameDueDay: 2 })
-    expect(workloads.mgr).toEqual({ activeTotal: 5, sameDueDay: 3 })
+    expect(workloads.assoc).toEqual({
+      activeTotal: 2,
+      sameDueDay: 2,
+      directActive: 2,
+      directSameDueDay: 2,
+      subordinateActive: 0,
+      subordinateSameDueDay: 0,
+    })
+    expect(workloads.tl).toEqual({
+      activeTotal: 4,
+      sameDueDay: 2,
+      directActive: 2,
+      directSameDueDay: 0,
+      subordinateActive: 2,
+      subordinateSameDueDay: 2,
+    })
+    expect(workloads.mgr).toEqual({
+      activeTotal: 5,
+      sameDueDay: 3,
+      directActive: 1,
+      directSameDueDay: 1,
+      subordinateActive: 4,
+      subordinateSameDueDay: 2,
+    })
   })
 })
 
