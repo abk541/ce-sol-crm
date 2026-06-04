@@ -369,6 +369,94 @@ function ReviewModal({
   )
 }
 
+function EditRequestModal({
+  request,
+  onClose,
+}: {
+  request: EmployeeRequest
+  onClose: () => void
+}) {
+  const updateEmployeeRequest = useStore(s => s.updateEmployeeRequest)
+  const [form, setForm] = useState({
+    title: request.title,
+    type: request.type,
+    priority: request.priority,
+    details: request.details,
+  })
+
+  const handleSubmit = (event: React.FormEvent) => {
+    event.preventDefault()
+    if (!form.title.trim() || !form.details.trim()) {
+      toast.error('Title and details are required')
+      return
+    }
+    updateEmployeeRequest(request.id, {
+      title: form.title.trim(),
+      type: form.type,
+      priority: form.priority,
+      details: form.details.trim(),
+    })
+    toast.success('Request updated')
+    onClose()
+  }
+
+  return (
+    <motion.div className="fixed inset-0 z-50 flex items-center justify-center p-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+      <button className="absolute inset-0 cursor-default bg-black/65 backdrop-blur-sm" onClick={onClose} aria-label="Close edit form" />
+      <motion.form
+        onSubmit={handleSubmit}
+        initial={{ opacity: 0, y: 18, scale: 0.97 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={{ opacity: 0, y: 12, scale: 0.97 }}
+        className="relative z-10 flex max-h-[92vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-modal)] shadow-[var(--shadow-modal)]"
+      >
+        <div className="flex items-start justify-between gap-4 border-b border-[var(--border-default)] p-5">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-amber-200">Edit request</p>
+            <h2 className="mt-1 text-xl font-black text-white">Fix request fields</h2>
+            <p className="mt-1 text-xs text-slate-400">Submitted by {request.requesterName}</p>
+          </div>
+          <button type="button" onClick={onClose} className="btn-ghost p-2">
+            <X size={15} />
+          </button>
+        </div>
+
+        <div className="space-y-4 overflow-y-auto p-5">
+          <div>
+            <label className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-400">Title</label>
+            <input className="input-field" value={form.title} onChange={e => setForm(p => ({ ...p, title: e.target.value }))} />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-400">Type</label>
+              <select className="select-field" value={form.type} onChange={e => setForm(p => ({ ...p, type: e.target.value as EmployeeRequestType }))}>
+                {REQUEST_TYPES.map(t => <option key={t} value={t}>{REQUEST_TYPE_LABEL[t]}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-400">Priority</label>
+              <select className="select-field" value={form.priority} onChange={e => setForm(p => ({ ...p, priority: e.target.value as EmployeeRequest['priority'] }))}>
+                <option value="LOW">LOW</option>
+                <option value="MEDIUM">MEDIUM</option>
+                <option value="HIGH">HIGH</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-400">Details</label>
+            <textarea className="input-field min-h-32 resize-y" value={form.details} onChange={e => setForm(p => ({ ...p, details: e.target.value }))} />
+          </div>
+        </div>
+
+        <div className="flex justify-end gap-3 border-t border-[var(--border-default)] p-5">
+          <button type="button" onClick={onClose} className="btn-secondary justify-center">Cancel</button>
+          <button type="submit" className="btn-primary justify-center">Save Changes</button>
+        </div>
+      </motion.form>
+    </motion.div>
+  )
+}
+
 export default function HRPage() {
   const {
     currentUser,
@@ -381,6 +469,7 @@ export default function HRPage() {
   const [certModal, setCertModal] = useState<{ cert: CompanyCertification | null } | null>(null)
   const [requestModalOpen, setRequestModalOpen] = useState(false)
   const [reviewRequest, setReviewRequest] = useState<EmployeeRequest | null>(null)
+  const [editRequest, setEditRequest] = useState<EmployeeRequest | null>(null)
 
   const canManageCertifications = hasPermission(currentUser, 'hr:manageCertifications')
   const canReviewRequests = hasPermission(currentUser, 'hr:reviewRequests')
@@ -584,9 +673,14 @@ export default function HRPage() {
                         </p>
                       </div>
                       {canReviewRequests && (
-                        <button onClick={() => setReviewRequest(request)} className="btn-primary shrink-0 justify-center px-3 py-2 text-xs">
-                          Review
-                        </button>
+                        <div className="flex shrink-0 gap-2">
+                          <button onClick={() => setEditRequest(request)} className="btn-secondary justify-center px-3 py-2 text-xs" title="Edit request fields">
+                            <Pencil size={12} /> Edit
+                          </button>
+                          <button onClick={() => setReviewRequest(request)} className="btn-primary justify-center px-3 py-2 text-xs">
+                            Review
+                          </button>
+                        </div>
                       )}
                     </div>
                     <p className="mt-3 text-sm leading-relaxed text-slate-300">{request.details}</p>
@@ -612,6 +706,7 @@ export default function HRPage() {
         {certModal && <CertificationModal cert={certModal.cert} onClose={() => setCertModal(null)} />}
         {requestModalOpen && <RequestModal onClose={() => setRequestModalOpen(false)} />}
         {reviewRequest && <ReviewModal request={reviewRequest} onClose={() => setReviewRequest(null)} />}
+        {editRequest && <EditRequestModal request={editRequest} onClose={() => setEditRequest(null)} />}
       </AnimatePresence>
     </div>
   )
