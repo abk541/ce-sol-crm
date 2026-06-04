@@ -2635,26 +2635,28 @@ export default function ContractsPage() {
       </div>
 
       {/* Detail modal */}
-      <AnimatePresence>
-        {selected && createPortal((
-          <>
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              className="fixed inset-0 z-50"
-              style={{ background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)' } as React.CSSProperties}
-              onClick={() => setSelected(null)} />
-            <ContractDetailDrawer
-              key={selected.id}
-              contract={contracts.find(c => c.id === selected.id) || selected}
-              initialTab={selectedInitialTab}
-              onClose={() => setSelected(null)}
-              onOpenSourcing={opp => {
-                setSelected(null)
-                setSourcingOpp(opp)
-              }}
-            />
-          </>
-        ), document.body)}
-      </AnimatePresence>
+      {createPortal((
+        <AnimatePresence>
+          {selected && (
+            <>
+              <motion.div key="contract-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                className="fixed inset-0 z-50"
+                style={{ background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)' } as React.CSSProperties}
+                onClick={() => setSelected(null)} />
+              <ContractDetailDrawer
+                key={selected.id}
+                contract={contracts.find(c => c.id === selected.id) || selected}
+                initialTab={selectedInitialTab}
+                onClose={() => setSelected(null)}
+                onOpenSourcing={opp => {
+                  setSelected(null)
+                  setSourcingOpp(opp)
+                }}
+              />
+            </>
+          )}
+        </AnimatePresence>
+      ), document.body)}
 
       {sourcingOpp && (
         <SourcingModal opp={sourcingOpp} onClose={() => setSourcingOpp(null)} />
