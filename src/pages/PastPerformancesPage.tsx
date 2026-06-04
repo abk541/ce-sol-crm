@@ -4,10 +4,10 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   History, Search, Download, FileText,
   Building2, DollarSign, Calendar, MapPin,
-  ChevronDown, X, Save, Eye, Tag, MoreHorizontal,
+  ChevronDown, X, Save, Eye, Tag, MoreHorizontal, Pencil,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
-import type { Contract, PastPerformance } from '../types'
+import type { Contract, PastPerformance, ContractType, ContractFinanceType, SetAside } from '../types'
 import { formatCurrency } from '../lib/utils'
 import { generatePastPerformancePdf } from '../lib/pastPerformancePdf'
 import FloatingActionMenu from '../components/shared/FloatingActionMenu'
@@ -118,7 +118,164 @@ function ExportModal({ pp, onClose }: { pp: PastPerformance; onClose: () => void
   )
 }
 
-function DetailDrawerPP({ pp, onClose, onExport }: { pp: PastPerformance; onClose: () => void; onExport: (pp: PastPerformance) => void }) {
+function EditPPModal({ pp, onClose }: { pp: PastPerformance; onClose: () => void }) {
+  const { updatePastPerformance } = useStore()
+  const [form, setForm] = useState<PastPerformance>({ ...pp })
+  const [saving, setSaving] = useState(false)
+
+  const set = <K extends keyof PastPerformance>(k: K, v: PastPerformance[K]) =>
+    setForm(p => ({ ...p, [k]: v }))
+
+  const handleSave = () => {
+    if (!form.title.trim())          { toast.error('Title is required'); return }
+    if (!form.contractNumber.trim()) { toast.error('Contract number is required'); return }
+    if (!form.client.trim())         { toast.error('Client is required'); return }
+    if (!form.popStart || !form.popEnd) { toast.error('Period of performance is required'); return }
+    if (!Number.isFinite(form.value) || form.value < 0) { toast.error('Value must be a non-negative number'); return }
+    setSaving(true)
+    const patch: Partial<PastPerformance> = {
+      title: form.title.trim(),
+      contractNumber: form.contractNumber.trim(),
+      client: form.client.trim(),
+      type: form.type,
+      financeType: form.financeType,
+      naicsCode: form.naicsCode.trim(),
+      setAside: form.setAside,
+      value: form.value,
+      popStart: form.popStart,
+      popEnd: form.popEnd,
+      location: form.location?.trim() || undefined,
+      description: form.description,
+      relevance: form.relevance,
+      keyPersonnel: form.keyPersonnel?.trim() || undefined,
+      challenges: form.challenges?.trim() || undefined,
+      bdm: form.bdm.trim(),
+      bds: form.bds.trim(),
+    }
+    updatePastPerformance(pp.id, patch)
+    setSaving(false)
+    toast.success('Past performance updated')
+    onClose()
+  }
+
+  const TYPES: ContractType[] = ['OTJ', 'RECURRING', 'BPA', 'IDIQ', 'S&D', 'SUPPLY']
+  const FINANCE: ContractFinanceType[] = ['FFP', 'T&M', 'CPFF', 'OTHER']
+  const SETASIDES: SetAside[] = ['SB', 'SDVOSB', 'WOSB', 'HUBZone', 'VOSB', '8(a)', 'UNRES']
+
+  return (
+    <div className="fixed inset-0 z-[55] flex items-center justify-center p-4"
+      style={{ background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(8px)' }}>
+      <motion.div
+        initial={{ opacity: 0, scale: 0.96 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.96 }}
+        className="flex w-full max-w-2xl max-h-[calc(100vh-2rem)] flex-col overflow-hidden rounded-2xl"
+        style={{ background: 'var(--bg-card)', border: '1px solid var(--border-default)' }}
+      >
+        <div className="border-b p-5 flex items-center gap-3 flex-shrink-0" style={{ borderColor: 'var(--border-default)' }}>
+          <div className="w-9 h-9 rounded-xl bg-amber-50 flex items-center justify-center">
+            <Pencil size={16} className="text-amber-600" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <h2 className="text-sm font-bold text-slate-800">Edit Past Performance</h2>
+            <p className="text-xs text-slate-400 truncate">{pp.title}</p>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X size={16} /></button>
+        </div>
+
+        <div className="p-5 overflow-y-auto">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="sm:col-span-2">
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Title <span className="text-rose-500">*</span></label>
+              <input value={form.title} onChange={e => set('title', e.target.value)} className="input-field text-xs py-2 w-full" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Contract Number <span className="text-rose-500">*</span></label>
+              <input value={form.contractNumber} onChange={e => set('contractNumber', e.target.value)} className="input-field text-xs py-2 w-full font-mono" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Client <span className="text-rose-500">*</span></label>
+              <input value={form.client} onChange={e => set('client', e.target.value)} className="input-field text-xs py-2 w-full" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Type</label>
+              <select value={form.type} onChange={e => set('type', e.target.value as ContractType)} className="input-field text-xs py-2 w-full">
+                {TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Finance Type</label>
+              <select value={form.financeType ?? ''} onChange={e => set('financeType', (e.target.value || undefined) as ContractFinanceType | undefined)} className="input-field text-xs py-2 w-full">
+                <option value="">—</option>
+                {FINANCE.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">NAICS</label>
+              <input value={form.naicsCode} onChange={e => set('naicsCode', e.target.value)} className="input-field text-xs py-2 w-full" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Set-Aside</label>
+              <select value={form.setAside} onChange={e => set('setAside', e.target.value as SetAside)} className="input-field text-xs py-2 w-full">
+                {SETASIDES.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Value (USD) <span className="text-rose-500">*</span></label>
+              <input type="number" step="0.01" min="0" value={form.value}
+                     onChange={e => set('value', Number(e.target.value))} className="input-field text-xs py-2 w-full" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Location</label>
+              <input value={form.location ?? ''} onChange={e => set('location', e.target.value)} className="input-field text-xs py-2 w-full" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">PoP Start <span className="text-rose-500">*</span></label>
+              <input type="date" value={form.popStart} onChange={e => set('popStart', e.target.value)} className="input-field text-xs py-2 w-full" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">PoP End <span className="text-rose-500">*</span></label>
+              <input type="date" value={form.popEnd} onChange={e => set('popEnd', e.target.value)} className="input-field text-xs py-2 w-full" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Manager</label>
+              <input value={form.bdm} onChange={e => set('bdm', e.target.value)} className="input-field text-xs py-2 w-full" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Team Lead</label>
+              <input value={form.bds} onChange={e => set('bds', e.target.value)} className="input-field text-xs py-2 w-full" />
+            </div>
+            <div className="sm:col-span-2">
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Description</label>
+              <textarea rows={4} value={form.description} onChange={e => set('description', e.target.value)} className="input-field text-xs py-2 w-full resize-none" />
+            </div>
+            <div className="sm:col-span-2">
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Relevance</label>
+              <textarea rows={3} value={form.relevance} onChange={e => set('relevance', e.target.value)} className="input-field text-xs py-2 w-full resize-none" />
+            </div>
+            <div className="sm:col-span-2">
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Key Personnel</label>
+              <textarea rows={2} value={form.keyPersonnel ?? ''} onChange={e => set('keyPersonnel', e.target.value)} className="input-field text-xs py-2 w-full resize-none" />
+            </div>
+            <div className="sm:col-span-2">
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Challenges &amp; Solutions</label>
+              <textarea rows={3} value={form.challenges ?? ''} onChange={e => set('challenges', e.target.value)} className="input-field text-xs py-2 w-full resize-none" />
+            </div>
+          </div>
+        </div>
+
+        <div className="flex gap-2 p-5 border-t flex-shrink-0" style={{ borderColor: 'var(--border-default)' }}>
+          <button onClick={onClose} className="btn-secondary flex-1 text-xs">Cancel</button>
+          <button onClick={handleSave} disabled={saving} className="btn-primary flex-1 text-xs gap-1.5 disabled:opacity-40">
+            <Save size={12} /> Save Changes
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  )
+}
+
+function DetailDrawerPP({ pp, onClose, onExport, onEdit }: { pp: PastPerformance; onClose: () => void; onExport: (pp: PastPerformance) => void; onEdit: (pp: PastPerformance) => void }) {
   return (
     <motion.div
       initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }}
@@ -134,6 +291,11 @@ function DetailDrawerPP({ pp, onClose, onExport }: { pp: PastPerformance; onClos
           <h2 className="text-sm font-bold text-slate-800 truncate">{pp.title}</h2>
           <p className="text-xs text-slate-400">{pp.contractNumber}</p>
         </div>
+        <button
+          onClick={() => onEdit(pp)}
+          className="flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-600 transition-colors hover:bg-slate-50 hover:text-slate-900">
+          <Pencil size={12} /> Edit
+        </button>
         <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X size={16} /></button>
       </div>
 
@@ -234,6 +396,7 @@ export default function PastPerformancesPage() {
   const [search, setSearch] = useState('')
   const [source, setSource] = useState<'ACTIVE' | 'COMPLETED'>('ACTIVE')
   const [selected, setSelected] = useState<PastPerformance | null>(null)
+  const [editTarget, setEditTarget] = useState<PastPerformance | null>(null)
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
   const [exportTarget, setExportTarget] = useState<PastPerformance | null>(null)
 
@@ -437,6 +600,7 @@ export default function PastPerformancesPage() {
               pp={selected}
               onClose={() => setSelected(null)}
               onExport={(pp) => { setSelected(null); setExportTarget(pp) }}
+              onEdit={(pp) => { setSelected(null); setEditTarget(pp) }}
             />
           </>
         )}
@@ -446,6 +610,13 @@ export default function PastPerformancesPage() {
       <AnimatePresence>
         {exportTarget && (
           <ExportModal pp={exportTarget} onClose={() => setExportTarget(null)} />
+        )}
+      </AnimatePresence>
+
+      {/* Edit modal */}
+      <AnimatePresence>
+        {editTarget && (
+          <EditPPModal pp={editTarget} onClose={() => setEditTarget(null)} />
         )}
       </AnimatePresence>
     </div>
