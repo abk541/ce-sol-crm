@@ -5,10 +5,11 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   Trophy, UserPlus, ArrowRight, CheckCircle2, Clock,
   Building2, DollarSign, MapPin, Calendar, Briefcase,
-  ChevronRight, X, Check, MoreHorizontal,
+  ChevronRight, X, Check, MoreHorizontal, Pencil,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
-import type { FreshAward } from '../types'
+import { hasPermission } from '../lib/permissions'
+import type { FreshAward, ContractType, SetAside } from '../types'
 import { formatCurrency } from '../lib/utils'
 import toast from 'react-hot-toast'
 import FloatingActionMenu from '../components/shared/FloatingActionMenu'
@@ -225,6 +226,167 @@ function OperationsAssignPicker({
   )
 }
 
+// Edit modal for fixing typos / metadata after award creation
+const FA_TYPES: ContractType[] = ['IDIQ', 'BPA', 'GSA', 'OneTime']
+const FA_SETASIDES: SetAside[] = ['SB', 'SDVOSB', 'WOSB', 'HUBZone', 'VOSB', '8(a)', 'UNRES']
+
+function EditModal({ award, onClose }: { award: FreshAward; onClose: () => void }) {
+  const updateFreshAward = useStore(s => s.updateFreshAward)
+  const [form, setForm] = useState({
+    solicitation: award.solicitation,
+    solicitationId: award.solicitationId,
+    client: award.client,
+    type: award.type,
+    setAside: award.setAside,
+    naicsCode: award.naicsCode,
+    contractAmount: award.contractAmount?.toString() ?? '',
+    baseAmount: award.baseAmount?.toString() ?? '',
+    monthlyPayment: award.monthlyPayment?.toString() ?? '',
+    pop: award.pop ?? '',
+    location: award.location ?? '',
+    awardedDate: award.awardedDate,
+    notes: award.notes ?? '',
+  })
+  const set = (k: keyof typeof form, v: string) => setForm(p => ({ ...p, [k]: v }))
+
+  const parseNum = (v: string): number | undefined => {
+    if (v.trim() === '') return undefined
+    const n = Number(v)
+    return Number.isFinite(n) && n >= 0 ? n : undefined
+  }
+
+  const handleSave = () => {
+    if (!form.solicitation.trim() || !form.solicitationId.trim() || !form.client.trim() || !form.awardedDate) {
+      toast.error('Solicitation, ID, Client and Awarded Date are required')
+      return
+    }
+    const numFields = ['contractAmount', 'baseAmount', 'monthlyPayment'] as const
+    for (const k of numFields) {
+      const raw = form[k]
+      if (raw.trim() !== '' && (!Number.isFinite(Number(raw)) || Number(raw) < 0)) {
+        toast.error(`${k} must be a non-negative number`)
+        return
+      }
+    }
+    const patch: Partial<FreshAward> = {
+      solicitation: form.solicitation.trim(),
+      solicitationId: form.solicitationId.trim(),
+      client: form.client.trim(),
+      type: form.type,
+      setAside: form.setAside,
+      naicsCode: form.naicsCode.trim(),
+      contractAmount: parseNum(form.contractAmount),
+      baseAmount: parseNum(form.baseAmount),
+      monthlyPayment: parseNum(form.monthlyPayment),
+      pop: form.pop.trim() || undefined,
+      location: form.location.trim() || undefined,
+      awardedDate: form.awardedDate,
+      notes: form.notes.trim() || undefined,
+    }
+    updateFreshAward(award.id, patch)
+    toast.success('Fresh award updated')
+    onClose()
+  }
+
+  return createPortal(
+    <AnimatePresence>
+      <motion.div
+        key="fa-edit-modal"
+        className="fixed inset-0 z-[80] flex items-center justify-center p-4"
+        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      >
+        <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={onClose} />
+        <motion.div
+          initial={{ y: 16, scale: 0.97, opacity: 0 }}
+          animate={{ y: 0, scale: 1, opacity: 1 }}
+          exit={{ y: 12, scale: 0.97, opacity: 0 }}
+          transition={{ type: 'spring', stiffness: 320, damping: 30 }}
+          className="relative z-10 flex w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
+          style={{ maxHeight: 'calc(100vh - 2rem)' }}
+        >
+          <div className="flex items-center gap-3 border-b border-slate-200 px-5 py-4 flex-shrink-0">
+            <div className="w-9 h-9 rounded-xl bg-amber-50 flex items-center justify-center">
+              <Pencil size={15} className="text-amber-600" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-amber-600">Edit Fresh Award</p>
+              <h2 className="text-sm font-bold text-slate-800 truncate">{award.solicitation}</h2>
+            </div>
+            <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X size={16} /></button>
+          </div>
+
+          <div className="grid gap-3 overflow-y-auto p-5 sm:grid-cols-2">
+            <div className="sm:col-span-2">
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Solicitation *</label>
+              <input value={form.solicitation} onChange={e => set('solicitation', e.target.value)} className="input-field text-xs py-2 w-full" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Solicitation ID *</label>
+              <input value={form.solicitationId} onChange={e => set('solicitationId', e.target.value)} className="input-field text-xs py-2 w-full font-mono" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Client *</label>
+              <input value={form.client} onChange={e => set('client', e.target.value)} className="input-field text-xs py-2 w-full" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Type</label>
+              <select value={form.type} onChange={e => set('type', e.target.value)} className="input-field text-xs py-2 w-full">
+                {FA_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Set-Aside</label>
+              <select value={form.setAside} onChange={e => set('setAside', e.target.value)} className="input-field text-xs py-2 w-full">
+                {FA_SETASIDES.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">NAICS Code</label>
+              <input value={form.naicsCode} onChange={e => set('naicsCode', e.target.value)} className="input-field text-xs py-2 w-full font-mono" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Awarded Date *</label>
+              <input type="date" value={form.awardedDate} onChange={e => set('awardedDate', e.target.value)} className="input-field text-xs py-2 w-full" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Contract Amount</label>
+              <input type="number" min="0" step="0.01" value={form.contractAmount} onChange={e => set('contractAmount', e.target.value)} className="input-field text-xs py-2 w-full" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Base Amount</label>
+              <input type="number" min="0" step="0.01" value={form.baseAmount} onChange={e => set('baseAmount', e.target.value)} className="input-field text-xs py-2 w-full" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Monthly Payment</label>
+              <input type="number" min="0" step="0.01" value={form.monthlyPayment} onChange={e => set('monthlyPayment', e.target.value)} className="input-field text-xs py-2 w-full" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Period of Performance</label>
+              <input value={form.pop} onChange={e => set('pop', e.target.value)} className="input-field text-xs py-2 w-full" placeholder="e.g. 12 months" />
+            </div>
+            <div className="sm:col-span-2">
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Location</label>
+              <input value={form.location} onChange={e => set('location', e.target.value)} className="input-field text-xs py-2 w-full" />
+            </div>
+            <div className="sm:col-span-2">
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Notes</label>
+              <textarea rows={3} value={form.notes} onChange={e => set('notes', e.target.value)} className="input-field text-xs py-2 w-full resize-none" />
+            </div>
+          </div>
+
+          <div className="flex gap-2 border-t border-slate-200 px-5 py-4 flex-shrink-0">
+            <button onClick={onClose} className="btn-secondary flex-1 text-xs justify-center">Cancel</button>
+            <button onClick={handleSave} className="btn-primary flex-1 text-xs gap-1.5 justify-center">
+              <Check size={12} /> Save Changes
+            </button>
+          </div>
+        </motion.div>
+      </motion.div>
+    </AnimatePresence>,
+    document.body
+  )
+}
+
 function AssignModal({ award, onClose, onMove }: AssignModalProps) {
   const existingManager = OPERATION_MANAGERS.find(person => person.name === award.assignedBDM)
   const existingTeamLead = OPERATIONS_PEOPLE.find(person => person.role === 'OPERATIONS_TEAM_LEAD' && person.name === award.assignedBDS)
@@ -342,10 +504,12 @@ function AssignModal({ award, onClose, onMove }: AssignModalProps) {
 }
 
 export default function FreshAwardPage() {
-  const { freshAwards, moveFreshAwardToActive } = useStore()
+  const { freshAwards, moveFreshAwardToActive, currentUser } = useStore()
+  const canEdit = hasPermission(currentUser, 'opportunity:edit')
   const [searchParams] = useSearchParams()
   const globalRecordId = searchParams.get('record')
   const [selected, setSelected] = useState<FreshAward | null>(null)
+  const [editTarget, setEditTarget] = useState<FreshAward | null>(null)
   const [filter, setFilter] = useState<'ALL' | 'PENDING_ASSIGNMENT' | 'ASSIGNED' | 'MOVED_TO_ACTIVE'>('ALL')
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
 
@@ -442,6 +606,17 @@ export default function FreshAwardPage() {
                               >
                                 Assign Operations
                               </button>
+                              {canEdit && (
+                                <button
+                                  onClick={() => { setEditTarget(fa); setMenuOpen(null) }}
+                                  className="flex w-full items-center gap-2 px-3 py-2 text-xs font-medium transition-colors"
+                                  style={{ color: '#B45309' }}
+                                  onMouseEnter={e => { e.currentTarget.style.background = 'rgba(245,158,11,0.08)' }}
+                                  onMouseLeave={e => { e.currentTarget.style.background = '' }}
+                                >
+                                  <Pencil size={11} /> Edit Details
+                                </button>
+                              )}
                               {fa.status === 'ASSIGNED' && (
                                 <button
                                   onClick={() => { moveFreshAwardToActive(fa.id); toast.success('Moved to Active Contracts'); setMenuOpen(null) }}
@@ -554,6 +729,10 @@ export default function FreshAwardPage() {
           />
         )}
       </AnimatePresence>
+
+      {editTarget && (
+        <EditModal award={editTarget} onClose={() => setEditTarget(null)} />
+      )}
     </div>
   )
 }

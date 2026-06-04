@@ -90,6 +90,7 @@ interface AppState {
   deleteCompanyCertification: (id: string) => void
   submitEmployeeRequest: (data: Omit<EmployeeRequest, 'id' | 'requesterId' | 'requesterName' | 'requesterEmail' | 'status' | 'submittedAt'>) => void
   reviewEmployeeRequest: (id: string, status: EmployeeRequestStatus, reviewNote?: string) => void
+  updateEmployeeRequest: (id: string, data: Partial<EmployeeRequest>) => void
 
   // ── Opportunity management ─────────────────────────────────────────
   createOpportunity: (o: Omit<Opportunity, 'id'>) => Promise<boolean>
@@ -126,6 +127,7 @@ interface AppState {
   // ── Fresh Awards ───────────────────────────────────────────────────
   assignFreshAward: (id: string, assignments: Partial<FreshAward>) => void
   moveFreshAwardToActive: (id: string, assignments?: Partial<FreshAward>) => void
+  updateFreshAward: (id: string, data: Partial<FreshAward>) => void
 
   // ── Past Performances ──────────────────────────────────────────────
   addPastPerformance: (pp: Omit<PastPerformance, 'id' | 'createdAt'>) => void
@@ -545,6 +547,18 @@ export const useStore = create<AppState>()(
                   reviewedBy: user?.name || 'System',
                 }
               : request
+          )
+        }))
+      },
+
+      updateEmployeeRequest: (id, data) => {
+        if (!hasPermission(get().currentUser, 'hr:reviewRequests')) {
+          toast.error('Only the Capture Manager can edit HR requests.')
+          return
+        }
+        set(s => ({
+          employeeRequests: s.employeeRequests.map(request =>
+            request.id === id ? { ...request, ...data } : request
           )
         }))
       },
@@ -1162,6 +1176,18 @@ export const useStore = create<AppState>()(
         }))
         const updatedFa = get().freshAwards.find(f => f.id === id)
         if (updatedFa) upsertFreshAward(updatedFa)
+      },
+
+      updateFreshAward: (id, data) => {
+        if (!hasPermission(get().currentUser, 'opportunity:edit')) {
+          toast.error('You do not have permission to edit fresh awards.')
+          return
+        }
+        set(s => ({
+          freshAwards: s.freshAwards.map(fa => (fa.id === id ? { ...fa, ...data } : fa))
+        }))
+        const updated = get().freshAwards.find(f => f.id === id)
+        if (updated) upsertFreshAward(updated)
       },
 
       moveFreshAwardToActive: (id, assignments) => {
