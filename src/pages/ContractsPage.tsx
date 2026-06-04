@@ -624,7 +624,7 @@ function ContractDetailDrawer({
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.96, y: 20 }}
         transition={{ type: 'spring', stiffness: 300, damping: 28 }}
-        className="flex max-h-[calc(100vh-1rem)] w-full max-w-6xl flex-col overflow-hidden rounded-2xl sm:max-h-[calc(100vh-2rem)]"
+        className="flex max-h-[min(92vh,860px)] w-full max-w-5xl flex-col overflow-hidden rounded-2xl"
         style={{
           background: 'var(--bg-card)',
           border: '1px solid var(--border-default)',
@@ -682,9 +682,9 @@ function ContractDetailDrawer({
 
         {/* OVERVIEW */}
         {tab === 'overview' && (
-          <div className="space-y-4">
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             {/* Quick stats */}
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-2 gap-3 lg:col-span-2">
               <div className="p-3 rounded-xl bg-slate-50 border border-slate-100">
                 <p className="text-[10px] text-slate-400 uppercase tracking-wider mb-0.5">Contract Value</p>
                 <p className="text-lg font-black text-emerald-600">{formatCurrency(contract.value)}</p>
@@ -704,7 +704,7 @@ function ContractDetailDrawer({
             </div>
 
             <div
-              className="rounded-xl border p-3"
+              className="rounded-xl border p-3 lg:col-span-2"
               style={{ background: 'rgba(255,255,255,0.055)', borderColor: 'rgba(215,190,122,0.24)' }}
             >
               <div className="mb-2 flex flex-wrap items-start justify-between gap-3">
@@ -746,7 +746,7 @@ function ContractDetailDrawer({
               </div>
             </div>
 
-            <div className="rounded-xl border border-slate-200 bg-white p-3">
+            <div className="rounded-xl border border-slate-200 bg-white p-3 lg:col-span-2">
               <div className="mb-2 flex items-center justify-between gap-2">
                 <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Finance Projection</p>
                 <button
@@ -770,7 +770,7 @@ function ContractDetailDrawer({
             </div>
 
             <div
-              className="rounded-xl border p-3"
+              className="rounded-xl border p-3 lg:col-span-2"
               style={{ background: 'rgba(8,24,37,0.72)', borderColor: 'rgba(215,190,122,0.24)' }}
             >
               <div className="mb-2 flex items-start justify-between gap-3">
