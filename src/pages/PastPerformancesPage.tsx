@@ -67,10 +67,10 @@ function ExportModal({ pp, onClose }: { pp: PastPerformance; onClose: () => void
         initial={{ opacity: 0, scale: 0.96 }}
         animate={{ opacity: 1, scale: 1 }}
         exit={{ opacity: 0, scale: 0.96 }}
-        className="rounded-2xl w-full max-w-lg"
+        className="flex w-full max-w-lg max-h-[calc(100vh-2rem)] flex-col overflow-hidden rounded-2xl"
         style={{ background: 'var(--bg-card)', border: '1px solid var(--border-default)' }}
       >
-        <div className="border-b p-5 flex items-center gap-3" style={{ borderColor: 'var(--border-default)' }}>
+        <div className="border-b p-5 flex items-center gap-3 flex-shrink-0" style={{ borderColor: 'var(--border-default)' }}>
           <div className="w-9 h-9 rounded-xl bg-indigo-50 flex items-center justify-center">
             <Download size={16} className="text-indigo-600" />
           </div>
@@ -81,7 +81,7 @@ function ExportModal({ pp, onClose }: { pp: PastPerformance; onClose: () => void
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X size={16} /></button>
         </div>
 
-        <div className="p-5 space-y-4">
+        <div className="p-5 space-y-4 overflow-y-auto">
           <div>
             <label className="block text-xs font-semibold text-slate-600 mb-1">
               Project Description <span className="text-rose-500">*</span>
@@ -103,7 +103,7 @@ function ExportModal({ pp, onClose }: { pp: PastPerformance; onClose: () => void
           </p>
         </div>
 
-        <div className="flex gap-2 p-5 border-t" style={{ borderColor: 'var(--border-default)' }}>
+        <div className="flex gap-2 p-5 border-t flex-shrink-0" style={{ borderColor: 'var(--border-default)' }}>
           <button onClick={onClose} className="btn-secondary flex-1 text-xs">Cancel</button>
           <button
             disabled={!desc.trim()}

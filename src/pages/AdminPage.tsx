@@ -55,7 +55,7 @@ function UserModal({ user, onClose }: { user: User | null; onClose: () => void }
       <motion.div
         initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
         exit={{ scale: 0.95, opacity: 0 }}
-        className="relative z-10 w-full max-w-md rounded-2xl p-6"
+        className="relative z-10 w-full max-w-md max-h-[calc(100vh-2rem)] overflow-y-auto rounded-2xl p-6"
         style={{ background: 'rgba(7,14,34,0.98)', border: '1px solid rgba(99,102,241,0.2)', boxShadow: '0 24px 80px rgba(0,0,0,0.7)' }}>
         <div className="flex items-center justify-between mb-5">
           <h2 className="font-semibold text-white">{isEdit ? 'Edit User' : 'Create User'}</h2>

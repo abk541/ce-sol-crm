@@ -38,17 +38,17 @@ function SubmitReportModal({ oppId, oppName, onClose }: { oppId: string; oppName
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
       <div className="absolute inset-0" style={{ background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(8px)' }} onClick={onClose} />
       <motion.div
-        className="relative w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden"
+        className="relative flex w-full max-w-lg max-h-[calc(100vh-2rem)] flex-col overflow-hidden rounded-2xl shadow-2xl"
         style={{ background: 'var(--bg-card)', border: '1px solid var(--border-default)' }}
         initial={{ scale: 0.94, opacity: 0, y: 12 }}
         animate={{ scale: 1, opacity: 1, y: 0 }}
         exit={{ scale: 0.94, opacity: 0 }}
         transition={{ type: 'spring', stiffness: 320, damping: 26 }}>
-        <div className="px-6 py-5 border-b border-slate-100">
+        <div className="px-6 py-5 border-b border-slate-100 flex-shrink-0">
           <h2 className="text-base font-bold text-slate-900">Non-Submission Report</h2>
           <p className="text-sm text-slate-500 mt-0.5 truncate">{oppName}</p>
         </div>
-        <div className="p-6 space-y-4">
+        <div className="p-6 space-y-4 overflow-y-auto">
           <div>
             <label className="block text-xs font-semibold text-slate-600 mb-1.5">
               Reason for non-submission <span className="text-red-500">*</span>
@@ -95,19 +95,19 @@ function ReviewModal({ reportId, onClose }: { reportId: string; onClose: () => v
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
       <div className="absolute inset-0" style={{ background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(8px)' }} onClick={onClose} />
       <motion.div
-        className="relative w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden"
+        className="relative flex w-full max-w-lg max-h-[calc(100vh-2rem)] flex-col overflow-hidden rounded-2xl shadow-2xl"
         style={{ background: 'var(--bg-card)', border: '1px solid var(--border-default)' }}
         initial={{ scale: 0.94, opacity: 0, y: 12 }}
         animate={{ scale: 1, opacity: 1, y: 0 }}
         exit={{ scale: 0.94, opacity: 0 }}
         transition={{ type: 'spring', stiffness: 320, damping: 26 }}>
-        <div className="px-6 py-5 border-b border-slate-100">
+        <div className="px-6 py-5 border-b border-slate-100 flex-shrink-0">
           <h2 className="text-base font-bold text-slate-900">Review Non-Submission Report</h2>
           <p className="text-xs text-slate-500 mt-0.5">
             {opp?.solicitation ?? report.opportunityId} · By {report.agentUsername}
           </p>
         </div>
-        <div className="p-6 space-y-4">
+        <div className="p-6 space-y-4 overflow-y-auto">
           <div className="p-4 rounded-xl bg-slate-50 border border-slate-100">
             <p className="text-xs font-semibold text-slate-500 mb-1.5">Agent's Reason</p>
             <p className="text-sm text-slate-700 leading-relaxed">{report.reason}</p>

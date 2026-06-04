@@ -139,10 +139,10 @@ function CreateModal({ onClose, onSave }: { onClose: () => void; onSave: (e: Omi
         initial={{ opacity: 0, scale: 0.96 }}
         animate={{ opacity: 1, scale: 1 }}
         exit={{ opacity: 0, scale: 0.96 }}
-        className="rounded-2xl w-full max-w-lg"
+        className="flex w-full max-w-lg max-h-[calc(100vh-2rem)] flex-col overflow-hidden rounded-2xl"
         style={{ background: 'var(--bg-card)', border: '1px solid var(--border-default)', boxShadow: '0 24px 80px rgba(0,0,0,0.15)' }}
       >
-        <div className="flex items-center gap-3 p-5 border-b" style={{ borderColor: 'var(--border-default)' }}>
+        <div className="flex items-center gap-3 p-5 border-b flex-shrink-0" style={{ borderColor: 'var(--border-default)' }}>
           <div className="w-9 h-9 rounded-xl bg-indigo-50 flex items-center justify-center">
             <Plus size={16} className="text-indigo-600" />
           </div>
@@ -150,7 +150,7 @@ function CreateModal({ onClose, onSave }: { onClose: () => void; onSave: (e: Omi
           <button onClick={onClose} className="ml-auto text-slate-400 hover:text-slate-600"><X size={16} /></button>
         </div>
 
-        <div className="p-5 space-y-3">
+        <div className="p-5 space-y-3 overflow-y-auto">
           <div className="grid grid-cols-2 gap-3">
             {[
               { label: 'Company Name *', key: 'companyName' },
@@ -187,7 +187,7 @@ function CreateModal({ onClose, onSave }: { onClose: () => void; onSave: (e: Omi
           </div>
         </div>
 
-        <div className="flex gap-2 p-5 border-t" style={{ borderColor: 'var(--border-default)' }}>
+        <div className="flex gap-2 p-5 border-t flex-shrink-0" style={{ borderColor: 'var(--border-default)' }}>
           <button onClick={onClose} className="btn-secondary flex-1 text-xs">Cancel</button>
           <button
             disabled={!valid}

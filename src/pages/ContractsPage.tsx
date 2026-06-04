@@ -618,13 +618,13 @@ function ContractDetailDrawer({
       ]
 
   return (
-    <div className="fixed inset-0 z-[51] flex items-start justify-center overflow-y-auto p-2 sm:p-4" style={{ pointerEvents: 'none' }}>
+    <div className="fixed inset-0 z-[51] flex items-center justify-center p-2 sm:p-4" style={{ pointerEvents: 'none' }}>
       <motion.div
         initial={{ opacity: 0, scale: 0.96, y: 20 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.96, y: 20 }}
         transition={{ type: 'spring', stiffness: 300, damping: 28 }}
-        className="my-2 flex max-h-[calc(100vh-1rem)] w-full max-w-6xl flex-col overflow-hidden rounded-2xl sm:my-3 sm:max-h-[calc(100vh-1.5rem)]"
+        className="flex max-h-[calc(100vh-1rem)] w-full max-w-6xl flex-col overflow-hidden rounded-2xl sm:max-h-[calc(100vh-2rem)]"
         style={{
           background: 'var(--bg-card)',
           border: '1px solid var(--border-default)',
@@ -2004,14 +2004,14 @@ function ContractDetailDrawer({
               initial={{ opacity: 0, scale: 0.96, y: 12 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.96, y: 12 }}
-              className="relative z-10 w-full max-w-md rounded-2xl bg-white shadow-2xl"
+              className="relative z-10 flex w-full max-w-md max-h-[calc(100vh-2rem)] flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
               style={{ border: '1px solid var(--border-default)' }}
             >
-              <div className="px-6 py-4 border-b border-slate-100">
+              <div className="px-6 py-4 border-b border-slate-100 flex-shrink-0">
                 <h3 className="text-base font-bold text-slate-900">Terminate Contract</h3>
                 <p className="text-xs text-slate-500 mt-0.5">{contract.title}</p>
               </div>
-              <div className="p-6 space-y-4">
+              <div className="p-6 space-y-4 overflow-y-auto">
                 <div>
                   <label className="block text-xs font-semibold text-slate-500 mb-1.5">Termination Type</label>
                   <select value={terminateType} onChange={e => setTerminateType(e.target.value as any)} className="select-field">
@@ -2031,7 +2031,7 @@ function ContractDetailDrawer({
                   />
                 </div>
               </div>
-              <div className="flex gap-3 px-6 pb-6">
+              <div className="flex gap-3 px-6 pb-6 pt-4 border-t border-slate-100 flex-shrink-0">
                 <button onClick={() => setShowTerminate(false)} className="btn-secondary flex-1 justify-center">Cancel</button>
                 <button
                   onClick={() => {
@@ -2117,7 +2117,7 @@ function AssignModal({ award, onClose }: { award: FreshAward; onClose: () => voi
       <div className="absolute inset-0" style={{ background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(8px)' }}
         onClick={onClose} />
       <motion.div
-        className="relative w-full max-w-md rounded-2xl shadow-2xl overflow-hidden"
+        className="relative flex w-full max-w-md max-h-[calc(100vh-2rem)] flex-col overflow-hidden rounded-2xl shadow-2xl"
         style={{ background: 'var(--bg-card)', border: '1px solid var(--border-default)' }}
         initial={{ scale: 0.94, opacity: 0, y: 12 }}
         animate={{ scale: 1, opacity: 1, y: 0 }}
