@@ -48,18 +48,25 @@ function download(bytes: Uint8Array, filename: string) {
 async function loadLogoPng(): Promise<Uint8Array | null> {
   try {
     const url = `${import.meta.env.BASE_URL}logo.svg`
-    const svgText = await fetch(url).then(r => (r.ok ? r.text() : Promise.reject()))
+    const res = await fetch(url)
+    if (!res.ok) return null
+    const svgText = await res.text()
+    // strip the explicit white background rect so the logo sits cleanly on its tile
     const cleaned = svgText.replace(/<rect[^/]*fill="white"[^/]*\/>/i, '')
-    const blob = new Blob([cleaned], { type: 'image/svg+xml' })
+    const blob = new Blob([cleaned], { type: 'image/svg+xml;charset=utf-8' })
     const blobUrl = URL.createObjectURL(blob)
     try {
       const img = new Image()
-      img.crossOrigin = 'anonymous'
       img.src = blobUrl
-      await new Promise<void>((res, rej) => {
-        img.onload = () => res()
-        img.onerror = () => rej(new Error('logo load failed'))
-      })
+      // Image.decode is more reliable than onload for SVGs with text content
+      if (typeof img.decode === 'function') {
+        await img.decode()
+      } else {
+        await new Promise<void>((res2, rej) => {
+          img.onload = () => res2()
+          img.onerror = () => rej(new Error('logo load failed'))
+        })
+      }
       const scale = 3
       const w = 840 * scale
       const h = 138 * scale
@@ -70,8 +77,14 @@ async function loadLogoPng(): Promise<Uint8Array | null> {
       if (!ctx) return null
       ctx.clearRect(0, 0, w, h)
       ctx.drawImage(img, 0, 0, w, h)
-      const dataUrl = canvas.toDataURL('image/png')
+      let dataUrl: string
+      try {
+        dataUrl = canvas.toDataURL('image/png')
+      } catch {
+        return null // tainted canvas — skip logo, generate the PDF without it
+      }
       const base64 = dataUrl.split(',')[1] ?? ''
+      if (!base64) return null
       const bin = atob(base64)
       const bytes = new Uint8Array(bin.length)
       for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
@@ -79,18 +92,37 @@ async function loadLogoPng(): Promise<Uint8Array | null> {
     } finally {
       URL.revokeObjectURL(blobUrl)
     }
-  } catch {
+  } catch (err) {
+    console.warn('Past performance PDF: logo could not be embedded', err)
     return null
   }
+}
+
+// Replace characters that pdf-lib's WinAnsi encoder cannot handle (em dash, smart quotes,
+// non-breaking space, etc.) with safe ASCII equivalents so a stray unicode glyph in user
+// data never crashes the whole export.
+function toWinAnsi(input: string): string {
+  if (!input) return ''
+  return input
+    .replace(/[\u2018\u2019\u201A\u201B\u2032]/g, "'")
+    .replace(/[\u201C\u201D\u201E\u201F\u2033]/g, '"')
+    .replace(/[\u2013\u2014\u2212]/g, '-')
+    .replace(/\u2026/g, '...')
+    .replace(/\u00A0/g, ' ')
+    .replace(/\u2022/g, '*')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    // drop anything outside the printable WinAnsi/Latin-1 range
+    .replace(/[^\x09\x0A\x0D\x20-\x7E\xA0-\xFF]/g, '?')
 }
 
 type DrawCtx = { page: PDFPage; font: PDFFont; bold: PDFFont }
 
 function wrap(ctx: DrawCtx, text: string, maxWidth: number, size: number, useBold = false): string[] {
   if (!text) return []
+  const safe = toWinAnsi(text)
   const f = useBold ? ctx.bold : ctx.font
   const out: string[] = []
-  for (const paragraph of text.split(/\r?\n/)) {
+  for (const paragraph of safe.split(/\r?\n/)) {
     const words = paragraph.split(/\s+/).filter(Boolean)
     if (!words.length) {
       out.push('')
@@ -235,27 +267,31 @@ export async function generatePastPerformancePdf({
     color: HEADER_BG,
   })
 
-  // Logo (white tile + brand mark)
-  const logoBytes = await loadLogoPng()
-  if (logoBytes) {
-    const logoImg = await pdf.embedPng(logoBytes)
-    const logoH = 36
-    const logoW = (logoImg.width / logoImg.height) * logoH
-    const padX = 8
-    const padY = 5
-    page.drawRectangle({
-      x: MARGIN - padX,
-      y: headerTop - HEADER_H / 2 - logoH / 2 - padY,
-      width: logoW + padX * 2,
-      height: logoH + padY * 2,
-      color: rgb(1, 1, 1),
-    })
-    page.drawImage(logoImg, {
-      x: MARGIN,
-      y: headerTop - HEADER_H / 2 - logoH / 2,
-      width: logoW,
-      height: logoH,
-    })
+  // Logo (white tile + brand mark) — failure to embed must NOT block the export.
+  try {
+    const logoBytes = await loadLogoPng()
+    if (logoBytes) {
+      const logoImg = await pdf.embedPng(logoBytes)
+      const logoH = 36
+      const logoW = (logoImg.width / logoImg.height) * logoH
+      const padX = 8
+      const padY = 5
+      page.drawRectangle({
+        x: MARGIN - padX,
+        y: headerTop - HEADER_H / 2 - logoH / 2 - padY,
+        width: logoW + padX * 2,
+        height: logoH + padY * 2,
+        color: rgb(1, 1, 1),
+      })
+      page.drawImage(logoImg, {
+        x: MARGIN,
+        y: headerTop - HEADER_H / 2 - logoH / 2,
+        width: logoW,
+        height: logoH,
+      })
+    }
+  } catch (err) {
+    console.warn('Past performance PDF: logo embed failed, continuing without it', err)
   }
 
   // Header right meta

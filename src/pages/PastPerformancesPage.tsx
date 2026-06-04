@@ -56,7 +56,8 @@ function ExportModal({ pp, onClose }: { pp: PastPerformance; onClose: () => void
       onClose()
     } catch (err) {
       console.error(err)
-      toast.error('Could not generate the PDF template.')
+      const msg = err instanceof Error && err.message ? err.message : 'Could not generate the PDF.'
+      toast.error(msg.length > 140 ? `${msg.slice(0, 140)}...` : msg)
     }
   }
 
