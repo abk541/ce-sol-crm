@@ -13,7 +13,8 @@ import PeriodFilter, { type Period, filterByPeriod } from '../components/shared/
 import toast from 'react-hot-toast'
 import { useStore } from '../store/useStore'
 import type {
-  Contract, ContractStatus, ContractPoC, LockedSubcontractor,
+  Contract, ContractStatus, ContractType, ContractFinanceType, SetAside,
+  ContractPoC, LockedSubcontractor,
   GovernmentWarning, GovWarningType, FreshAward, FileAttachment, Comment, ContractDeliverable,
   LockedSubkDocuments, Subcontractor, Opportunity,
 } from '../types'
@@ -459,6 +460,27 @@ function ContractDetailDrawer({
   })
   const [contractNumberDraft, setContractNumberDraft] = useState(contract.contractNumber || '')
 
+  // Edit Details form
+  const buildEditForm = (c: Contract) => ({
+    title: c.title,
+    contractId: c.contractId,
+    type: c.type,
+    financeType: (c.financeType || '') as ContractFinanceType | '',
+    naicsCode: c.naicsCode || '',
+    setAside: (c.setAside || '') as SetAside | '',
+    location: c.location || '',
+    client: c.client || '',
+    value: c.value != null ? String(c.value) : '',
+    baseAmount: c.baseAmount != null ? String(c.baseAmount) : '',
+    monthlyPayment: c.monthlyPayment != null ? String(c.monthlyPayment) : '',
+    optionYears: c.optionYears != null ? String(c.optionYears) : '',
+    optionYearDeadline: c.optionYearDeadline || '',
+    supportAgent: c.supportAgent || '',
+    billingNotes: c.billingNotes || '',
+  })
+  const [showEditDetails, setShowEditDetails] = useState(false)
+  const [editForm, setEditForm] = useState(() => buildEditForm(contract))
+
   // Terminate form
   const [showTerminate, setShowTerminate] = useState(false)
   const [terminateType, setTerminateType] = useState<'T4C' | 'T4D' | 'CANCELED'>('T4C')
@@ -684,6 +706,16 @@ function ContractDetailDrawer({
         {/* OVERVIEW */}
         {tab === 'overview' && (
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <div className="flex items-center justify-end lg:col-span-2">
+              <button
+                type="button"
+                onClick={() => { setEditForm(buildEditForm(contract)); setShowEditDetails(true) }}
+                className="btn-secondary justify-center gap-1.5 text-xs"
+                title="Edit contract details (fix typos and human errors)"
+              >
+                <Pencil size={12} /> Edit Details
+              </button>
+            </div>
             {/* Quick stats */}
             <div className="grid grid-cols-2 gap-3 lg:col-span-2">
               <div className="p-3 rounded-xl bg-slate-50 border border-slate-100">
@@ -1995,6 +2027,158 @@ function ContractDetailDrawer({
 
       </div>
       </motion.div>
+
+      {/* Edit Contract Details Modal */}
+      <AnimatePresence>
+        {showEditDetails && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+            <div className="absolute inset-0" style={{ background: 'rgba(15,23,42,0.55)', backdropFilter: 'blur(6px)' }} onClick={() => setShowEditDetails(false)} />
+            <motion.div
+              key="edit-details-panel"
+              initial={{ opacity: 0, scale: 0.96, y: 12 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: 12 }}
+              className="relative z-10 flex w-full max-w-2xl max-h-[calc(100vh-2rem)] flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
+              style={{ border: '1px solid var(--border-default)' }}
+            >
+              <div className="px-6 py-4 border-b border-slate-100 flex-shrink-0 flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">Edit Contract Details</h3>
+                  <p className="text-xs text-slate-500 mt-0.5">Fix typos or human errors. Only edit fields that need correction.</p>
+                </div>
+                <button onClick={() => setShowEditDetails(false)} className="flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-700 transition-colors">
+                  <X size={16} />
+                </button>
+              </div>
+              <div className="p-6 space-y-4 overflow-y-auto">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="sm:col-span-2">
+                    <label className="block text-xs font-semibold text-slate-500 mb-1.5">Title *</label>
+                    <input value={editForm.title} onChange={e => setEditForm(f => ({ ...f, title: e.target.value }))} className="input-field text-xs" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-500 mb-1.5">Contract ID *</label>
+                    <input value={editForm.contractId} onChange={e => setEditForm(f => ({ ...f, contractId: e.target.value }))} className="input-field text-xs font-mono" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-500 mb-1.5">NAICS Code</label>
+                    <input value={editForm.naicsCode} onChange={e => setEditForm(f => ({ ...f, naicsCode: e.target.value }))} className="input-field text-xs" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-500 mb-1.5">Type *</label>
+                    <select value={editForm.type} onChange={e => setEditForm(f => ({ ...f, type: e.target.value as ContractType }))} className="select-field text-xs">
+                      {(['OTJ','RECURRING','BPA','IDIQ','S&D','SUPPLY'] as ContractType[]).map(t => (
+                        <option key={t} value={t}>{t}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-500 mb-1.5">Finance Type</label>
+                    <select value={editForm.financeType} onChange={e => setEditForm(f => ({ ...f, financeType: e.target.value as ContractFinanceType | '' }))} className="select-field text-xs">
+                      <option value="">—</option>
+                      {(['FFP','T&M','CPFF','OTHER'] as ContractFinanceType[]).map(t => (
+                        <option key={t} value={t}>{t}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-500 mb-1.5">Set-Aside</label>
+                    <select value={editForm.setAside} onChange={e => setEditForm(f => ({ ...f, setAside: e.target.value as SetAside | '' }))} className="select-field text-xs">
+                      <option value="">—</option>
+                      {(['SB','SDVOSB','WOSB','HUBZone','VOSB','8(a)','UNRES'] as SetAside[]).map(t => (
+                        <option key={t} value={t}>{t}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-500 mb-1.5">Client / Agency</label>
+                    <input value={editForm.client} onChange={e => setEditForm(f => ({ ...f, client: e.target.value }))} className="input-field text-xs" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-500 mb-1.5">Location</label>
+                    <input value={editForm.location} onChange={e => setEditForm(f => ({ ...f, location: e.target.value }))} className="input-field text-xs" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-500 mb-1.5">Contract Value (USD)</label>
+                    <input type="number" min="0" step="0.01" value={editForm.value} onChange={e => setEditForm(f => ({ ...f, value: e.target.value }))} className="input-field text-xs" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-500 mb-1.5">Base Amount (USD)</label>
+                    <input type="number" min="0" step="0.01" value={editForm.baseAmount} onChange={e => setEditForm(f => ({ ...f, baseAmount: e.target.value }))} className="input-field text-xs" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-500 mb-1.5">Monthly Payment (USD)</label>
+                    <input type="number" min="0" step="0.01" value={editForm.monthlyPayment} onChange={e => setEditForm(f => ({ ...f, monthlyPayment: e.target.value }))} className="input-field text-xs" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-500 mb-1.5">Associate (Support Agent)</label>
+                    <input value={editForm.supportAgent} onChange={e => setEditForm(f => ({ ...f, supportAgent: e.target.value }))} className="input-field text-xs" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-500 mb-1.5">Option Years Remaining</label>
+                    <input type="number" min="0" step="1" value={editForm.optionYears} onChange={e => setEditForm(f => ({ ...f, optionYears: e.target.value }))} className="input-field text-xs" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-500 mb-1.5">Option Year Deadline</label>
+                    <input type="date" value={editForm.optionYearDeadline} onChange={e => setEditForm(f => ({ ...f, optionYearDeadline: e.target.value }))} className="input-field text-xs" />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="block text-xs font-semibold text-slate-500 mb-1.5">Billing Notes</label>
+                    <textarea value={editForm.billingNotes} onChange={e => setEditForm(f => ({ ...f, billingNotes: e.target.value }))} rows={3} className="input-field text-xs resize-none" placeholder="Internal billing notes…" />
+                  </div>
+                </div>
+                <p className="text-[10px] text-slate-400">POP dates, PoC, Warnings, Deliverables, Subcontractors, and Termination are managed in their own tabs.</p>
+              </div>
+              <div className="flex gap-3 px-6 pb-6 pt-4 border-t border-slate-100 flex-shrink-0">
+                <button onClick={() => setShowEditDetails(false)} className="btn-secondary flex-1 justify-center">Cancel</button>
+                <button
+                  onClick={async () => {
+                    if (!editForm.title.trim() || !editForm.contractId.trim()) {
+                      toast.error('Title and Contract ID are required')
+                      return
+                    }
+                    const valueNum = Number(editForm.value)
+                    if (editForm.value === '' || Number.isNaN(valueNum) || valueNum < 0) {
+                      toast.error('Contract value must be a non-negative number')
+                      return
+                    }
+                    const parseOptionalNumber = (v: string) => {
+                      if (v.trim() === '') return undefined
+                      const n = Number(v)
+                      return Number.isFinite(n) && n >= 0 ? n : undefined
+                    }
+                    const patch: Partial<Contract> = {
+                      title: editForm.title.trim(),
+                      contractId: editForm.contractId.trim(),
+                      type: editForm.type,
+                      financeType: editForm.financeType ? editForm.financeType : undefined,
+                      naicsCode: editForm.naicsCode.trim(),
+                      setAside: editForm.setAside ? editForm.setAside : undefined,
+                      location: editForm.location.trim(),
+                      client: editForm.client.trim() || undefined,
+                      value: valueNum,
+                      baseAmount: parseOptionalNumber(editForm.baseAmount),
+                      monthlyPayment: parseOptionalNumber(editForm.monthlyPayment),
+                      optionYears: parseOptionalNumber(editForm.optionYears),
+                      optionYearDeadline: editForm.optionYearDeadline || undefined,
+                      supportAgent: editForm.supportAgent.trim() || undefined,
+                      billingNotes: editForm.billingNotes.trim() || undefined,
+                    }
+                    const ok = await updateContract(contract.id, patch)
+                    if (ok) {
+                      toast.success('Contract details updated')
+                      setShowEditDetails(false)
+                    }
+                  }}
+                  className="btn-primary flex-1 flex items-center justify-center gap-1.5"
+                >
+                  <Save size={13} /> Save Changes
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Terminate Contract Modal */}
       <AnimatePresence>
