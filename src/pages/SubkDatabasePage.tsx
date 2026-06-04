@@ -5,6 +5,7 @@ import {
   Tag, Briefcase, X, Save, Eye, Pencil, Trash2, MoreHorizontal,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
+import { hasPermission } from '../lib/permissions'
 import type { SubkDatabaseEntry, SetAside } from '../types'
 import { formatCurrency } from '../lib/utils'
 import toast from 'react-hot-toast'
@@ -22,7 +23,7 @@ const SETASIDE_COLORS: Record<string, { bg: string; color: string }> = {
   UNRES:    { bg: '#F1F5F9', color: '#64748B' },
 }
 
-function EntryDrawer({ entry, onClose }: { entry: SubkDatabaseEntry; onClose: () => void }) {
+function EntryDrawer({ entry, onClose, onEdit }: { entry: SubkDatabaseEntry; onClose: () => void; onEdit?: () => void }) {
   const saStyle = SETASIDE_COLORS[entry.setAside] || SETASIDE_COLORS['UNRES']
 
   return (
@@ -40,6 +41,15 @@ function EntryDrawer({ entry, onClose }: { entry: SubkDatabaseEntry; onClose: ()
           <h2 className="text-sm font-bold text-slate-800 truncate">{entry.companyName}</h2>
           <p className="text-xs text-slate-400">{entry.contactName}</p>
         </div>
+        {onEdit && (
+          <button
+            onClick={onEdit}
+            className="flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1 text-[11px] font-semibold text-slate-600 transition-colors hover:border-amber-300 hover:bg-amber-50 hover:text-amber-700"
+            title="Edit details"
+          >
+            <Pencil size={11} /> Edit
+          </button>
+        )}
         <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X size={16} /></button>
       </div>
 
@@ -216,11 +226,118 @@ function CreateModal({ onClose, onSave }: { onClose: () => void; onSave: (e: Omi
   )
 }
 
+function EditModal({ entry, onClose }: { entry: SubkDatabaseEntry; onClose: () => void }) {
+  const updateSubkDatabaseEntry = useStore(s => s.updateSubkDatabaseEntry)
+  const [form, setForm] = useState({
+    companyName: entry.companyName,
+    contactName: entry.contactName,
+    email: entry.email,
+    phone: entry.phone,
+    naicsCodes: entry.naicsCodes.join(', '),
+    setAside: entry.setAside as SetAside,
+    notes: entry.notes,
+  })
+  const set = (k: string, v: string) => setForm(p => ({ ...p, [k]: v }))
+  const valid = form.companyName.trim() && form.contactName.trim()
+
+  const handleSave = () => {
+    if (!valid) {
+      toast.error('Company and contact names are required')
+      return
+    }
+    updateSubkDatabaseEntry(entry.id, {
+      companyName: form.companyName.trim(),
+      contactName: form.contactName.trim(),
+      email: form.email.trim(),
+      phone: form.phone.trim(),
+      naicsCodes: form.naicsCodes.split(',').map(n => n.trim()).filter(Boolean),
+      setAside: form.setAside,
+      notes: form.notes.trim(),
+    })
+    toast.success('Entry updated')
+    onClose()
+  }
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4"
+      style={{ background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(8px)' }}>
+      <motion.div
+        initial={{ opacity: 0, scale: 0.96 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.96 }}
+        className="flex w-full max-w-lg max-h-[calc(100vh-2rem)] flex-col overflow-hidden rounded-2xl"
+        style={{ background: 'var(--bg-card)', border: '1px solid var(--border-default)', boxShadow: '0 24px 80px rgba(0,0,0,0.15)' }}
+      >
+        <div className="flex items-center gap-3 p-5 border-b flex-shrink-0" style={{ borderColor: 'var(--border-default)' }}>
+          <div className="w-9 h-9 rounded-xl bg-amber-50 flex items-center justify-center">
+            <Pencil size={15} className="text-amber-600" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-amber-600">Edit Entry</p>
+            <h2 className="text-sm font-bold text-slate-800 truncate">{entry.companyName}</h2>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X size={16} /></button>
+        </div>
+
+        <div className="p-5 space-y-3 overflow-y-auto">
+          <div className="grid grid-cols-2 gap-3">
+            {[
+              { label: 'Company Name *', key: 'companyName' },
+              { label: 'Contact Name *', key: 'contactName' },
+              { label: 'Email', key: 'email', type: 'email' },
+              { label: 'Phone', key: 'phone' },
+            ].map(f => (
+              <div key={f.key}>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">{f.label}</label>
+                <input type={f.type || 'text'} value={(form as any)[f.key]}
+                  onChange={e => set(f.key, e.target.value)}
+                  className="input-field text-xs py-2 w-full" />
+              </div>
+            ))}
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-600 mb-1">NAICS Codes (comma separated)</label>
+            <input value={form.naicsCodes} onChange={e => set('naicsCodes', e.target.value)}
+              className="input-field text-xs py-2 w-full" placeholder="238220, 561621, 238290" />
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-600 mb-1">Set-Aside</label>
+            <select value={form.setAside} onChange={e => set('setAside', e.target.value)} className="input-field text-xs py-2 w-full">
+              {SETASIDE_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-600 mb-1">Notes</label>
+            <textarea rows={3} value={form.notes} onChange={e => set('notes', e.target.value)}
+              className="input-field text-xs py-2 w-full resize-none" />
+          </div>
+        </div>
+
+        <div className="flex gap-2 p-5 border-t flex-shrink-0" style={{ borderColor: 'var(--border-default)' }}>
+          <button onClick={onClose} className="btn-secondary flex-1 text-xs">Cancel</button>
+          <button
+            disabled={!valid}
+            onClick={handleSave}
+            className="btn-primary flex-1 text-xs gap-1.5 disabled:opacity-40"
+          >
+            <Save size={12} /> Save Changes
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  )
+}
+
 export default function SubkDatabasePage() {
-  const { subkDatabase, addSubkDatabaseEntry } = useStore()
+  const { subkDatabase, addSubkDatabaseEntry, currentUser } = useStore()
+  const canEdit = hasPermission(currentUser, 'opportunity:edit')
   const [search, setSearch] = useState('')
   const [filterSA, setFilterSA] = useState<string>('ALL')
   const [selected, setSelected] = useState<SubkDatabaseEntry | null>(null)
+  const [editTarget, setEditTarget] = useState<SubkDatabaseEntry | null>(null)
   const [showCreate, setShowCreate] = useState(false)
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
 
@@ -321,6 +438,17 @@ export default function SubkDatabasePage() {
                           >
                             View Profile
                           </button>
+                          {canEdit && (
+                            <button
+                              onClick={() => { setEditTarget(entry); setMenuOpen(null) }}
+                              className="flex w-full items-center gap-2 px-3 py-2 text-xs font-medium transition-colors"
+                              style={{ color: '#B45309' }}
+                              onMouseEnter={e => { e.currentTarget.style.background = 'rgba(245,158,11,0.08)' }}
+                              onMouseLeave={e => { e.currentTarget.style.background = '' }}
+                            >
+                              <Pencil size={11} /> Edit Details
+                            </button>
+                          )}
                           <button
                             onClick={() => { navigator.clipboard.writeText(entry.email); toast.success('Email copied'); setMenuOpen(null) }}
                             className="block w-full text-left px-3 py-2 text-xs font-medium transition-colors"
@@ -403,7 +531,11 @@ export default function SubkDatabasePage() {
           <>
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
               className="fixed inset-0 z-40 bg-black/20" onClick={() => setSelected(null)} />
-            <EntryDrawer entry={selected} onClose={() => setSelected(null)} />
+            <EntryDrawer
+              entry={selected}
+              onClose={() => setSelected(null)}
+              onEdit={canEdit ? () => { const e = selected; setSelected(null); setEditTarget(e) } : undefined}
+            />
           </>
         )}
       </AnimatePresence>
@@ -412,6 +544,13 @@ export default function SubkDatabasePage() {
       <AnimatePresence>
         {showCreate && (
           <CreateModal onClose={() => setShowCreate(false)} onSave={e => { addSubkDatabaseEntry(e); setShowCreate(false) }} />
+        )}
+      </AnimatePresence>
+
+      {/* Edit modal */}
+      <AnimatePresence>
+        {editTarget && (
+          <EditModal entry={editTarget} onClose={() => setEditTarget(null)} />
         )}
       </AnimatePresence>
     </div>
