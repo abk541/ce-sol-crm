@@ -754,20 +754,13 @@ function ContractDetailDrawer({
                   </span>
                 )}
               </div>
-              <div className="grid gap-2 sm:grid-cols-[1fr_auto_auto]">
+              <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
                 <input
                   className="input-field text-xs"
                   value={contractNumberDraft}
                   onChange={e => setContractNumberDraft(e.target.value)}
                   placeholder="Enter contract number manually..."
                 />
-                <button
-                  type="button"
-                  className="btn-secondary justify-center text-xs"
-                  onClick={() => setContractNumberDraft(contract.contractNumber || '')}
-                >
-                  Reset
-                </button>
                 <button
                   type="button"
                   disabled={contractNumberDraft.trim() === (contract.contractNumber || '')}
