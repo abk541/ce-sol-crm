@@ -590,7 +590,7 @@ function OppModalShell({ title, subtitle, tab, setTab, onClose, extraHeader, foo
 }
 
 // ── Edit Modal ────────────────────────────────────────────────────────
-function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) {
+export function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) {
   const { updateOpportunity, requestDeletion, deletionRequests, currentUser, employees } = useStore()
   const [tab, setTab] = useState<OppFormTab>('details')
   const [form, setForm] = useState<Partial<Opportunity>>({ ...opp })

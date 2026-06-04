@@ -10,6 +10,9 @@ import PeriodFilter, { type Period, filterByPeriod } from '../components/shared/
 import { getAssignmentChain } from '../lib/team'
 import { formatCurrency } from '../lib/utils'
 import FloatingActionMenu from '../components/shared/FloatingActionMenu'
+import { hasPermission } from '../lib/permissions'
+import type { Opportunity } from '../types'
+import { EditModal as OpportunityEditModal } from './PipelinePage'
 
 type BDTab = BDSubmission['status']
 
@@ -99,7 +102,9 @@ function FilterInput({
 }
 
 export default function BDTrackerPage() {
-  const { bdSubmissions, updateBDSubmission, opportunities, employees } = useStore()
+  const { bdSubmissions, updateBDSubmission, opportunities, employees, currentUser } = useStore()
+  const canEditOpportunities = hasPermission(currentUser, 'opportunity:edit')
+  const [editOpp, setEditOpp] = useState<Opportunity | null>(null)
   const [searchParams] = useSearchParams()
   const globalRecordId = searchParams.get('record')
   const globalTab = searchParams.get('tab') as BDTab | null
@@ -360,6 +365,20 @@ export default function BDTrackerPage() {
                           onOpenChange={open => setMenuOpen(open ? String(s.id) : null)}
                           trigger={<MoreHorizontal size={14} />}
                         >
+                                {canEditOpportunities && (() => {
+                                  const linkedOpp = opportunities.find(o => o.solicitationId === s.solicitationId)
+                                  if (!linkedOpp) return null
+                                  return (
+                                    <>
+                                      <button
+                                        onClick={() => { setEditOpp(linkedOpp); setMenuOpen(null) }}
+                                        className="block w-full px-3 py-2 text-left text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50 hover:text-slate-900">
+                                        Edit Details
+                                      </button>
+                                      <div className="my-1 border-t border-slate-100" />
+                                    </>
+                                  )
+                                })()}
                                 <p className="px-3 py-1 text-[9px] font-bold uppercase tracking-wider text-slate-400">Move to</p>
                                 {BD_TABS.filter(t => t.key !== s.status).map(t => {
                                   const itemMeta = STATUS_META[t.key]
@@ -402,6 +421,7 @@ export default function BDTrackerPage() {
           </div>
         </div>
       </div>
+      {editOpp && <OpportunityEditModal opp={editOpp} onClose={() => setEditOpp(null)} />}
     </div>
   )
 }

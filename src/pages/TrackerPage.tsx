@@ -15,6 +15,7 @@ import DetailDrawer, { DrawerSection, DrawerField } from '../components/shared/D
 import type { Opportunity } from '../types'
 import FloatingActionMenu from '../components/shared/FloatingActionMenu'
 import { hasPermission } from '../lib/permissions'
+import { EditModal as OpportunityEditModal } from './PipelinePage'
 
 const stagger = { animate: { transition: { staggerChildren: 0.05 } } }
 const fadeUp = {
@@ -157,6 +158,7 @@ export default function TrackerPage() {
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<Opportunity | null>(null)
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
+  const [editOpp, setEditOpp] = useState<Opportunity | null>(null)
   const [page, setPage] = useState(1)
   const [perPage, setPerPage] = useState<PerPage>(25)
 
@@ -314,6 +316,16 @@ export default function TrackerPage() {
                                   onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = ''; (e.currentTarget as HTMLButtonElement).style.color = '#475569' }}>
                                   View Details
                                 </button>
+                                {isManager && (
+                                  <button
+                                    onClick={() => { setEditOpp(o); setMenuOpen(null) }}
+                                    className="block w-full text-left px-3 py-2 text-xs font-medium transition-colors"
+                                    style={{ color: '#475569' }}
+                                    onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(0,0,0,0.04)'; (e.currentTarget as HTMLButtonElement).style.color = '#0F172A' }}
+                                    onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = ''; (e.currentTarget as HTMLButtonElement).style.color = '#475569' }}>
+                                    Edit Details
+                                  </button>
+                                )}
                                 <button
                                   onClick={() => { setMenuOpen(null) }}
                                   className="block w-full text-left px-3 py-2 text-xs font-medium transition-colors"
@@ -492,6 +504,7 @@ export default function TrackerPage() {
           </>
         )}
       </DetailDrawer>
+      {editOpp && <OpportunityEditModal opp={editOpp} onClose={() => setEditOpp(null)} />}
     </div>
   )
 }
