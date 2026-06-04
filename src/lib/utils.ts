@@ -1,8 +1,22 @@
 import { clsx, type ClassValue } from 'clsx'
 import { twMerge } from 'tailwind-merge'
+import { useEffect } from 'react'
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
+}
+
+// Closes a modal/popover when the user presses Escape.
+// Pass `enabled = false` (e.g. when the modal is closed) to skip the listener.
+export function useEscapeKey(onEscape: () => void, enabled: boolean = true) {
+  useEffect(() => {
+    if (!enabled) return
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onEscape()
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [enabled, onEscape])
 }
 
 export function formatCurrency(value: number): string {

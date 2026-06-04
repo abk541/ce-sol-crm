@@ -28,7 +28,7 @@ import {
   Zap,
 } from 'lucide-react'
 import { useStore } from '../../store/useStore'
-import { avatarColor, formatCurrency } from '../../lib/utils'
+import { avatarColor, formatCurrency, useEscapeKey } from '../../lib/utils'
 import { getAssignmentChain, ROLE_DISPLAY_LABELS } from '../../lib/team'
 import type { Contract, Employee, NotifType, Notification as AppNotification, Opportunity } from '../../types'
 import { ROUTE_LABELS } from '../../config/navigation'
@@ -125,6 +125,10 @@ export default function TopBar() {
   const [showGlobalSearch, setShowGlobalSearch] = useState(false)
   const [showNotifications, setShowNotifications] = useState(false)
   const [selectedNotification, setSelectedNotification] = useState<AppNotification | null>(null)
+
+  useEscapeKey(() => setSelectedNotification(null), Boolean(selectedNotification))
+  useEscapeKey(() => setShowGlobalSearch(false), showGlobalSearch)
+  useEscapeKey(() => setShowNotifications(false), showNotifications)
 
   const label = ROUTE_LABELS[location.pathname] ?? 'NEXUS ERP'
   const visibleNotifications = useMemo(() => notifications.filter(n => {

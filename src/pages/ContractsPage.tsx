@@ -18,7 +18,7 @@ import type {
   GovernmentWarning, GovWarningType, FreshAward, FileAttachment, Comment, ContractDeliverable,
   LockedSubkDocuments, Subcontractor, Opportunity,
 } from '../types'
-import { formatCurrency } from '../lib/utils'
+import { formatCurrency, useEscapeKey } from '../lib/utils'
 import FloatingActionMenu from '../components/shared/FloatingActionMenu'
 import {
   canGenerateContractInvoice,
@@ -485,6 +485,9 @@ function ContractDetailDrawer({
   const [showTerminate, setShowTerminate] = useState(false)
   const [terminateType, setTerminateType] = useState<'T4C' | 'T4D' | 'CANCELED'>('T4C')
   const [terminateReason, setTerminateReason] = useState('')
+
+  useEscapeKey(() => setShowEditDetails(false), showEditDetails)
+  useEscapeKey(() => setShowTerminate(false), showTerminate)
 
   // PoC form
   const [addingPoC, setAddingPoC] = useState(false)
@@ -2029,10 +2032,11 @@ function ContractDetailDrawer({
       </motion.div>
 
       {/* Edit Contract Details Modal */}
-      <AnimatePresence>
-        {showEditDetails && (
-          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-            <div className="absolute inset-0" style={{ background: 'rgba(15,23,42,0.55)', backdropFilter: 'blur(6px)' }} onClick={() => setShowEditDetails(false)} />
+      {createPortal(
+        <AnimatePresence>
+          {showEditDetails && (
+            <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+              <div className="absolute inset-0" style={{ background: 'rgba(15,23,42,0.55)', backdropFilter: 'blur(6px)' }} onClick={() => setShowEditDetails(false)} />
             <motion.div
               key="edit-details-panel"
               initial={{ opacity: 0, scale: 0.96, y: 12 }}
@@ -2178,13 +2182,16 @@ function ContractDetailDrawer({
             </motion.div>
           </div>
         )}
-      </AnimatePresence>
+      </AnimatePresence>,
+      document.body
+      )}
 
       {/* Terminate Contract Modal */}
-      <AnimatePresence>
-        {showTerminate && (
-          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-            <div className="absolute inset-0" style={{ background: 'rgba(15,23,42,0.55)', backdropFilter: 'blur(6px)' }} onClick={() => setShowTerminate(false)} />
+      {createPortal(
+        <AnimatePresence>
+          {showTerminate && (
+            <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+              <div className="absolute inset-0" style={{ background: 'rgba(15,23,42,0.55)', backdropFilter: 'blur(6px)' }} onClick={() => setShowTerminate(false)} />
             <motion.div
               initial={{ opacity: 0, scale: 0.96, y: 12 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -2234,7 +2241,9 @@ function ContractDetailDrawer({
             </motion.div>
           </div>
         )}
-      </AnimatePresence>
+      </AnimatePresence>,
+      document.body
+      )}
     </div>
   )
 }
@@ -2295,6 +2304,8 @@ function AssignModal({ award, onClose }: { award: FreshAward; onClose: () => voi
     { label: 'Team Lead', key: 'assignedBDS' },
     { label: 'Associate *', key: 'assignedSupportAgent' },
   ]
+
+  useEscapeKey(onClose)
 
   return (
     <motion.div className="fixed inset-0 z-50 flex items-center justify-center p-4"

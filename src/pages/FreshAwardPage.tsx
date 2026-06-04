@@ -10,7 +10,7 @@ import {
 import { useStore } from '../store/useStore'
 import { hasPermission } from '../lib/permissions'
 import type { FreshAward, ContractType, SetAside } from '../types'
-import { formatCurrency } from '../lib/utils'
+import { formatCurrency, useEscapeKey } from '../lib/utils'
 import toast from 'react-hot-toast'
 import FloatingActionMenu from '../components/shared/FloatingActionMenu'
 
@@ -288,6 +288,8 @@ function EditModal({ award, onClose }: { award: FreshAward; onClose: () => void 
     onClose()
   }
 
+  useEscapeKey(onClose)
+
   return createPortal(
     <AnimatePresence>
       <motion.div
@@ -403,6 +405,8 @@ function AssignModal({ award, onClose, onMove }: AssignModalProps) {
   const selectedTeamLead = OPERATIONS_PEOPLE.find(person => person.id === operationsTeamLeadId)
   const selectedSpecialist = OPERATIONS_PEOPLE.find(person => person.id === contractSpecialistId)
   const allAssigned = selectedManager && selectedTeamLead && selectedSpecialist
+
+  useEscapeKey(onClose)
 
   return createPortal(
     <motion.div className="fixed inset-0 z-[80] grid place-items-center px-4 py-6"

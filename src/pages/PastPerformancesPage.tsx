@@ -8,7 +8,7 @@ import {
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import type { Contract, PastPerformance, ContractType, ContractFinanceType, SetAside } from '../types'
-import { formatCurrency } from '../lib/utils'
+import { formatCurrency, useEscapeKey } from '../lib/utils'
 import { generatePastPerformancePdf } from '../lib/pastPerformancePdf'
 import FloatingActionMenu from '../components/shared/FloatingActionMenu'
 import toast from 'react-hot-toast'
@@ -60,13 +60,19 @@ function ExportModal({ pp, onClose }: { pp: PastPerformance; onClose: () => void
     }
   }
 
+  useEscapeKey(onClose)
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(8px)' }}>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(8px)' }}
+      onClick={onClose}
+    >
       <motion.div
         initial={{ opacity: 0, scale: 0.96 }}
         animate={{ opacity: 1, scale: 1 }}
         exit={{ opacity: 0, scale: 0.96 }}
+        onClick={e => e.stopPropagation()}
         className="flex w-full max-w-lg max-h-[calc(100vh-2rem)] flex-col overflow-hidden rounded-2xl"
         style={{ background: 'var(--bg-card)', border: '1px solid var(--border-default)' }}
       >
@@ -162,13 +168,19 @@ function EditPPModal({ pp, onClose }: { pp: PastPerformance; onClose: () => void
   const FINANCE: ContractFinanceType[] = ['FFP', 'T&M', 'CPFF', 'OTHER']
   const SETASIDES: SetAside[] = ['SB', 'SDVOSB', 'WOSB', 'HUBZone', 'VOSB', '8(a)', 'UNRES']
 
+  useEscapeKey(onClose)
+
   return (
-    <div className="fixed inset-0 z-[55] flex items-center justify-center p-4"
-      style={{ background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(8px)' }}>
+    <div
+      className="fixed inset-0 z-[55] flex items-center justify-center p-4"
+      style={{ background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(8px)' }}
+      onClick={onClose}
+    >
       <motion.div
         initial={{ opacity: 0, scale: 0.96 }}
         animate={{ opacity: 1, scale: 1 }}
         exit={{ opacity: 0, scale: 0.96 }}
+        onClick={e => e.stopPropagation()}
         className="flex w-full max-w-2xl max-h-[calc(100vh-2rem)] flex-col overflow-hidden rounded-2xl"
         style={{ background: 'var(--bg-card)', border: '1px solid var(--border-default)' }}
       >
@@ -276,6 +288,7 @@ function EditPPModal({ pp, onClose }: { pp: PastPerformance; onClose: () => void
 }
 
 function DetailDrawerPP({ pp, onClose, onExport, onEdit }: { pp: PastPerformance; onClose: () => void; onExport: (pp: PastPerformance) => void; onEdit: (pp: PastPerformance) => void }) {
+  useEscapeKey(onClose)
   return (
     <motion.div
       initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }}

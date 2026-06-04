@@ -12,7 +12,7 @@ import {
 import { useStore } from '../store/useStore'
 import type { Opportunity, Priority, OppStatus, Comment, FileAttachment } from '../types'
 import { TIMEZONES } from '../data/mock'
-import { formatCurrency } from '../lib/utils'
+import { formatCurrency, useEscapeKey } from '../lib/utils'
 import { assignableEmployeesForUser, getAssignmentChain, isAssignedToAssociate, ROLE_DISPLAY_LABELS } from '../lib/team'
 import { NAICS_CODES } from '../data/naics'
 import toast from 'react-hot-toast'
@@ -471,6 +471,7 @@ function dueDateColor(d: string) {
 function ModalWrap({ onClose, title, subtitle, children, maxW = 'max-w-2xl' }: {
   onClose: () => void; title: string; subtitle?: string; children: React.ReactNode; maxW?: string
 }) {
+  useEscapeKey(onClose)
   return createPortal((
     <motion.div className="fixed inset-0 z-50 flex items-center justify-center p-4"
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
@@ -519,6 +520,7 @@ function OppModalShell({ title, subtitle, tab, setTab, onClose, extraHeader, foo
   footer: React.ReactNode
   children: React.ReactNode
 }) {
+  useEscapeKey(onClose)
   return createPortal((
     <motion.div className="fixed inset-0 z-50 flex items-center justify-center p-4"
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
@@ -935,6 +937,8 @@ function DeleteOpportunityModal({ opp, onClose }: { opp: Opportunity; onClose: (
     toast.success('Deletion request submitted')
     onClose()
   }
+
+  useEscapeKey(onClose)
 
   return createPortal(
     <motion.div

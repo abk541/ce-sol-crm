@@ -17,6 +17,7 @@ import {
 import toast from 'react-hot-toast'
 import { useStore } from '../store/useStore'
 import { hasPermission } from '../lib/permissions'
+import { useEscapeKey } from '../lib/utils'
 import type {
   CompanyCertification,
   CompanyCertificationStatus,
@@ -168,6 +169,8 @@ function CertificationModal({
     onClose()
   }
 
+  useEscapeKey(onClose)
+
   return (
     <motion.div className="fixed inset-0 z-50 flex items-center justify-center p-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
       <button className="absolute inset-0 cursor-default bg-black/65 backdrop-blur-sm" onClick={onClose} aria-label="Close certification form" />
@@ -250,6 +253,8 @@ function RequestModal({ onClose }: { onClose: () => void }) {
     onClose()
   }
 
+  useEscapeKey(onClose)
+
   return (
     <motion.div className="fixed inset-0 z-50 flex items-center justify-center p-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
       <button className="absolute inset-0 cursor-default bg-black/65 backdrop-blur-sm" onClick={onClose} aria-label="Close request form" />
@@ -321,6 +326,8 @@ function ReviewModal({
     toast.success('Request updated')
     onClose()
   }
+
+  useEscapeKey(onClose)
 
   return (
     <motion.div className="fixed inset-0 z-50 flex items-center justify-center p-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
@@ -399,6 +406,8 @@ function EditRequestModal({
     toast.success('Request updated')
     onClose()
   }
+
+  useEscapeKey(onClose)
 
   return (
     <motion.div className="fixed inset-0 z-50 flex items-center justify-center p-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>

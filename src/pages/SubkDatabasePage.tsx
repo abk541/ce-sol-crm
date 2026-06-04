@@ -7,7 +7,7 @@ import {
 import { useStore } from '../store/useStore'
 import { hasPermission } from '../lib/permissions'
 import type { SubkDatabaseEntry, SetAside } from '../types'
-import { formatCurrency } from '../lib/utils'
+import { formatCurrency, useEscapeKey } from '../lib/utils'
 import toast from 'react-hot-toast'
 import FloatingActionMenu from '../components/shared/FloatingActionMenu'
 
@@ -142,13 +142,19 @@ function CreateModal({ onClose, onSave }: { onClose: () => void; onSave: (e: Omi
   const set = (k: string, v: string) => setForm(p => ({ ...p, [k]: v }))
   const valid = form.companyName && form.contactName
 
+  useEscapeKey(onClose)
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(8px)' }}>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(8px)' }}
+      onClick={onClose}
+    >
       <motion.div
         initial={{ opacity: 0, scale: 0.96 }}
         animate={{ opacity: 1, scale: 1 }}
         exit={{ opacity: 0, scale: 0.96 }}
+        onClick={e => e.stopPropagation()}
         className="flex w-full max-w-lg max-h-[calc(100vh-2rem)] flex-col overflow-hidden rounded-2xl"
         style={{ background: 'var(--bg-card)', border: '1px solid var(--border-default)', boxShadow: '0 24px 80px rgba(0,0,0,0.15)' }}
       >
@@ -258,13 +264,19 @@ function EditModal({ entry, onClose }: { entry: SubkDatabaseEntry; onClose: () =
     onClose()
   }
 
+  useEscapeKey(onClose)
+
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4"
-      style={{ background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(8px)' }}>
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center p-4"
+      style={{ background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(8px)' }}
+      onClick={onClose}
+    >
       <motion.div
         initial={{ opacity: 0, scale: 0.96 }}
         animate={{ opacity: 1, scale: 1 }}
         exit={{ opacity: 0, scale: 0.96 }}
+        onClick={e => e.stopPropagation()}
         className="flex w-full max-w-lg max-h-[calc(100vh-2rem)] flex-col overflow-hidden rounded-2xl"
         style={{ background: 'var(--bg-card)', border: '1px solid var(--border-default)', boxShadow: '0 24px 80px rgba(0,0,0,0.15)' }}
       >

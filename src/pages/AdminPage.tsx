@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { Plus, Pencil, Trash2, X, Check, Shield, Search, Clock, Save } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import type { User, Role } from '../types'
-import { avatarColor } from '../lib/utils'
+import { avatarColor, useEscapeKey } from '../lib/utils'
 import { hasPermission, ROLE_LABELS } from '../lib/permissions'
 import toast from 'react-hot-toast'
 
@@ -47,6 +47,8 @@ function UserModal({ user, onClose }: { user: User | null; onClose: () => void }
     }
     onClose()
   }
+
+  useEscapeKey(onClose)
 
   return (
     <motion.div className="fixed inset-0 z-50 flex items-center justify-center p-4"
