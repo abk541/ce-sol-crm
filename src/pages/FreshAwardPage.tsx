@@ -227,7 +227,7 @@ function OperationsAssignPicker({
 }
 
 // Edit modal for fixing typos / metadata after award creation
-const FA_TYPES: ContractType[] = ['IDIQ', 'BPA', 'GSA', 'OneTime']
+const FA_TYPES: ContractType[] = ['OTJ', 'RECURRING', 'BPA', 'IDIQ', 'S&D', 'SUPPLY']
 const FA_SETASIDES: SetAside[] = ['SB', 'SDVOSB', 'WOSB', 'HUBZone', 'VOSB', '8(a)', 'UNRES']
 
 function EditModal({ award, onClose }: { award: FreshAward; onClose: () => void }) {
