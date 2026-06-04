@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { useSearchParams } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
@@ -2635,7 +2636,7 @@ export default function ContractsPage() {
 
       {/* Detail modal */}
       <AnimatePresence>
-        {selected && (
+        {selected && createPortal((
           <>
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
               className="fixed inset-0 z-50"
@@ -2652,7 +2653,7 @@ export default function ContractsPage() {
               }}
             />
           </>
-        )}
+        ), document.body)}
       </AnimatePresence>
 
       {sourcingOpp && (
