@@ -21,6 +21,7 @@ import NonSubmissionsPage from './pages/NonSubmissionsPage'
 import PastPerformancesPage from './pages/PastPerformancesPage'
 import FreshAwardPage from './pages/FreshAwardPage'
 import SubkDatabasePage from './pages/SubkDatabasePage'
+import CertificationsPage from './pages/CertificationsPage'
 import PlaceholderPage from './pages/PlaceholderPage'
 import { hasAnyPermission, hasPermission, type Permission } from './lib/permissions'
 
@@ -115,6 +116,7 @@ export default function App() {
           <Route path="past-performances" element={<PermissionGuard permission="contract:read"><PastPerformancesPage /></PermissionGuard>} />
           <Route path="fresh-award"       element={<PermissionGuard permission="operations:manage"><FreshAwardPage /></PermissionGuard>} />
           <Route path="subk-database"     element={<PermissionGuard anyOf={['sourcing:read', 'operations:manage']}><SubkDatabasePage /></PermissionGuard>} />
+          <Route path="certifications"    element={<PermissionGuard permission="hr:viewCertifications"><CertificationsPage /></PermissionGuard>} />
           <Route path="notifications"     element={<NotificationsPage />} />
           <Route path="database"          element={<PermissionGuard permission="admin:manageUsers"><PlaceholderPage title="INT-Database" /></PermissionGuard>} />
           <Route path="admin"             element={<PermissionGuard permission="admin:manageUsers"><AdminPage /></PermissionGuard>} />
