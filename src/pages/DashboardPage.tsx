@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   DollarSign, Target, Send, FileCheck2,
@@ -988,7 +989,9 @@ function AdminDashboard() {
                 <motion.div key={a.username}
                   initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }}
                   transition={{ delay: 0.08 + i * 0.06 }}
-                  className="px-5 py-3 flex items-center gap-3 transition-all">
+                  whileHover={{ x: 3, backgroundColor: '#F9FAFB' }}
+                  onClick={() => setActiveKpi({ key: 'winrate', label: 'Win Rates Breakdown', color: '#F59E0B' })}
+                  className="px-5 py-3 flex items-center gap-3 transition-all cursor-pointer">
                   <div className="w-6 text-center flex-shrink-0">
                     <span className="text-[11px] text-slate-400 font-bold">#{i + 1}</span>
                   </div>
@@ -1196,22 +1199,28 @@ function AdminDashboard() {
         )}
       </motion.div>
 
-      {/* KPI detail drawer */}
-      <AnimatePresence>
-        {activeKpi && (
-          <>
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              className="fixed inset-0 z-40 bg-black/20" onClick={() => setActiveKpi(null)} />
-            <KpiDetailDrawer
-              kpi={activeKpi}
-              opportunities={opps}
-              nonSubReports={nonSubReports}
-              deletionRequests={deletionRequests}
-              onClose={() => setActiveKpi(null)}
-            />
-          </>
-        )}
-      </AnimatePresence>
+      {/* KPI detail drawer — portaled to <body> because framer-motion `transform` ancestors
+          break `position: fixed` and would otherwise anchor the drawer to the dashboard subtree. */}
+      {createPortal(
+        <AnimatePresence>
+          {activeKpi && (
+            <>
+              <motion.div key="kpi-drawer-backdrop"
+                initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                className="fixed inset-0 z-40 bg-black/20" onClick={() => setActiveKpi(null)} />
+              <KpiDetailDrawer
+                key="kpi-drawer-panel"
+                kpi={activeKpi}
+                opportunities={opps}
+                nonSubReports={nonSubReports}
+                deletionRequests={deletionRequests}
+                onClose={() => setActiveKpi(null)}
+              />
+            </>
+          )}
+        </AnimatePresence>,
+        document.body,
+      )}
     </div>
   )
 }
