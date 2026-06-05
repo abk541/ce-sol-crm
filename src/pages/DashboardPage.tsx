@@ -988,9 +988,7 @@ function AdminDashboard() {
                 <motion.div key={a.username}
                   initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }}
                   transition={{ delay: 0.08 + i * 0.06 }}
-                  whileHover={{ x: 3, backgroundColor: '#F9FAFB' }}
-                  onClick={() => setActiveKpi({ key: 'winrate', label: 'Win Rates Breakdown', color: '#F59E0B' })}
-                  className="px-5 py-3 flex items-center gap-3 transition-all cursor-pointer">
+                  className="px-5 py-3 flex items-center gap-3 transition-all">
                   <div className="w-6 text-center flex-shrink-0">
                     <span className="text-[11px] text-slate-400 font-bold">#{i + 1}</span>
                   </div>
