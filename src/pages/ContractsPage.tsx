@@ -70,13 +70,14 @@ const SEV_COLORS = {
 type CTab = 'ACTIVE_GROUP' | 'KICK_OFF' | 'LOCKING_SUB' | 'PERFORMING' | 'PENDING_PAYMENT' | 'ARCHIVED' | 'TERMINATED'
 
 const C_TABS: { key: CTab; label: string; statuses: ContractStatus[] }[] = [
-  { key: 'ACTIVE_GROUP',  label: 'Active',         statuses: ['KICK_OFF','LOCKING_SUB','ACTIVE','ON_GOING','PERFORMING'] },
+  // "Active" = anything that isn't ARCHIVED or TERMINATED (Pending Payment + Canceled count as active too).
+  { key: 'ACTIVE_GROUP',  label: 'Active',         statuses: ['KICK_OFF','LOCKING_SUB','ACTIVE','ON_GOING','PERFORMING','PENDING_PAYMENT','CANCELED'] },
   { key: 'KICK_OFF',      label: 'Kick-Off',       statuses: ['KICK_OFF'] },
   { key: 'LOCKING_SUB',   label: 'Locking Sub',    statuses: ['LOCKING_SUB'] },
   { key: 'PERFORMING',    label: 'Performing',     statuses: ['PERFORMING'] },
   { key: 'PENDING_PAYMENT',label:'Pend. Payment',  statuses: ['PENDING_PAYMENT'] },
   { key: 'ARCHIVED',      label: 'Archived',       statuses: ['ARCHIVED'] },
-  { key: 'TERMINATED',    label: 'Terminated',     statuses: ['TERMINATED','CANCELED'] },
+  { key: 'TERMINATED',    label: 'Terminated',     statuses: ['TERMINATED'] },
 ]
 
 const POC_ROLE_LABELS = { KO: 'Contracting Officer', COR: 'COR', END_USER: 'End User' }
@@ -3077,7 +3078,8 @@ export default function ContractsPage() {
   }, [contracts, tabDef, search, period, sortKey, sortDir, columnFilters, employees])
 
   const totalValue = contracts.reduce((s, c) => s + c.value, 0)
-  const activeCount = contracts.filter(c => ['ACTIVE', 'ON_GOING', 'PERFORMING', 'KICK_OFF', 'LOCKING_SUB'].includes(c.status)).length
+  // Active = anything that isn't archived or terminated (pending-payment and canceled count too).
+  const activeCount = contracts.filter(c => c.status !== 'ARCHIVED' && c.status !== 'TERMINATED').length
   const warningCount = contracts.reduce((s, c) => s + (c.governmentWarnings || []).filter(w => !w.resolvedAt).length, 0)
 
   return (

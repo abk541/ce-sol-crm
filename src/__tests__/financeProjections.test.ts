@@ -25,11 +25,12 @@ function makeContract(overrides: Partial<Contract> = {}): Contract {
 }
 
 describe('finance projection helpers', () => {
-  it('keeps archived, terminated, and canceled contracts out of projections', () => {
+  it('keeps archived and terminated contracts out of projections (pending-payment and canceled stay active)', () => {
     expect(isFinanceProjectionContract(makeContract({ status: 'KICK_OFF' }))).toBe(true)
+    expect(isFinanceProjectionContract(makeContract({ status: 'PENDING_PAYMENT' }))).toBe(true)
+    expect(isFinanceProjectionContract(makeContract({ status: 'CANCELED' }))).toBe(true)
     expect(isFinanceProjectionContract(makeContract({ status: 'ARCHIVED' }))).toBe(false)
     expect(isFinanceProjectionContract(makeContract({ status: 'TERMINATED' }))).toBe(false)
-    expect(isFinanceProjectionContract(makeContract({ status: 'CANCELED' }))).toBe(false)
   })
 
   it('summarizes OTJ totals and recurring monthly projections', () => {

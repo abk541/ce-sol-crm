@@ -7,7 +7,7 @@ import {
 } from './invoicePdf'
 
 export function isFinanceProjectionContract(contract: Contract) {
-  return !['ARCHIVED', 'TERMINATED', 'CANCELED'].includes(contract.status)
+  return !['ARCHIVED', 'TERMINATED'].includes(contract.status)
 }
 
 export function getFinanceProjectionSummary(contracts: Contract[]) {

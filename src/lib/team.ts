@@ -18,7 +18,7 @@ export interface AssignmentWorkload {
   sameDueDay: number
 }
 
-const ACTIVE_STATUSES_EXCLUDE: Contract['status'][] = ['ARCHIVED', 'TERMINATED', 'CANCELED']
+const ACTIVE_STATUSES_EXCLUDE: Contract['status'][] = ['ARCHIVED', 'TERMINATED']
 const ACTIVE_OPPORTUNITY_STATUSES: Opportunity['status'][] = ['ACTIVE', 'NEW_ASSIGNMENT', 'DISCUSSION']
 
 const EMPTY_ASSIGNMENT_WORKLOAD: AssignmentWorkload = {
