@@ -1824,7 +1824,6 @@ function SubmitModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }
 
   // Financial fields vary by contract type
   const isOTJ       = opp.type === 'OTJ'
-  const isRecurring = opp.type === 'RECURRING'
   const showYearlyMonthly = !isOTJ
 
   const [contractAmount, setContractAmount] = useState<string>(opp.contractAmount ? String(opp.contractAmount) : '')
@@ -1889,31 +1888,27 @@ function SubmitModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }
   const dueTimeLabel = opp.localTime ? formatLocalDueTimeShared(opp.localTime, opp.timezone) : ''
 
   return (
-    <ModalWrap onClose={onClose} title="Submit Proposal" subtitle={opp.solicitation} maxW="max-w-3xl">
+    <ModalWrap onClose={onClose} title="Submit Proposal" subtitle={opp.solicitation} maxW="max-w-2xl">
       <div className="flex flex-col bg-white" style={{ maxHeight: 'min(86vh, 780px)' }}>
         {/* Hero card */}
         <div className="flex-shrink-0 px-6 pt-5">
-          <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-indigo-50 via-white to-white p-5">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[10px] font-black uppercase tracking-wider ring-1 ring-inset ${tone.bg} ${tone.text} ${tone.ring}`}>
-                    {typeLabel(opp.type)}
-                  </span>
-                  <span className="font-mono text-[10px] text-slate-500">{opp.solicitationId}</span>
-                </div>
-                <h3 className="mt-1.5 text-base font-black text-slate-900">{opp.solicitation}</h3>
-                <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-slate-600">
-                  <span className="inline-flex items-center gap-1">
-                    <Calendar size={11} className="text-slate-400" />
-                    Due {dueDateLabel}{dueTimeLabel ? ` · ${dueTimeLabel}` : ''}
-                  </span>
-                  <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold ${SUBMIT_DEADLINE_TONE[deadline.tone]}`}>
-                    <Clock size={9} /> {deadline.label}
-                  </span>
-                </div>
-              </div>
+          <div className="rounded-2xl border border-slate-200 bg-white shadow-sm p-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[10px] font-black uppercase tracking-wider ring-1 ring-inset ${tone.bg} ${tone.text} ${tone.ring}`}>
+                {typeLabel(opp.type)}
+              </span>
+              <span className="font-mono text-[10px] text-slate-500">{opp.solicitationId || '—'}</span>
+              <span className={`ml-auto inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold ${SUBMIT_DEADLINE_TONE[deadline.tone]}`}>
+                <Clock size={9} /> {deadline.label}
+              </span>
             </div>
+            <h3 className="mt-2 text-sm font-bold text-slate-900 break-words">
+              {opp.solicitation || 'Untitled solicitation'}
+            </h3>
+            <p className="mt-1 inline-flex items-center gap-1 text-[11px] text-slate-500">
+              <Calendar size={11} className="text-slate-400" />
+              Due {dueDateLabel}{dueTimeLabel ? ` · ${dueTimeLabel}` : ''}
+            </p>
           </div>
         </div>
 
@@ -1925,63 +1920,36 @@ function SubmitModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }
               <DollarSign size={13} className="text-emerald-500" />
               <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">Contract value</p>
             </div>
-            <div className="grid gap-4 md:grid-cols-[1fr_240px]">
-              <div className="space-y-3">
-                <MoneyInput
-                  label="Total contract amount"
-                  value={contractAmount}
-                  onChange={setContractAmount}
-                />
-                {showYearlyMonthly && (
-                  <>
-                    <MoneyInput
-                      label="Yearly value"
-                      value={yearlyValue}
-                      onChange={handleYearlyChange}
-                    />
-                    <MoneyInput
-                      label="Monthly value"
-                      hint={monthlyOverridden ? 'Manual override' : 'Auto = yearly ÷ 12'}
-                      value={monthlyValue}
-                      onChange={val => { setMonthlyOverridden(true); setMonthlyValue(val) }}
-                    />
-                  </>
-                )}
-                {isOTJ && (
-                  <p className="text-[11px] text-slate-500">
-                    OTJ contracts are billed once at the total contract amount — no yearly / monthly breakdown.
-                  </p>
-                )}
-              </div>
-
-              {/* Live preview card */}
-              <aside className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-xs">
-                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Preview</p>
-                <div className="mt-2 space-y-2">
-                  <div>
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Total</p>
-                    <p className="text-lg font-black text-slate-900">
-                      {Number.isFinite(previewTotal) && previewTotal > 0 ? formatCurrency(previewTotal) : '—'}
-                    </p>
-                  </div>
-                  {showYearlyMonthly && (
-                    <>
-                      <div>
-                        <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Yearly</p>
-                        <p className="text-sm font-bold text-slate-700">
-                          {Number.isFinite(previewYearly) && previewYearly > 0 ? formatCurrency(previewYearly) : '—'}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Monthly</p>
-                        <p className="text-sm font-bold text-emerald-700">
-                          {Number.isFinite(previewMonthly) && previewMonthly > 0 ? formatCurrency(previewMonthly) : '—'}
-                        </p>
-                      </div>
-                    </>
-                  )}
-                </div>
-              </aside>
+            <div className="space-y-3">
+              <MoneyInput
+                label="Total contract amount"
+                value={contractAmount}
+                onChange={setContractAmount}
+                preview={previewTotal}
+              />
+              {showYearlyMonthly && (
+                <>
+                  <MoneyInput
+                    label="Yearly value"
+                    value={yearlyValue}
+                    onChange={handleYearlyChange}
+                    preview={previewYearly}
+                  />
+                  <MoneyInput
+                    label="Monthly value"
+                    hint={monthlyOverridden ? 'Manual override' : 'Auto = yearly ÷ 12'}
+                    value={monthlyValue}
+                    onChange={val => { setMonthlyOverridden(true); setMonthlyValue(val) }}
+                    preview={previewMonthly}
+                    accent="emerald"
+                  />
+                </>
+              )}
+              {isOTJ && (
+                <p className="text-[11px] text-slate-500">
+                  OTJ contracts are billed once at the total contract amount — no yearly / monthly breakdown.
+                </p>
+              )}
             </div>
           </section>
 
@@ -2077,18 +2045,24 @@ function SubmitModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }
   )
 }
 
-// Money input with $ prefix used inside SubmitModal.
+// Money input with $ prefix and inline formatted preview used inside SubmitModal.
 function MoneyInput({
   label,
   value,
   onChange,
   hint,
+  preview,
+  accent = 'slate',
 }: {
   label: string
   value: string
   onChange: (val: string) => void
   hint?: string
+  preview?: number
+  accent?: 'slate' | 'emerald'
 }) {
+  const showPreview = typeof preview === 'number' && Number.isFinite(preview) && preview > 0
+  const accentText = accent === 'emerald' ? 'text-emerald-600' : 'text-slate-600'
   return (
     <div>
       <div className="mb-1 flex items-center justify-between">
@@ -2108,6 +2082,11 @@ function MoneyInput({
           className="input-field w-full pl-7 text-right tabular-nums no-spin"
         />
       </div>
+      {showPreview && (
+        <p className={`mt-1 text-right text-[11px] font-bold tabular-nums ${accentText}`}>
+          = {formatCurrency(preview as number)}
+        </p>
+      )}
     </div>
   )
 }
