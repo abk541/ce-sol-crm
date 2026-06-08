@@ -116,6 +116,7 @@ export interface LockedSubcontractor {
   setAside?: string
   naicsCode?: string
   subkDatabaseId?: string   // link to SubkDatabaseEntry
+  paymentRate?: number      // amount paid to this subk (one-time for OTJ, monthly for recurring) — entered manually
   invoices?: string[]
   subAgreements?: string[]
   quotes?: string[]

@@ -6,6 +6,10 @@ function fmtMoney(value?: number) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(value)
 }
 
+function fmtMoneyExact(value: number) {
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 }).format(value)
+}
+
 function download(bytes: Uint8Array, filename: string) {
   const blob = new Blob([bytes.slice().buffer], { type: 'application/pdf' })
   const url = URL.createObjectURL(blob)
@@ -46,11 +50,23 @@ function attachmentNames(attachments?: FileAttachment[], legacyNames?: string[])
 }
 
 export function subkQuoteSummaryForContract(contract: Contract) {
-  const quotes = (contract.lockedSubcontractors || [])
-    .flatMap(sub => attachmentNames(sub.documents?.quote, sub.quotes).map(quote => `${sub.companyName}: ${quote}`))
+  const subs = contract.lockedSubcontractors || []
+  const lines: string[] = []
+  for (const sub of subs) {
+    const quotes = attachmentNames(sub.documents?.quote, sub.quotes)
+    const hasRate = typeof sub.paymentRate === 'number' && Number.isFinite(sub.paymentRate) && sub.paymentRate > 0
+    const ratePart = hasRate ? ` (${fmtMoneyExact(sub.paymentRate as number)})` : ''
+    if (quotes.length === 0) {
+      if (hasRate) lines.push(`${sub.companyName}${ratePart}`)
+      continue
+    }
+    for (const quote of quotes) {
+      lines.push(`${sub.companyName}: ${quote}${ratePart}`)
+    }
+  }
 
-  if (quotes.length === 0) return 'No locked subk quotes yet'
-  return quotes.join(', ')
+  if (lines.length === 0) return 'No locked subk quotes yet'
+  return lines.join(', ')
 }
 
 export function subkMonthlyBillingRowsForContract(contract: Contract) {
@@ -59,7 +75,9 @@ export function subkMonthlyBillingRowsForContract(contract: Contract) {
   return subs.map(sub => {
     const invoices = attachmentNames(sub.documents?.invoice, sub.invoices)
     const invoiceNote = invoices.length > 0 ? ` - invoices: ${invoices.join(', ')}` : ''
-    return `${sub.companyName}: monthly billing to be confirmed${invoiceNote}`
+    const hasRate = typeof sub.paymentRate === 'number' && Number.isFinite(sub.paymentRate) && sub.paymentRate > 0
+    const ratePart = hasRate ? `${fmtMoneyExact(sub.paymentRate as number)} / month` : 'monthly billing to be confirmed'
+    return `${sub.companyName}: ${ratePart}${invoiceNote}`
   })
 }
 

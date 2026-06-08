@@ -381,11 +381,13 @@ function normalizeLockedSubDocuments(sub: LockedSubcontractor): LockedSubkDocume
   }
 }
 
-function encodeLockedSubNotes(notes: string | undefined, documents: LockedSubkDocuments): string | null {
+function encodeLockedSubNotes(notes: string | undefined, documents: LockedSubkDocuments, paymentRate: number | undefined): string | null {
   const cleanNotes = notes?.trim() ?? ''
-  if (!hasLockedSubDocuments(documents)) return cleanNotes || null
+  const hasRate = typeof paymentRate === 'number' && Number.isFinite(paymentRate)
+  if (!hasLockedSubDocuments(documents) && !hasRate) return cleanNotes || null
   return `${LOCKED_SUBK_META_PREFIX}${JSON.stringify({
     notes: cleanNotes,
+    paymentRate: hasRate ? paymentRate : undefined,
     documents: {
       coi: documents.coi ?? [],
       w9: documents.w9 ?? [],
@@ -393,7 +395,7 @@ function encodeLockedSubNotes(notes: string | undefined, documents: LockedSubkDo
   })}`
 }
 
-function decodeLockedSubNotes(value: unknown): { notes?: string; documents: Pick<LockedSubkDocuments, 'coi' | 'w9'> } {
+function decodeLockedSubNotes(value: unknown): { notes?: string; paymentRate?: number; documents: Pick<LockedSubkDocuments, 'coi' | 'w9'> } {
   if (typeof value !== 'string') return { documents: {} }
   if (!value.startsWith(LOCKED_SUBK_META_PREFIX)) return { notes: value || undefined, documents: {} }
 
@@ -401,8 +403,11 @@ function decodeLockedSubNotes(value: unknown): { notes?: string; documents: Pick
     const parsed = JSON.parse(value.slice(LOCKED_SUBK_META_PREFIX.length)) as unknown
     if (!isRecord(parsed)) return { documents: {} }
     const rawDocuments = isRecord(parsed.documents) ? parsed.documents : {}
+    const rawRate = parsed.paymentRate
+    const paymentRate = typeof rawRate === 'number' && Number.isFinite(rawRate) ? rawRate : undefined
     return {
       notes: typeof parsed.notes === 'string' ? parsed.notes : undefined,
+      paymentRate,
       documents: {
         coi: normalizeStoredAttachments(rawDocuments.coi),
         w9: normalizeStoredAttachments(rawDocuments.w9),
@@ -428,7 +433,7 @@ function lockedSubToDb(sub: LockedSubcontractor): Record<string, unknown> {
     invoices: serializeStoredAttachments(documents.invoice) ?? sub.invoices ?? null,
     sub_agreements: serializeStoredAttachments(documents.subAgreement) ?? sub.subAgreements ?? null,
     quotes: serializeStoredAttachments(documents.quote) ?? sub.quotes ?? null,
-    notes: encodeLockedSubNotes(sub.notes, documents),
+    notes: encodeLockedSubNotes(sub.notes, documents, sub.paymentRate),
     created_at: sub.createdAt,
     created_by: sub.createdBy,
   }
@@ -453,6 +458,7 @@ function dbToLockedSub(row: Record<string, unknown>): LockedSubcontractor {
     setAside: row.set_aside as string | undefined,
     naicsCode: row.naics_code as string | undefined,
     subkDatabaseId: row.subk_database_id as string | undefined,
+    paymentRate: meta.paymentRate,
     invoices: attachmentNames(documents.invoice),
     subAgreements: attachmentNames(documents.subAgreement),
     quotes: attachmentNames(documents.quote),
