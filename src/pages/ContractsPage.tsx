@@ -29,6 +29,8 @@ import {
 } from '../lib/invoicePdf'
 import { normalizeContractDeliverables } from '../lib/contractDeliverables'
 import { SourcingModal } from './PipelinePage'
+import HierarchyAssignPicker from '../components/shared/HierarchyAssignPicker'
+import { assignableEmployeesForUser } from '../lib/team'
 
 // ── Status config ───────────────────────────────────────────────────────
 const STATUS_META: Record<ContractStatus, { label: string; color: string; bg: string; border: string }> = {
@@ -522,6 +524,32 @@ function ContractDetailDrawer({
   // Edit status
   const [editingStatus, setEditingStatus] = useState(false)
 
+  // Reassign contract
+  const [showReassign, setShowReassign] = useState(false)
+  const [reassignDraft, setReassignDraft] = useState(contract.assignedTo || '')
+  const [reassignSaving, setReassignSaving] = useState(false)
+  const allowedAssignees = useMemo(() => {
+    const ids = assignableEmployeesForUser(employees, currentUser).map(e => e.id)
+    if (contract.assignedTo && !ids.includes(contract.assignedTo)) ids.push(contract.assignedTo)
+    return ids
+  }, [employees, currentUser, contract.assignedTo])
+  useEscapeKey(() => setShowReassign(false), showReassign)
+  useEffect(() => {
+    if (showReassign) setReassignDraft(contract.assignedTo || '')
+  }, [showReassign, contract.assignedTo])
+
+  // Edit details tab
+  type EditDetailsTab = 'details' | 'finance' | 'notes'
+  const [editDetailsTab, setEditDetailsTab] = useState<EditDetailsTab>('details')
+  const EDIT_DETAILS_TABS: { id: EditDetailsTab; label: string }[] = [
+    { id: 'details', label: 'Identity' },
+    { id: 'finance', label: 'Finance' },
+    { id: 'notes',   label: 'Notes' },
+  ]
+  useEffect(() => {
+    if (showEditDetails) setEditDetailsTab('details')
+  }, [showEditDetails])
+
   const nextStatus = STATUS_FLOW[contract.status]
   const meta = STATUS_META[contract.status]
   const sourceOpportunity =
@@ -922,7 +950,16 @@ function ContractDetailDrawer({
 
             {/* Team */}
             <div>
-              <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Team</p>
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Team</p>
+                <button
+                  type="button"
+                  onClick={() => setShowReassign(true)}
+                  className="flex items-center gap-1 rounded-lg border border-indigo-200 bg-indigo-50 px-2 py-1 text-[10px] font-semibold text-indigo-700 hover:bg-indigo-100"
+                >
+                  <UserPlus size={11} /> {contract.assignedTo ? 'Reassign' : 'Assign'}
+                </button>
+              </div>
               <div className="grid grid-cols-2 gap-2">
                 {[
                   { label: 'Associate', value: contract.supportAgent },
@@ -933,7 +970,7 @@ function ContractDetailDrawer({
                   </div>
                 ))}
               </div>
-              {contract.assignedTo && (() => {
+              {contract.assignedTo ? (() => {
                 const emp = employees.find(e => e.id === contract.assignedTo)
                 if (!emp) return null
                 const rc = ROLE_COLOR_C[emp.role] ?? ROLE_COLOR_C.ASSOCIATE
@@ -947,7 +984,12 @@ function ContractDetailDrawer({
                     </span>
                   </div>
                 )
-              })()}
+              })() : (
+                <div className="mt-2 flex items-center gap-2 p-2 rounded-lg bg-slate-50">
+                  <span className="text-[10px] text-slate-400 w-16 flex-shrink-0">Assigned To</span>
+                  <span className="text-xs italic text-slate-400">No one assigned yet</span>
+                </div>
+              )}
             </div>
 
             {/* Billing notes */}
@@ -2250,146 +2292,212 @@ function ContractDetailDrawer({
               initial={{ opacity: 0, scale: 0.96, y: 12 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.96, y: 12 }}
-              className="relative z-10 flex w-full max-w-2xl max-h-[calc(100vh-2rem)] flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
-              style={{ border: '1px solid var(--border-default)' }}
+              transition={{ type: 'spring', stiffness: 340, damping: 28 }}
+              className="relative z-10 flex w-full max-w-4xl flex-col overflow-hidden rounded-2xl shadow-2xl border"
+              style={{
+                height: 'min(88vh, 760px)',
+                background: 'linear-gradient(180deg, rgba(16,40,32,0.98), rgba(10,29,43,0.98))',
+                borderColor: 'rgba(215,190,122,0.18)',
+              }}
             >
-              <div className="px-6 py-4 border-b border-slate-100 flex-shrink-0 flex items-start justify-between gap-3">
-                <div>
-                  <h3 className="text-base font-bold text-slate-900">Edit Contract Details</h3>
-                  <p className="text-xs text-slate-500 mt-0.5">Fix typos or human errors. Only edit fields that need correction.</p>
+              {/* Header */}
+              <div className="flex-shrink-0 border-b border-[#D7BE7A]/15">
+                <div className="flex items-start justify-between px-7 pt-5 pb-3 gap-4">
+                  <div className="min-w-0">
+                    <h2 className="text-[15px] font-bold text-slate-100 leading-tight">Edit Contract</h2>
+                    <p className="text-xs text-slate-400 mt-0.5 truncate max-w-lg">{contract.title} · {contract.contractId}</p>
+                  </div>
+                  <button onClick={() => setShowEditDetails(false)}
+                    className="flex-shrink-0 w-8 h-8 rounded-xl flex items-center justify-center text-slate-400 hover:text-slate-100 hover:bg-white/5 transition-all mt-0.5">
+                    <X size={14} />
+                  </button>
                 </div>
-                <button onClick={() => setShowEditDetails(false)} className="flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-700 transition-colors">
-                  <X size={16} />
-                </button>
-              </div>
-              <div className="p-6 space-y-4 overflow-y-auto">
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div className="sm:col-span-2">
-                    <label className="block text-xs font-semibold text-slate-500 mb-1.5">Title *</label>
-                    <input value={editForm.title} onChange={e => setEditForm(f => ({ ...f, title: e.target.value }))} className="input-field text-xs" />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-500 mb-1.5">Contract ID *</label>
-                    <input value={editForm.contractId} onChange={e => setEditForm(f => ({ ...f, contractId: e.target.value }))} className="input-field text-xs font-mono" />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-500 mb-1.5">NAICS Code</label>
-                    <input value={editForm.naicsCode} onChange={e => setEditForm(f => ({ ...f, naicsCode: e.target.value }))} className="input-field text-xs" />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-500 mb-1.5">Type *</label>
-                    <select value={editForm.type} onChange={e => setEditForm(f => ({ ...f, type: e.target.value as ContractType }))} className="select-field text-xs">
-                      {(['OTJ','RECURRING','BPA','IDIQ','S&D','SUPPLY'] as ContractType[]).map(t => (
-                        <option key={t} value={t}>{t}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-500 mb-1.5">Finance Type</label>
-                    <select value={editForm.financeType} onChange={e => setEditForm(f => ({ ...f, financeType: e.target.value as ContractFinanceType | '' }))} className="select-field text-xs">
-                      <option value="">—</option>
-                      {(['FFP','T&M','CPFF','OTHER'] as ContractFinanceType[]).map(t => (
-                        <option key={t} value={t}>{t}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-500 mb-1.5">Set-Aside</label>
-                    <select value={editForm.setAside} onChange={e => setEditForm(f => ({ ...f, setAside: e.target.value as SetAside | '' }))} className="select-field text-xs">
-                      <option value="">—</option>
-                      {(['SB','SDVOSB','WOSB','HUBZone','VOSB','8(a)','UNRES'] as SetAside[]).map(t => (
-                        <option key={t} value={t}>{t}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-500 mb-1.5">Client / Agency</label>
-                    <input value={editForm.client} onChange={e => setEditForm(f => ({ ...f, client: e.target.value }))} className="input-field text-xs" />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-500 mb-1.5">Location</label>
-                    <input value={editForm.location} onChange={e => setEditForm(f => ({ ...f, location: e.target.value }))} className="input-field text-xs" />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-500 mb-1.5">Contract Value (USD)</label>
-                    <input type="number" min="0" step="0.01" value={editForm.value} onChange={e => setEditForm(f => ({ ...f, value: e.target.value }))} className="input-field text-xs" />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-500 mb-1.5">Base Amount (USD)</label>
-                    <input type="number" min="0" step="0.01" value={editForm.baseAmount} onChange={e => setEditForm(f => ({ ...f, baseAmount: e.target.value }))} className="input-field text-xs" />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-500 mb-1.5">Monthly Payment (USD)</label>
-                    <input type="number" min="0" step="0.01" value={editForm.monthlyPayment} onChange={e => setEditForm(f => ({ ...f, monthlyPayment: e.target.value }))} className="input-field text-xs" />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-500 mb-1.5">Associate (Support Agent)</label>
-                    <input value={editForm.supportAgent} onChange={e => setEditForm(f => ({ ...f, supportAgent: e.target.value }))} className="input-field text-xs" />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-500 mb-1.5">Option Years Remaining</label>
-                    <input type="number" min="0" step="1" value={editForm.optionYears} onChange={e => setEditForm(f => ({ ...f, optionYears: e.target.value }))} className="input-field text-xs" />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-500 mb-1.5">Option Year Deadline</label>
-                    <input type="date" value={editForm.optionYearDeadline} onChange={e => setEditForm(f => ({ ...f, optionYearDeadline: e.target.value }))} className="input-field text-xs" />
-                  </div>
-                  <div className="sm:col-span-2">
-                    <label className="block text-xs font-semibold text-slate-500 mb-1.5">Billing Notes</label>
-                    <textarea value={editForm.billingNotes} onChange={e => setEditForm(f => ({ ...f, billingNotes: e.target.value }))} rows={3} className="input-field text-xs resize-none" placeholder="Internal billing notes…" />
-                  </div>
+                {/* Tab bar */}
+                <div className="flex px-7 gap-0.5">
+                  {EDIT_DETAILS_TABS.map((t, i) => (
+                    <button key={t.id} onClick={() => setEditDetailsTab(t.id)}
+                      className={[
+                        'px-4 py-2.5 text-[12px] font-semibold border-b-2 transition-all whitespace-nowrap flex items-center gap-1.5',
+                        editDetailsTab === t.id
+                          ? 'border-indigo-400 text-indigo-200'
+                          : 'border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-700',
+                      ].join(' ')}>
+                      <span className={`w-4 h-4 rounded-full text-[9px] font-black flex items-center justify-center ${editDetailsTab === t.id ? 'bg-indigo-500/30 text-indigo-100' : 'bg-white/5 text-slate-400'}`}>
+                        {i + 1}
+                      </span>
+                      {t.label}
+                    </button>
+                  ))}
                 </div>
-                <p className="text-[10px] text-slate-400">POP dates, PoC, Warnings, Deliverables, Subcontractors, and Termination are managed in their own tabs.</p>
               </div>
-              <div className="flex gap-3 px-6 pb-6 pt-4 border-t border-slate-100 flex-shrink-0">
-                <button onClick={() => setShowEditDetails(false)} className="btn-secondary flex-1 justify-center">Cancel</button>
-                <button
-                  onClick={async () => {
-                    if (!editForm.title.trim() || !editForm.contractId.trim()) {
-                      toast.error('Title and Contract ID are required')
-                      return
-                    }
-                    const valueNum = Number(editForm.value)
-                    if (editForm.value === '' || Number.isNaN(valueNum) || valueNum < 0) {
-                      toast.error('Contract value must be a non-negative number')
-                      return
-                    }
-                    const parseOptionalNumber = (v: string) => {
-                      if (v.trim() === '') return undefined
-                      const n = Number(v)
-                      return Number.isFinite(n) && n >= 0 ? n : undefined
-                    }
-                    const patch: Partial<Contract> = {
-                      title: editForm.title.trim(),
-                      contractId: editForm.contractId.trim(),
-                      type: editForm.type,
-                      financeType: editForm.financeType ? editForm.financeType : undefined,
-                      naicsCode: editForm.naicsCode.trim(),
-                      setAside: editForm.setAside ? editForm.setAside : undefined,
-                      location: editForm.location.trim(),
-                      client: editForm.client.trim() || undefined,
-                      value: valueNum,
-                      baseAmount: parseOptionalNumber(editForm.baseAmount),
-                      monthlyPayment: parseOptionalNumber(editForm.monthlyPayment),
-                      optionYears: parseOptionalNumber(editForm.optionYears),
-                      optionYearDeadline: editForm.optionYearDeadline || undefined,
-                      supportAgent: editForm.supportAgent.trim() || undefined,
-                      billingNotes: editForm.billingNotes.trim() || undefined,
-                    }
-                    const ok = await updateContract(contract.id, patch)
-                    if (ok) {
-                      toast.success('Contract details updated')
-                      setShowEditDetails(false)
-                    }
-                  }}
-                  className="btn-primary flex-1 flex items-center justify-center gap-1.5"
-                >
-                  <Save size={13} /> Save Changes
-                </button>
+
+              {/* Body */}
+              <div className="flex-1 overflow-y-auto px-7 py-6">
+                {editDetailsTab === 'details' && (
+                  <div className="space-y-5">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-400 mb-1.5">Title *</label>
+                      <input value={editForm.title} onChange={e => setEditForm(f => ({ ...f, title: e.target.value }))} className="input-field" />
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-400 mb-1.5">Contract ID *</label>
+                        <input value={editForm.contractId} onChange={e => setEditForm(f => ({ ...f, contractId: e.target.value }))} className="input-field font-mono" />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-400 mb-1.5">NAICS Code</label>
+                        <input value={editForm.naicsCode} onChange={e => setEditForm(f => ({ ...f, naicsCode: e.target.value }))} className="input-field" />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-3 gap-3">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-400 mb-1.5">Type *</label>
+                        <select value={editForm.type} onChange={e => setEditForm(f => ({ ...f, type: e.target.value as ContractType }))} className="select-field">
+                          {(['OTJ','RECURRING','BPA','IDIQ','S&D','SUPPLY'] as ContractType[]).map(t => (
+                            <option key={t} value={t}>{t}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-400 mb-1.5">Finance Type</label>
+                        <select value={editForm.financeType} onChange={e => setEditForm(f => ({ ...f, financeType: e.target.value as ContractFinanceType | '' }))} className="select-field">
+                          <option value="">—</option>
+                          {(['FFP','T&M','CPFF','OTHER'] as ContractFinanceType[]).map(t => (
+                            <option key={t} value={t}>{t}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-400 mb-1.5">Set-Aside</label>
+                        <select value={editForm.setAside} onChange={e => setEditForm(f => ({ ...f, setAside: e.target.value as SetAside | '' }))} className="select-field">
+                          <option value="">—</option>
+                          {(['SB','SDVOSB','WOSB','HUBZone','VOSB','8(a)','UNRES'] as SetAside[]).map(t => (
+                            <option key={t} value={t}>{t}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-400 mb-1.5">Client / Agency</label>
+                        <input value={editForm.client} onChange={e => setEditForm(f => ({ ...f, client: e.target.value }))} className="input-field" />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-400 mb-1.5">Location</label>
+                        <input value={editForm.location} onChange={e => setEditForm(f => ({ ...f, location: e.target.value }))} className="input-field" placeholder="City, State" />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {editDetailsTab === 'finance' && (
+                  <div className="space-y-6">
+                    <div>
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4">Contract Value</p>
+                      <div className="grid grid-cols-3 gap-4">
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-400 mb-1.5">Contract Value ($)</label>
+                          <input type="number" min="0" step="0.01" value={editForm.value} onChange={e => setEditForm(f => ({ ...f, value: e.target.value }))} className="input-field" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-400 mb-1.5">Base Amount ($)</label>
+                          <input type="number" min="0" step="0.01" value={editForm.baseAmount} onChange={e => setEditForm(f => ({ ...f, baseAmount: e.target.value }))} className="input-field" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-400 mb-1.5">Monthly Payment ($)</label>
+                          <input type="number" min="0" step="0.01" value={editForm.monthlyPayment} onChange={e => setEditForm(f => ({ ...f, monthlyPayment: e.target.value }))} className="input-field" />
+                        </div>
+                      </div>
+                    </div>
+                    <div className="border-t border-[#D7BE7A]/15 pt-5">
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4">Option Years</p>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-400 mb-1.5">Option Years Remaining</label>
+                          <input type="number" min="0" step="1" value={editForm.optionYears} onChange={e => setEditForm(f => ({ ...f, optionYears: e.target.value }))} className="input-field" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-400 mb-1.5">Option Year Deadline</label>
+                          <input type="date" value={editForm.optionYearDeadline} onChange={e => setEditForm(f => ({ ...f, optionYearDeadline: e.target.value }))} className="input-field" />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {editDetailsTab === 'notes' && (
+                  <div className="space-y-5">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-400 mb-1.5">Associate (Support Agent)</label>
+                      <input value={editForm.supportAgent} onChange={e => setEditForm(f => ({ ...f, supportAgent: e.target.value }))} className="input-field" />
+                      <p className="text-[10px] text-slate-500 mt-1">To change the assigned employee, use the Reassign action on the Overview tab.</p>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-400 mb-1.5">Billing Notes</label>
+                      <textarea value={editForm.billingNotes} onChange={e => setEditForm(f => ({ ...f, billingNotes: e.target.value }))} rows={4} className="input-field resize-none" placeholder="Internal billing notes…" />
+                    </div>
+                    <p className="text-[10px] text-slate-500">POP dates, PoC, Warnings, Deliverables, Subcontractors, and Termination are managed in their own tabs in the contract window.</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Footer */}
+              <div
+                className="flex-shrink-0 px-7 py-4 border-t flex items-center gap-3"
+                style={{ background: 'rgba(7,19,31,0.88)', borderColor: 'rgba(215,190,122,0.16)' }}
+              >
+                <div className="ml-auto flex gap-3">
+                  <button onClick={() => setShowEditDetails(false)} className="btn-secondary">Cancel</button>
+                  <button
+                    onClick={async () => {
+                      if (!editForm.title.trim() || !editForm.contractId.trim()) {
+                        toast.error('Title and Contract ID are required')
+                        setEditDetailsTab('details')
+                        return
+                      }
+                      const valueNum = Number(editForm.value)
+                      if (editForm.value === '' || Number.isNaN(valueNum) || valueNum < 0) {
+                        toast.error('Contract value must be a non-negative number')
+                        setEditDetailsTab('finance')
+                        return
+                      }
+                      const parseOptionalNumber = (v: string) => {
+                        if (v.trim() === '') return undefined
+                        const n = Number(v)
+                        return Number.isFinite(n) && n >= 0 ? n : undefined
+                      }
+                      const patch: Partial<Contract> = {
+                        title: editForm.title.trim(),
+                        contractId: editForm.contractId.trim(),
+                        type: editForm.type,
+                        financeType: editForm.financeType ? editForm.financeType : undefined,
+                        naicsCode: editForm.naicsCode.trim(),
+                        setAside: editForm.setAside ? editForm.setAside : undefined,
+                        location: editForm.location.trim(),
+                        client: editForm.client.trim() || undefined,
+                        value: valueNum,
+                        baseAmount: parseOptionalNumber(editForm.baseAmount),
+                        monthlyPayment: parseOptionalNumber(editForm.monthlyPayment),
+                        optionYears: parseOptionalNumber(editForm.optionYears),
+                        optionYearDeadline: editForm.optionYearDeadline || undefined,
+                        supportAgent: editForm.supportAgent.trim() || undefined,
+                        billingNotes: editForm.billingNotes.trim() || undefined,
+                      }
+                      const ok = await updateContract(contract.id, patch)
+                      if (ok) {
+                        toast.success('Contract details updated')
+                        setShowEditDetails(false)
+                      }
+                    }}
+                    className="btn-primary flex items-center gap-1.5"
+                  >
+                    <Save size={13} /> Save Changes
+                  </button>
+                </div>
               </div>
             </motion.div>
           </div>
-        )}
+          )}
       </AnimatePresence>,
       document.body
       )}
@@ -2451,6 +2559,104 @@ function ContractDetailDrawer({
         )}
       </AnimatePresence>,
       document.body
+      )}
+
+      {/* Reassign Contract Modal */}
+      {createPortal(
+        <AnimatePresence>
+          {showReassign && (
+            <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+              <div className="absolute inset-0" style={{ background: 'rgba(15,23,42,0.55)', backdropFilter: 'blur(6px)' }} onClick={() => setShowReassign(false)} />
+              <motion.div
+                key="reassign-panel"
+                initial={{ opacity: 0, scale: 0.96, y: 12 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.96, y: 12 }}
+                transition={{ type: 'spring', stiffness: 340, damping: 28 }}
+                className="relative z-10 flex w-full max-w-4xl max-h-[min(88vh,720px)] flex-col overflow-hidden rounded-2xl shadow-2xl border"
+                style={{
+                  background: 'linear-gradient(180deg, rgba(16,40,32,0.98), rgba(10,29,43,0.98))',
+                  borderColor: 'rgba(215,190,122,0.18)',
+                }}
+              >
+                <div className="flex-shrink-0 border-b border-[#D7BE7A]/15 px-7 pt-5 pb-4 flex items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    <h2 className="text-[15px] font-bold text-slate-100 leading-tight">Reassign Contract</h2>
+                    <p className="text-xs text-slate-400 mt-0.5 truncate">{contract.title} · {contract.contractId}</p>
+                  </div>
+                  <button onClick={() => setShowReassign(false)}
+                    className="flex-shrink-0 w-8 h-8 rounded-xl flex items-center justify-center text-slate-400 hover:text-slate-100 hover:bg-white/5 transition-all">
+                    <X size={14} />
+                  </button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto px-7 py-6 space-y-4">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-100">Assign to a team member</p>
+                    <p className="text-xs text-slate-400 mt-1">
+                      Select anyone in the hierarchy. Workload lines show total active assignments and same-due-day assignments.
+                    </p>
+                  </div>
+                  <HierarchyAssignPicker
+                    value={reassignDraft}
+                    onChange={v => setReassignDraft(v)}
+                    deadline={contract.popEnd || undefined}
+                    allowedEmployeeIds={allowedAssignees}
+                  />
+                </div>
+
+                <div
+                  className="flex-shrink-0 px-7 py-4 border-t flex items-center gap-3"
+                  style={{ background: 'rgba(7,19,31,0.88)', borderColor: 'rgba(215,190,122,0.16)' }}
+                >
+                  {contract.assignedTo && (
+                    <button
+                      type="button"
+                      disabled={reassignSaving}
+                      onClick={async () => {
+                        setReassignSaving(true)
+                        const saved = await updateContract(contract.id, { assignedTo: undefined })
+                        setReassignSaving(false)
+                        if (saved) {
+                          toast.success('Assignment cleared')
+                          setShowReassign(false)
+                        }
+                      }}
+                      className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold text-red-300 bg-red-900/30 border border-red-700/40 hover:bg-red-900/50 transition-colors disabled:opacity-45"
+                    >
+                      <Trash2 size={12} /> Clear assignment
+                    </button>
+                  )}
+                  <div className="ml-auto flex gap-3">
+                    <button type="button" onClick={() => setShowReassign(false)} className="btn-secondary">Cancel</button>
+                    <button
+                      type="button"
+                      disabled={reassignSaving || !reassignDraft || reassignDraft === contract.assignedTo}
+                      onClick={async () => {
+                        if (!reassignDraft) { toast.error('Select an employee to assign.'); return }
+                        if (!allowedAssignees.includes(reassignDraft)) {
+                          toast.error('You can only assign contracts inside your team.')
+                          return
+                        }
+                        setReassignSaving(true)
+                        const saved = await updateContract(contract.id, { assignedTo: reassignDraft })
+                        setReassignSaving(false)
+                        if (saved) {
+                          toast.success('Contract reassigned')
+                          setShowReassign(false)
+                        }
+                      }}
+                      className="btn-primary disabled:opacity-45 disabled:cursor-not-allowed"
+                    >
+                      <Save size={13} /> Save Assignment
+                    </button>
+                  </div>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>,
+        document.body
       )}
     </div>
   )
