@@ -7,6 +7,7 @@ import type {
   Opportunity,
   Contract,
   ContractPoC,
+  ContractLineItem,
   FreshAward,
   FileAttachment,
   GovernmentWarning,
@@ -490,6 +491,38 @@ function dbToWarning(row: Record<string, unknown>): GovernmentWarning {
   }
 }
 
+// ── Contract line item (CLIN) mappers ────────────────────────────────────────
+
+function lineItemToDb(line: ContractLineItem): Record<string, unknown> {
+  return {
+    id: line.id,
+    contract_id: line.contractId,
+    clin: line.clin,
+    year: line.year,
+    description: line.description,
+    quantity: line.quantity,
+    unit: line.unit,
+    rate: line.rate,
+    amount: line.amount,
+    created_at: line.createdAt ?? new Date().toISOString(),
+  }
+}
+
+function dbToLineItem(row: Record<string, unknown>): ContractLineItem {
+  return {
+    id: row.id as string,
+    contractId: row.contract_id as string,
+    clin: row.clin as string,
+    year: row.year as ContractLineItem['year'],
+    description: row.description as string,
+    quantity: Number(row.quantity ?? 0),
+    unit: (row.unit as string) ?? '',
+    rate: Number(row.rate ?? 0),
+    amount: Number(row.amount ?? 0),
+    createdAt: row.created_at as string | undefined,
+  }
+}
+
 // ── FreshAward mappers ───────────────────────────────────────────────────────
 
 function freshAwardToDb(fa: FreshAward): Record<string, unknown> {
@@ -753,6 +786,7 @@ export async function loadAllData(): Promise<{
       pocRes,
       lockedSubRes,
       warningRes,
+      lineItemRes,
       faRes,
       ppRes,
       nonSubRes,
@@ -767,6 +801,7 @@ export async function loadAllData(): Promise<{
       supabase.from('contract_pocs').select('*'),
       supabase.from('locked_subcontractors').select('*'),
       supabase.from('government_warnings').select('*'),
+      supabase.from('contract_line_items').select('*'),
       supabase.from('fresh_awards').select('*'),
       supabase.from('past_performances').select('*'),
       supabase.from('non_submission_reports').select('*'),
@@ -782,6 +817,7 @@ export async function loadAllData(): Promise<{
     if (pocRes.error) console.error('[db] contract_pocs load error', pocRes.error)
     if (lockedSubRes.error) console.error('[db] locked_subcontractors load error', lockedSubRes.error)
     if (warningRes.error) console.error('[db] government_warnings load error', warningRes.error)
+    if (lineItemRes.error) console.error('[db] contract_line_items load error', lineItemRes.error)
     if (faRes.error) console.error('[db] fresh_awards load error', faRes.error)
     if (ppRes.error) console.error('[db] past_performances load error', ppRes.error)
     if (nonSubRes.error) console.error('[db] non_submission_reports load error', nonSubRes.error)
@@ -807,11 +843,13 @@ export async function loadAllData(): Promise<{
     const pocs: ContractPoC[] = (pocRes.data ?? []).map(r => dbToPoc(r as Record<string, unknown>))
     const lockedSubs: LockedSubcontractor[] = (lockedSubRes.data ?? []).map(r => dbToLockedSub(r as Record<string, unknown>))
     const warnings: GovernmentWarning[] = (warningRes.data ?? []).map(r => dbToWarning(r as Record<string, unknown>))
+    const lineItems: ContractLineItem[] = (lineItemRes.data ?? []).map(r => dbToLineItem(r as Record<string, unknown>))
     const contracts: Contract[] = (conRes.data ?? []).map(r => {
       const contract = dbToContract(r as Record<string, unknown>) as Contract
       contract.pocs = pocs.filter(p => p.contractId === contract.id)
       contract.lockedSubcontractors = lockedSubs.filter(s => s.contractId === contract.id)
       contract.governmentWarnings = warnings.filter(w => w.contractId === contract.id)
+      contract.lineItems = lineItems.filter(l => l.contractId === contract.id)
       return contract
     })
     const freshAwards: FreshAward[] = (faRes.data ?? []).map(r => dbToFreshAward(r as Record<string, unknown>) as FreshAward)
@@ -994,6 +1032,26 @@ export async function deleteGovernmentWarningRecord(id: string): Promise<void> {
   }
 }
 
+export async function upsertContractLineItem(line: ContractLineItem): Promise<void> {
+  if (!isSupabaseConnected || !supabase) return
+  try {
+    const { error } = await supabase.from('contract_line_items').upsert(lineItemToDb(line))
+    if (error) console.error('[db] upsertContractLineItem error', error)
+  } catch (err) {
+    console.error('[db] upsertContractLineItem failed', err)
+  }
+}
+
+export async function deleteContractLineItemRecord(id: string): Promise<void> {
+  if (!isSupabaseConnected || !supabase) return
+  try {
+    const { error } = await supabase.from('contract_line_items').delete().eq('id', id)
+    if (error) console.error('[db] deleteContractLineItem error', error)
+  } catch (err) {
+    console.error('[db] deleteContractLineItem failed', err)
+  }
+}
+
 export async function upsertFreshAward(fa: FreshAward): Promise<void> {
   if (!isSupabaseConnected || !supabase) return
   try {
@@ -1063,6 +1121,7 @@ export async function clearBusinessData(): Promise<void> {
       'contract_pocs',
       'locked_subcontractors',
       'government_warnings',
+      'contract_line_items',
       'comments',
       'subcontractors',
       'non_submission_reports',

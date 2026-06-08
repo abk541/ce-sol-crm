@@ -8,7 +8,7 @@ import {
   ArrowRight, CheckCircle2, Info, MapPin, Calendar,
   Phone, Mail, Clock, Shield, FileText, Trash2, AlertCircle,
   ChevronUp, ChevronDown, ChevronsUpDown, Pencil, Receipt, Eye, Paperclip, Download,
-  UserCog,
+  UserCog, Layers,
 } from 'lucide-react'
 import PeriodFilter, { type Period, filterByPeriod } from '../components/shared/PeriodFilter'
 import toast from 'react-hot-toast'
@@ -18,6 +18,7 @@ import type {
   ContractPoC, LockedSubcontractor,
   GovernmentWarning, GovWarningType, FreshAward, FileAttachment, Comment, ContractDeliverable,
   LockedSubkDocuments, Subcontractor, Opportunity,
+  ContractLineItem, ContractLineYear,
 } from '../types'
 import { formatCurrency, useEscapeKey } from '../lib/utils'
 import FloatingActionMenu from '../components/shared/FloatingActionMenu'
@@ -439,7 +440,342 @@ function uniqueSourcingEntries(entries: Subcontractor[]) {
   return Array.from(byId.values())
 }
 
-type ContractDrawerTab = 'overview' | 'pop' | 'poc' | 'subk' | 'lockSubk' | 'warnings' | 'deliverables' | 'billing' | 'assignment'
+type ContractDrawerTab = 'overview' | 'pop' | 'poc' | 'subk' | 'lockSubk' | 'warnings' | 'deliverables' | 'lineItems' | 'billing' | 'assignment'
+
+const LINE_YEAR_LABELS: Record<ContractLineYear, string> = {
+  base: 'Base year',
+  option1: 'Option year 1',
+  option2: 'Option year 2',
+  option3: 'Option year 3',
+  option4: 'Option year 4',
+}
+
+const LINE_YEAR_ORDER: ContractLineYear[] = ['base', 'option1', 'option2', 'option3', 'option4']
+
+function ContractLineItemsTab({
+  contract,
+  onAdd,
+  onUpdate,
+  onRemove,
+}: {
+  contract: Contract
+  onAdd: (line: { year: ContractLineYear; description: string; quantity: number; unit: string; rate: number }) => string | null
+  onUpdate: (lineId: string, data: Partial<Omit<ContractLineItem, 'id' | 'contractId' | 'clin'>>) => void
+  onRemove: (lineId: string) => void
+}) {
+  const lineItems = useMemo(() => {
+    return [...(contract.lineItems || [])].sort((a, b) => {
+      const ay = LINE_YEAR_ORDER.indexOf(a.year)
+      const by = LINE_YEAR_ORDER.indexOf(b.year)
+      if (ay !== by) return ay - by
+      return a.clin.localeCompare(b.clin)
+    })
+  }, [contract.lineItems])
+
+  const allowedYears = useMemo<ContractLineYear[]>(() => {
+    const optionCount = Math.max(0, Math.min(4, contract.optionYears ?? 4))
+    return LINE_YEAR_ORDER.slice(0, 1 + optionCount)
+  }, [contract.optionYears])
+
+  const [draft, setDraft] = useState<{
+    year: ContractLineYear
+    description: string
+    quantity: string
+    unit: string
+    rate: string
+  }>({ year: allowedYears[0] ?? 'base', description: '', quantity: '1', unit: 'EA', rate: '0' })
+
+  useEffect(() => {
+    if (!allowedYears.includes(draft.year)) {
+      setDraft(d => ({ ...d, year: allowedYears[0] ?? 'base' }))
+    }
+  }, [allowedYears, draft.year])
+
+  const draftAmount = (() => {
+    const q = Number(draft.quantity) || 0
+    const r = Number(draft.rate) || 0
+    return Number((q * r).toFixed(2))
+  })()
+
+  const draftValid = draft.description.trim().length > 0 && Number(draft.quantity) > 0 && Number(draft.rate) >= 0
+
+  const handleAdd = () => {
+    if (!draftValid) {
+      toast.error('Description, quantity, and rate are required')
+      return
+    }
+    const id = onAdd({
+      year: draft.year,
+      description: draft.description.trim(),
+      quantity: Number(draft.quantity) || 0,
+      unit: (draft.unit || 'EA').trim().toUpperCase(),
+      rate: Number(draft.rate) || 0,
+    })
+    if (id) {
+      toast.success('Line item added')
+      setDraft(d => ({ ...d, description: '', quantity: '1', rate: '0' }))
+    }
+  }
+
+  const totalsByYear = useMemo(() => {
+    const totals: Partial<Record<ContractLineYear, number>> = {}
+    for (const l of lineItems) totals[l.year] = (totals[l.year] || 0) + l.amount
+    return totals
+  }, [lineItems])
+
+  const grandTotal = lineItems.reduce((s, l) => s + l.amount, 0)
+
+  return (
+    <div className="space-y-5">
+      <div
+        className="rounded-2xl border p-5"
+        style={{
+          background: 'linear-gradient(135deg, rgba(15,46,54,0.94), rgba(10,29,43,0.96))',
+          borderColor: 'rgba(215,190,122,0.24)',
+        }}
+      >
+        <p className="text-[10px] font-black uppercase tracking-[0.16em] text-[#D7BE7A]">Contract line items</p>
+        <h3 className="text-base font-bold text-slate-100 mt-1">Add a line</h3>
+        <p className="text-xs text-slate-400 mt-1 max-w-2xl">
+          Pick the year, describe the work, then enter quantity / unit / rate. The CLIN number is generated automatically:
+          base year starts at 0001, option year 1 at 1001, option year 2 at 2001, and so on. Up to 1 base year + 4 option years.
+        </p>
+
+        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-6">
+          <div className="sm:col-span-2">
+            <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">Year</label>
+            <select
+              value={draft.year}
+              onChange={e => setDraft({ ...draft, year: e.target.value as ContractLineYear })}
+              className="input-field w-full"
+            >
+              {allowedYears.map(y => (
+                <option key={y} value={y}>{LINE_YEAR_LABELS[y]}</option>
+              ))}
+            </select>
+          </div>
+          <div className="sm:col-span-4">
+            <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">Description</label>
+            <input
+              type="text"
+              value={draft.description}
+              onChange={e => setDraft({ ...draft, description: e.target.value })}
+              placeholder="e.g. Hazard tree removal services"
+              className="input-field w-full"
+            />
+          </div>
+          <div>
+            <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">Quantity</label>
+            <input
+              type="number"
+              min={0}
+              step="0.01"
+              value={draft.quantity}
+              onChange={e => setDraft({ ...draft, quantity: e.target.value })}
+              className="input-field w-full"
+            />
+          </div>
+          <div>
+            <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">Unit</label>
+            <input
+              type="text"
+              value={draft.unit}
+              onChange={e => setDraft({ ...draft, unit: e.target.value })}
+              placeholder="EA"
+              className="input-field w-full uppercase"
+            />
+          </div>
+          <div>
+            <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">Rate ($)</label>
+            <input
+              type="number"
+              min={0}
+              step="0.01"
+              value={draft.rate}
+              onChange={e => setDraft({ ...draft, rate: e.target.value })}
+              className="input-field w-full"
+            />
+          </div>
+          <div>
+            <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">Amount</label>
+            <div
+              className="rounded-xl border px-3 py-2 text-sm font-bold text-[#F8E8B8]"
+              style={{ background: 'rgba(255,255,255,0.04)', borderColor: 'rgba(215,190,122,0.22)' }}
+            >
+              {formatCurrency(draftAmount)}
+            </div>
+          </div>
+          <div className="sm:col-span-2 flex items-end">
+            <button
+              type="button"
+              onClick={handleAdd}
+              disabled={!draftValid}
+              className="btn-primary w-full disabled:opacity-45 disabled:cursor-not-allowed"
+            >
+              <Plus size={12} /> Add line
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {lineItems.length === 0 ? (
+        <div
+          className="rounded-2xl border p-8 text-center"
+          style={{ background: 'rgba(8,24,37,0.55)', borderColor: 'rgba(215,190,122,0.18)' }}
+        >
+          <Layers size={28} className="mx-auto text-slate-500" />
+          <p className="text-sm text-slate-400 mt-2 font-semibold">No line items yet</p>
+          <p className="text-xs text-slate-500 mt-1">Add the first CLIN above to get started.</p>
+        </div>
+      ) : (
+        <div
+          className="rounded-2xl border overflow-hidden"
+          style={{ background: 'rgba(8,24,37,0.72)', borderColor: 'rgba(215,190,122,0.24)' }}
+        >
+          <div className="flex items-center justify-between px-5 py-3 border-b" style={{ borderColor: 'rgba(215,190,122,0.18)' }}>
+            <p className="text-[10px] font-black uppercase tracking-[0.16em] text-[#D7BE7A]">All lines</p>
+            <p className="text-xs text-slate-300 font-semibold">
+              Total: <span className="text-[#F8E8B8] font-bold">{formatCurrency(grandTotal)}</span>
+            </p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr style={{ background: 'rgba(215,190,122,0.10)' }}>
+                  <th className="text-left px-3 py-2 font-bold uppercase tracking-wide text-[10px] text-[#D7BE7A]">CLIN</th>
+                  <th className="text-left px-3 py-2 font-bold uppercase tracking-wide text-[10px] text-[#D7BE7A]">Year</th>
+                  <th className="text-left px-3 py-2 font-bold uppercase tracking-wide text-[10px] text-[#D7BE7A]">Description</th>
+                  <th className="text-right px-3 py-2 font-bold uppercase tracking-wide text-[10px] text-[#D7BE7A]">Qty</th>
+                  <th className="text-left px-3 py-2 font-bold uppercase tracking-wide text-[10px] text-[#D7BE7A]">Unit</th>
+                  <th className="text-right px-3 py-2 font-bold uppercase tracking-wide text-[10px] text-[#D7BE7A]">Rate</th>
+                  <th className="text-right px-3 py-2 font-bold uppercase tracking-wide text-[10px] text-[#D7BE7A]">Amount</th>
+                  <th className="px-3 py-2"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {LINE_YEAR_ORDER.map(year => {
+                  const rows = lineItems.filter(l => l.year === year)
+                  if (rows.length === 0) return null
+                  return (
+                    <>
+                      <tr key={`hdr-${year}`}>
+                        <td colSpan={8} className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide text-slate-400" style={{ background: 'rgba(255,255,255,0.025)' }}>
+                          {LINE_YEAR_LABELS[year]} · {formatCurrency(totalsByYear[year] || 0)}
+                        </td>
+                      </tr>
+                      {rows.map(line => (
+                        <LineItemRow
+                          key={line.id}
+                          line={line}
+                          onUpdate={data => onUpdate(line.id, data)}
+                          onRemove={() => onRemove(line.id)}
+                        />
+                      ))}
+                    </>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function LineItemRow({
+  line,
+  onUpdate,
+  onRemove,
+}: {
+  line: ContractLineItem
+  onUpdate: (data: Partial<Omit<ContractLineItem, 'id' | 'contractId' | 'clin'>>) => void
+  onRemove: () => void
+}) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState({
+    description: line.description,
+    quantity: String(line.quantity),
+    unit: line.unit,
+    rate: String(line.rate),
+  })
+
+  useEffect(() => {
+    if (!editing) {
+      setDraft({
+        description: line.description,
+        quantity: String(line.quantity),
+        unit: line.unit,
+        rate: String(line.rate),
+      })
+    }
+  }, [line, editing])
+
+  const save = () => {
+    const quantity = Number(draft.quantity) || 0
+    const rate = Number(draft.rate) || 0
+    onUpdate({
+      description: draft.description.trim(),
+      quantity,
+      unit: (draft.unit || 'EA').trim().toUpperCase(),
+      rate,
+    })
+    setEditing(false)
+  }
+
+  if (editing) {
+    return (
+      <tr style={{ borderTop: '1px solid rgba(215,190,122,0.10)' }}>
+        <td className="px-3 py-2 font-mono font-bold text-[#F8E8B8]">{line.clin}</td>
+        <td className="px-3 py-2 text-slate-300 text-[11px]">{LINE_YEAR_LABELS[line.year]}</td>
+        <td className="px-3 py-2">
+          <input className="input-field w-full text-xs" value={draft.description} onChange={e => setDraft({ ...draft, description: e.target.value })} />
+        </td>
+        <td className="px-3 py-2 w-20">
+          <input className="input-field w-full text-xs text-right" type="number" min={0} step="0.01" value={draft.quantity} onChange={e => setDraft({ ...draft, quantity: e.target.value })} />
+        </td>
+        <td className="px-3 py-2 w-20">
+          <input className="input-field w-full text-xs uppercase" value={draft.unit} onChange={e => setDraft({ ...draft, unit: e.target.value })} />
+        </td>
+        <td className="px-3 py-2 w-28">
+          <input className="input-field w-full text-xs text-right" type="number" min={0} step="0.01" value={draft.rate} onChange={e => setDraft({ ...draft, rate: e.target.value })} />
+        </td>
+        <td className="px-3 py-2 text-right text-[#F8E8B8] font-bold">{formatCurrency((Number(draft.quantity) || 0) * (Number(draft.rate) || 0))}</td>
+        <td className="px-3 py-2">
+          <div className="flex items-center justify-end gap-1">
+            <button type="button" onClick={save} className="p-1.5 rounded-md text-emerald-300 hover:bg-emerald-900/40" title="Save"><Save size={12} /></button>
+            <button type="button" onClick={() => setEditing(false)} className="p-1.5 rounded-md text-slate-400 hover:bg-white/10" title="Cancel"><X size={12} /></button>
+          </div>
+        </td>
+      </tr>
+    )
+  }
+
+  return (
+    <tr style={{ borderTop: '1px solid rgba(215,190,122,0.10)' }}>
+      <td className="px-3 py-2 font-mono font-bold text-[#F8E8B8]">{line.clin}</td>
+      <td className="px-3 py-2 text-slate-400 text-[11px]">{LINE_YEAR_LABELS[line.year]}</td>
+      <td className="px-3 py-2 text-slate-200">{line.description || <span className="italic text-slate-500">(no description)</span>}</td>
+      <td className="px-3 py-2 text-right text-slate-200">{line.quantity}</td>
+      <td className="px-3 py-2 text-slate-300">{line.unit}</td>
+      <td className="px-3 py-2 text-right text-slate-200">{formatCurrency(line.rate)}</td>
+      <td className="px-3 py-2 text-right text-[#F8E8B8] font-bold">{formatCurrency(line.amount)}</td>
+      <td className="px-3 py-2">
+        <div className="flex items-center justify-end gap-1">
+          <button type="button" onClick={() => setEditing(true)} className="p-1.5 rounded-md text-slate-300 hover:bg-white/10" title="Edit"><Pencil size={12} /></button>
+          <button
+            type="button"
+            onClick={() => {
+              if (confirm(`Delete CLIN ${line.clin}?`)) onRemove()
+            }}
+            className="p-1.5 rounded-md text-red-300 hover:bg-red-900/40"
+            title="Delete"
+          ><Trash2 size={12} /></button>
+        </div>
+      </td>
+    </tr>
+  )
+}
 
 function ContractBillingTab({
   contract,
@@ -679,7 +1015,7 @@ function ContractDetailDrawer({
   onClose: () => void
   onOpenSourcing?: (opp: Opportunity) => void
 }) {
-  const { updateContract, addContractPoC, updateContractPoC, removeContractPoC, addLockedSubcontractor, updateLockedSubcontractor, addGovernmentWarning, updateGovernmentWarning, removeGovernmentWarning, resolveGovernmentWarning, advanceContractStatus, terminateContract, currentUser, employees, opportunities, subcontractors, nextInvoiceNumber, consumeInvoiceNumber } = useStore()
+  const { updateContract, addContractPoC, updateContractPoC, removeContractPoC, addLockedSubcontractor, updateLockedSubcontractor, addGovernmentWarning, updateGovernmentWarning, removeGovernmentWarning, resolveGovernmentWarning, advanceContractStatus, terminateContract, currentUser, employees, opportunities, subcontractors, nextInvoiceNumber, consumeInvoiceNumber, addContractLineItem, updateContractLineItem, removeContractLineItem } = useStore()
   const [tab, setTab] = useState<ContractDrawerTab>(initialTab)
   const [deliverableForm, setDeliverableForm] = useState({
     title: '',
@@ -964,6 +1300,7 @@ function ContractDetailDrawer({
           { key: 'lockSubk', label: `Locked Subk (${(contract.lockedSubcontractors || []).length})`, icon: Shield },
           { key: 'warnings', label: `Warnings (${(contract.governmentWarnings || []).filter(w => !w.resolvedAt).length})`, icon: AlertTriangle },
           { key: 'deliverables', label: `Deliverables`, icon: ListChecks },
+          { key: 'lineItems', label: `Line Items (${(contract.lineItems || []).length})`, icon: Layers },
           { key: 'billing', label: 'Billing Period', icon: Receipt },
           { key: 'assignment', label: 'Assignment', icon: UserCog },
         ].map(t => (
@@ -2461,6 +2798,16 @@ function ContractDetailDrawer({
               </div>
             </div>
           </div>
+        )}
+
+        {/* LINE ITEMS — CLIN-numbered scope of work for base + option years */}
+        {tab === 'lineItems' && (
+          <ContractLineItemsTab
+            contract={contract}
+            onAdd={(line) => addContractLineItem(contract.id, line)}
+            onUpdate={(lineId, data) => updateContractLineItem(contract.id, lineId, data)}
+            onRemove={(lineId) => removeContractLineItem(contract.id, lineId)}
+          />
         )}
 
         {/* BILLING PERIOD — Manual service date + invoice sequence preview */}

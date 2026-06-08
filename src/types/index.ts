@@ -303,6 +303,29 @@ export interface Contract {
   proposalAttachments?: FileAttachment[]
   samGovContacts?: SamGovContact[]   // copied from originating opportunity at award time
   serviceDate?: string              // YYYY-MM-DD, entered in the Billing Period tab; printed on the invoice
+  lineItems?: ContractLineItem[]    // CLIN-numbered scope of work entries (base + up to 4 option years)
+}
+
+// ── Contract Line Item (CLIN) ─────────────────────────────────────────
+// Year bucket the line belongs to. CLIN format:
+//   base    -> 0001, 0002, 0003 ...
+//   option1 -> 1001, 1002, 1003 ...
+//   option2 -> 2001, 2002, 2003 ...
+//   option3 -> 3001, 3002, 3003 ...
+//   option4 -> 4001, 4002, 4003 ...
+export type ContractLineYear = 'base' | 'option1' | 'option2' | 'option3' | 'option4'
+
+export interface ContractLineItem {
+  id: string
+  contractId: string
+  clin: string                       // 4-digit string (e.g. "0001", "1002")
+  year: ContractLineYear
+  description: string
+  quantity: number
+  unit: string                       // e.g. "EA", "HR", "LOT", "MO"
+  rate: number                       // per-unit price
+  amount: number                     // = quantity × rate (stored for invoice rendering)
+  createdAt?: string
 }
 
 // ── BD Submission (BD Tracker) ────────────────────────────────────────

@@ -8,6 +8,7 @@ import type {
   ContractPoC, LockedSubcontractor, GovernmentWarning, Employee,
   BDSubmission, FileAttachment, CompanyCertification, EmployeeRequest,
   CompanyCertificationStatus, EmployeeRequestStatus,
+  ContractLineItem,
 } from '../types'
 import {
   MOCK_USERS, MOCK_OPPORTUNITIES, MOCK_NOTIFICATIONS,
@@ -33,6 +34,8 @@ import {
   upsertLockedSubcontractor,
   upsertGovernmentWarning,
   deleteGovernmentWarningRecord,
+  upsertContractLineItem,
+  deleteContractLineItemRecord,
   upsertFreshAward,
   deleteFreshAwardRecord,
   upsertPastPerformance,
@@ -116,6 +119,11 @@ interface AppState {
   removeGovernmentWarning: (contractId: string, warningId: string) => void
   resolveGovernmentWarning: (contractId: string, warningId: string, note: string) => void
   advanceContractStatus: (id: string) => void
+
+  // ── Contract line items (CLINs) ────────────────────────────────────
+  addContractLineItem: (contractId: string, line: Omit<ContractLineItem, 'id' | 'contractId' | 'clin' | 'amount' | 'createdAt'> & { amount?: number }) => string | null
+  updateContractLineItem: (contractId: string, lineId: string, data: Partial<Omit<ContractLineItem, 'id' | 'contractId' | 'clin'>>) => void
+  removeContractLineItem: (contractId: string, lineId: string) => void
 
   // ── Subcontractor management ───────────────────────────────────────
   addSubcontractor: (data: Omit<Subcontractor, 'id' | 'createdAt'>) => void
@@ -1056,6 +1064,84 @@ export const useStore = create<AppState>()(
         }))
         const updated = get().contracts.find(c => c.id === contractId)?.governmentWarnings?.find(w => w.id === warningId)
         if (updated) upsertGovernmentWarning(updated)
+      },
+
+      addContractLineItem: (contractId, line) => {
+        const contract = get().contracts.find(c => c.id === contractId)
+        if (!contract) return null
+        const yearPrefixes: Record<ContractLineItem['year'], number> = {
+          base: 0, option1: 1000, option2: 2000, option3: 3000, option4: 4000,
+        }
+        const prefix = yearPrefixes[line.year]
+        const existing = (contract.lineItems || []).filter(l => l.year === line.year)
+        const usedNumbers = new Set(
+          existing
+            .map(l => Number(l.clin))
+            .filter(n => Number.isFinite(n) && n >= prefix && n < prefix + 1000),
+        )
+        let next = prefix + 1
+        while (usedNumbers.has(next)) next++
+        if (next >= prefix + 1000) {
+          toast.error('No more CLIN numbers available for this year')
+          return null
+        }
+        const clin = String(next).padStart(4, '0')
+        const quantity = Number(line.quantity) || 0
+        const rate = Number(line.rate) || 0
+        const amount = line.amount !== undefined ? Number(line.amount) : Number((quantity * rate).toFixed(2))
+        const newLine: ContractLineItem = {
+          id: `cli-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          contractId,
+          clin,
+          year: line.year,
+          description: line.description ?? '',
+          quantity,
+          unit: line.unit ?? '',
+          rate,
+          amount,
+          createdAt: new Date().toISOString(),
+        }
+        set(s => ({
+          contracts: s.contracts.map(c =>
+            c.id === contractId ? { ...c, lineItems: [...(c.lineItems || []), newLine] } : c
+          )
+        }))
+        upsertContractLineItem(newLine)
+        return newLine.id
+      },
+
+      updateContractLineItem: (contractId, lineId, data) => {
+        set(s => ({
+          contracts: s.contracts.map(c => {
+            if (c.id !== contractId) return c
+            return {
+              ...c,
+              lineItems: (c.lineItems || []).map(l => {
+                if (l.id !== lineId) return l
+                const next = { ...l, ...data }
+                const quantity = Number(next.quantity) || 0
+                const rate = Number(next.rate) || 0
+                if (data.amount === undefined) {
+                  next.amount = Number((quantity * rate).toFixed(2))
+                }
+                return next
+              }),
+            }
+          })
+        }))
+        const updated = get().contracts.find(c => c.id === contractId)?.lineItems?.find(l => l.id === lineId)
+        if (updated) upsertContractLineItem(updated)
+      },
+
+      removeContractLineItem: (contractId, lineId) => {
+        set(s => ({
+          contracts: s.contracts.map(c =>
+            c.id === contractId
+              ? { ...c, lineItems: (c.lineItems || []).filter(l => l.id !== lineId) }
+              : c
+          )
+        }))
+        deleteContractLineItemRecord(lineId)
       },
 
       advanceContractStatus: (id) => {
