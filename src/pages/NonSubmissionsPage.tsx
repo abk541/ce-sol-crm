@@ -373,7 +373,7 @@ function ReportCard({
 }
 
 // ── Dropped Opportunities Table ────────────────────────────────────────
-function DroppedOpportunitiesTab({ targetId }: { targetId?: string | null }) {
+function DroppedOpportunitiesTab({ targetId, onViewReport }: { targetId?: string | null; onViewReport: (reportId: string) => void }) {
   const { opportunities, nonSubReports } = useStore()
   const dropped = useMemo(
     () => opportunities
@@ -415,11 +415,13 @@ function DroppedOpportunitiesTab({ targetId }: { targetId?: string | null }) {
               <tbody>
                 {dropped.map((o, i) => {
                   const report = nonSubReports.find(r => r.opportunityId === o.id)
+                  const clickable = !!report
                   return (
                     <motion.tr key={o.id}
                       initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: i * 0.03 }}
-                      className={targetId ? 'ring-1 ring-[#D7BE7A] ring-inset bg-[#D7BE7A]/10' : undefined}>
+                      onClick={clickable ? () => onViewReport(report!.id) : undefined}
+                      className={`${clickable ? 'cursor-pointer hover:bg-slate-50 transition-colors' : ''} ${targetId ? 'ring-1 ring-[#D7BE7A] ring-inset bg-[#D7BE7A]/10' : ''}`.trim() || undefined}>
                       <td>
                         {o.priority && (
                           <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
@@ -668,7 +670,7 @@ export default function NonSubmissionsPage() {
       )}
 
       {/* ── Dropped Tab ── */}
-      {pageTab === 'dropped' && <DroppedOpportunitiesTab targetId={globalRecordId} />}
+      {pageTab === 'dropped' && <DroppedOpportunitiesTab targetId={globalRecordId} onViewReport={(id) => setReviewId(id)} />}
 
       {/* Modals */}
       <AnimatePresence>
