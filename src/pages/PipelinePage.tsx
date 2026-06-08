@@ -1298,32 +1298,40 @@ function SubmitModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }
     }
   }
 
-  const addFile = async () => {
-    if (!selectedProposalFile || !proposalAttachedAt) return
+  const addFile = async (fileArg?: File): Promise<FileAttachment | null> => {
+    const file = fileArg ?? selectedProposalFile
+    if (!file || !proposalAttachedAt) return null
     try {
-      const attachment = await fileToProposalAttachment(selectedProposalFile, proposalAttachedAt, uploadedBy)
+      const attachment = await fileToProposalAttachment(file, proposalAttachedAt, uploadedBy)
       setProposalAttachments(prev => [...prev, attachment])
       setSelectedProposalFile(null)
       setProposalAttachedAt(toDatetimeLocal(new Date().toISOString()))
       if (proposalFileInputRef.current) proposalFileInputRef.current.value = ''
       toast.success('Proposal file uploaded')
+      return attachment
     } catch (err) {
       console.error(err)
       toast.error('Proposal file could not be uploaded.')
+      return null
     }
   }
 
-  const confirm = () => {
+  const confirm = async () => {
+    let pending: FileAttachment | null = null
+    if (selectedProposalFile) {
+      pending = await addFile(selectedProposalFile)
+    }
+    const finalAttachments = pending ? [...proposalAttachments, pending] : proposalAttachments
     const vals: { contractAmount?: number; baseAmount?: number; monthlyPayment?: number } = {}
     if (contractAmount) vals.contractAmount = parseFloat(contractAmount)
     if (yearlyValue)    vals.baseAmount     = parseFloat(yearlyValue)
     if (monthlyValue)   vals.monthlyPayment = parseFloat(monthlyValue)
-    const proposalNames = proposalAttachments.map(att => att.name).filter(Boolean)
+    const proposalNames = finalAttachments.map(att => att.name).filter(Boolean)
     submitOpportunity(opp.id, {
       ...vals,
       proposals: proposalNames,
       assignedOpportunities: proposalNames,
-      proposalAttachments,
+      proposalAttachments: finalAttachments,
     })
     toast.success('Proposal submitted! Status updated.')
     onClose()
@@ -1431,7 +1439,11 @@ function SubmitModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }
               <input
                 ref={proposalFileInputRef}
                 type="file"
-                onChange={e => setSelectedProposalFile(e.target.files?.[0] ?? null)}
+                onChange={e => {
+                  const file = e.target.files?.[0] ?? null
+                  setSelectedProposalFile(file)
+                  if (file) addFile(file)
+                }}
                 className="input-field text-xs file:mr-3 file:rounded-lg file:border-0 file:bg-[#D7BE7A] file:px-3 file:py-1.5 file:text-xs file:font-bold file:text-[#07131F]"
               />
               <input
@@ -1443,13 +1455,14 @@ function SubmitModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }
               />
               <button
                 type="button"
-                onClick={addFile}
+                onClick={() => addFile()}
                 disabled={!selectedProposalFile || !proposalAttachedAt}
                 className="btn-secondary justify-center text-xs px-3 disabled:opacity-40"
               >
                 <Upload size={12} /> Add
               </button>
             </div>
+            <p className="mt-2 text-[10px] text-slate-400">Files are added automatically when selected.</p>
           </div>
         </div>
 
