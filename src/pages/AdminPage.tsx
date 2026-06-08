@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Plus, Pencil, Trash2, X, Check, Shield, Search, Clock, Save } from 'lucide-react'
+import { Plus, Pencil, Trash2, X, Check, Shield, Search, Clock, Save, Network, List, GripVertical } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import type { User, Role } from '../types'
 import { avatarColor, useEscapeKey } from '../lib/utils'
@@ -16,17 +16,67 @@ const ROLE_BADGE: Record<Role, string> = {
   OPS_MANAGER:     'bg-cyan-500/15 text-cyan-300 border-cyan-500/25',
 }
 
+type HierarchyTier = {
+  key: string
+  title: string
+  subtitle: string
+  roles: Role[]
+  // Role assigned when the “+” tile is clicked OR when a card is dropped onto this tier.
+  primaryRole: Role
+  accent: string        // border / glow colour
+  pillClass: string     // tailwind classes for header pill
+}
+
+const HIERARCHY_TIERS: HierarchyTier[] = [
+  {
+    key: 'executive',
+    title: 'Executive',
+    subtitle: 'Capture & Operations leadership',
+    roles: ['CAPTURE_MANAGER', 'OPS_MANAGER'],
+    primaryRole: 'CAPTURE_MANAGER',
+    accent: 'rgba(245,158,11,0.45)',
+    pillClass: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
+  },
+  {
+    key: 'bd',
+    title: 'BD Managers',
+    subtitle: 'Lead the business-development teams',
+    roles: ['BD_MANAGER'],
+    primaryRole: 'BD_MANAGER',
+    accent: 'rgba(99,102,241,0.45)',
+    pillClass: 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30',
+  },
+  {
+    key: 'leads',
+    title: 'Team Leads',
+    subtitle: 'Coordinate associates day-to-day',
+    roles: ['TEAM_LEAD'],
+    primaryRole: 'TEAM_LEAD',
+    accent: 'rgba(139,92,246,0.45)',
+    pillClass: 'bg-violet-500/15 text-violet-300 border-violet-500/30',
+  },
+  {
+    key: 'associates',
+    title: 'Associates',
+    subtitle: 'Capture analysts & proposal writers',
+    roles: ['ASSOCIATE'],
+    primaryRole: 'ASSOCIATE',
+    accent: 'rgba(16,185,129,0.45)',
+    pillClass: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30',
+  },
+]
+
 type FormState = {
   name: string; email: string; role: Role; status: 'active' | 'inactive'
 }
 
-function UserModal({ user, onClose }: { user: User | null; onClose: () => void }) {
+function UserModal({ user, defaultRole, onClose }: { user: User | null; defaultRole?: Role; onClose: () => void }) {
   const { createUser, updateUser } = useStore()
   const isEdit = !!user
   const [form, setForm] = useState<FormState>({
     name:   user?.name   ?? '',
     email:  user?.email  ?? '',
-    role:   user?.role   ?? 'ASSOCIATE',
+    role:   user?.role   ?? defaultRole ?? 'ASSOCIATE',
     status: user?.status ?? 'active',
   })
 
@@ -119,6 +169,7 @@ export default function AdminPage() {
   const {
     users,
     deleteUser,
+    updateUser,
     currentUser,
     nonSubGraceHours,
     nonSubGraceMinutes,
@@ -126,6 +177,10 @@ export default function AdminPage() {
   } = useStore()
   const [search, setSearch] = useState('')
   const [modal, setModal] = useState<'create' | User | null>(null)
+  const [createRole, setCreateRole] = useState<Role | null>(null)
+  const [view, setView] = useState<'hierarchy' | 'table'>('hierarchy')
+  const [dragId, setDragId] = useState<string | null>(null)
+  const [dragOverTier, setDragOverTier] = useState<string | null>(null)
   const [graceHours, setGraceHours] = useState(String(nonSubGraceHours))
   const [graceMinutes, setGraceMinutes] = useState(String(nonSubGraceMinutes))
 
@@ -152,6 +207,27 @@ export default function AdminPage() {
     toast.success(`${u.name} removed.`)
   }
 
+  const openCreate = (role?: Role) => {
+    setCreateRole(role ?? null)
+    setModal('create')
+  }
+
+  const handleDrop = (tier: HierarchyTier) => {
+    setDragOverTier(null)
+    const id = dragId
+    setDragId(null)
+    if (!id) return
+    const user = users.find(u => u.id === id)
+    if (!user) return
+    if (tier.roles.includes(user.role)) return
+    if (user.id === currentUser?.id && !tier.roles.includes('CAPTURE_MANAGER')) {
+      toast.error("You can't change your own role away from Capture Manager.")
+      return
+    }
+    updateUser(user.id, { role: tier.primaryRole })
+    toast.success(`${user.name} \u2192 ${ROLE_LABELS[tier.primaryRole]}`)
+  }
+
   const saveNonSubTiming = () => {
     const hours = Math.max(0, Math.trunc(Number(graceHours) || 0))
     const minutes = Math.max(0, Math.trunc(Number(graceMinutes) || 0))
@@ -170,7 +246,7 @@ export default function AdminPage() {
           </h1>
           <p className="text-slate-500 text-sm mt-0.5">{users.length} users · {users.filter(u => u.status === 'active').length} active</p>
         </div>
-        <button onClick={() => setModal('create')} className="btn-primary">
+        <button onClick={() => openCreate()} className="btn-primary">
           <Plus size={14} /> Create User
         </button>
       </div>
@@ -227,16 +303,121 @@ export default function AdminPage() {
         })}
       </div>
 
-      {/* Search */}
-      <div className="glass rounded-2xl p-4 mb-4">
-        <div className="relative max-w-sm">
-          <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
-          <input value={search} onChange={e => setSearch(e.target.value)}
-            className="input-field pl-9 text-xs" placeholder="Search by name, email, role…" />
+      {/* View toggle */}
+      <div className="flex items-center gap-2 mb-4">
+        <div className="inline-flex rounded-xl p-1" style={{ background: 'rgba(15,23,42,0.6)', border: '1px solid rgba(99,102,241,0.15)' }}>
+          <button
+            onClick={() => setView('hierarchy')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${view === 'hierarchy' ? 'bg-indigo-500/20 text-indigo-200' : 'text-slate-400 hover:text-slate-200'}`}>
+            <Network size={13} /> Hierarchy
+          </button>
+          <button
+            onClick={() => setView('table')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${view === 'table' ? 'bg-indigo-500/20 text-indigo-200' : 'text-slate-400 hover:text-slate-200'}`}>
+            <List size={13} /> Table
+          </button>
         </div>
+        <p className="text-[11px] text-slate-500 ml-1">
+          {view === 'hierarchy' ? 'Click \u201C+\u201D to add a user at that level, or drag a card between tiers to change a role.' : 'Tabular view of all user accounts.'}
+        </p>
       </div>
 
+      {/* Hierarchy view */}
+      {view === 'hierarchy' && (
+        <div className="space-y-3">
+          {HIERARCHY_TIERS.map((tier, idx) => {
+            const tierUsers = users.filter(u => tier.roles.includes(u.role))
+            const isOver = dragOverTier === tier.key
+            return (
+              <div key={tier.key}>
+                <div
+                  onDragOver={e => { e.preventDefault(); if (dragId) setDragOverTier(tier.key) }}
+                  onDragLeave={() => { if (dragOverTier === tier.key) setDragOverTier(null) }}
+                  onDrop={() => handleDrop(tier)}
+                  className="glass rounded-2xl p-4 transition-all"
+                  style={{
+                    border: `1px solid ${isOver ? tier.accent : 'rgba(99,102,241,0.12)'}`,
+                    boxShadow: isOver ? `0 0 0 2px ${tier.accent}, 0 12px 32px ${tier.accent}` : undefined,
+                    background: isOver ? 'rgba(99,102,241,0.05)' : undefined,
+                  }}>
+                  <div className="flex items-center justify-between mb-3 gap-3">
+                    <div className="flex items-center gap-2">
+                      <span className={`badge border text-[10px] ${tier.pillClass}`}>{tier.title}</span>
+                      <span className="text-[10px] font-bold text-slate-500 bg-slate-700/30 px-1.5 py-0.5 rounded-md">{tierUsers.length}</span>
+                      <p className="text-[11px] text-slate-500 hidden sm:block">{tier.subtitle}</p>
+                    </div>
+                    {isOver && (
+                      <p className="text-[10px] font-bold uppercase tracking-wide" style={{ color: tier.accent }}>
+                        Drop to set role: {ROLE_LABELS[tier.primaryRole]}
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {tierUsers.map(u => (
+                      <motion.div
+                        key={u.id}
+                        layout
+                        draggable
+                        onDragStart={e => { setDragId(u.id); e.dataTransfer.effectAllowed = 'move' }}
+                        onDragEnd={() => { setDragId(null); setDragOverTier(null) }}
+                        onClick={() => setModal(u)}
+                        className="group relative flex items-center gap-2 pl-2 pr-3 py-2 rounded-xl cursor-grab active:cursor-grabbing transition-all"
+                        style={{
+                          background: 'rgba(15,23,42,0.7)',
+                          border: '1px solid rgba(99,102,241,0.18)',
+                          opacity: dragId === u.id ? 0.4 : 1,
+                          minWidth: 200,
+                        }}>
+                        <GripVertical size={12} className="text-slate-600 group-hover:text-slate-400 transition-colors flex-shrink-0" />
+                        <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold text-white bg-gradient-to-br ${avatarColor(u.avatar)} flex-shrink-0`}>
+                          {u.avatar.slice(0, 2)}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5">
+                            <p className="text-xs font-semibold text-slate-200 truncate">{u.name}</p>
+                            {u.id === currentUser?.id && (
+                              <span className="text-[8px] font-bold text-indigo-300 bg-indigo-400/15 px-1 py-0.5 rounded">YOU</span>
+                            )}
+                            {u.status === 'inactive' && (
+                              <span className="text-[8px] font-bold text-rose-300 bg-rose-400/15 px-1 py-0.5 rounded">OFF</span>
+                            )}
+                          </div>
+                          <p className="text-[10px] text-slate-500 truncate">@{u.username} · {ROLE_LABELS[u.role]}</p>
+                        </div>
+                      </motion.div>
+                    ))}
+                    <button
+                      onClick={() => openCreate(tier.primaryRole)}
+                      className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:text-indigo-300 transition-colors"
+                      style={{ background: 'transparent', border: '1px dashed rgba(99,102,241,0.3)', minWidth: 200, justifyContent: 'center' }}>
+                      <Plus size={13} /> Add to {tier.title}
+                    </button>
+                  </div>
+                </div>
+                {idx < HIERARCHY_TIERS.length - 1 && (
+                  <div className="flex justify-center py-1">
+                    <div className="w-px h-3" style={{ background: 'linear-gradient(to bottom, rgba(99,102,241,0.4), rgba(99,102,241,0.05))' }} />
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {/* Search */}
+      {view === 'table' && (
+        <div className="glass rounded-2xl p-4 mb-4">
+          <div className="relative max-w-sm">
+            <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+            <input value={search} onChange={e => setSearch(e.target.value)}
+              className="input-field pl-9 text-xs" placeholder="Search by name, email, role\u2026" />
+          </div>
+        </div>
+      )}
+
       {/* Table */}
+      {view === 'table' && (
       <div className="glass rounded-2xl overflow-hidden">
         <table className="data-table">
           <thead>
@@ -299,12 +480,14 @@ export default function AdminPage() {
           </tbody>
         </table>
       </div>
+      )}
 
       <AnimatePresence>
         {modal && (
           <UserModal
             user={modal === 'create' ? null : modal as User}
-            onClose={() => setModal(null)}
+            defaultRole={createRole ?? undefined}
+            onClose={() => { setModal(null); setCreateRole(null) }}
           />
         )}
       </AnimatePresence>
