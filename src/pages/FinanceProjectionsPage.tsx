@@ -1,7 +1,21 @@
-import { Fragment, useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'framer-motion'
-import { DollarSign, Download, Filter, Pencil, Plus, Search, Trash2, X } from 'lucide-react'
+import {
+  Calendar,
+  CalendarDays,
+  CheckCircle2,
+  ChevronDown,
+  CreditCard,
+  DollarSign,
+  Download,
+  Filter,
+  Pencil,
+  Plus,
+  Search,
+  Trash2,
+  X,
+} from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useStore } from '../store/useStore'
 import type {
@@ -441,6 +455,54 @@ type Row = {
   subStatus: SubInvoiceStatus
 }
 
+function FilterChip({
+  icon,
+  label,
+  active,
+  children,
+}: {
+  icon: ReactNode
+  label: string
+  active: boolean
+  children: ReactNode
+}) {
+  return (
+    <label
+      className={
+        'group inline-flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-1.5 transition-colors focus-within:border-emerald-400 focus-within:bg-white focus-within:ring-2 focus-within:ring-emerald-100 ' +
+        (active
+          ? 'border-emerald-300 bg-emerald-50 hover:border-emerald-400'
+          : 'border-slate-200 bg-slate-50 hover:border-slate-300')
+      }
+    >
+      <span
+        className={
+          'flex h-5 w-5 items-center justify-center rounded-md shadow-sm ' +
+          (active ? 'bg-emerald-500 text-white' : 'bg-white text-slate-500')
+        }
+      >
+        {icon}
+      </span>
+      <span
+        className={
+          'text-[10px] font-bold uppercase tracking-wider ' +
+          (active ? 'text-emerald-600' : 'text-slate-400')
+        }
+      >
+        {label}
+      </span>
+      {children}
+      <ChevronDown
+        size={12}
+        className={
+          '-ml-1 transition-colors ' +
+          (active ? 'text-emerald-500' : 'text-slate-400 group-focus-within:text-emerald-500')
+        }
+      />
+    </label>
+  )
+}
+
 export default function FinanceProjectionsPage() {
   const { contracts, addContractInvoice, updateContractInvoice, removeContractInvoice } = useStore()
 
@@ -654,6 +716,13 @@ export default function FinanceProjectionsPage() {
     setSearchTerm('')
   }
 
+  const activeFilterCount =
+    (yearFilter !== defaultYear ? 1 : 0) +
+    (monthFilter !== 'ALL' ? 1 : 0) +
+    (statusFilter !== 'ALL' ? 1 : 0) +
+    (methodFilter !== 'ALL' ? 1 : 0) +
+    (searchTerm.trim() ? 1 : 0)
+
   return (
     <div className="p-6 page-enter space-y-4">
       {/* Header + KPIs */}
@@ -708,71 +777,101 @@ export default function FinanceProjectionsPage() {
       </div>
 
       {/* Filters */}
-      <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">
-            <Filter size={12} /> Filters
+      <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2">
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">
+              <Filter size={13} />
+            </span>
+            <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">Filters</span>
+            {activeFilterCount > 0 && (
+              <span className="inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-emerald-500 px-1.5 text-[10px] font-bold text-white">
+                {activeFilterCount}
+              </span>
+            )}
           </div>
 
-          <div className="relative">
-            <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400" />
+          <div className="relative min-w-[200px] flex-1 sm:max-w-sm">
+            <Search size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
-              className="input-field py-1.5 pl-7 text-xs"
+              className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-9 text-xs text-slate-700 placeholder:text-slate-400 transition-colors hover:border-slate-300 focus:border-emerald-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-100"
               placeholder="Search contract or invoice…"
               value={searchTerm}
               onChange={e => setSearchTerm(e.target.value)}
             />
+            {searchTerm && (
+              <button
+                type="button"
+                onClick={() => setSearchTerm('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full p-0.5 text-slate-400 transition-colors hover:bg-slate-200 hover:text-slate-700"
+                aria-label="Clear search"
+              >
+                <X size={12} />
+              </button>
+            )}
           </div>
 
-          <select
-            className="input-field py-1.5 text-xs"
-            value={yearFilter}
-            onChange={e => setYearFilter(e.target.value)}
-          >
-            <option value="ALL">All years</option>
-            {yearOptions.map(y => <option key={y} value={y}>{y}</option>)}
-          </select>
+          {activeFilterCount > 0 && (
+            <button
+              type="button"
+              onClick={resetFilters}
+              className="ml-auto inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-500 transition-colors hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600"
+            >
+              <X size={11} /> Reset
+            </button>
+          )}
+        </div>
 
-          <select
-            className="input-field py-1.5 text-xs"
-            value={monthFilter}
-            onChange={e => setMonthFilter(e.target.value)}
-          >
-            <option value="ALL">All months</option>
-            {MONTHS_LONG.map((m, i) => (
-              <option key={m} value={String(i + 1).padStart(2, '0')}>{m}</option>
-            ))}
-          </select>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <FilterChip icon={<Calendar size={12} />} label="Year" active={yearFilter !== defaultYear}>
+            <select
+              className="cursor-pointer appearance-none border-0 bg-transparent pr-0 text-xs font-semibold text-slate-700 outline-none focus:ring-0"
+              value={yearFilter}
+              onChange={e => setYearFilter(e.target.value)}
+            >
+              <option value="ALL">All years</option>
+              {yearOptions.map(y => <option key={y} value={y}>{y}</option>)}
+            </select>
+          </FilterChip>
 
-          <select
-            className="input-field py-1.5 text-xs"
-            value={statusFilter}
-            onChange={e => setStatusFilter(e.target.value as GovBillingStatus | 'ALL')}
-          >
-            <option value="ALL">All statuses</option>
-            {STATUS_OPTIONS.map(o => (
-              <option key={o.value} value={o.value}>{o.label}</option>
-            ))}
-          </select>
+          <FilterChip icon={<CalendarDays size={12} />} label="Month" active={monthFilter !== 'ALL'}>
+            <select
+              className="cursor-pointer appearance-none border-0 bg-transparent pr-0 text-xs font-semibold text-slate-700 outline-none focus:ring-0"
+              value={monthFilter}
+              onChange={e => setMonthFilter(e.target.value)}
+            >
+              <option value="ALL">All months</option>
+              {MONTHS_LONG.map((m, i) => (
+                <option key={m} value={String(i + 1).padStart(2, '0')}>{m}</option>
+              ))}
+            </select>
+          </FilterChip>
 
-          <select
-            className="input-field py-1.5 text-xs"
-            value={methodFilter}
-            onChange={e => setMethodFilter(e.target.value as InvoicePaymentMethod | 'ALL')}
-          >
-            <option value="ALL">All methods</option>
-            {PAYMENT_METHOD_OPTIONS.map(o => (
-              <option key={o.value} value={o.value}>{o.label}</option>
-            ))}
-          </select>
+          <FilterChip icon={<CheckCircle2 size={12} />} label="Status" active={statusFilter !== 'ALL'}>
+            <select
+              className="cursor-pointer appearance-none border-0 bg-transparent pr-0 text-xs font-semibold text-slate-700 outline-none focus:ring-0"
+              value={statusFilter}
+              onChange={e => setStatusFilter(e.target.value as GovBillingStatus | 'ALL')}
+            >
+              <option value="ALL">All statuses</option>
+              {STATUS_OPTIONS.map(o => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+          </FilterChip>
 
-          <button
-            type="button"
-            onClick={resetFilters}
-            className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-bold text-slate-500 transition-colors hover:bg-slate-50 hover:text-slate-800"
-          >
-            Reset
-          </button>
+          <FilterChip icon={<CreditCard size={12} />} label="Method" active={methodFilter !== 'ALL'}>
+            <select
+              className="cursor-pointer appearance-none border-0 bg-transparent pr-0 text-xs font-semibold text-slate-700 outline-none focus:ring-0"
+              value={methodFilter}
+              onChange={e => setMethodFilter(e.target.value as InvoicePaymentMethod | 'ALL')}
+            >
+              <option value="ALL">All methods</option>
+              {PAYMENT_METHOD_OPTIONS.map(o => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+          </FilterChip>
         </div>
       </div>
 
