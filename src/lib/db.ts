@@ -912,27 +912,32 @@ export async function upsertContract(c: Contract): Promise<boolean> {
     return false
   }
   try {
-    const payload = contractToDb(c)
-    const { error } = await supabase.from('contracts').upsert(payload)
-    if (error) {
-      // Schema cache may be missing newly added columns (e.g. service_date before migration 011 is applied).
-      // Retry once without the unknown column so the rest of the update still saves.
-      const message = `${error.message ?? ''} ${error.details ?? ''}`.toLowerCase()
-      if (error.code === 'PGRST204' && message.includes('service_date')) {
-        const { service_date: _omit, ...withoutServiceDate } = payload as Record<string, unknown>
-        void _omit
-        const retry = await supabase.from('contracts').upsert(withoutServiceDate)
-        if (retry.error) {
-          console.error('[db] upsertContract retry error', retry.error)
-          return false
+    let payload: Record<string, unknown> = contractToDb(c) as Record<string, unknown>
+    const stripped: string[] = []
+    // Up to 4 retries — strip any column the schema cache doesn't know about and try again.
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const { error } = await supabase.from('contracts').upsert(payload)
+      if (!error) {
+        if (stripped.length) {
+          console.warn(`[db] contracts row saved without missing column(s): ${stripped.join(', ')}. Run the matching SQL migration in Supabase to enable remote persistence.`)
         }
-        console.warn('[db] contracts.service_date column missing — apply migration 011_add_contract_service_date.sql in Supabase to persist service dates remotely.')
         return true
+      }
+      // PGRST204 = "Could not find the 'X' column of 'contracts' in the schema cache"
+      const message = `${error.message ?? ''} ${error.details ?? ''}`
+      const missing = error.code === 'PGRST204' ? message.match(/'([a-z0-9_]+)'/i)?.[1] : null
+      if (missing && missing in payload) {
+        const { [missing]: _drop, ...rest } = payload
+        void _drop
+        payload = rest
+        stripped.push(missing)
+        continue
       }
       console.error('[db] upsertContract error', error)
       return false
     }
-    return true
+    console.error('[db] upsertContract aborted after stripping too many unknown columns', stripped)
+    return false
   } catch (err) {
     console.error('[db] upsertContract failed', err)
     return false
