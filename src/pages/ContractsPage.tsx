@@ -1068,7 +1068,7 @@ function ContractDetailDrawer({
   onClose: () => void
   onOpenSourcing?: (opp: Opportunity) => void
 }) {
-  const { updateContract, addContractPoC, updateContractPoC, removeContractPoC, addLockedSubcontractor, updateLockedSubcontractor, addGovernmentWarning, updateGovernmentWarning, removeGovernmentWarning, resolveGovernmentWarning, advanceContractStatus, terminateContract, currentUser, employees, opportunities, subcontractors, nextInvoiceNumber, consumeInvoiceNumber, addContractLineItem, updateContractLineItem, removeContractLineItem } = useStore()
+  const { updateContract, addContractPoC, updateContractPoC, removeContractPoC, addLockedSubcontractor, updateLockedSubcontractor, addGovernmentWarning, updateGovernmentWarning, removeGovernmentWarning, resolveGovernmentWarning, advanceContractStatus, terminateContract, currentUser, employees, opportunities, subcontractors, subkDatabase, nextInvoiceNumber, consumeInvoiceNumber, addContractLineItem, updateContractLineItem, removeContractLineItem } = useStore()
   const [tab, setTab] = useState<ContractDrawerTab>(initialTab)
   const [deliverableForm, setDeliverableForm] = useState({
     title: '',
@@ -1233,6 +1233,7 @@ function ContractDetailDrawer({
     currentProject: boolean
     fromContractAdmin: boolean
     contractSourceQuote: boolean
+    fromDatabase: boolean
   }>()
 
   sourceOpportunitySourcing.forEach(entry => {
@@ -1259,6 +1260,7 @@ function ContractDetailDrawer({
       currentProject: true,
       fromContractAdmin: false,
       contractSourceQuote: true,
+      fromDatabase: false,
     })
   })
 
@@ -1285,6 +1287,39 @@ function ContractDetailDrawer({
       currentProject: false,
       fromContractAdmin: true,
       contractSourceQuote: false,
+      fromDatabase: false,
+    })
+  })
+
+  ;(subkDatabase || []).forEach(entry => {
+    const companyName = entry.companyName?.trim()
+    if (!companyName) return
+    const key = subkCompanyKey(companyName, entry.email || '')
+    const existing = subkCandidateMap.get(key)
+    if (existing) {
+      existing.fromDatabase = true
+      if (!existing.contactName && entry.contactName) existing.contactName = entry.contactName
+      if (!existing.email && entry.email) existing.email = entry.email
+      if (!existing.phone && entry.phone) existing.phone = entry.phone
+      if (!existing.setAside && entry.setAside) existing.setAside = entry.setAside
+      if (!existing.naicsCode && entry.naicsCodes?.length) existing.naicsCode = entry.naicsCodes[0]
+      if (!existing.notes && entry.notes) existing.notes = entry.notes
+      return
+    }
+    subkCandidateMap.set(key, {
+      key,
+      companyName,
+      contactName: entry.contactName || '',
+      email: entry.email || '',
+      phone: entry.phone || '',
+      setAside: entry.setAside || '',
+      naicsCode: entry.naicsCodes?.[0] || '',
+      notes: entry.notes || '',
+      entries: sourcingHistoryByKey.get(key) || [],
+      currentProject: false,
+      fromContractAdmin: false,
+      contractSourceQuote: false,
+      fromDatabase: true,
     })
   })
 
@@ -2042,13 +2077,13 @@ function ContractDetailDrawer({
             >
               <p className="text-sm font-black text-slate-100">Potential subcontractors</p>
               <p className="mt-1 text-xs text-slate-300">
-                Review quote-backed subcontractors linked to this contract, plus subcontractors already added in Contract Admin.
+                Quote-backed sourcing on this contract, subcontractors already added in Contract Admin, plus everyone in your Subk Database.
               </p>
             </div>
 
             {subkCandidates.length === 0 && (
               <p className="rounded-2xl border border-dashed border-[#D7BE7A]/25 py-8 text-center text-sm text-slate-400">
-                No quote-backed sourcing is linked to this contract yet.
+                No subcontractors yet. Add some to the Subk Database or attach quote-backed sourcing on the linked opportunity.
               </p>
             )}
 
@@ -2090,6 +2125,11 @@ function ContractDetailDrawer({
                         {candidate.fromContractAdmin && (
                           <span className="rounded-full border border-[#D7BE7A]/30 bg-[#D7BE7A]/10 px-2 py-0.5 text-[10px] font-bold text-[#F8E8B8]">
                             Added in Contract Admin
+                          </span>
+                        )}
+                        {candidate.fromDatabase && !candidate.contractSourceQuote && !candidate.fromContractAdmin && (
+                          <span className="rounded-full border border-violet-300/30 bg-violet-400/10 px-2 py-0.5 text-[10px] font-bold text-violet-100">
+                            Subk Database
                           </span>
                         )}
                         {alreadyLocked && (
