@@ -1001,6 +1001,200 @@ function ContractDetailDrawer({
                 <Trash2 size={12} /> Terminate Contract
               </button>
             )}
+
+            {/* ──── Cross-tab snapshot ──── */}
+            <div className="lg:col-span-2">
+              <p className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">Snapshot</p>
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                {/* POP */}
+                <button
+                  type="button"
+                  onClick={() => setTab('pop')}
+                  className="rounded-xl border border-slate-200 bg-white p-3 text-left transition-colors hover:border-indigo-300 hover:bg-indigo-50/40"
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                      <Calendar size={11} /> Period of Performance
+                    </div>
+                    <span className="text-[10px] font-semibold text-indigo-600">View →</span>
+                  </div>
+                  <p className="mt-1.5 text-xs font-semibold text-slate-800">
+                    {formatDate(contract.popStart)} → {formatDate(contract.popEnd) || 'TBD'}
+                  </p>
+                </button>
+
+                {/* Financials */}
+                <div className="rounded-xl border border-slate-200 bg-white p-3">
+                  <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                    <Receipt size={11} /> Financials
+                  </div>
+                  <div className="mt-1.5 space-y-0.5 text-xs">
+                    <p className="font-semibold text-slate-800">Value: ${(contract.value || 0).toLocaleString()}</p>
+                    {contract.baseAmount ? <p className="text-slate-600">Base: ${contract.baseAmount.toLocaleString()}</p> : null}
+                    {contract.monthlyPayment ? <p className="text-slate-600">Monthly: ${contract.monthlyPayment.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p> : null}
+                  </div>
+                </div>
+
+                {/* PoCs */}
+                <button
+                  type="button"
+                  onClick={() => setTab('poc')}
+                  className="rounded-xl border border-slate-200 bg-white p-3 text-left transition-colors hover:border-indigo-300 hover:bg-indigo-50/40"
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                      <UserPlus size={11} /> Points of Contact ({(contract.pocs || []).length})
+                    </div>
+                    <span className="text-[10px] font-semibold text-indigo-600">View →</span>
+                  </div>
+                  {(contract.pocs || []).length === 0 ? (
+                    <p className="mt-1.5 text-xs text-slate-400">No PoCs added yet.</p>
+                  ) : (
+                    <div className="mt-1.5 space-y-0.5">
+                      {(contract.pocs || []).slice(0, 3).map(p => (
+                        <p key={p.id} className="truncate text-xs text-slate-700">
+                          <span className="font-semibold">{POC_ROLE_LABELS[p.role]}:</span> {p.name || '—'}
+                        </p>
+                      ))}
+                      {(contract.pocs || []).length > 3 && (
+                        <p className="text-[10px] text-slate-400">+{(contract.pocs || []).length - 3} more</p>
+                      )}
+                    </div>
+                  )}
+                </button>
+
+                {/* Locked Subk */}
+                <button
+                  type="button"
+                  onClick={() => setTab('lockSubk')}
+                  className="rounded-xl border border-slate-200 bg-white p-3 text-left transition-colors hover:border-indigo-300 hover:bg-indigo-50/40"
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                      <Shield size={11} /> Locked Subk ({(contract.lockedSubcontractors || []).length})
+                    </div>
+                    <span className="text-[10px] font-semibold text-indigo-600">View →</span>
+                  </div>
+                  {(contract.lockedSubcontractors || []).length === 0 ? (
+                    <p className="mt-1.5 text-xs text-slate-400">No subcontractors locked.</p>
+                  ) : (
+                    <div className="mt-1.5 space-y-0.5">
+                      {(contract.lockedSubcontractors || []).slice(0, 3).map(s => (
+                        <p key={s.id} className="truncate text-xs text-slate-700">{s.companyName}</p>
+                      ))}
+                      {(contract.lockedSubcontractors || []).length > 3 && (
+                        <p className="text-[10px] text-slate-400">+{(contract.lockedSubcontractors || []).length - 3} more</p>
+                      )}
+                    </div>
+                  )}
+                </button>
+
+                {/* Potential Subk */}
+                <button
+                  type="button"
+                  onClick={() => setTab('subk')}
+                  className="rounded-xl border border-slate-200 bg-white p-3 text-left transition-colors hover:border-indigo-300 hover:bg-indigo-50/40"
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                      <Building2 size={11} /> Potential Subk ({subkCandidates.length})
+                    </div>
+                    <span className="text-[10px] font-semibold text-indigo-600">View →</span>
+                  </div>
+                  {subkCandidates.length === 0 ? (
+                    <p className="mt-1.5 text-xs text-slate-400">No sourced candidates.</p>
+                  ) : (
+                    <div className="mt-1.5 space-y-0.5">
+                      {subkCandidates.slice(0, 3).map(c => (
+                        <p key={c.key} className="truncate text-xs text-slate-700">{c.companyName}</p>
+                      ))}
+                      {subkCandidates.length > 3 && (
+                        <p className="text-[10px] text-slate-400">+{subkCandidates.length - 3} more</p>
+                      )}
+                    </div>
+                  )}
+                </button>
+
+                {/* Warnings */}
+                {(() => {
+                  const activeWarnings = (contract.governmentWarnings || []).filter(w => !w.resolvedAt)
+                  const warningTone = activeWarnings.length > 0
+                  return (
+                    <button
+                      type="button"
+                      onClick={() => setTab('warnings')}
+                      className={`rounded-xl border p-3 text-left transition-colors ${
+                        warningTone
+                          ? 'border-red-200 bg-red-50/60 hover:border-red-300 hover:bg-red-50'
+                          : 'border-slate-200 bg-white hover:border-indigo-300 hover:bg-indigo-50/40'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className={`flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider ${warningTone ? 'text-red-600' : 'text-slate-500'}`}>
+                          <AlertTriangle size={11} /> Gov Warnings ({activeWarnings.length})
+                        </div>
+                        <span className={`text-[10px] font-semibold ${warningTone ? 'text-red-600' : 'text-indigo-600'}`}>View →</span>
+                      </div>
+                      {activeWarnings.length === 0 ? (
+                        <p className="mt-1.5 text-xs text-slate-400">No active warnings.</p>
+                      ) : (
+                        <div className="mt-1.5 space-y-0.5">
+                          {activeWarnings.slice(0, 3).map(w => (
+                            <p key={w.id} className="truncate text-xs text-red-700">
+                              <span className="font-semibold">{GOV_WARNING_META[w.type]?.label || w.type}</span>
+                              {w.deadline ? ` · due ${formatDate(w.deadline)}` : ''}
+                            </p>
+                          ))}
+                          {activeWarnings.length > 3 && (
+                            <p className="text-[10px] text-red-500">+{activeWarnings.length - 3} more</p>
+                          )}
+                        </div>
+                      )}
+                    </button>
+                  )
+                })()}
+
+                {/* Deliverables */}
+                {(() => {
+                  const now = Date.now()
+                  const overdue = deliverables.filter(d => d.deadline && new Date(`${d.deadline}T23:59:59`).getTime() < now)
+                  const nextDue = [...deliverables]
+                    .filter(d => d.deadline && new Date(`${d.deadline}T23:59:59`).getTime() >= now)
+                    .sort((a, b) => new Date(a.deadline).getTime() - new Date(b.deadline).getTime())[0]
+                  return (
+                    <button
+                      type="button"
+                      onClick={() => setTab('deliverables')}
+                      className="rounded-xl border border-slate-200 bg-white p-3 text-left transition-colors hover:border-indigo-300 hover:bg-indigo-50/40 md:col-span-2"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                          <ListChecks size={11} /> Deliverables ({deliverables.length})
+                        </div>
+                        <span className="text-[10px] font-semibold text-indigo-600">View →</span>
+                      </div>
+                      {deliverables.length === 0 ? (
+                        <p className="mt-1.5 text-xs text-slate-400">No deliverables tracked.</p>
+                      ) : (
+                        <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-700">
+                          {overdue.length > 0 && (
+                            <span className="font-semibold text-red-600">{overdue.length} overdue</span>
+                          )}
+                          {nextDue && (
+                            <span className="text-slate-500">
+                              Next due: <span className="font-semibold text-slate-800">{nextDue.title || 'Deliverable'}</span> · {formatDate(nextDue.deadline)}
+                            </span>
+                          )}
+                          {!nextDue && overdue.length === 0 && (
+                            <span className="text-slate-400">All deliverables in the past.</span>
+                          )}
+                        </div>
+                      )}
+                    </button>
+                  )
+                })()}
+              </div>
+            </div>
           </div>
         )}
 
