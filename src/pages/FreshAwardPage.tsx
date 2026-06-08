@@ -5,11 +5,11 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   Trophy, UserPlus, ArrowRight, CheckCircle2, Clock,
   Building2, DollarSign, MapPin, Calendar, Briefcase,
-  ChevronRight, X, Check, MoreHorizontal, Pencil,
+  ChevronRight, X, Check, MoreHorizontal, Pencil, Paperclip,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { hasPermission } from '../lib/permissions'
-import type { FreshAward, ContractType, SetAside } from '../types'
+import type { FreshAward, ContractType, SetAside, FileAttachment } from '../types'
 import { formatCurrency, useEscapeKey } from '../lib/utils'
 import toast from 'react-hot-toast'
 import FloatingActionMenu from '../components/shared/FloatingActionMenu'
@@ -508,7 +508,7 @@ function AssignModal({ award, onClose, onMove }: AssignModalProps) {
 }
 
 export default function FreshAwardPage() {
-  const { freshAwards, moveFreshAwardToActive, currentUser } = useStore()
+  const { freshAwards, moveFreshAwardToActive, currentUser, opportunities } = useStore()
   const canEdit = hasPermission(currentUser, 'opportunity:edit')
   const [searchParams] = useSearchParams()
   const globalRecordId = searchParams.get('record')
@@ -576,6 +576,8 @@ export default function FreshAwardPage() {
         )}
         {visible.map((fa, i) => {
           const meta = STATUS_META[fa.status]
+          const sourceOpp = fa.opportunityId ? opportunities.find(o => o.id === fa.opportunityId) : undefined
+          const proposalAttachments: FileAttachment[] = sourceOpp?.proposalAttachments ?? []
           return (
             <motion.div
               key={fa.id}
@@ -675,6 +677,36 @@ export default function FreshAwardPage() {
                     <div className="flex items-center gap-1.5 text-slate-500 col-span-2">
                       <MapPin size={11} className="text-slate-400" />
                       <span className="truncate">{fa.location}</span>
+                    </div>
+                  )}
+                  {proposalAttachments.length > 0 && (
+                    <div className="col-span-2 flex flex-wrap items-center gap-1.5">
+                      <span className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                        <Paperclip size={11} /> Proposal
+                      </span>
+                      {proposalAttachments.map(att => (
+                        <button
+                          key={att.id}
+                          type="button"
+                          onClick={() => {
+                            if (!att.dataUrl) {
+                              toast.error('Proposal file has metadata only — re-upload it from the opportunity.')
+                              return
+                            }
+                            const link = document.createElement('a')
+                            link.href = att.dataUrl
+                            link.download = att.name || 'proposal'
+                            link.rel = 'noopener'
+                            document.body.appendChild(link)
+                            link.click()
+                            link.remove()
+                          }}
+                          title={att.name}
+                          className="inline-flex max-w-[180px] items-center gap-1 truncate rounded-md bg-indigo-50 px-2 py-0.5 text-[10px] font-semibold text-indigo-600 transition-colors hover:bg-indigo-100"
+                        >
+                          <span className="truncate">{att.name}</span>
+                        </button>
+                      ))}
                     </div>
                   )}
                 </div>

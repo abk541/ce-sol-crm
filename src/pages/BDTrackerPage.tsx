@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { Filter, MoreHorizontal, Search, TrendingUp } from 'lucide-react'
+import { Filter, MoreHorizontal, Paperclip, Search, TrendingUp } from 'lucide-react'
 import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import type { BDSubmission } from '../types'
+import type { BDSubmission, FileAttachment } from '../types'
 import { useStore } from '../store/useStore'
 import toast from 'react-hot-toast'
 import PeriodFilter, { type Period, filterByPeriod } from '../components/shared/PeriodFilter'
@@ -58,6 +58,61 @@ function typeLabel(value: string) {
 
 function rowOpportunity(row: BDSubmission, opportunities: ReturnType<typeof useStore.getState>['opportunities']) {
   return opportunities.find(o => o.solicitationId === row.solicitationId)
+}
+
+function downloadProposalAttachment(att: FileAttachment) {
+  if (!att.dataUrl) {
+    toast.error('Proposal file has metadata only — re-upload it from the opportunity to download.')
+    return
+  }
+  const link = document.createElement('a')
+  link.href = att.dataUrl
+  link.download = att.name || 'proposal'
+  link.rel = 'noopener'
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+}
+
+function ProposalCell({ attachments }: { attachments: FileAttachment[] }) {
+  const [open, setOpen] = useState(false)
+  if (!attachments.length) return <span className="text-xs text-slate-300">—</span>
+  if (attachments.length === 1) {
+    const att = attachments[0]
+    return (
+      <button
+        type="button"
+        onClick={() => downloadProposalAttachment(att)}
+        title={att.name}
+        className="inline-flex items-center gap-1 rounded-md bg-indigo-50 px-2 py-0.5 text-[10px] font-semibold text-indigo-600 transition-colors hover:bg-indigo-100"
+      >
+        <Paperclip size={11} /> Proposal
+      </button>
+    )
+  }
+  return (
+    <FloatingActionMenu
+      open={open}
+      onOpenChange={setOpen}
+      trigger={
+        <span className="inline-flex items-center gap-1 rounded-md bg-indigo-50 px-2 py-0.5 text-[10px] font-semibold text-indigo-600 hover:bg-indigo-100">
+          <Paperclip size={11} /> {attachments.length} files
+        </span>
+      }
+    >
+      {attachments.map(att => (
+        <button
+          key={att.id}
+          onClick={() => { downloadProposalAttachment(att); setOpen(false) }}
+          className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50 hover:text-slate-900"
+          title={att.name}
+        >
+          <Paperclip size={11} className="text-slate-400" />
+          <span className="max-w-[200px] truncate">{att.name}</span>
+        </button>
+      ))}
+    </FloatingActionMenu>
+  )
 }
 
 function filterValue(
@@ -326,13 +381,14 @@ export default function BDTrackerPage() {
                   <th>Team Lead</th>
                   <th>Associate</th>
                   <th>Value</th>
+                  <th>Proposal</th>
                   <th>Comment</th>
                   <th></th>
                 </tr>
               </thead>
               <tbody>
                 {pageRows.length === 0 && (
-                  <tr><td colSpan={13} className="py-12 text-center text-sm text-slate-400">No opportunities in this category.</td></tr>
+                  <tr><td colSpan={14} className="py-12 text-center text-sm text-slate-400">No opportunities in this category.</td></tr>
                 )}
                 {pageRows.map((s, i) => {
                   const meta = STATUS_META[s.status]
@@ -358,6 +414,9 @@ export default function BDTrackerPage() {
                       <td className="text-xs text-slate-600">{chain.teamLead?.name ?? '-'}</td>
                       <td className="text-xs text-slate-600">{chain.associate?.name ?? s.supportAgent ?? '-'}</td>
                       <td className="whitespace-nowrap text-xs font-semibold text-emerald-600">{formatCurrency(s.value)}</td>
+                      <td onClick={e => e.stopPropagation()}>
+                        <ProposalCell attachments={opp?.proposalAttachments ?? []} />
+                      </td>
                       <td className="max-w-[140px] text-xs text-slate-400"><p className="truncate">{s.comment ?? '-'}</p></td>
                       <td onClick={e => e.stopPropagation()}>
                         <FloatingActionMenu
