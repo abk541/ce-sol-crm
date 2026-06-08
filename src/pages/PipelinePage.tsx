@@ -1277,8 +1277,6 @@ function SubmitModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }
     const legacyNames = Array.from(new Set([...(opp.proposals ?? []), ...(opp.assignedOpportunities ?? [])].filter(Boolean)))
     return legacyNames.map((name, index) => legacyProposalAttachment(name, index, uploadedBy))
   })
-  const [selectedProposalFile, setSelectedProposalFile] = useState<File | null>(null)
-  const [proposalAttachedAt, setProposalAttachedAt] = useState(() => toDatetimeLocal(new Date().toISOString()))
   const proposalFileInputRef = useRef<HTMLInputElement>(null)
 
   // Financial fields vary by contract type
@@ -1298,14 +1296,11 @@ function SubmitModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }
     }
   }
 
-  const addFile = async (fileArg?: File): Promise<FileAttachment | null> => {
-    const file = fileArg ?? selectedProposalFile
-    if (!file || !proposalAttachedAt) return null
+  const addFile = async (file: File): Promise<FileAttachment | null> => {
+    if (!file) return null
     try {
-      const attachment = await fileToProposalAttachment(file, proposalAttachedAt, uploadedBy)
+      const attachment = await fileToProposalAttachment(file, new Date().toISOString(), uploadedBy)
       setProposalAttachments(prev => [...prev, attachment])
-      setSelectedProposalFile(null)
-      setProposalAttachedAt(toDatetimeLocal(new Date().toISOString()))
       if (proposalFileInputRef.current) proposalFileInputRef.current.value = ''
       toast.success('Proposal file uploaded')
       return attachment
@@ -1317,21 +1312,16 @@ function SubmitModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }
   }
 
   const confirm = async () => {
-    let pending: FileAttachment | null = null
-    if (selectedProposalFile) {
-      pending = await addFile(selectedProposalFile)
-    }
-    const finalAttachments = pending ? [...proposalAttachments, pending] : proposalAttachments
     const vals: { contractAmount?: number; baseAmount?: number; monthlyPayment?: number } = {}
     if (contractAmount) vals.contractAmount = parseFloat(contractAmount)
     if (yearlyValue)    vals.baseAmount     = parseFloat(yearlyValue)
     if (monthlyValue)   vals.monthlyPayment = parseFloat(monthlyValue)
-    const proposalNames = finalAttachments.map(att => att.name).filter(Boolean)
+    const proposalNames = proposalAttachments.map(att => att.name).filter(Boolean)
     submitOpportunity(opp.id, {
       ...vals,
       proposals: proposalNames,
       assignedOpportunities: proposalNames,
-      proposalAttachments: finalAttachments,
+      proposalAttachments,
     })
     toast.success('Proposal submitted! Status updated.')
     onClose()
@@ -1435,34 +1425,16 @@ function SubmitModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }
             ))}
           </div>
           <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
-            <div className="grid gap-2 md:grid-cols-[1fr_170px_auto]">
-              <input
-                ref={proposalFileInputRef}
-                type="file"
-                onChange={e => {
-                  const file = e.target.files?.[0] ?? null
-                  setSelectedProposalFile(file)
-                  if (file) addFile(file)
-                }}
-                className="input-field text-xs file:mr-3 file:rounded-lg file:border-0 file:bg-[#D7BE7A] file:px-3 file:py-1.5 file:text-xs file:font-bold file:text-[#07131F]"
-              />
-              <input
-                type="datetime-local"
-                value={proposalAttachedAt}
-                onChange={e => setProposalAttachedAt(e.target.value)}
-                className="input-field text-xs"
-                required
-              />
-              <button
-                type="button"
-                onClick={() => addFile()}
-                disabled={!selectedProposalFile || !proposalAttachedAt}
-                className="btn-secondary justify-center text-xs px-3 disabled:opacity-40"
-              >
-                <Upload size={12} /> Add
-              </button>
-            </div>
-            <p className="mt-2 text-[10px] text-slate-400">Files are added automatically when selected.</p>
+            <input
+              ref={proposalFileInputRef}
+              type="file"
+              onChange={e => {
+                const file = e.target.files?.[0] ?? null
+                if (file) addFile(file)
+              }}
+              className="input-field text-xs file:mr-3 file:rounded-lg file:border-0 file:bg-[#D7BE7A] file:px-3 file:py-1.5 file:text-xs file:font-bold file:text-[#07131F]"
+            />
+            <p className="mt-2 text-[10px] text-slate-400">File is attached automatically when selected.</p>
           </div>
         </div>
 
