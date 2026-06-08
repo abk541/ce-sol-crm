@@ -912,8 +912,23 @@ export async function upsertContract(c: Contract): Promise<boolean> {
     return false
   }
   try {
-    const { error } = await supabase.from('contracts').upsert(contractToDb(c))
+    const payload = contractToDb(c)
+    const { error } = await supabase.from('contracts').upsert(payload)
     if (error) {
+      // Schema cache may be missing newly added columns (e.g. service_date before migration 011 is applied).
+      // Retry once without the unknown column so the rest of the update still saves.
+      const message = `${error.message ?? ''} ${error.details ?? ''}`.toLowerCase()
+      if (error.code === 'PGRST204' && message.includes('service_date')) {
+        const { service_date: _omit, ...withoutServiceDate } = payload as Record<string, unknown>
+        void _omit
+        const retry = await supabase.from('contracts').upsert(withoutServiceDate)
+        if (retry.error) {
+          console.error('[db] upsertContract retry error', retry.error)
+          return false
+        }
+        console.warn('[db] contracts.service_date column missing — apply migration 011_add_contract_service_date.sql in Supabase to persist service dates remotely.')
+        return true
+      }
       console.error('[db] upsertContract error', error)
       return false
     }
