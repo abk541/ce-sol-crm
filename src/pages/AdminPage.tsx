@@ -354,9 +354,8 @@ export default function AdminPage() {
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {tierUsers.map(u => (
-                      <motion.div
+                      <div
                         key={u.id}
-                        layout
                         draggable
                         onDragStart={e => { setDragId(u.id); e.dataTransfer.effectAllowed = 'move' }}
                         onDragEnd={() => { setDragId(null); setDragOverTier(null) }}
@@ -384,7 +383,7 @@ export default function AdminPage() {
                           </div>
                           <p className="text-[10px] text-slate-500 truncate">@{u.username} · {ROLE_LABELS[u.role]}</p>
                         </div>
-                      </motion.div>
+                      </div>
                     ))}
                     <button
                       onClick={() => openCreate(tier.primaryRole)}
