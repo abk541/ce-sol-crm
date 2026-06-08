@@ -23,3 +23,24 @@ CREATE TABLE IF NOT EXISTS public.contract_line_items (
 
 CREATE INDEX IF NOT EXISTS contract_line_items_contract_id_idx
   ON public.contract_line_items (contract_id);
+
+-- Row Level Security — match the permissive policy convention used by other
+-- business tables in 001_initial_schema.sql. Tighten when Supabase Auth is wired.
+ALTER TABLE public.contract_line_items ENABLE ROW LEVEL SECURITY;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public'
+      AND tablename  = 'contract_line_items'
+      AND policyname = 'allow_all_contract_line_items'
+  ) THEN
+    CREATE POLICY "allow_all_contract_line_items"
+      ON public.contract_line_items
+      FOR ALL TO anon, authenticated
+      USING (true) WITH CHECK (true);
+  END IF;
+END $$;
+
+NOTIFY pgrst, 'reload schema';
