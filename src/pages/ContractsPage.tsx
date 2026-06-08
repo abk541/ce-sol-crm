@@ -8,6 +8,7 @@ import {
   ArrowRight, CheckCircle2, Info, MapPin, Calendar,
   Phone, Mail, Clock, Shield, FileText, Trash2, AlertCircle,
   ChevronUp, ChevronDown, ChevronsUpDown, Pencil, Receipt, Eye, Paperclip, Download,
+  UserCog,
 } from 'lucide-react'
 import PeriodFilter, { type Period, filterByPeriod } from '../components/shared/PeriodFilter'
 import toast from 'react-hot-toast'
@@ -30,7 +31,6 @@ import {
 import { normalizeContractDeliverables } from '../lib/contractDeliverables'
 import { SourcingModal } from './PipelinePage'
 import HierarchyAssignPicker from '../components/shared/HierarchyAssignPicker'
-import { assignableEmployeesForUser } from '../lib/team'
 
 // ── Status config ───────────────────────────────────────────────────────
 const STATUS_META: Record<ContractStatus, { label: string; color: string; bg: string; border: string }> = {
@@ -434,7 +434,112 @@ function uniqueSourcingEntries(entries: Subcontractor[]) {
   return Array.from(byId.values())
 }
 
-type ContractDrawerTab = 'overview' | 'pop' | 'poc' | 'subk' | 'lockSubk' | 'warnings' | 'deliverables'
+type ContractDrawerTab = 'overview' | 'pop' | 'poc' | 'subk' | 'lockSubk' | 'warnings' | 'deliverables' | 'assignment'
+
+function ContractAssignmentTab({
+  contract,
+  onSave,
+}: {
+  contract: Contract
+  onSave: (employeeId: string) => Promise<boolean>
+}) {
+  const { employees } = useStore()
+  const [draft, setDraft] = useState(contract.assignedTo || '')
+  const [saving, setSaving] = useState(false)
+  useEffect(() => { setDraft(contract.assignedTo || '') }, [contract.assignedTo])
+
+  const current = useMemo(
+    () => (contract.assignedTo ? employees.find(e => e.id === contract.assignedTo) : undefined),
+    [employees, contract.assignedTo],
+  )
+  const dirty = draft !== (contract.assignedTo || '')
+
+  return (
+    <div className="space-y-5">
+      <div
+        className="rounded-2xl border p-5"
+        style={{
+          background: 'linear-gradient(135deg, rgba(15,46,54,0.94), rgba(10,29,43,0.96))',
+          borderColor: 'rgba(215,190,122,0.24)',
+        }}
+      >
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div className="min-w-0">
+            <p className="text-[10px] font-black uppercase tracking-[0.16em] text-[#D7BE7A]">Operations team assignment</p>
+            <h3 className="text-base font-bold text-slate-100 mt-1">Who owns this contract day-to-day?</h3>
+            <p className="text-xs text-slate-400 mt-1 max-w-2xl">
+              Contracts are assigned to the <span className="text-slate-200 font-semibold">Operations</span> hierarchy —
+              a separate team from BD (which owns opportunities and sourcing). Pick a Manager → Team Lead → Associate.
+            </p>
+          </div>
+          <div className="flex items-center gap-2.5 rounded-xl px-3 py-2 border"
+            style={{ background: 'rgba(255,255,255,0.04)', borderColor: 'rgba(215,190,122,0.22)' }}>
+            <div className="w-8 h-8 rounded-full border flex items-center justify-center text-[10px] font-bold"
+              style={{ background: '#102820', color: '#F8E8B8', borderColor: 'rgba(215,190,122,0.45)' }}>
+              {current?.avatar || '—'}
+            </div>
+            <div className="min-w-0">
+              <p className="text-[10px] uppercase tracking-wide text-slate-400">Currently assigned</p>
+              <p className="text-xs font-bold text-slate-100 truncate max-w-[200px]">
+                {current?.name || 'Unassigned'}
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <HierarchyAssignPicker
+        value={draft}
+        onChange={setDraft}
+        deadline={contract.popEnd || undefined}
+        team="OPS"
+        label="Operations hierarchy"
+      />
+
+      <div className="flex items-center justify-between gap-3 pt-2">
+        {contract.assignedTo ? (
+          <button
+            type="button"
+            disabled={saving}
+            onClick={async () => {
+              setSaving(true)
+              const ok = await onSave('')
+              setSaving(false)
+              if (ok) setDraft('')
+            }}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold text-red-300 bg-red-900/30 border border-red-700/40 hover:bg-red-900/50 transition-colors disabled:opacity-45"
+          >
+            <Trash2 size={12} /> Clear assignment
+          </button>
+        ) : <span />}
+
+        <div className="flex gap-3">
+          <button
+            type="button"
+            disabled={!dirty || saving}
+            onClick={() => setDraft(contract.assignedTo || '')}
+            className="btn-secondary disabled:opacity-45 disabled:cursor-not-allowed"
+          >
+            Reset
+          </button>
+          <button
+            type="button"
+            disabled={saving || !dirty || !draft}
+            onClick={async () => {
+              if (!draft) { toast.error('Select an Operations team member.'); return }
+              setSaving(true)
+              await onSave(draft)
+              setSaving(false)
+            }}
+            className="btn-primary disabled:opacity-45 disabled:cursor-not-allowed"
+          >
+            <Save size={13} /> Save Assignment
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 function ContractDetailDrawer({
   contract,
@@ -524,15 +629,10 @@ function ContractDetailDrawer({
   // Edit status
   const [editingStatus, setEditingStatus] = useState(false)
 
-  // Reassign contract
+  // Reassign contract (OPS team)
   const [showReassign, setShowReassign] = useState(false)
   const [reassignDraft, setReassignDraft] = useState(contract.assignedTo || '')
   const [reassignSaving, setReassignSaving] = useState(false)
-  const allowedAssignees = useMemo(() => {
-    const ids = assignableEmployeesForUser(employees, currentUser).map(e => e.id)
-    if (contract.assignedTo && !ids.includes(contract.assignedTo)) ids.push(contract.assignedTo)
-    return ids
-  }, [employees, currentUser, contract.assignedTo])
   useEscapeKey(() => setShowReassign(false), showReassign)
   useEffect(() => {
     if (showReassign) setReassignDraft(contract.assignedTo || '')
@@ -737,6 +837,7 @@ function ContractDetailDrawer({
           { key: 'lockSubk', label: `Locked Subk (${(contract.lockedSubcontractors || []).length})`, icon: Shield },
           { key: 'warnings', label: `Warnings (${(contract.governmentWarnings || []).filter(w => !w.resolvedAt).length})`, icon: AlertTriangle },
           { key: 'deliverables', label: `Deliverables`, icon: ListChecks },
+          { key: 'assignment', label: 'Assignment', icon: UserCog },
         ].map(t => (
           <button key={t.key} onClick={() => setTab(t.key as any)}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all flex-shrink-0"
@@ -2229,6 +2330,18 @@ function ContractDetailDrawer({
           </div>
         )}
 
+        {/* ASSIGNMENT — Operations team picker (separate hierarchy from BD / opportunities) */}
+        {tab === 'assignment' && (
+          <ContractAssignmentTab
+            contract={contract}
+            onSave={async (employeeId) => {
+              const saved = await updateContract(contract.id, { assignedTo: employeeId || undefined })
+              if (saved) toast.success(employeeId ? 'Contract reassigned' : 'Assignment cleared')
+              return !!saved
+            }}
+          />
+        )}
+
       </div>
       </motion.div>
 
@@ -2543,16 +2656,16 @@ function ContractDetailDrawer({
 
                 <div className="flex-1 overflow-y-auto px-7 py-6 space-y-4">
                   <div>
-                    <p className="text-sm font-semibold text-slate-100">Assign to a team member</p>
+                    <p className="text-sm font-semibold text-slate-100">Assign to an Operations team member</p>
                     <p className="text-xs text-slate-400 mt-1">
-                      Select anyone in the hierarchy. Workload lines show total active assignments and same-due-day assignments.
+                      Contracts are owned by the Operations team — a separate hierarchy from the BD team that owns opportunities. Workload lines show total active assignments and same-day deadlines.
                     </p>
                   </div>
                   <HierarchyAssignPicker
                     value={reassignDraft}
                     onChange={v => setReassignDraft(v)}
                     deadline={contract.popEnd || undefined}
-                    allowedEmployeeIds={allowedAssignees}
+                    team="OPS"
                   />
                 </div>
 
@@ -2585,10 +2698,6 @@ function ContractDetailDrawer({
                       disabled={reassignSaving || !reassignDraft || reassignDraft === contract.assignedTo}
                       onClick={async () => {
                         if (!reassignDraft) { toast.error('Select an employee to assign.'); return }
-                        if (!allowedAssignees.includes(reassignDraft)) {
-                          toast.error('You can only assign contracts inside your team.')
-                          return
-                        }
                         setReassignSaving(true)
                         const saved = await updateContract(contract.id, { assignedTo: reassignDraft })
                         setReassignSaving(false)

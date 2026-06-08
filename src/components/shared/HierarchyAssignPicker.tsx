@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { useStore } from '../../store/useStore'
-import type { Employee, HierarchyRole } from '../../types'
+import type { Employee, EmployeeTeam, HierarchyRole } from '../../types'
 import { assignmentWorkloadByEmployee } from '../../lib/team'
 
 interface HierarchyAssignPickerProps {
@@ -10,6 +10,7 @@ interface HierarchyAssignPickerProps {
   excludeOpportunityId?: string
   label?: string
   allowedEmployeeIds?: string[]
+  team?: EmployeeTeam      // when set, only employees in this team are shown
 }
 
 // Role display helpers
@@ -74,8 +75,14 @@ export default function HierarchyAssignPicker({
   excludeOpportunityId,
   label,
   allowedEmployeeIds,
+  team,
 }: HierarchyAssignPickerProps) {
-  const { employees, contracts, opportunities } = useStore()
+  const { employees: allEmployees, contracts, opportunities } = useStore()
+  // Treat undefined team as 'BD' for backwards compatibility with seeded/persisted data.
+  const employees = useMemo(
+    () => (team ? allEmployees.filter(e => (e.team ?? 'BD') === team) : allEmployees),
+    [allEmployees, team],
+  )
   const allowedSet = useMemo(() => allowedEmployeeIds ? new Set(allowedEmployeeIds) : null, [allowedEmployeeIds])
   const visibleSet = useMemo(() => {
     if (!allowedSet) return null

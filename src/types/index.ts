@@ -1,5 +1,9 @@
 export type HierarchyRole = 'BD_MANAGER' | 'TEAM_LEAD' | 'ASSOCIATE'
 
+// 'BD' = Business Development team (opportunities, sourcing). 'OPS' = Operations team (active contracts).
+// Treat undefined as 'BD' for backwards compatibility with persisted data.
+export type EmployeeTeam = 'BD' | 'OPS'
+
 export interface Employee {
   id: string
   name: string
@@ -8,6 +12,7 @@ export interface Employee {
   managerId: string | null   // null for Managers (top level)
   department?: string
   avatar: string             // 2-letter initials
+  team?: EmployeeTeam
 }
 
 export type Role =

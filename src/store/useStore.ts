@@ -292,6 +292,17 @@ function mergeSeedUsers(users: unknown): User[] {
   return Array.from(byEmail.values())
 }
 
+// Adds any seeded employees that aren't already in the persisted list (matched by id) and
+// back-fills the `team` field on legacy BD employees so the contract picker can filter correctly.
+function mergeSeedEmployees(employees: unknown): Employee[] {
+  const existing = Array.isArray(employees) ? (employees as Employee[]) : []
+  const byId = new Map<string, Employee>(existing.map(emp => [emp.id, { ...emp, team: emp.team ?? 'BD' }]))
+  MOCK_EMPLOYEES.forEach(seed => {
+    if (!byId.has(seed.id)) byId.set(seed.id, seed)
+  })
+  return Array.from(byId.values())
+}
+
 function normalizedSolicitationId(value?: string) {
   return (value ?? '').trim().toLowerCase()
 }
@@ -1632,8 +1643,8 @@ export const useStore = create<AppState>()(
     }),
     {
       name: 'ces-crm-store',
-      // v9: add HR certifications and employee requests.
-      version: 9,
+      // v10: introduce OPS employee team (separate hierarchy used for contract assignment).
+      version: 10,
       migrate: (persistedState: unknown, fromVersion: number) => {
         const s = persistedState as Record<string, unknown>
         if (fromVersion < 4) {
@@ -1670,6 +1681,7 @@ export const useStore = create<AppState>()(
           ...s,
           currentUser: normalizePersistedUserRole(s.currentUser),
           users: mergeSeedUsers(s.users),
+          employees: mergeSeedEmployees(s.employees),
           accessNoticeAccepted: Boolean(s.accessNoticeAccepted),
           nonSubGraceHours: Number(s.nonSubGraceHours ?? 0),
           nonSubGraceMinutes: Number(s.nonSubGraceMinutes ?? 5),
