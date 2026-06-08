@@ -7,7 +7,7 @@ import { useStore } from '../store/useStore'
 import type { Opportunity } from '../types'
 import toast from 'react-hot-toast'
 import HierarchyAssignPicker from '../components/shared/HierarchyAssignPicker'
-import { assignableEmployeesForUser, isAssignedToAssociate } from '../lib/team'
+import { assignableEmployeesForUser, getAssignmentChain, isAssignedToAssociate } from '../lib/team'
 import { hasPermission } from '../lib/permissions'
 
 const ASSIGNABLE_STATUSES = ['ACTIVE', 'NEW_ASSIGNMENT', 'DISCUSSION'] as const
@@ -154,18 +154,22 @@ export default function ProposalsPage() {
                 <th>NAICS</th>
                 <th>Due Date</th>
                 <th>Location</th>
+                <th>Manager</th>
+                <th>Team Lead</th>
                 <th>Action</th>
               </tr>
             </thead>
             <tbody>
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="py-12 text-center text-sm text-slate-400">
+                  <td colSpan={10} className="py-12 text-center text-sm text-slate-400">
                     No opportunities are waiting for assignment.
                   </td>
                 </tr>
               )}
-              {rows.map((o, i) => (
+              {rows.map((o, i) => {
+                const chain = getAssignmentChain(employees, o.assignedTo)
+                return (
                 <motion.tr key={o.id}
                   initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: i * 0.02 }}>
@@ -181,6 +185,16 @@ export default function ProposalsPage() {
                     {o.dueDate ? new Date(o.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '-'}
                   </td>
                   <td className="max-w-[150px] text-xs text-slate-500"><p className="truncate">{o.location}</p></td>
+                  <td className="max-w-[150px] text-xs text-slate-600">
+                    {chain.manager
+                      ? <p className="truncate" title={chain.manager.name}>{chain.manager.name}</p>
+                      : <span className="text-slate-300">-</span>}
+                  </td>
+                  <td className="max-w-[150px] text-xs text-slate-600">
+                    {chain.teamLead
+                      ? <p className="truncate" title={chain.teamLead.name}>{chain.teamLead.name}</p>
+                      : <span className="text-slate-300">-</span>}
+                  </td>
                   <td className="text-right">
                     <button
                       type="button"
@@ -195,7 +209,7 @@ export default function ProposalsPage() {
                     </button>
                   </td>
                 </motion.tr>
-              ))}
+              )})}
             </tbody>
           </table>
         </div>
