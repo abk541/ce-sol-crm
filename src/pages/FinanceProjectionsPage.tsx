@@ -838,7 +838,7 @@ export default function FinanceProjectionsPage() {
           <div>
             <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">Finance</p>
             <h1 className="mt-1 flex items-center gap-2 text-2xl font-black text-slate-900">
-              <DollarSign size={22} className="text-emerald-500" /> Finance Projections
+              <DollarSign size={22} className="text-emerald-500" /> Billing Process
             </h1>
             <p className="mt-0.5 text-sm text-slate-500">
               Invoice tracker grouped by month. Each row is one government invoice with its subcontractor payout context.

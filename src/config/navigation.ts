@@ -55,7 +55,12 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { to: '/contracts',            icon: FileCheck2, label: 'Contract Admin' },
       { to: '/fresh-award',          icon: Trophy,     label: 'Fresh Awards' },
-      { to: '/finance-projections', icon: DollarSign, label: 'Finance Projections' },
+    ],
+  },
+  {
+    label: 'Finance',
+    items: [
+      { to: '/finance-projections', icon: DollarSign, label: 'Billing Process' },
     ],
   },
   {
