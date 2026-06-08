@@ -1120,9 +1120,9 @@ function serializeSourcingComments(comments: Comment[]) {
 export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) {
   const { subcontractors, addSubcontractor, updateSubcontractor, deleteSubcontractor, currentUser } = useStore()
   const [tab, setTab] = useState<'list' | 'add'>('list')
-  const [form, setForm] = useState({ companyName: '', contactName: '', email: '', phone: '', comment: '', quoteFile: '' })
+  const [form, setForm] = useState({ companyName: '', contactName: '', email: '', phone: '', website: '', comment: '', quoteFile: '' })
   const [editingId, setEditingId] = useState<string | null>(null)
-  const [editForm, setEditForm] = useState({ companyName: '', contactName: '', email: '', phone: '', newComment: '', quoteFile: '', comments: [] as Comment[] })
+  const [editForm, setEditForm] = useState({ companyName: '', contactName: '', email: '', phone: '', website: '', newComment: '', quoteFile: '', comments: [] as Comment[] })
 
   const oppSubs = subcontractors.filter(s => s.opportunityId === opp.id)
   const setF = (k: string, v: string) => setForm(p => ({ ...p, [k]: v }))
@@ -1136,6 +1136,7 @@ export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () 
       contactName: form.contactName,
       email: form.email,
       phone: form.phone,
+      website: form.website.trim() || undefined,
       quoteFile: form.quoteFile,
       notes: form.comment.trim()
         ? serializeSourcingComments([{
@@ -1151,13 +1152,13 @@ export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () 
       createdBy: currentUser?.username ?? '',
     })
     toast.success('Sourcing entry added')
-    setForm({ companyName: '', contactName: '', email: '', phone: '', comment: '', quoteFile: '' })
+    setForm({ companyName: '', contactName: '', email: '', phone: '', website: '', comment: '', quoteFile: '' })
     setTab('list')
   }
 
   const startEdit = (s: any) => {
     setEditingId(s.id)
-    setEditForm({ companyName: s.companyName, contactName: s.contactName, email: s.email, phone: s.phone, newComment: '', quoteFile: s.quoteFile ?? '', comments: parseSourcingComments(s.notes) })
+    setEditForm({ companyName: s.companyName, contactName: s.contactName, email: s.email, phone: s.phone, website: s.website ?? '', newComment: '', quoteFile: s.quoteFile ?? '', comments: parseSourcingComments(s.notes) })
   }
 
   const saveEdit = (id: string) => {
@@ -1175,6 +1176,7 @@ export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () 
       contactName: editForm.contactName,
       email: editForm.email,
       phone: editForm.phone,
+      website: editForm.website.trim() || undefined,
       quoteFile: editForm.quoteFile,
       notes: serializeSourcingComments(comments),
     })
@@ -1225,6 +1227,10 @@ export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () 
                           <label className="block text-xs font-semibold text-slate-500 mb-1">Phone</label>
                           <input value={editForm.phone} onChange={e => setEF('phone', e.target.value)} className="input-field" />
                         </div>
+                        <div className="col-span-2">
+                          <label className="block text-xs font-semibold text-slate-500 mb-1">Website</label>
+                          <input value={editForm.website} onChange={e => setEF('website', e.target.value)} className="input-field" placeholder="https://example.com" />
+                        </div>
                         <div>
                           <label className="block text-xs font-semibold text-slate-500 mb-1">Quote File</label>
                           <div className="flex gap-2">
@@ -1264,6 +1270,11 @@ export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () 
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-semibold text-slate-800">{s.companyName}</p>
                         <p className="text-xs text-slate-500 mt-0.5">{s.contactName} - {s.email} - {s.phone}</p>
+                        {s.website && (
+                          <a href={s.website.startsWith('http') ? s.website : `https://${s.website}`} target="_blank" rel="noreferrer" className="text-[11px] text-indigo-600 hover:underline">
+                            {s.website}
+                          </a>
+                        )}
                         {s.quoteFile && (
                           <div className="flex items-center gap-1 mt-1.5">
                             <FileText size={10} className="text-slate-400" />
@@ -1321,6 +1332,10 @@ export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () 
               <div>
                 <label className="block text-xs font-semibold text-slate-500 mb-1.5">Phone</label>
                 <input value={form.phone} onChange={e => setF('phone', e.target.value)} className="input-field" />
+              </div>
+              <div className="col-span-2">
+                <label className="block text-xs font-semibold text-slate-500 mb-1.5">Website</label>
+                <input value={form.website} onChange={e => setF('website', e.target.value)} className="input-field" placeholder="https://example.com" />
               </div>
               <div>
                 <label className="block text-xs font-semibold text-slate-500 mb-1.5">Quote File</label>

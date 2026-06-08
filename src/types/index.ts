@@ -97,6 +97,7 @@ export interface Subcontractor {
   contactName: string
   email: string
   phone: string
+  website?: string
   naicsCode: string
   setAside: string
   notes: string
@@ -113,10 +114,12 @@ export interface LockedSubcontractor {
   contactName: string
   email?: string
   phone?: string
+  website?: string
   setAside?: string
   naicsCode?: string
   subkDatabaseId?: string   // link to SubkDatabaseEntry
   paymentRate?: number      // amount paid to this subk (one-time for OTJ, monthly for recurring) — entered manually
+  paid?: boolean            // whether we have paid this subk for the current invoice cycle
   invoices?: string[]
   subAgreements?: string[]
   quotes?: string[]
@@ -305,7 +308,16 @@ export interface Contract {
   samGovContacts?: SamGovContact[]   // copied from originating opportunity at award time
   serviceDate?: string              // YYYY-MM-DD, entered in the Billing Period tab; printed on the invoice
   lineItems?: ContractLineItem[]    // CLIN-numbered scope of work entries (base + up to 4 option years)
+  governmentBillingStatus?: GovBillingStatus  // gov-invoice payment status shown in Finance Projections
 }
+
+// ── Government Billing Status (Finance Projections) ─────────────
+export type GovBillingStatus =
+  | 'SUBMITTED'
+  | 'BILLED'
+  | 'REJECTED'
+  | 'SENT_FOR_APPROVAL'
+  | 'PAID'
 
 // ── Contract Line Item (CLIN) ─────────────────────────────────────────
 // Year bucket the line belongs to. CLIN format:

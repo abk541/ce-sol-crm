@@ -1123,6 +1123,7 @@ function ContractDetailDrawer({
   const [subkDocumentDrafts, setSubkDocumentDrafts] = useState<LockedSubkDocuments>({})
   const [subkPaymentRateDraft, setSubkPaymentRateDraft] = useState('')
   const [lockedSubRateDrafts, setLockedSubRateDrafts] = useState<Record<string, string>>({})
+  const [lockedSubWebsiteDrafts, setLockedSubWebsiteDrafts] = useState<Record<string, string>>({})
 
   // Gov warning form
   const [addingWarning, setAddingWarning] = useState(false)
@@ -2325,6 +2326,7 @@ function ContractDetailDrawer({
                 {(contract.lockedSubcontractors || []).map(sub => {
                   const documents = getLockedSubDocuments(sub)
                   const rateDraft = lockedSubRateDrafts[sub.id] ?? (sub.paymentRate != null ? String(sub.paymentRate) : '')
+                  const websiteDraft = lockedSubWebsiteDrafts[sub.id] ?? (sub.website ?? '')
                   const rateLabel = contract.type === 'RECURRING' ? 'Pay rate ($ / month)' : 'Pay rate ($)'
                   return (
                     <div
@@ -2339,6 +2341,11 @@ function ContractDetailDrawer({
                           {sub.email && <p className="mt-1 flex items-center gap-1.5 text-xs text-slate-400"><Mail size={10} />{sub.email}</p>}
                         </div>
                         <div className="flex flex-wrap items-center gap-2">
+                          {sub.paid && (
+                            <span className="rounded-full border border-emerald-300/40 bg-emerald-400/15 px-3 py-1 text-[10px] font-bold text-emerald-100">
+                              Paid
+                            </span>
+                          )}
                           {typeof sub.paymentRate === 'number' && Number.isFinite(sub.paymentRate) && sub.paymentRate > 0 && (
                             <span className="rounded-full border border-[#D7BE7A]/35 bg-[rgba(184,145,78,0.14)] px-3 py-1 text-[10px] font-bold text-[#F8E8B8]">
                               {formatCurrency(sub.paymentRate)}{contract.type === 'RECURRING' ? ' / mo' : ''}
@@ -2347,6 +2354,42 @@ function ContractDetailDrawer({
                           <span className="rounded-full border border-emerald-300/30 bg-emerald-400/10 px-3 py-1 text-[10px] font-bold text-emerald-100">
                             {subkDocumentTotal(documents)} files
                           </span>
+                        </div>
+                      </div>
+
+                      <div className="mt-4 grid gap-3 md:grid-cols-2">
+                        <div className="rounded-2xl border border-white/10 bg-black/10 p-3">
+                          <label className="block text-[10px] font-bold uppercase tracking-wider text-[#D7BE7A] mb-1.5">Website</label>
+                          <input
+                            type="url"
+                            value={websiteDraft}
+                            onChange={e => setLockedSubWebsiteDrafts(prev => ({ ...prev, [sub.id]: e.target.value }))}
+                            onBlur={() => {
+                              const next = websiteDraft.trim()
+                              if ((sub.website ?? '') === next) return
+                              updateLockedSubcontractor(contract.id, sub.id, { website: next || undefined })
+                              setLockedSubWebsiteDrafts(prev => ({ ...prev, [sub.id]: next }))
+                            }}
+                            placeholder="https://example.com"
+                            className="input-field w-full"
+                          />
+                          <p className="mt-1 text-[11px] text-slate-400">Subcontractor website. Saved on blur.</p>
+                        </div>
+                        <div className="rounded-2xl border border-white/10 bg-black/10 p-3">
+                          <label className="block text-[10px] font-bold uppercase tracking-wider text-[#D7BE7A] mb-1.5">Subk payment status</label>
+                          <select
+                            value={sub.paid ? 'PAID' : 'NOT_PAID'}
+                            onChange={e => {
+                              const nextPaid = e.target.value === 'PAID'
+                              updateLockedSubcontractor(contract.id, sub.id, { paid: nextPaid })
+                              toast.success(nextPaid ? 'Marked as paid' : 'Marked as not paid')
+                            }}
+                            className="input-field w-full"
+                          >
+                            <option value="NOT_PAID">Not paid</option>
+                            <option value="PAID">Paid</option>
+                          </select>
+                          <p className="mt-1 text-[11px] text-slate-400">Track whether this subcontractor has been paid.</p>
                         </div>
                       </div>
 

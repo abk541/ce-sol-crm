@@ -176,6 +176,7 @@ function subcontractorToDb(sub: Subcontractor): Record<string, unknown> {
     contact_name: sub.contactName,
     email: sub.email,
     phone: sub.phone,
+    website: sub.website ?? null,
     naics_code: sub.naicsCode || null,
     set_aside: sub.setAside || null,
     notes: sub.notes,
@@ -193,6 +194,7 @@ function dbToSubcontractor(row: Record<string, unknown>): Subcontractor {
     contactName: row.contact_name as string,
     email: row.email as string,
     phone: row.phone as string,
+    website: (row.website as string | null) ?? undefined,
     naicsCode: (row.naics_code as string | null) ?? '',
     setAside: (row.set_aside as string | null) ?? '',
     notes: (row.notes as string | null) ?? '',
@@ -237,6 +239,7 @@ function contractToDb(c: Contract): Record<string, unknown> {
     assigned_to: c.assignedTo ?? null,
     proposal_attachments: normalizeStoredAttachments(c.proposalAttachments),
     service_date: c.serviceDate ?? null,
+    gov_billing_status: c.governmentBillingStatus ?? null,
   }
 }
 
@@ -275,6 +278,7 @@ function dbToContract(row: Record<string, unknown>): Partial<Contract> {
     assignedTo: row.assigned_to as string | undefined,
     proposalAttachments: normalizeStoredAttachments(row.proposal_attachments),
     serviceDate: row.service_date as string | undefined,
+    governmentBillingStatus: (row.gov_billing_status as Contract['governmentBillingStatus']) ?? undefined,
     // Initialize nested arrays — loaded separately if needed
     pocs: [],
     lockedSubcontractors: [],
@@ -381,13 +385,25 @@ function normalizeLockedSubDocuments(sub: LockedSubcontractor): LockedSubkDocume
   }
 }
 
-function encodeLockedSubNotes(notes: string | undefined, documents: LockedSubkDocuments, paymentRate: number | undefined): string | null {
+function encodeLockedSubNotes(
+  notes: string | undefined,
+  documents: LockedSubkDocuments,
+  paymentRate: number | undefined,
+  paid: boolean | undefined,
+  website: string | undefined,
+): string | null {
   const cleanNotes = notes?.trim() ?? ''
   const hasRate = typeof paymentRate === 'number' && Number.isFinite(paymentRate)
-  if (!hasLockedSubDocuments(documents) && !hasRate) return cleanNotes || null
+  const hasPaid = typeof paid === 'boolean'
+  const cleanWebsite = website?.trim() || ''
+  if (!hasLockedSubDocuments(documents) && !hasRate && !hasPaid && !cleanWebsite) {
+    return cleanNotes || null
+  }
   return `${LOCKED_SUBK_META_PREFIX}${JSON.stringify({
     notes: cleanNotes,
     paymentRate: hasRate ? paymentRate : undefined,
+    paid: hasPaid ? paid : undefined,
+    website: cleanWebsite || undefined,
     documents: {
       coi: documents.coi ?? [],
       w9: documents.w9 ?? [],
@@ -395,7 +411,13 @@ function encodeLockedSubNotes(notes: string | undefined, documents: LockedSubkDo
   })}`
 }
 
-function decodeLockedSubNotes(value: unknown): { notes?: string; paymentRate?: number; documents: Pick<LockedSubkDocuments, 'coi' | 'w9'> } {
+function decodeLockedSubNotes(value: unknown): {
+  notes?: string
+  paymentRate?: number
+  paid?: boolean
+  website?: string
+  documents: Pick<LockedSubkDocuments, 'coi' | 'w9'>
+} {
   if (typeof value !== 'string') return { documents: {} }
   if (!value.startsWith(LOCKED_SUBK_META_PREFIX)) return { notes: value || undefined, documents: {} }
 
@@ -405,9 +427,13 @@ function decodeLockedSubNotes(value: unknown): { notes?: string; paymentRate?: n
     const rawDocuments = isRecord(parsed.documents) ? parsed.documents : {}
     const rawRate = parsed.paymentRate
     const paymentRate = typeof rawRate === 'number' && Number.isFinite(rawRate) ? rawRate : undefined
+    const paid = typeof parsed.paid === 'boolean' ? parsed.paid : undefined
+    const website = typeof parsed.website === 'string' && parsed.website.trim() ? parsed.website : undefined
     return {
       notes: typeof parsed.notes === 'string' ? parsed.notes : undefined,
       paymentRate,
+      paid,
+      website,
       documents: {
         coi: normalizeStoredAttachments(rawDocuments.coi),
         w9: normalizeStoredAttachments(rawDocuments.w9),
@@ -433,7 +459,7 @@ function lockedSubToDb(sub: LockedSubcontractor): Record<string, unknown> {
     invoices: serializeStoredAttachments(documents.invoice) ?? sub.invoices ?? null,
     sub_agreements: serializeStoredAttachments(documents.subAgreement) ?? sub.subAgreements ?? null,
     quotes: serializeStoredAttachments(documents.quote) ?? sub.quotes ?? null,
-    notes: encodeLockedSubNotes(sub.notes, documents, sub.paymentRate),
+    notes: encodeLockedSubNotes(sub.notes, documents, sub.paymentRate, sub.paid, sub.website),
     created_at: sub.createdAt,
     created_by: sub.createdBy,
   }
@@ -459,6 +485,8 @@ function dbToLockedSub(row: Record<string, unknown>): LockedSubcontractor {
     naicsCode: row.naics_code as string | undefined,
     subkDatabaseId: row.subk_database_id as string | undefined,
     paymentRate: meta.paymentRate,
+    paid: meta.paid,
+    website: meta.website,
     invoices: attachmentNames(documents.invoice),
     subAgreements: attachmentNames(documents.subAgreement),
     quotes: attachmentNames(documents.quote),
