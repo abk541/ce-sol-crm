@@ -5,15 +5,30 @@ import {
   History, Search, Download, FileText,
   Building2, DollarSign, Calendar, MapPin,
   ChevronDown, X, Save, Eye, Tag, MoreHorizontal, Pencil,
+  Mail, Phone, User as UserIcon,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
-import type { Contract, PastPerformance, ContractType, ContractFinanceType, SetAside } from '../types'
+import type { Contract, ContractPoC, PastPerformance, ContractType, ContractFinanceType, SetAside } from '../types'
 import { formatCurrency, useEscapeKey } from '../lib/utils'
 import { generatePastPerformancePdf } from '../lib/pastPerformancePdf'
 import FloatingActionMenu from '../components/shared/FloatingActionMenu'
 import toast from 'react-hot-toast'
 
 type PocDraft = { name: string; email: string; phone: string }
+
+function findContractingPoc(pocs: ContractPoC[] | undefined): ContractPoC | undefined {
+  return (pocs || []).find(p => p.role === 'KO')
+}
+function findTechnicalPoc(pocs: ContractPoC[] | undefined): ContractPoC | undefined {
+  const arr = pocs || []
+  return arr.find(p => p.role === 'COR') || arr.find(p => p.role === 'END_USER')
+}
+function pocToDraft(poc: ContractPoC | undefined): PocDraft {
+  return { name: poc?.name ?? '', email: poc?.email ?? '', phone: poc?.phone ?? '' }
+}
+function draftHasContent(d: PocDraft): boolean {
+  return !!(d.name.trim() || d.email.trim() || d.phone.trim())
+}
 
 function PocFieldset({
   title,
@@ -67,6 +82,39 @@ function PocFieldset({
   )
 }
 
+function PocViewCard({ label, subtitle, poc }: { label: string; subtitle?: string; poc: ContractPoC | undefined }) {
+  const has = !!poc && (!!poc.name || !!poc.email || !!poc.phone)
+  return (
+    <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+      <div className="flex items-baseline justify-between gap-2">
+        <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{label}</p>
+        {subtitle && <p className="text-[9px] text-slate-400">{subtitle}</p>}
+      </div>
+      {has ? (
+        <div className="mt-1.5 space-y-1">
+          {poc?.name && (
+            <p className="flex items-center gap-1.5 text-xs font-semibold text-slate-800">
+              <UserIcon size={12} className="text-slate-400" /> {poc.name}
+            </p>
+          )}
+          {poc?.email && (
+            <p className="flex items-center gap-1.5 text-xs text-slate-600">
+              <Mail size={12} className="text-slate-400" /> {poc.email}
+            </p>
+          )}
+          {poc?.phone && (
+            <p className="flex items-center gap-1.5 text-xs text-slate-600">
+              <Phone size={12} className="text-slate-400" /> {poc.phone}
+            </p>
+          )}
+        </div>
+      ) : (
+        <p className="mt-1.5 text-xs italic text-slate-400">Not specified</p>
+      )}
+    </div>
+  )
+}
+
 function ExportModal({ pp, onClose }: { pp: PastPerformance; onClose: () => void }) {
   const { contracts, opportunities } = useStore()
   const [desc, setDesc] = useState(pp.description)
@@ -77,15 +125,8 @@ function ExportModal({ pp, onClose }: { pp: PastPerformance; onClose: () => void
     () => contracts.find(c => c.id === pp.contractId || c.contractId === pp.contractNumber),
     [contracts, pp.contractId, pp.contractNumber],
   )
-  const seedContractingPoc = useMemo(() => {
-    const p = (linkedContract?.pocs || []).find(p => p.role === 'KO')
-    return { name: p?.name ?? '', email: p?.email ?? '', phone: p?.phone ?? '' }
-  }, [linkedContract])
-  const seedTechnicalPoc = useMemo(() => {
-    const all = linkedContract?.pocs || []
-    const p = all.find(p => p.role === 'COR') || all.find(p => p.role === 'END_USER')
-    return { name: p?.name ?? '', email: p?.email ?? '', phone: p?.phone ?? '' }
-  }, [linkedContract])
+  const seedContractingPoc = useMemo(() => pocToDraft(findContractingPoc(linkedContract?.pocs)), [linkedContract])
+  const seedTechnicalPoc = useMemo(() => pocToDraft(findTechnicalPoc(linkedContract?.pocs)), [linkedContract])
 
   const [contractingPoc, setContractingPoc] = useState(seedContractingPoc)
   const [technicalPoc, setTechnicalPoc] = useState(seedTechnicalPoc)
@@ -212,12 +253,47 @@ function ExportModal({ pp, onClose }: { pp: PastPerformance; onClose: () => void
 }
 
 function EditPPModal({ pp, onClose }: { pp: PastPerformance; onClose: () => void }) {
-  const { updatePastPerformance } = useStore()
+  const { updatePastPerformance, contracts, addContractPoC, updateContractPoC, removeContractPoC } = useStore()
   const [form, setForm] = useState<PastPerformance>({ ...pp })
   const [saving, setSaving] = useState(false)
 
+  const linkedContract = useMemo(
+    () => contracts.find(c => c.id === pp.contractId || c.contractId === pp.contractNumber),
+    [contracts, pp.contractId, pp.contractNumber],
+  )
+  const initialContractingPoc = useMemo(() => findContractingPoc(linkedContract?.pocs), [linkedContract])
+  const initialTechnicalPoc = useMemo(() => findTechnicalPoc(linkedContract?.pocs), [linkedContract])
+  const [contractingPoc, setContractingPoc] = useState<PocDraft>(() => pocToDraft(initialContractingPoc))
+  const [technicalPoc, setTechnicalPoc] = useState<PocDraft>(() => pocToDraft(initialTechnicalPoc))
+
   const set = <K extends keyof PastPerformance>(k: K, v: PastPerformance[K]) =>
     setForm(p => ({ ...p, [k]: v }))
+
+  const persistPoc = (
+    contractId: string,
+    role: ContractPoC['role'],
+    original: ContractPoC | undefined,
+    draft: PocDraft,
+  ) => {
+    const has = draftHasContent(draft)
+    if (!has && !original) return
+    if (!has && original) { removeContractPoC(contractId, original.id); return }
+    const payload = {
+      name: draft.name.trim(),
+      email: draft.email.trim() || undefined,
+      phone: draft.phone.trim() || undefined,
+    }
+    if (original) {
+      if (
+        original.name === payload.name &&
+        (original.email ?? undefined) === payload.email &&
+        (original.phone ?? undefined) === payload.phone
+      ) return
+      updateContractPoC(contractId, original.id, payload)
+    } else {
+      addContractPoC(contractId, { role, ...payload })
+    }
+  }
 
   const handleSave = () => {
     if (!form.title.trim())          { toast.error('Title is required'); return }
@@ -246,6 +322,17 @@ function EditPPModal({ pp, onClose }: { pp: PastPerformance; onClose: () => void
       bds: form.bds.trim(),
     }
     updatePastPerformance(pp.id, patch)
+    if (linkedContract) {
+      persistPoc(linkedContract.id, 'KO', initialContractingPoc, contractingPoc)
+      // For technical, only update an existing END_USER record; otherwise add/update under COR.
+      if (initialTechnicalPoc) {
+        persistPoc(linkedContract.id, initialTechnicalPoc.role, initialTechnicalPoc, technicalPoc)
+      } else if (draftHasContent(technicalPoc)) {
+        persistPoc(linkedContract.id, 'COR', undefined, technicalPoc)
+      }
+    } else if (draftHasContent(contractingPoc) || draftHasContent(technicalPoc)) {
+      toast('POCs were not saved \u2014 this row has no linked contract.', { icon: '\u26a0\ufe0f' })
+    }
     setSaving(false)
     toast.success('Past performance updated')
     onClose()
@@ -360,6 +447,28 @@ function EditPPModal({ pp, onClose }: { pp: PastPerformance; onClose: () => void
               <label className="block text-xs font-semibold text-slate-600 mb-1">Challenges &amp; Solutions</label>
               <textarea rows={3} value={form.challenges ?? ''} onChange={e => set('challenges', e.target.value)} className="input-field text-xs py-2 w-full resize-none" />
             </div>
+            <div className="sm:col-span-2 mt-1">
+              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500 mb-2">Points of Contact</p>
+              {!linkedContract && (
+                <p className="mb-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-700">
+                  This past-performance row has no linked contract — POCs cannot be saved here.
+                </p>
+              )}
+              <div className="space-y-2">
+                <PocFieldset
+                  title="Contracting / Purchasing POC"
+                  subtitle="Cell 8 of the PDF template — saved on the contract as KO"
+                  value={contractingPoc}
+                  onChange={setContractingPoc}
+                />
+                <PocFieldset
+                  title="Technical POC"
+                  subtitle="Cell 9 of the PDF template — saved on the contract as COR"
+                  value={technicalPoc}
+                  onChange={setTechnicalPoc}
+                />
+              </div>
+            </div>
           </div>
         </div>
 
@@ -376,6 +485,13 @@ function EditPPModal({ pp, onClose }: { pp: PastPerformance; onClose: () => void
 
 function DetailDrawerPP({ pp, onClose, onExport, onEdit }: { pp: PastPerformance; onClose: () => void; onExport: (pp: PastPerformance) => void; onEdit: (pp: PastPerformance) => void }) {
   useEscapeKey(onClose)
+  const { contracts } = useStore()
+  const linkedContract = useMemo(
+    () => contracts.find(c => c.id === pp.contractId || c.contractId === pp.contractNumber),
+    [contracts, pp.contractId, pp.contractNumber],
+  )
+  const contractingPoc = findContractingPoc(linkedContract?.pocs)
+  const technicalPoc = findTechnicalPoc(linkedContract?.pocs)
   return (
     <motion.div
       initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }}
@@ -436,6 +552,20 @@ function DetailDrawerPP({ pp, onClose, onExport, onEdit }: { pp: PastPerformance
             {pp.location}
           </div>
         )}
+
+        {/* Points of Contact */}
+        <div>
+          <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Points of Contact</p>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <PocViewCard label="Contracting / Purchasing" subtitle="Cell 8 (KO)" poc={contractingPoc} />
+            <PocViewCard label="Technical" subtitle="Cell 9 (COR / END_USER)" poc={technicalPoc} />
+          </div>
+          {!linkedContract && (
+            <p className="mt-2 text-[11px] text-amber-600">
+              No linked contract found — POCs cannot be edited from this row.
+            </p>
+          )}
+        </div>
 
         {/* Description */}
         <div>
