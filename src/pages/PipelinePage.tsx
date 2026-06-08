@@ -10,6 +10,7 @@ import {
   Ban, ChevronLeft, ChevronRight,
   Mail, Phone, User as UserIcon,
   Search, Globe, MessageSquare, Copy, Building2, CheckCircle2, Paperclip,
+  Calendar, DollarSign,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import type { Opportunity, Priority, OppStatus, Comment, FileAttachment, SamGovContact } from '../types'
@@ -1769,6 +1770,47 @@ export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () 
 }
 
 // ── Submit Modal ──────────────────────────────────────────────────────
+// Color tokens for opportunity type pills used in the Submit modal hero.
+const SUBMIT_TYPE_TONES: Record<string, { bg: string; text: string; ring: string }> = {
+  OTJ:       { bg: 'bg-amber-100',   text: 'text-amber-700',   ring: 'ring-amber-200' },
+  RECURRING: { bg: 'bg-emerald-100', text: 'text-emerald-700', ring: 'ring-emerald-200' },
+  BPA:       { bg: 'bg-sky-100',     text: 'text-sky-700',     ring: 'ring-sky-200' },
+  IDIQ:      { bg: 'bg-violet-100',  text: 'text-violet-700',  ring: 'ring-violet-200' },
+  'S&D':     { bg: 'bg-rose-100',    text: 'text-rose-700',    ring: 'ring-rose-200' },
+  SUPPLY:    { bg: 'bg-rose-100',    text: 'text-rose-700',    ring: 'ring-rose-200' },
+}
+
+function submitTypeTone(type: string) {
+  return SUBMIT_TYPE_TONES[type] || { bg: 'bg-slate-100', text: 'text-slate-700', ring: 'ring-slate-200' }
+}
+
+function submitFileExt(name: string) {
+  const dot = name.lastIndexOf('.')
+  return dot > 0 ? name.slice(dot + 1).toUpperCase() : 'FILE'
+}
+
+function submitDeadlineMeta(dueDate: string): { label: string; tone: 'overdue' | 'urgent' | 'warning' | 'ok' } {
+  if (!dueDate) return { label: 'No deadline', tone: 'ok' }
+  const due = new Date(dueDate)
+  if (Number.isNaN(due.getTime())) return { label: 'Invalid date', tone: 'ok' }
+  const start = new Date(); start.setHours(0, 0, 0, 0)
+  const target = new Date(due);  target.setHours(0, 0, 0, 0)
+  const days = Math.round((target.getTime() - start.getTime()) / 86400000)
+  if (days < 0)  return { label: `${Math.abs(days)} day${Math.abs(days) === 1 ? '' : 's'} overdue`, tone: 'overdue' }
+  if (days === 0) return { label: 'Due today', tone: 'urgent' }
+  if (days === 1) return { label: 'Due tomorrow', tone: 'urgent' }
+  if (days <= 3)  return { label: `${days} days left`, tone: 'urgent' }
+  if (days <= 7)  return { label: `${days} days left`, tone: 'warning' }
+  return { label: `${days} days left`, tone: 'ok' }
+}
+
+const SUBMIT_DEADLINE_TONE: Record<'overdue' | 'urgent' | 'warning' | 'ok', string> = {
+  overdue: 'bg-rose-100 text-rose-700 border-rose-200',
+  urgent:  'bg-rose-100 text-rose-700 border-rose-200',
+  warning: 'bg-amber-100 text-amber-700 border-amber-200',
+  ok:      'bg-slate-100 text-slate-600 border-slate-200',
+}
+
 function SubmitModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) {
   const { submitOpportunity, currentUser } = useStore()
   const uploadedBy = currentUser?.username ?? currentUser?.name ?? 'current_user'
@@ -1778,10 +1820,12 @@ function SubmitModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }
     return legacyNames.map((name, index) => legacyProposalAttachment(name, index, uploadedBy))
   })
   const proposalFileInputRef = useRef<HTMLInputElement>(null)
+  const [dragOver, setDragOver] = useState(false)
 
   // Financial fields vary by contract type
   const isOTJ       = opp.type === 'OTJ'
   const isRecurring = opp.type === 'RECURRING'
+  const showYearlyMonthly = !isOTJ
 
   const [contractAmount, setContractAmount] = useState<string>(opp.contractAmount ? String(opp.contractAmount) : '')
   const [yearlyValue, setYearlyValue]       = useState<string>(opp.baseAmount ? String(opp.baseAmount) : '')
@@ -1811,6 +1855,13 @@ function SubmitModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }
     }
   }
 
+  const onDropFiles = async (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    setDragOver(false)
+    const list = Array.from(e.dataTransfer.files || [])
+    for (const f of list) await addFile(f)
+  }
+
   const confirm = async () => {
     const vals: { contractAmount?: number; baseAmount?: number; monthlyPayment?: number } = {}
     if (contractAmount) vals.contractAmount = parseFloat(contractAmount)
@@ -1827,137 +1878,237 @@ function SubmitModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }
     onClose()
   }
 
+  const tone = submitTypeTone(opp.type)
+  const deadline = submitDeadlineMeta(opp.dueDate)
+  const previewTotal   = parseFloat(contractAmount)
+  const previewYearly  = parseFloat(yearlyValue)
+  const previewMonthly = parseFloat(monthlyValue)
+  const dueDateLabel = opp.dueDate
+    ? new Date(opp.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+    : '—'
+  const dueTimeLabel = opp.localTime ? formatLocalDueTimeShared(opp.localTime, opp.timezone) : ''
+
   return (
-    <ModalWrap onClose={onClose} title="Submit Proposal" subtitle={opp.solicitation} maxW="max-w-md">
-      <div className="p-6 space-y-4">
-        <div className="p-4 rounded-xl bg-indigo-50 border border-indigo-100">
-          <p className="text-xs font-semibold text-indigo-500 mb-1.5">Opportunity details</p>
-          <p className="text-sm font-semibold text-slate-800">{opp.solicitation}</p>
-          <p className="text-xs text-slate-500 mt-0.5">{opp.solicitationId} - Due: {new Date(opp.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} {opp.localTime && `at ${formatLocalDueTimeShared(opp.localTime, opp.timezone)}`}</p>
-          <p className="text-xs text-indigo-600 font-semibold mt-1">{typeLabel(opp.type)}</p>
-        </div>
-
-        {/* Financial fields conditional on contract type */}
-        <div className="space-y-3">
-          <p className="text-xs font-bold text-slate-600 uppercase tracking-wide">Contract Value</p>
-
-          {/* OTJ: only Total Contract Amount */}
-          {isOTJ && (
-            <div>
-              <label className="block text-xs font-semibold text-slate-500 mb-1.5">Total Contract Amount ($)</label>
-              <input type="number" value={contractAmount} onChange={e => setContractAmount(e.target.value)} className="input-field" placeholder="0.00" />
+    <ModalWrap onClose={onClose} title="Submit Proposal" subtitle={opp.solicitation} maxW="max-w-3xl">
+      <div className="flex flex-col bg-white" style={{ maxHeight: 'min(86vh, 780px)' }}>
+        {/* Hero card */}
+        <div className="flex-shrink-0 px-6 pt-5">
+          <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-indigo-50 via-white to-white p-5">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[10px] font-black uppercase tracking-wider ring-1 ring-inset ${tone.bg} ${tone.text} ${tone.ring}`}>
+                    {typeLabel(opp.type)}
+                  </span>
+                  <span className="font-mono text-[10px] text-slate-500">{opp.solicitationId}</span>
+                </div>
+                <h3 className="mt-1.5 text-base font-black text-slate-900">{opp.solicitation}</h3>
+                <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-slate-600">
+                  <span className="inline-flex items-center gap-1">
+                    <Calendar size={11} className="text-slate-400" />
+                    Due {dueDateLabel}{dueTimeLabel ? ` · ${dueTimeLabel}` : ''}
+                  </span>
+                  <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold ${SUBMIT_DEADLINE_TONE[deadline.tone]}`}>
+                    <Clock size={9} /> {deadline.label}
+                  </span>
+                </div>
+              </div>
             </div>
-          )}
-
-          {/* RECURRING: Yearly + Monthly (monthly auto-computes) */}
-          {isRecurring && (
-            <>
-              <div>
-                <label className="block text-xs font-semibold text-slate-500 mb-1.5">Total Contract Amount ($)</label>
-                <input type="number" value={contractAmount} onChange={e => setContractAmount(e.target.value)} className="input-field" placeholder="0.00" />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-500 mb-1.5">Yearly Value ($)</label>
-                <input type="number" value={yearlyValue} onChange={e => handleYearlyChange(e.target.value)} className="input-field" placeholder="0.00" />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-500 mb-1.5">
-                  Monthly Value ($) <span className="text-slate-400 font-normal">(auto = yearly / 12)</span>
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={monthlyValue}
-                  onChange={e => { setMonthlyOverridden(true); setMonthlyValue(e.target.value) }}
-                  className="input-field"
-                  placeholder="0.00"
-                />
-              </div>
-            </>
-          )}
-
-          {/* BPA / IDIQ / S&D: all three fields */}
-          {!isOTJ && !isRecurring && (
-            <>
-              <div>
-                <label className="block text-xs font-semibold text-slate-500 mb-1.5">Total Contract Amount ($)</label>
-                <input type="number" value={contractAmount} onChange={e => setContractAmount(e.target.value)} className="input-field" placeholder="0.00" />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-500 mb-1.5">Yearly Value ($)</label>
-                <input type="number" value={yearlyValue} onChange={e => handleYearlyChange(e.target.value)} className="input-field" placeholder="0.00" />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-500 mb-1.5">
-                  Monthly Value ($) <span className="text-slate-400 font-normal">(auto = yearly / 12)</span>
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={monthlyValue}
-                  onChange={e => { setMonthlyOverridden(true); setMonthlyValue(e.target.value) }}
-                  className="input-field"
-                  placeholder="0.00"
-                />
-              </div>
-            </>
-          )}
+          </div>
         </div>
 
-        <div>
-          <label className="block text-xs font-semibold text-slate-600 mb-2">Proposal Files</label>
-          {proposalAttachments.length > 0 && (
-            <div className="space-y-1.5 mb-3">
-              {proposalAttachments.map((att, i) => (
-                <div key={att.id} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-indigo-50 border border-indigo-100">
-                  <FileText size={12} className="flex-shrink-0 text-indigo-500" />
-                  <div className="min-w-0 flex-1">
-                    <p className="text-xs text-slate-800 truncate font-semibold">{att.name}</p>
-                    <p className="text-[10px] text-slate-500">
-                      {att.attachedAt ? formatDateTime(att.attachedAt) : 'Saved file reference'}
-                      {formatFileSize(att.size) ? ` · ${formatFileSize(att.size)}` : ''}
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+          {/* Contract Value */}
+          <section>
+            <div className="mb-2 flex items-center gap-2">
+              <DollarSign size={13} className="text-emerald-500" />
+              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">Contract value</p>
+            </div>
+            <div className="grid gap-4 md:grid-cols-[1fr_240px]">
+              <div className="space-y-3">
+                <MoneyInput
+                  label="Total contract amount"
+                  value={contractAmount}
+                  onChange={setContractAmount}
+                />
+                {showYearlyMonthly && (
+                  <>
+                    <MoneyInput
+                      label="Yearly value"
+                      value={yearlyValue}
+                      onChange={handleYearlyChange}
+                    />
+                    <MoneyInput
+                      label="Monthly value"
+                      hint={monthlyOverridden ? 'Manual override' : 'Auto = yearly ÷ 12'}
+                      value={monthlyValue}
+                      onChange={val => { setMonthlyOverridden(true); setMonthlyValue(val) }}
+                    />
+                  </>
+                )}
+                {isOTJ && (
+                  <p className="text-[11px] text-slate-500">
+                    OTJ contracts are billed once at the total contract amount — no yearly / monthly breakdown.
+                  </p>
+                )}
+              </div>
+
+              {/* Live preview card */}
+              <aside className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-xs">
+                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Preview</p>
+                <div className="mt-2 space-y-2">
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Total</p>
+                    <p className="text-lg font-black text-slate-900">
+                      {Number.isFinite(previewTotal) && previewTotal > 0 ? formatCurrency(previewTotal) : '—'}
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setProposalAttachments(p => p.filter((_, j) => j !== i))}
-                    className="rounded-md p-1 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-500"
-                    aria-label={`Remove ${att.name}`}
-                  >
-                    <X size={12} />
-                  </button>
+                  {showYearlyMonthly && (
+                    <>
+                      <div>
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Yearly</p>
+                        <p className="text-sm font-bold text-slate-700">
+                          {Number.isFinite(previewYearly) && previewYearly > 0 ? formatCurrency(previewYearly) : '—'}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Monthly</p>
+                        <p className="text-sm font-bold text-emerald-700">
+                          {Number.isFinite(previewMonthly) && previewMonthly > 0 ? formatCurrency(previewMonthly) : '—'}
+                        </p>
+                      </div>
+                    </>
+                  )}
                 </div>
-              ))}
+              </aside>
             </div>
-          )}
-          <input
-            ref={proposalFileInputRef}
-            type="file"
-            className="hidden"
-            onChange={e => {
-              const file = e.target.files?.[0] ?? null
-              if (file) addFile(file)
-            }}
-          />
-          <button
-            type="button"
-            onClick={() => proposalFileInputRef.current?.click()}
-            className="flex w-full flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-indigo-200 bg-indigo-50/50 px-4 py-5 text-center transition-colors hover:border-indigo-300 hover:bg-indigo-50"
-          >
-            <Upload size={18} className="text-indigo-500" />
-            <p className="text-xs font-semibold text-indigo-600">
-              {proposalAttachments.length > 0 ? 'Add another file' : 'Click to upload a proposal file'}
-            </p>
-            <p className="text-[10px] text-slate-500">Attached automatically on selection</p>
-          </button>
+          </section>
+
+          {/* Proposal files */}
+          <section>
+            <div className="mb-2 flex items-center gap-2">
+              <FileText size={13} className="text-indigo-500" />
+              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">
+                Proposal files <span className="text-slate-300">·</span> {proposalAttachments.length}
+              </p>
+            </div>
+            <input
+              ref={proposalFileInputRef}
+              type="file"
+              className="hidden"
+              onChange={e => {
+                const file = e.target.files?.[0] ?? null
+                if (file) addFile(file)
+              }}
+            />
+            <div
+              onDragOver={e => { e.preventDefault(); setDragOver(true) }}
+              onDragEnter={e => { e.preventDefault(); setDragOver(true) }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={onDropFiles}
+              onClick={() => proposalFileInputRef.current?.click()}
+              className={`flex flex-col items-center justify-center gap-1 cursor-pointer rounded-2xl border-2 border-dashed px-4 py-6 text-center transition-all ${
+                dragOver
+                  ? 'border-indigo-400 bg-indigo-50'
+                  : 'border-slate-200 bg-slate-50 hover:border-indigo-300 hover:bg-indigo-50/40'
+              }`}
+            >
+              <Upload size={18} className={dragOver ? 'text-indigo-600' : 'text-slate-400'} />
+              <p className={`text-xs font-bold ${dragOver ? 'text-indigo-700' : 'text-slate-700'}`}>
+                {dragOver ? 'Drop to upload' : (proposalAttachments.length > 0 ? 'Add another file' : 'Drop files here or click to upload')}
+              </p>
+              <p className="text-[10px] text-slate-500">PDF, DOCX, XLSX up to a few MB. Files attach instantly.</p>
+            </div>
+
+            {proposalAttachments.length > 0 && (
+              <div className="mt-3 space-y-1.5">
+                {proposalAttachments.map((att, i) => (
+                  <div key={att.id} className="flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-200 bg-white hover:border-indigo-200">
+                    <span className="flex-shrink-0 inline-flex h-7 w-9 items-center justify-center rounded-md bg-indigo-100 text-[9px] font-black text-indigo-700">
+                      {submitFileExt(att.name)}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-bold text-slate-800 truncate">{att.name}</p>
+                      <p className="text-[10px] text-slate-500">
+                        {att.attachedAt ? formatDateTime(att.attachedAt) : 'Saved file reference'}
+                        {formatFileSize(att.size) ? ` · ${formatFileSize(att.size)}` : ''}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setProposalAttachments(p => p.filter((_, j) => j !== i))}
+                      className="flex-shrink-0 rounded-md p-1 text-slate-400 transition-colors hover:bg-rose-50 hover:text-rose-500"
+                      aria-label={`Remove ${att.name}`}
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
         </div>
 
-        <div className="flex gap-3 pt-2 border-t border-slate-100">
-          <button onClick={onClose} className="btn-secondary flex-1 justify-center">Cancel</button>
-          <button onClick={confirm} className="btn-primary flex-1 justify-center"><Send size={13} /> Confirm Submission</button>
-        </div>
+        {/* Sticky footer */}
+        <footer className="flex-shrink-0 flex items-center justify-between gap-3 px-6 py-3 border-t border-slate-200 bg-slate-50">
+          <p className="text-[10px] text-slate-500">
+            Submitting moves the opportunity to <span className="font-bold text-slate-700">Submitted</span>.
+          </p>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-slate-600 hover:bg-slate-100"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={confirm}
+              className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm"
+            >
+              <Send size={12} /> Submit proposal
+            </button>
+          </div>
+        </footer>
       </div>
     </ModalWrap>
+  )
+}
+
+// Money input with $ prefix used inside SubmitModal.
+function MoneyInput({
+  label,
+  value,
+  onChange,
+  hint,
+}: {
+  label: string
+  value: string
+  onChange: (val: string) => void
+  hint?: string
+}) {
+  return (
+    <div>
+      <div className="mb-1 flex items-center justify-between">
+        <label className="text-[10px] font-black uppercase tracking-wider text-slate-500">{label}</label>
+        {hint && <span className="text-[10px] font-semibold text-slate-400">{hint}</span>}
+      </div>
+      <div className="relative">
+        <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-xs font-black text-slate-400">$</span>
+        <input
+          type="number"
+          inputMode="decimal"
+          step="0.01"
+          min={0}
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          placeholder="0.00"
+          className="input-field w-full pl-7 text-right tabular-nums no-spin"
+        />
+      </div>
+    </div>
   )
 }
 
