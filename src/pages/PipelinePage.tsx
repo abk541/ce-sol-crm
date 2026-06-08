@@ -1406,36 +1406,50 @@ function SubmitModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }
 
         <div>
           <label className="block text-xs font-semibold text-slate-600 mb-2">Proposal Files</label>
-          {proposalAttachments.length === 0 && <p className="text-xs text-slate-400 mb-2">No files attached yet</p>}
-          <div className="space-y-1.5 mb-3">
-            {proposalAttachments.map((att, i) => (
-              <div key={att.id} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-50 border border-slate-100">
-                <FileText size={11} className="flex-shrink-0 text-slate-400" />
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs text-slate-700 truncate font-semibold">{att.name}</p>
-                  <p className="text-[10px] text-slate-400">
-                    {att.attachedAt ? formatDateTime(att.attachedAt) : 'Saved file reference'}
-                    {formatFileSize(att.size) ? ` - ${formatFileSize(att.size)}` : ''}
-                  </p>
+          {proposalAttachments.length > 0 && (
+            <div className="space-y-1.5 mb-3">
+              {proposalAttachments.map((att, i) => (
+                <div key={att.id} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-indigo-50 border border-indigo-100">
+                  <FileText size={12} className="flex-shrink-0 text-indigo-500" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs text-slate-800 truncate font-semibold">{att.name}</p>
+                    <p className="text-[10px] text-slate-500">
+                      {att.attachedAt ? formatDateTime(att.attachedAt) : 'Saved file reference'}
+                      {formatFileSize(att.size) ? ` · ${formatFileSize(att.size)}` : ''}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setProposalAttachments(p => p.filter((_, j) => j !== i))}
+                    className="rounded-md p-1 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-500"
+                    aria-label={`Remove ${att.name}`}
+                  >
+                    <X size={12} />
+                  </button>
                 </div>
-                <button type="button" onClick={() => setProposalAttachments(p => p.filter((_, j) => j !== i))} className="text-slate-400 hover:text-red-400 transition-colors" aria-label={`Remove ${att.name}`}>
-                  <X size={10} />
-                </button>
-              </div>
-            ))}
-          </div>
-          <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
-            <input
-              ref={proposalFileInputRef}
-              type="file"
-              onChange={e => {
-                const file = e.target.files?.[0] ?? null
-                if (file) addFile(file)
-              }}
-              className="input-field text-xs file:mr-3 file:rounded-lg file:border-0 file:bg-[#D7BE7A] file:px-3 file:py-1.5 file:text-xs file:font-bold file:text-[#07131F]"
-            />
-            <p className="mt-2 text-[10px] text-slate-400">File is attached automatically when selected.</p>
-          </div>
+              ))}
+            </div>
+          )}
+          <input
+            ref={proposalFileInputRef}
+            type="file"
+            className="hidden"
+            onChange={e => {
+              const file = e.target.files?.[0] ?? null
+              if (file) addFile(file)
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => proposalFileInputRef.current?.click()}
+            className="flex w-full flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-indigo-200 bg-indigo-50/50 px-4 py-5 text-center transition-colors hover:border-indigo-300 hover:bg-indigo-50"
+          >
+            <Upload size={18} className="text-indigo-500" />
+            <p className="text-xs font-semibold text-indigo-600">
+              {proposalAttachments.length > 0 ? 'Add another file' : 'Click to upload a proposal file'}
+            </p>
+            <p className="text-[10px] text-slate-500">Attached automatically on selection</p>
+          </button>
         </div>
 
         <div className="flex gap-3 pt-2 border-t border-slate-100">
