@@ -8,7 +8,7 @@ import {
   ArrowRight, CheckCircle2, Info, MapPin, Calendar,
   Phone, Mail, Clock, Shield, FileText, Trash2, AlertCircle,
   ChevronUp, ChevronDown, ChevronsUpDown, Pencil, Receipt, Eye, Paperclip, Download,
-  UserCog, Layers,
+  UserCog, Layers, Minus,
 } from 'lucide-react'
 import PeriodFilter, { type Period, filterByPeriod } from '../components/shared/PeriodFilter'
 import toast from 'react-hot-toast'
@@ -452,6 +452,59 @@ const LINE_YEAR_LABELS: Record<ContractLineYear, string> = {
 
 const LINE_YEAR_ORDER: ContractLineYear[] = ['base', 'option1', 'option2', 'option3', 'option4']
 
+function QuantityStepper({
+  value,
+  onChange,
+  compact = false,
+}: {
+  value: string
+  onChange: (next: string) => void
+  compact?: boolean
+}) {
+  const step = (delta: number) => {
+    const n = Number(value)
+    const base = Number.isFinite(n) ? Math.floor(n) : 0
+    const next = Math.max(0, base + delta)
+    onChange(String(next))
+  }
+  const btnSize = compact ? 'h-[30px] w-7' : 'h-[38px] w-9'
+  const inputSize = compact ? 'h-[30px] text-xs' : 'h-[38px] text-sm'
+  return (
+    <div
+      className="flex items-stretch rounded-xl overflow-hidden"
+      style={{ background: 'var(--bg-input)', border: '1px solid var(--border-input)' }}
+    >
+      <button
+        type="button"
+        onClick={() => step(-1)}
+        className={`${btnSize} flex items-center justify-center text-[#D7BE7A] hover:bg-[rgba(184,145,78,0.18)] active:bg-[rgba(184,145,78,0.28)] transition-colors disabled:opacity-40 disabled:cursor-not-allowed border-r`}
+        style={{ borderColor: 'rgba(215,190,122,0.18)' }}
+        disabled={Number(value) <= 0}
+        aria-label="Decrease quantity"
+      >
+        <Minus size={compact ? 12 : 14} strokeWidth={2.5} />
+      </button>
+      <input
+        type="number"
+        min={0}
+        step={1}
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        className={`flex-1 min-w-0 bg-transparent border-0 outline-none text-center font-bold text-[#F8E8B8] no-spin ${inputSize}`}
+      />
+      <button
+        type="button"
+        onClick={() => step(1)}
+        className={`${btnSize} flex items-center justify-center text-[#D7BE7A] hover:bg-[rgba(184,145,78,0.18)] active:bg-[rgba(184,145,78,0.28)] transition-colors border-l`}
+        style={{ borderColor: 'rgba(215,190,122,0.18)' }}
+        aria-label="Increase quantity"
+      >
+        <Plus size={compact ? 12 : 14} strokeWidth={2.5} />
+      </button>
+    </div>
+  )
+}
+
 function ContractLineItemsTab({
   contract,
   onAdd,
@@ -566,13 +619,9 @@ function ContractLineItemsTab({
           </div>
           <div>
             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">Quantity</label>
-            <input
-              type="number"
-              min={0}
-              step="0.01"
+            <QuantityStepper
               value={draft.quantity}
-              onChange={e => setDraft({ ...draft, quantity: e.target.value })}
-              className="input-field w-full"
+              onChange={v => setDraft({ ...draft, quantity: v })}
             />
           </div>
           <div>
@@ -593,7 +642,7 @@ function ContractLineItemsTab({
               step="0.01"
               value={draft.rate}
               onChange={e => setDraft({ ...draft, rate: e.target.value })}
-              className="input-field w-full"
+              className="input-field w-full no-spin"
             />
           </div>
           <div>
@@ -731,14 +780,18 @@ function LineItemRow({
         <td className="px-3 py-2">
           <input className="input-field w-full text-xs" value={draft.description} onChange={e => setDraft({ ...draft, description: e.target.value })} />
         </td>
-        <td className="px-3 py-2 w-20">
-          <input className="input-field w-full text-xs text-right" type="number" min={0} step="0.01" value={draft.quantity} onChange={e => setDraft({ ...draft, quantity: e.target.value })} />
+        <td className="px-3 py-2 w-32">
+          <QuantityStepper
+            value={draft.quantity}
+            onChange={v => setDraft({ ...draft, quantity: v })}
+            compact
+          />
         </td>
         <td className="px-3 py-2 w-20">
           <input className="input-field w-full text-xs uppercase" value={draft.unit} onChange={e => setDraft({ ...draft, unit: e.target.value })} />
         </td>
         <td className="px-3 py-2 w-28">
-          <input className="input-field w-full text-xs text-right" type="number" min={0} step="0.01" value={draft.rate} onChange={e => setDraft({ ...draft, rate: e.target.value })} />
+          <input className="input-field w-full text-xs text-right no-spin" type="number" min={0} step="0.01" value={draft.rate} onChange={e => setDraft({ ...draft, rate: e.target.value })} />
         </td>
         <td className="px-3 py-2 text-right text-[#F8E8B8] font-bold">{formatCurrency((Number(draft.quantity) || 0) * (Number(draft.rate) || 0))}</td>
         <td className="px-3 py-2">
