@@ -13,15 +13,85 @@ import { generatePastPerformancePdf } from '../lib/pastPerformancePdf'
 import FloatingActionMenu from '../components/shared/FloatingActionMenu'
 import toast from 'react-hot-toast'
 
+type PocDraft = { name: string; email: string; phone: string }
+
+function PocFieldset({
+  title,
+  subtitle,
+  value,
+  onChange,
+}: {
+  title: string
+  subtitle?: string
+  value: PocDraft
+  onChange: (next: PocDraft) => void
+}) {
+  return (
+    <div className="rounded-xl border border-slate-200 p-3 space-y-2" style={{ background: 'var(--bg-raised)' }}>
+      <div>
+        <p className="text-xs font-bold text-slate-700">{title}</p>
+        {subtitle && <p className="text-[10px] text-slate-400">{subtitle}</p>}
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+        <div>
+          <label className="block text-[10px] font-semibold uppercase tracking-wider text-slate-500 mb-1">Name</label>
+          <input
+            value={value.name}
+            onChange={e => onChange({ ...value, name: e.target.value })}
+            className="input-field text-xs py-1.5 w-full"
+            placeholder="Full name"
+          />
+        </div>
+        <div>
+          <label className="block text-[10px] font-semibold uppercase tracking-wider text-slate-500 mb-1">Email</label>
+          <input
+            type="email"
+            value={value.email}
+            onChange={e => onChange({ ...value, email: e.target.value })}
+            className="input-field text-xs py-1.5 w-full"
+            placeholder="name@agency.gov"
+          />
+        </div>
+        <div>
+          <label className="block text-[10px] font-semibold uppercase tracking-wider text-slate-500 mb-1">Phone</label>
+          <input
+            type="tel"
+            value={value.phone}
+            onChange={e => onChange({ ...value, phone: e.target.value })}
+            className="input-field text-xs py-1.5 w-full"
+            placeholder="(555) 555-5555"
+          />
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function ExportModal({ pp, onClose }: { pp: PastPerformance; onClose: () => void }) {
   const { contracts, opportunities } = useStore()
   const [desc, setDesc] = useState(pp.description)
   const [touched, setTouched] = useState(false)
   const invalid = touched && !desc.trim()
 
+  const linkedContract = useMemo(
+    () => contracts.find(c => c.id === pp.contractId || c.contractId === pp.contractNumber),
+    [contracts, pp.contractId, pp.contractNumber],
+  )
+  const seedContractingPoc = useMemo(() => {
+    const p = (linkedContract?.pocs || []).find(p => p.role === 'KO')
+    return { name: p?.name ?? '', email: p?.email ?? '', phone: p?.phone ?? '' }
+  }, [linkedContract])
+  const seedTechnicalPoc = useMemo(() => {
+    const all = linkedContract?.pocs || []
+    const p = all.find(p => p.role === 'COR') || all.find(p => p.role === 'END_USER')
+    return { name: p?.name ?? '', email: p?.email ?? '', phone: p?.phone ?? '' }
+  }, [linkedContract])
+
+  const [contractingPoc, setContractingPoc] = useState(seedContractingPoc)
+  const [technicalPoc, setTechnicalPoc] = useState(seedTechnicalPoc)
+
   const handleExport = async () => {
     if (!desc.trim()) { setTouched(true); return }
-    const contract = contracts.find(c => c.id === pp.contractId || c.contractId === pp.contractNumber)
     const fallbackContract: Contract = {
       id: pp.contractId || pp.id,
       contractId: pp.contractNumber,
@@ -42,7 +112,7 @@ function ExportModal({ pp, onClose }: { pp: PastPerformance; onClose: () => void
       bds: pp.bds,
       opportunityId: pp.opportunityId,
     }
-    const targetContract = contract || fallbackContract
+    const targetContract = linkedContract || fallbackContract
     const opportunity = targetContract.opportunityId
       ? opportunities.find(o => o.id === targetContract.opportunityId)
       : undefined
@@ -51,6 +121,8 @@ function ExportModal({ pp, onClose }: { pp: PastPerformance; onClose: () => void
         contract: targetContract,
         opportunity,
         description: desc.trim(),
+        contractingPoc,
+        technicalPoc,
       })
       toast.success('Past performance PDF generated')
       onClose()
@@ -105,6 +177,20 @@ function ExportModal({ pp, onClose }: { pp: PastPerformance; onClose: () => void
               <p className="text-xs text-rose-500 mt-1">Description is required</p>
             )}
           </div>
+
+          <PocFieldset
+            title="Contracting / Purchasing POC"
+            subtitle="Cell 8 of the PDF template"
+            value={contractingPoc}
+            onChange={setContractingPoc}
+          />
+          <PocFieldset
+            title="Technical POC"
+            subtitle="Cell 9 of the PDF template"
+            value={technicalPoc}
+            onChange={setTechnicalPoc}
+          />
+
           <p className="text-xs text-slate-400">
             Review and confirm the project description before exporting. This text will appear in the PDF template.
           </p>

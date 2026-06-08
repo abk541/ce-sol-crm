@@ -1,5 +1,11 @@
 import { PDFDocument, PDFFont, PDFPage, StandardFonts, rgb } from 'pdf-lib'
-import type { Contract, ContractPoC, Opportunity } from '../types'
+import type { Contract, Opportunity } from '../types'
+
+export interface PastPerformancePocOverride {
+  name?: string
+  email?: string
+  phone?: string
+}
 
 // ── Layout constants (Letter size, points) ───────────────────────────
 const PAGE_W = 612
@@ -196,7 +202,7 @@ function drawCellValue(
 
 function drawPocBlock(
   ctx: DrawCtx,
-  poc: ContractPoC | undefined,
+  poc: { name?: string; email?: string; phone?: string } | undefined,
   x: number,
   yTop: number,
   width: number,
@@ -226,7 +232,7 @@ function drawPocBlock(
         y,
         size: lineSize,
         font: ctx.font,
-        color: poc ? INK : MUTED,
+        color: poc && (poc.name || poc.email || poc.phone) ? INK : MUTED,
       })
     }
     y -= 18
@@ -237,10 +243,14 @@ export async function generatePastPerformancePdf({
   contract,
   opportunity,
   description,
+  contractingPoc,
+  technicalPoc,
 }: {
   contract: Contract
   opportunity?: Opportunity
   description: string
+  contractingPoc?: PastPerformancePocOverride
+  technicalPoc?: PastPerformancePocOverride
 }) {
   const pdf = await PDFDocument.create()
   const page = pdf.addPage([PAGE_W, PAGE_H])
@@ -331,8 +341,16 @@ export async function generatePastPerformancePdf({
   const location = contract.location || opportunity?.location || ''
 
   const pocs = contract.pocs || []
-  const contractingPoc = pocs.find(p => p.role === 'KO')
-  const technicalPoc = pocs.find(p => p.role === 'COR') || pocs.find(p => p.role === 'END_USER')
+  const fallbackContractingPoc = pocs.find(p => p.role === 'KO')
+  const fallbackTechnicalPoc = pocs.find(p => p.role === 'COR') || pocs.find(p => p.role === 'END_USER')
+  const overrideHasContent = (o?: PastPerformancePocOverride) =>
+    !!(o && (o.name?.trim() || o.email?.trim() || o.phone?.trim()))
+  const resolvedContractingPoc = overrideHasContent(contractingPoc)
+    ? { name: contractingPoc!.name?.trim(), email: contractingPoc!.email?.trim(), phone: contractingPoc!.phone?.trim() }
+    : fallbackContractingPoc
+  const resolvedTechnicalPoc = overrideHasContent(technicalPoc)
+    ? { name: technicalPoc!.name?.trim(), email: technicalPoc!.email?.trim(), phone: technicalPoc!.phone?.trim() }
+    : fallbackTechnicalPoc
 
   // Layout
   const tableX = MARGIN
@@ -396,8 +414,8 @@ export async function generatePastPerformancePdf({
     drawCellBox(page, tableX + halfW, y, halfW, h)
     const lL = drawCellLabel(ctx, '8.  Contracting or purchasing point of contact:', tableX, y, halfW)
     const lR = drawCellLabel(ctx, '9.  Technical point of contact:', tableX + halfW, y, halfW)
-    drawPocBlock(ctx, contractingPoc, tableX, y, halfW, lL)
-    drawPocBlock(ctx, technicalPoc, tableX + halfW, y, halfW, lR)
+    drawPocBlock(ctx, resolvedContractingPoc, tableX, y, halfW, lL)
+    drawPocBlock(ctx, resolvedTechnicalPoc, tableX + halfW, y, halfW, lR)
     y -= h
   }
 
