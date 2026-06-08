@@ -516,6 +516,7 @@ function freshAwardToDb(fa: FreshAward): Record<string, unknown> {
     contract_id: fa.contractId ?? null,
     moved_at: fa.movedAt ?? null,
     notes: fa.notes ?? null,
+    proposal_attachments: normalizeStoredAttachments(fa.proposalAttachments),
   }
 }
 
@@ -545,6 +546,7 @@ function dbToFreshAward(row: Record<string, unknown>): Partial<FreshAward> {
     contractId: row.contract_id as string | undefined,
     movedAt: row.moved_at as string | undefined,
     notes: row.notes as string | undefined,
+    proposalAttachments: normalizeStoredAttachments(row.proposal_attachments),
   }
 }
 

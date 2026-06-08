@@ -577,7 +577,9 @@ export default function FreshAwardPage() {
         {visible.map((fa, i) => {
           const meta = STATUS_META[fa.status]
           const sourceOpp = fa.opportunityId ? opportunities.find(o => o.id === fa.opportunityId) : undefined
-          const proposalAttachments: FileAttachment[] = sourceOpp?.proposalAttachments ?? []
+          const proposalAttachments: FileAttachment[] = fa.proposalAttachments?.length
+            ? fa.proposalAttachments
+            : sourceOpp?.proposalAttachments ?? []
           return (
             <motion.div
               key={fa.id}

@@ -693,6 +693,22 @@ export const useStore = create<AppState>()(
                 if (updated) upsertContract(updated)
               })
             }
+            // Also propagate to any in-flight FreshAward so the file follows
+            // the opportunity through the award handoff.
+            const linkedAwards = get().freshAwards.filter(fa => fa.opportunityId === opp.id)
+            if (linkedAwards.length) {
+              set(s => ({
+                freshAwards: s.freshAwards.map(fa =>
+                  linkedAwards.some(la => la.id === fa.id)
+                    ? { ...fa, proposalAttachments: values.proposalAttachments }
+                    : fa
+                ),
+              }))
+              linkedAwards.forEach(la => {
+                const updated = get().freshAwards.find(fa => fa.id === la.id)
+                if (updated) upsertFreshAward(updated)
+              })
+            }
           }
           get().addNotification({
             type: 'CONTRACT_SUBMITTED',
@@ -794,6 +810,7 @@ export const useStore = create<AppState>()(
           assignedBDS: opp.bds,
           assignedSupportAgent: opp.supportAgent,
           status: 'PENDING_ASSIGNMENT',
+          proposalAttachments: opp.proposalAttachments?.length ? opp.proposalAttachments : undefined,
         }
         set(s => ({ freshAwards: [freshAward, ...s.freshAwards] }))
         upsertFreshAward(freshAward)
@@ -1221,7 +1238,11 @@ export const useStore = create<AppState>()(
         }
 
         const sourceOpp = fa.opportunityId ? get().opportunities.find(o => o.id === fa.opportunityId) : undefined
-        const proposalAttachments = sourceOpp?.proposalAttachments?.length ? sourceOpp.proposalAttachments : undefined
+        const proposalAttachments = fa.proposalAttachments?.length
+          ? fa.proposalAttachments
+          : sourceOpp?.proposalAttachments?.length
+            ? sourceOpp.proposalAttachments
+            : undefined
 
         // Generate the contract ID once so it stays consistent on both the
         // contract record AND the fresh award's contractId field.

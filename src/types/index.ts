@@ -327,6 +327,7 @@ export interface FreshAward {
   contractId?: string         // set when moved to active
   movedAt?: string
   notes?: string
+  proposalAttachments?: FileAttachment[]
 }
 
 // ── Past Performance ──────────────────────────────────────────────────

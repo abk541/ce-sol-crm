@@ -7,7 +7,7 @@ import {
   AlertTriangle, ListChecks, ChevronRight, X, Save, Plus,
   ArrowRight, CheckCircle2, Info, MapPin, Calendar,
   Phone, Mail, Clock, Shield, FileText, Trash2, AlertCircle,
-  ChevronUp, ChevronDown, ChevronsUpDown, Pencil, Receipt, Eye, Paperclip, Download, Upload,
+  ChevronUp, ChevronDown, ChevronsUpDown, Pencil, Receipt, Eye, Paperclip, Download,
 } from 'lucide-react'
 import PeriodFilter, { type Period, filterByPeriod } from '../components/shared/PeriodFilter'
 import toast from 'react-hot-toast'
@@ -521,7 +521,6 @@ function ContractDetailDrawer({
 
   // Edit status
   const [editingStatus, setEditingStatus] = useState(false)
-  const proposalUploadRef = useRef<HTMLInputElement>(null)
 
   const nextStatus = STATUS_FLOW[contract.status]
   const meta = STATUS_META[contract.status]
@@ -831,49 +830,9 @@ function ContractDetailDrawer({
                     {sourceOpportunity?.submittedAt ? `Submitted ${formatDateTime(sourceOpportunity.submittedAt)}` : 'Linked from the source opportunity'}
                   </p>
                 </div>
-                <div className="flex flex-shrink-0 items-center gap-2">
-                  <span className="rounded-full border border-[#D7BE7A]/30 bg-[#D7BE7A]/10 px-2.5 py-1 text-[10px] font-bold text-[#F8E8B8]">
-                    {proposalCount} file{proposalCount === 1 ? '' : 's'}
-                  </span>
-                  <input
-                    ref={proposalUploadRef}
-                    type="file"
-                    className="hidden"
-                    onChange={async e => {
-                      const file = e.target.files?.[0]
-                      if (!file) return
-                      try {
-                        const dataUrl = await new Promise<string>((resolve, reject) => {
-                          const reader = new FileReader()
-                          reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '')
-                          reader.onerror = () => reject(reader.error)
-                          reader.readAsDataURL(file)
-                        })
-                        const attachment = createAttachment(
-                          file.name,
-                          new Date().toISOString(),
-                          currentUser?.username ?? currentUser?.name ?? 'unknown',
-                          { dataUrl, mimeType: file.type || undefined, size: file.size },
-                        )
-                        const next = [...(contract.proposalAttachments ?? []), attachment]
-                        const saved = await updateContract(contract.id, { proposalAttachments: next })
-                        if (saved) toast.success('Proposal attached to contract')
-                      } catch (err) {
-                        console.error(err)
-                        toast.error('Could not attach proposal file.')
-                      } finally {
-                        if (proposalUploadRef.current) proposalUploadRef.current.value = ''
-                      }
-                    }}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => proposalUploadRef.current?.click()}
-                    className="flex items-center gap-1.5 rounded-lg border border-[#D7BE7A]/35 bg-[#D7BE7A]/15 px-2.5 py-1 text-[11px] font-black text-[#F8E8B8] transition-colors hover:bg-[#D7BE7A]/25"
-                  >
-                    <Upload size={12} /> Upload
-                  </button>
-                </div>
+                <span className="rounded-full border border-[#D7BE7A]/30 bg-[#D7BE7A]/10 px-2.5 py-1 text-[10px] font-bold text-[#F8E8B8]">
+                  {proposalCount} file{proposalCount === 1 ? '' : 's'}
+                </span>
               </div>
               {proposalAttachments.length > 0 ? (
                 <div className="space-y-1.5">
@@ -906,27 +865,13 @@ function ContractDetailDrawer({
                         >
                           <Download size={12} /> Download
                         </button>
-                        {(contract.proposalAttachments ?? []).some(a => a.id === att.id) && (
-                          <button
-                            type="button"
-                            title="Remove from contract"
-                            onClick={async () => {
-                              const next = (contract.proposalAttachments ?? []).filter(a => a.id !== att.id)
-                              const saved = await updateContract(contract.id, { proposalAttachments: next })
-                              if (saved) toast.success('Proposal removed')
-                            }}
-                            className="flex items-center justify-center rounded-lg border border-red-300/30 bg-red-500/10 p-1.5 text-red-300 transition-colors hover:bg-red-500/20"
-                          >
-                            <Trash2 size={12} />
-                          </button>
-                        )}
                       </div>
                     </div>
                   ))}
                 </div>
               ) : (
                 <p className="rounded-lg border border-dashed border-white/10 px-3 py-3 text-xs text-slate-400">
-                  No proposal file is linked to this contract yet. Click <span className="font-bold text-[#F8E8B8]">Upload</span> above to attach one.
+                  No proposal file is linked to this contract yet.
                 </p>
               )}
             </div>
