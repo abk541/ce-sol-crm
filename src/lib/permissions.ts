@@ -26,7 +26,7 @@ export type Permission =
 export const ROLE_LABELS: Record<Role, string> = {
   CAPTURE_MANAGER: 'Capture Manager',
   BD_MANAGER: 'BD Manager',
-  TEAM_LEAD: 'BD Team Lead',
+  TEAM_LEAD: 'Team Lead',
   ASSOCIATE: 'Associate',
   OPS_MANAGER: 'Operations Manager',
 }

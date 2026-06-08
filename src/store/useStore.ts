@@ -407,10 +407,10 @@ export const useStore = create<AppState>()(
 
       acceptAccessNotice: () => set({ accessNoticeAccepted: true }),
 
-      completeFirstLogin: (_password) => {
+      completeFirstLogin: (password) => {
         const u = get().currentUser
         if (!u) return
-        const updated = { ...u, firstLogin: false }
+        const updated = { ...u, firstLogin: false, password: password || u.password }
         set(s => ({
           users: s.users.map(x => x.id === u.id ? updated : x),
           currentUser: updated,

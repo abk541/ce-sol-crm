@@ -34,6 +34,10 @@ export interface User {
   mfaEnabled: boolean
   createdAt: string
   password?: string
+  // BD vs OPS placement on the org chart. Only meaningful for TEAM_LEAD and
+  // ASSOCIATE; BD_MANAGER is implicitly 'BD', OPS_MANAGER 'OPS', and
+  // CAPTURE_MANAGER has no team. Treat undefined as 'BD' for legacy data.
+  team?: EmployeeTeam
 }
 
 export type Priority = 'VERY_HIGH' | 'HIGH' | 'MEDIUM'
