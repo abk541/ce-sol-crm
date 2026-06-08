@@ -8,7 +8,7 @@ import type {
   ContractPoC, LockedSubcontractor, GovernmentWarning, Employee,
   BDSubmission, FileAttachment, CompanyCertification, EmployeeRequest,
   CompanyCertificationStatus, EmployeeRequestStatus,
-  ContractLineItem,
+  ContractLineItem, ContractInvoice,
 } from '../types'
 import {
   MOCK_USERS, MOCK_OPPORTUNITIES, MOCK_NOTIFICATIONS,
@@ -31,6 +31,8 @@ import {
   upsertContract,
   upsertContractPoC,
   deleteContractPoC,
+  upsertContractInvoice,
+  deleteContractInvoice,
   upsertLockedSubcontractor,
   upsertGovernmentWarning,
   deleteGovernmentWarningRecord,
@@ -112,6 +114,9 @@ interface AppState {
   addContractPoC: (contractId: string, poc: Omit<ContractPoC, 'id' | 'contractId'>) => void
   updateContractPoC: (contractId: string, pocId: string, data: Partial<ContractPoC>) => void
   removeContractPoC: (contractId: string, pocId: string) => void
+  addContractInvoice: (contractId: string, invoice: Omit<ContractInvoice, 'id' | 'contractId' | 'createdAt'>) => string
+  updateContractInvoice: (contractId: string, invoiceId: string, data: Partial<ContractInvoice>) => void
+  removeContractInvoice: (contractId: string, invoiceId: string) => void
   addLockedSubcontractor: (contractId: string, sub: Omit<LockedSubcontractor, 'id' | 'contractId'>) => void
   updateLockedSubcontractor: (contractId: string, subId: string, data: Partial<LockedSubcontractor>) => void
   addGovernmentWarning: (contractId: string, warning: Omit<GovernmentWarning, 'id' | 'contractId'>) => void
@@ -970,6 +975,48 @@ export const useStore = create<AppState>()(
           )
         }))
         deleteContractPoC(pocId)
+      },
+
+      addContractInvoice: (contractId, invoice) => {
+        const id = `inv${Date.now()}${Math.floor(Math.random() * 1000)}`
+        const newInvoice: ContractInvoice = {
+          ...invoice,
+          id,
+          contractId,
+          createdAt: new Date().toISOString(),
+        }
+        set(s => ({
+          contracts: s.contracts.map(c =>
+            c.id === contractId
+              ? { ...c, invoices: [...(c.invoices || []), newInvoice] }
+              : c
+          )
+        }))
+        upsertContractInvoice(newInvoice)
+        return id
+      },
+
+      updateContractInvoice: (contractId, invoiceId, data) => {
+        set(s => ({
+          contracts: s.contracts.map(c =>
+            c.id === contractId
+              ? { ...c, invoices: (c.invoices || []).map(i => i.id === invoiceId ? { ...i, ...data } : i) }
+              : c
+          )
+        }))
+        const updated = get().contracts.find(c => c.id === contractId)?.invoices?.find(i => i.id === invoiceId)
+        if (updated) upsertContractInvoice(updated)
+      },
+
+      removeContractInvoice: (contractId, invoiceId) => {
+        set(s => ({
+          contracts: s.contracts.map(c =>
+            c.id === contractId
+              ? { ...c, invoices: (c.invoices || []).filter(i => i.id !== invoiceId) }
+              : c
+          )
+        }))
+        deleteContractInvoice(invoiceId)
       },
 
       addLockedSubcontractor: (contractId, sub) => {

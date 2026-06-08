@@ -309,6 +309,7 @@ export interface Contract {
   serviceDate?: string              // YYYY-MM-DD, entered in the Billing Period tab; printed on the invoice
   lineItems?: ContractLineItem[]    // CLIN-numbered scope of work entries (base + up to 4 option years)
   governmentBillingStatus?: GovBillingStatus  // gov-invoice payment status shown in Finance Projections
+  invoices?: ContractInvoice[]      // tracked invoices feeding the Finance Projections grid
 }
 
 // ── Government Billing Status (Finance Projections) ─────────────
@@ -318,6 +319,25 @@ export type GovBillingStatus =
   | 'REJECTED'
   | 'SENT_FOR_APPROVAL'
   | 'PAID'
+
+// ── Contract Invoice (Finance Projections row) ─────────────────────
+export type InvoicePaymentMethod = 'TUNGSTEN' | 'IPP' | 'EMAIL' | 'WAWF' | 'OTHER'
+export type SubInvoiceStatus = 'NOT_PAID' | 'PARTIAL' | 'PAID'
+
+export interface ContractInvoice {
+  id: string
+  contractId: string
+  invoiceNumber: string                  // e.g. "INV-CES-001"
+  invoiceDate: string                    // YYYY-MM-DD
+  amount: number                         // government bill amount
+  paymentMethod?: InvoicePaymentMethod
+  status: GovBillingStatus
+  subQuote?: number                      // override; default = sum of locked subk pay rates
+  dueDate?: string                       // YYYY-MM-DD; default = invoiceDate + 30d
+  subStatus?: SubInvoiceStatus           // default derived from locked subk paid flags
+  notes?: string
+  createdAt?: string
+}
 
 // ── Contract Line Item (CLIN) ─────────────────────────────────────────
 // Year bucket the line belongs to. CLIN format:

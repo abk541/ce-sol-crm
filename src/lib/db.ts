@@ -6,6 +6,7 @@ import type {
   Employee,
   Opportunity,
   Contract,
+  ContractInvoice,
   ContractPoC,
   ContractLineItem,
   FreshAward,
@@ -311,6 +312,42 @@ function dbToPoc(row: Record<string, unknown>): ContractPoC {
     phone: row.phone as string | undefined,
     notes: row.notes as string | undefined,
     contactedAt: row.contacted_at as string | undefined,
+  }
+}
+
+function invoiceToDb(inv: ContractInvoice): Record<string, unknown> {
+  return {
+    id: inv.id,
+    contract_id: inv.contractId,
+    invoice_number: inv.invoiceNumber,
+    invoice_date: inv.invoiceDate,
+    amount: inv.amount,
+    payment_method: inv.paymentMethod ?? null,
+    status: inv.status,
+    sub_quote: inv.subQuote ?? null,
+    due_date: inv.dueDate ?? null,
+    sub_status: inv.subStatus ?? null,
+    notes: inv.notes ?? null,
+    created_at: inv.createdAt ?? null,
+  }
+}
+
+function dbToInvoice(row: Record<string, unknown>): ContractInvoice {
+  const amountRaw = row.amount
+  const subQuoteRaw = row.sub_quote
+  return {
+    id: row.id as string,
+    contractId: row.contract_id as string,
+    invoiceNumber: (row.invoice_number as string) ?? '',
+    invoiceDate: (row.invoice_date as string) ?? '',
+    amount: typeof amountRaw === 'number' ? amountRaw : Number(amountRaw ?? 0),
+    paymentMethod: (row.payment_method as ContractInvoice['paymentMethod']) ?? undefined,
+    status: ((row.status as ContractInvoice['status']) ?? 'SUBMITTED'),
+    subQuote: subQuoteRaw == null ? undefined : Number(subQuoteRaw),
+    dueDate: (row.due_date as string | null) ?? undefined,
+    subStatus: (row.sub_status as ContractInvoice['subStatus']) ?? undefined,
+    notes: (row.notes as string | null) ?? undefined,
+    createdAt: (row.created_at as string | null) ?? undefined,
   }
 }
 
@@ -818,6 +855,7 @@ export async function loadAllData(): Promise<{
       subRes,
       conRes,
       pocRes,
+      invoiceRes,
       lockedSubRes,
       warningRes,
       lineItemRes,
@@ -833,6 +871,7 @@ export async function loadAllData(): Promise<{
       supabase.from('subcontractors').select('*'),
       supabase.from('contracts').select('*'),
       supabase.from('contract_pocs').select('*'),
+      supabase.from('contract_invoices').select('*'),
       supabase.from('locked_subcontractors').select('*'),
       supabase.from('government_warnings').select('*'),
       supabase.from('contract_line_items').select('*'),
@@ -849,6 +888,7 @@ export async function loadAllData(): Promise<{
     if (subRes.error) console.error('[db] subcontractors load error', subRes.error)
     if (conRes.error) console.error('[db] contracts load error', conRes.error)
     if (pocRes.error) console.error('[db] contract_pocs load error', pocRes.error)
+    if (invoiceRes.error) console.error('[db] contract_invoices load error', invoiceRes.error)
     if (lockedSubRes.error) console.error('[db] locked_subcontractors load error', lockedSubRes.error)
     if (warningRes.error) console.error('[db] government_warnings load error', warningRes.error)
     if (lineItemRes.error) console.error('[db] contract_line_items load error', lineItemRes.error)
@@ -875,12 +915,14 @@ export async function loadAllData(): Promise<{
         subcontractors: subcontractors.filter(sub => sub.opportunityId === opp.id),
       }))
     const pocs: ContractPoC[] = (pocRes.data ?? []).map(r => dbToPoc(r as Record<string, unknown>))
+    const invoices: ContractInvoice[] = (invoiceRes.data ?? []).map(r => dbToInvoice(r as Record<string, unknown>))
     const lockedSubs: LockedSubcontractor[] = (lockedSubRes.data ?? []).map(r => dbToLockedSub(r as Record<string, unknown>))
     const warnings: GovernmentWarning[] = (warningRes.data ?? []).map(r => dbToWarning(r as Record<string, unknown>))
     const lineItems: ContractLineItem[] = (lineItemRes.data ?? []).map(r => dbToLineItem(r as Record<string, unknown>))
     const contracts: Contract[] = (conRes.data ?? []).map(r => {
       const contract = dbToContract(r as Record<string, unknown>) as Contract
       contract.pocs = pocs.filter(p => p.contractId === contract.id)
+      contract.invoices = invoices.filter(i => i.contractId === contract.id)
       contract.lockedSubcontractors = lockedSubs.filter(s => s.contractId === contract.id)
       contract.governmentWarnings = warnings.filter(w => w.contractId === contract.id)
       contract.lineItems = lineItems.filter(l => l.contractId === contract.id)
@@ -1036,6 +1078,26 @@ export async function deleteContractPoC(id: string): Promise<void> {
   }
 }
 
+export async function upsertContractInvoice(invoice: ContractInvoice): Promise<void> {
+  if (!isSupabaseConnected || !supabase) return
+  try {
+    const { error } = await supabase.from('contract_invoices').upsert(invoiceToDb(invoice))
+    if (error) console.error('[db] upsertContractInvoice error', error)
+  } catch (err) {
+    console.error('[db] upsertContractInvoice failed', err)
+  }
+}
+
+export async function deleteContractInvoice(id: string): Promise<void> {
+  if (!isSupabaseConnected || !supabase) return
+  try {
+    const { error } = await supabase.from('contract_invoices').delete().eq('id', id)
+    if (error) console.error('[db] deleteContractInvoice error', error)
+  } catch (err) {
+    console.error('[db] deleteContractInvoice failed', err)
+  }
+}
+
 export async function upsertLockedSubcontractor(sub: LockedSubcontractor): Promise<void> {
   if (!isSupabaseConnected || !supabase) return
   try {
@@ -1153,6 +1215,7 @@ export async function clearBusinessData(): Promise<void> {
   try {
     for (const table of [
       'contract_pocs',
+      'contract_invoices',
       'locked_subcontractors',
       'government_warnings',
       'contract_line_items',
