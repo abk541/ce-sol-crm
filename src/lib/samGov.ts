@@ -1,4 +1,4 @@
-import type { Opportunity } from '../types'
+import type { Opportunity, SamGovContact } from '../types'
 import { TIMEZONES } from '../data/mock'
 import {
   formatTime12h,
@@ -192,6 +192,35 @@ export function extractSamGovAgency(opp: any): string {
   return trim(opp?.organizationName) || trim(opp?.agencyName) || 'Unknown'
 }
 
+export function extractSamGovContacts(opp: any): SamGovContact[] {
+  const raw = opp?.pointOfContact
+  if (!Array.isArray(raw)) return []
+  const trim = (v: unknown) => (typeof v === 'string' ? v.trim() : '')
+  const out: SamGovContact[] = []
+  raw.forEach((c: any, idx: number) => {
+    if (!c || typeof c !== 'object') return
+    const fullName = trim(c.fullName) || trim(c.name)
+    const email = trim(c.email)
+    const phone = trim(c.phone)
+    const fax = trim(c.fax)
+    const title = trim(c.title)
+    const type = trim(c.type)
+    const additionalInfo = trim(c.additionalInfo?.content) || trim(c.additionalInfo)
+    if (!(fullName || email || phone || fax || title || additionalInfo)) return
+    out.push({
+      id: `sgc-${idx}-${(fullName || email || phone || 'contact').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 32)}`,
+      type: type || undefined,
+      title: title || undefined,
+      fullName: fullName || undefined,
+      email: email || undefined,
+      phone: phone || undefined,
+      fax: fax || undefined,
+      additionalInfo: additionalInfo || undefined,
+    })
+  })
+  return out
+}
+
 export function mapSamGovOpportunityToForm(opp: any, url: string) {
   const setAsideMap: Record<string, string> = {
     SBA: 'SB',
@@ -219,5 +248,6 @@ export function mapSamGovOpportunityToForm(opp: any, url: string) {
     moroccoTime: deadline.moroccoTime,
     moroccoDate: deadline.moroccoDate,
     link: url,
+    samGovContacts: extractSamGovContacts(opp),
   }
 }

@@ -8,9 +8,10 @@ import {
   Edit2, Users2, Send, Trash2, Clock,
   FileText, PlusCircle, Download, Filter, MoreHorizontal, Upload,
   Ban, ChevronLeft, ChevronRight,
+  Mail, Phone, User as UserIcon,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
-import type { Opportunity, Priority, OppStatus, Comment, FileAttachment } from '../types'
+import type { Opportunity, Priority, OppStatus, Comment, FileAttachment, SamGovContact } from '../types'
 import { TIMEZONES } from '../data/mock'
 import { formatCurrency, useEscapeKey } from '../lib/utils'
 import { assignableEmployeesForUser, getAssignmentChain, isAssignedToAssociate, ROLE_DISPLAY_LABELS } from '../lib/team'
@@ -504,13 +505,86 @@ function ModalWrap({ onClose, title, subtitle, children, maxW = 'max-w-2xl' }: {
 }
 
 // ── Shared: tabbed opportunity modal shell ────────────────────────────
-type OppFormTab = 'details' | 'schedule' | 'team' | 'assign' | 'comments'
+type OppFormTab = 'details' | 'schedule' | 'team' | 'assign' | 'contacts' | 'comments'
 const OPP_FORM_TABS: { id: OppFormTab; label: string }[] = [
   { id: 'details',  label: 'Opportunity' },
   { id: 'schedule', label: 'Schedule' },
   { id: 'assign',   label: 'Assignment' },
+  { id: 'contacts', label: 'Contact Information' },
   { id: 'comments', label: 'Comments' },
 ]
+
+// ── SAM.gov contacts panel (shared between create + edit modals) ──────
+export function SamGovContactsPanel({ contacts, emptyHint }: { contacts?: SamGovContact[]; emptyHint?: string }) {
+  const list = contacts ?? []
+  if (list.length === 0) {
+    return (
+      <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/60 p-8 text-center">
+        <div className="mx-auto w-10 h-10 rounded-full flex items-center justify-center bg-white border border-slate-200 mb-3">
+          <UserIcon size={16} className="text-slate-400" />
+        </div>
+        <p className="text-sm font-semibold text-slate-700">No contacts on file</p>
+        <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">
+          {emptyHint ?? 'Contacts are pulled automatically when the opportunity is imported from SAM.gov.'}
+        </p>
+      </div>
+    )
+  }
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-semibold text-slate-700">Imported from SAM.gov</p>
+        <span className="text-[10px] uppercase tracking-widest text-slate-400">Read only · stays with the contract</span>
+      </div>
+      {list.map(c => (
+        <div
+          key={c.id}
+          className="p-4 rounded-xl border"
+          style={{ background: 'rgba(255,255,255,0.045)', borderColor: 'rgba(215,190,122,0.24)' }}
+        >
+          <div className="flex items-start justify-between gap-3 mb-2">
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-slate-800 truncate">
+                {c.fullName || c.title || 'Unnamed contact'}
+              </p>
+              {c.title && c.fullName && (
+                <p className="text-xs text-slate-500 mt-0.5 truncate">{c.title}</p>
+              )}
+            </div>
+            {c.type && (
+              <span
+                className="text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-full whitespace-nowrap"
+                style={{ background: 'rgba(215,190,122,0.18)', color: '#F8E8B8', border: '1px solid rgba(215,190,122,0.35)' }}
+              >
+                {c.type}
+              </span>
+            )}
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-1.5 gap-x-4 text-xs">
+            {c.email && (
+              <a href={`mailto:${c.email}`} className="flex items-center gap-1.5 text-slate-600 hover:text-indigo-600 break-all">
+                <Mail size={11} className="flex-shrink-0" /> {c.email}
+              </a>
+            )}
+            {c.phone && (
+              <a href={`tel:${c.phone}`} className="flex items-center gap-1.5 text-slate-600 hover:text-indigo-600">
+                <Phone size={11} className="flex-shrink-0" /> {c.phone}
+              </a>
+            )}
+            {c.fax && (
+              <span className="flex items-center gap-1.5 text-slate-500">
+                <span className="text-[10px] font-bold">FAX</span> {c.fax}
+              </span>
+            )}
+          </div>
+          {c.additionalInfo && (
+            <p className="text-[11px] text-slate-500 mt-2 leading-relaxed">{c.additionalInfo}</p>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}
 
 function OppModalShell({ title, subtitle, tab, setTab, onClose, extraHeader, footer, children }: {
   title: string; subtitle?: string
@@ -845,6 +919,14 @@ export function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => v
             allowedEmployeeIds={allowedAssignees}
           />
         </div>
+      )}
+
+      {/* ── Contacts tab (read-only SAM.gov pointOfContact snapshot) ── */}
+      {tab === 'contacts' && (
+        <SamGovContactsPanel
+          contacts={form.samGovContacts}
+          emptyHint="No contacts captured. They are populated automatically when an opportunity is imported from SAM.gov."
+        />
       )}
 
       {/* ── Comments tab ── */}
@@ -1538,9 +1620,14 @@ function CreateModal({ onClose }: { onClose: () => void }) {
         moroccoTime:   mapped.moroccoTime || prev.moroccoTime,
         moroccoDate:   mapped.moroccoDate || prev.moroccoDate,
         link:          url,
+        samGovContacts: mapped.samGovContacts?.length ? mapped.samGovContacts : prev.samGovContacts,
       }))
 
-      toast.success('Details imported from SAM.gov!')
+      toast.success(
+        mapped.samGovContacts?.length
+          ? `Details imported from SAM.gov \u2014 ${mapped.samGovContacts.length} contact${mapped.samGovContacts.length === 1 ? '' : 's'} attached.`
+          : 'Details imported from SAM.gov!'
+      )
       setTab('details')
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Unknown error'
@@ -1756,6 +1843,14 @@ function CreateModal({ onClose }: { onClose: () => void }) {
             allowedEmployeeIds={allowedAssignees}
           />
         </div>
+      )}
+
+      {/* ── Contacts tab (read-only SAM.gov pointOfContact snapshot) ── */}
+      {tab === 'contacts' && (
+        <SamGovContactsPanel
+          contacts={form.samGovContacts}
+          emptyHint="Paste a SAM.gov URL above and click Import to pull the agency points of contact."
+        />
       )}
 
       {/* ── Comments tab ── */}

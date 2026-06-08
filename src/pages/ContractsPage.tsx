@@ -29,7 +29,7 @@ import {
   subkQuoteSummaryForContract,
 } from '../lib/invoicePdf'
 import { normalizeContractDeliverables } from '../lib/contractDeliverables'
-import { SourcingModal } from './PipelinePage'
+import { SourcingModal, SamGovContactsPanel } from './PipelinePage'
 import HierarchyAssignPicker from '../components/shared/HierarchyAssignPicker'
 
 // ── Status config ───────────────────────────────────────────────────────
@@ -1402,6 +1402,11 @@ function ContractDetailDrawer({
         {/* POC TAB */}
         {tab === 'poc' && (
           <div className="space-y-3">
+            {(contract.samGovContacts?.length ?? 0) > 0 && (
+              <div className="mb-1">
+                <SamGovContactsPanel contacts={contract.samGovContacts} />
+              </div>
+            )}
             {(contract.pocs || []).length === 0 && !addingPoC && (
               <p className="text-sm text-slate-400 text-center py-8">No points of contact added yet.</p>
             )}

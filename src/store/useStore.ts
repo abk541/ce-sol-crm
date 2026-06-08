@@ -822,6 +822,7 @@ export const useStore = create<AppState>()(
           assignedSupportAgent: opp.supportAgent,
           status: 'PENDING_ASSIGNMENT',
           proposalAttachments: opp.proposalAttachments?.length ? opp.proposalAttachments : undefined,
+          samGovContacts: opp.samGovContacts?.length ? opp.samGovContacts : undefined,
         }
         set(s => ({ freshAwards: [freshAward, ...s.freshAwards] }))
         upsertFreshAward(freshAward)
@@ -1255,6 +1256,12 @@ export const useStore = create<AppState>()(
             ? sourceOpp.proposalAttachments
             : undefined
 
+        const samGovContacts = fa.samGovContacts?.length
+          ? fa.samGovContacts
+          : sourceOpp?.samGovContacts?.length
+            ? sourceOpp.samGovContacts
+            : undefined
+
         // Generate the contract ID once so it stays consistent on both the
         // contract record AND the fresh award's contractId field.
         const newContractId = `c${Date.now()}`
@@ -1280,6 +1287,7 @@ export const useStore = create<AppState>()(
           supportAgent: fa.assignedSupportAgent,
           opportunityId: fa.opportunityId,
           proposalAttachments,
+          samGovContacts,
         }
 
         // Move the award into Contract Admin and remove it from Fresh Awards.
@@ -1643,8 +1651,9 @@ export const useStore = create<AppState>()(
     }),
     {
       name: 'ces-crm-store',
-      // v10: introduce OPS employee team (separate hierarchy used for contract assignment).
-      version: 10,
+      // v11: capture SAM.gov pointOfContact on opportunities and propagate to
+      // FreshAward and Contract so imported contacts persist for the contract life.
+      version: 11,
       migrate: (persistedState: unknown, fromVersion: number) => {
         const s = persistedState as Record<string, unknown>
         if (fromVersion < 4) {

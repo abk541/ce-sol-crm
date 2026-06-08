@@ -162,6 +162,21 @@ export interface ContractPoC {
   contactedAt?: string     // last communication date
 }
 
+// ── SAM.gov imported contact ─────────────────────────────────────────
+// Read-only snapshot of a SAM.gov pointOfContact entry, captured at import
+// time and copied through Opportunity → FreshAward → Contract so the people
+// listed on the solicitation remain visible for the entire contract life.
+export interface SamGovContact {
+  id: string
+  type?: string         // e.g. "primary", "secondary"
+  title?: string
+  fullName?: string
+  email?: string
+  phone?: string
+  fax?: string
+  additionalInfo?: string
+}
+
 // ── Government Warning ───────────────────────────────────────────────
 export type GovWarningType =
   | 'CURE_NOTICE' | 'LETTER_OF_CONCERN' | 'NCR'
@@ -246,6 +261,7 @@ export interface Opportunity {
   submittedAt?: string
   nonSubmissionReportId?: string
   assignedTo?: string        // employee id
+  samGovContacts?: SamGovContact[]   // SAM.gov pointOfContact snapshot, captured at import time
 }
 
 // ── Contract ──────────────────────────────────────────────────────────
@@ -285,6 +301,7 @@ export interface Contract {
   terminationReason?: string
   assignedTo?: string        // employee id
   proposalAttachments?: FileAttachment[]
+  samGovContacts?: SamGovContact[]   // copied from originating opportunity at award time
 }
 
 // ── BD Submission (BD Tracker) ────────────────────────────────────────
@@ -333,6 +350,7 @@ export interface FreshAward {
   movedAt?: string
   notes?: string
   proposalAttachments?: FileAttachment[]
+  samGovContacts?: SamGovContact[]
 }
 
 // ── Past Performance ──────────────────────────────────────────────────
