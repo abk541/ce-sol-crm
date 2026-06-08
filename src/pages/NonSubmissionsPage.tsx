@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo } from 'react'
+import { createPortal } from 'react-dom'
 import { useSearchParams } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
@@ -33,8 +34,8 @@ function SubmitReportModal({ oppId, oppName, onClose }: { oppId: string; oppName
     onClose()
   }
 
-  return (
-    <motion.div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+  return createPortal(
+    <motion.div className="fixed inset-0 z-[80] flex items-center justify-center p-4"
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
       <div className="absolute inset-0" style={{ background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(8px)' }} onClick={onClose} />
       <motion.div
@@ -71,16 +72,21 @@ function SubmitReportModal({ oppId, oppName, onClose }: { oppId: string; oppName
           </div>
         </div>
       </motion.div>
-    </motion.div>
+    </motion.div>,
+    document.body,
   )
 }
 
-// ── Review Modal ───────────────────────────────────────────────────────
+// ── Review / Details Modal ─────────────────────────────────────────────
 function ReviewModal({ reportId, onClose }: { reportId: string; onClose: () => void }) {
   const [note, setNote] = useState('')
   const { reviewNonSubReport, nonSubReports, opportunities, currentUser } = useStore()
   const report = nonSubReports.find(r => r.id === reportId)
   const opp = opportunities.find(o => o.id === report?.opportunityId)
+
+  const canReview = hasPermission(currentUser, 'nonSubmission:review')
+  const isPending = report?.status === 'PENDING'
+  const showActions = canReview && isPending
 
   const review = (action: 'APPROVED' | 'DECLINED') => {
     reviewNonSubReport(reportId, action, note, currentUser?.username ?? '')
@@ -90,53 +96,154 @@ function ReviewModal({ reportId, onClose }: { reportId: string; onClose: () => v
 
   if (!report) return null
 
-  return (
-    <motion.div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+  const meta = STATUS_META[report.status]
+  const StatusIcon = meta.icon
+
+  const fmtDate = (iso?: string) =>
+    iso ? new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—'
+
+  const fmtMoney = (n?: number) =>
+    typeof n === 'number' ? `$${n.toLocaleString('en-US', { maximumFractionDigits: 0 })}` : '—'
+
+  return createPortal(
+    <motion.div className="fixed inset-0 z-[80] flex items-center justify-center p-4"
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
       <div className="absolute inset-0" style={{ background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(8px)' }} onClick={onClose} />
       <motion.div
-        className="relative flex w-full max-w-lg max-h-[calc(100vh-2rem)] flex-col overflow-hidden rounded-2xl shadow-2xl"
+        className="relative flex w-full max-w-2xl max-h-[min(92vh,860px)] flex-col overflow-hidden rounded-2xl shadow-2xl"
         style={{ background: 'var(--bg-card)', border: '1px solid var(--border-default)' }}
         initial={{ scale: 0.94, opacity: 0, y: 12 }}
         animate={{ scale: 1, opacity: 1, y: 0 }}
         exit={{ scale: 0.94, opacity: 0 }}
         transition={{ type: 'spring', stiffness: 320, damping: 26 }}>
-        <div className="px-6 py-5 border-b border-slate-100 flex-shrink-0">
-          <h2 className="text-base font-bold text-slate-900">Review Non-Submission Report</h2>
-          <p className="text-xs text-slate-500 mt-0.5">
-            {opp?.solicitation ?? report.opportunityId} · By {report.agentUsername}
-          </p>
-        </div>
-        <div className="p-6 space-y-4 overflow-y-auto">
-          <div className="p-4 rounded-xl bg-slate-50 border border-slate-100">
-            <p className="text-xs font-semibold text-slate-500 mb-1.5">Agent's Reason</p>
-            <p className="text-sm text-slate-700 leading-relaxed">{report.reason}</p>
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-slate-600 mb-1.5">Review note <span className="text-slate-400">(optional)</span></label>
-            <textarea value={note} onChange={e => setNote(e.target.value)} rows={3}
-              className="input-field w-full resize-none text-sm"
-              placeholder="Add context for your decision…" />
-          </div>
-          <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
-            <p className="text-xs text-amber-700">
-              <strong>Approve</strong> → opportunity set to NOT_SUBMITTED &nbsp;·&nbsp; <strong>Decline</strong> → opportunity set to DROPPED
+        <div className="px-6 py-5 border-b border-slate-100 flex-shrink-0 flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="text-base font-bold text-slate-900 truncate">{showActions ? 'Review Non-Submission Report' : 'Non-Submission Report Details'}</h2>
+            <p className="text-xs text-slate-500 mt-0.5 truncate">
+              {opp?.solicitation ?? report.opportunityId} · By {report.agentUsername}
             </p>
           </div>
-          <div className="flex gap-3 pt-1">
-            <button onClick={onClose} className="btn-secondary flex-1 justify-center">Cancel</button>
-            <button onClick={() => review('DECLINED')}
-              className="flex-1 flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold text-red-600 bg-red-50 border border-red-200 hover:bg-red-100 transition-colors">
-              <XCircle size={14} /> Decline
-            </button>
-            <button onClick={() => review('APPROVED')}
-              className="flex-1 flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 transition-colors">
-              <CheckCircle2 size={14} /> Approve
-            </button>
+          <span className="flex-shrink-0 inline-flex items-center gap-1 text-[10px] font-black px-2 py-0.5 rounded-full border"
+            style={{ color: meta.color, background: meta.bg, borderColor: meta.border }}>
+            <StatusIcon size={10} /> {report.status}
+          </span>
+        </div>
+
+        <div className="p-6 space-y-4 overflow-y-auto">
+          {/* Opportunity Details */}
+          <div className="rounded-xl border border-slate-200 overflow-hidden">
+            <div className="px-4 py-2 bg-slate-50 border-b border-slate-200">
+              <p className="text-[11px] font-bold text-slate-600 uppercase tracking-wide">Opportunity</p>
+            </div>
+            <div className="p-4 grid grid-cols-2 gap-x-4 gap-y-3 text-xs">
+              <div className="col-span-2">
+                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Solicitation</p>
+                <p className="text-sm font-semibold text-slate-800 mt-0.5 break-words">{opp?.solicitation ?? '—'}</p>
+              </div>
+              <div>
+                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Solicitation ID</p>
+                <p className="text-slate-700 mt-0.5 break-words">{opp?.solicitationId ?? '—'}</p>
+              </div>
+              <div>
+                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Client / Agency</p>
+                <p className="text-slate-700 mt-0.5 break-words">{opp?.client ?? '—'}</p>
+              </div>
+              <div>
+                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Type</p>
+                <p className="text-slate-700 mt-0.5">{opp?.type ?? '—'}</p>
+              </div>
+              <div>
+                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">NAICS / Set-Aside</p>
+                <p className="text-slate-700 mt-0.5">{opp?.naicsCode ?? '—'} · {opp?.setAside ?? '—'}</p>
+              </div>
+              <div>
+                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Due Date</p>
+                <p className="text-slate-700 mt-0.5">{opp?.dueDate ? new Date(opp.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}</p>
+              </div>
+              <div>
+                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Value</p>
+                <p className="text-slate-700 mt-0.5">{fmtMoney(opp?.value ?? opp?.contractAmount)}</p>
+              </div>
+              {opp?.location && (
+                <div>
+                  <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Location</p>
+                  <p className="text-slate-700 mt-0.5 break-words">{opp.location}</p>
+                </div>
+              )}
+              {opp?.pop && (
+                <div>
+                  <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Period of Performance</p>
+                  <p className="text-slate-700 mt-0.5 break-words">{opp.pop}</p>
+                </div>
+              )}
+              {opp?.link && (
+                <div className="col-span-2">
+                  <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">SAM.gov Link</p>
+                  <a href={opp.link} target="_blank" rel="noreferrer" className="text-indigo-600 hover:text-indigo-700 hover:underline mt-0.5 break-all block">{opp.link}</a>
+                </div>
+              )}
+            </div>
           </div>
+
+          {/* Agent's Reason */}
+          <div className="p-4 rounded-xl bg-slate-50 border border-slate-100">
+            <div className="flex items-center justify-between mb-1.5">
+              <p className="text-xs font-semibold text-slate-500">Agent's Reason</p>
+              <p className="text-[10px] text-slate-400">Submitted {fmtDate(report.submittedAt)}</p>
+            </div>
+            <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap">{report.reason}</p>
+          </div>
+
+          {/* Decision history (only for non-pending) */}
+          {!isPending && (
+            <div className="p-4 rounded-xl border" style={{ background: meta.bg, borderColor: meta.border }}>
+              <div className="flex items-center justify-between mb-1.5">
+                <p className="text-xs font-semibold" style={{ color: meta.color }}>
+                  {report.status === 'APPROVED' ? 'Approved' : 'Declined'}{report.reviewedBy ? ` by ${report.reviewedBy}` : ''}
+                </p>
+                {report.reviewedAt && <p className="text-[10px]" style={{ color: meta.color }}>{fmtDate(report.reviewedAt)}</p>}
+              </div>
+              {report.reviewNote
+                ? <p className="text-sm leading-relaxed whitespace-pre-wrap" style={{ color: meta.color }}>{report.reviewNote}</p>
+                : <p className="text-xs italic" style={{ color: meta.color, opacity: 0.7 }}>No review note provided.</p>}
+            </div>
+          )}
+
+          {/* Action area (pending + reviewer only) */}
+          {showActions ? (
+            <>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1.5">Review note <span className="text-slate-400">(optional)</span></label>
+                <textarea value={note} onChange={e => setNote(e.target.value)} rows={3}
+                  className="input-field w-full resize-none text-sm"
+                  placeholder="Add context for your decision…" />
+              </div>
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
+                <p className="text-xs text-amber-700">
+                  <strong>Approve</strong> → opportunity set to NOT_SUBMITTED &nbsp;·&nbsp; <strong>Decline</strong> → opportunity set to DROPPED
+                </p>
+              </div>
+              <div className="flex gap-3 pt-1">
+                <button onClick={onClose} className="btn-secondary flex-1 justify-center">Cancel</button>
+                <button onClick={() => review('DECLINED')}
+                  className="flex-1 flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold text-red-600 bg-red-50 border border-red-200 hover:bg-red-100 transition-colors">
+                  <XCircle size={14} /> Decline
+                </button>
+                <button onClick={() => review('APPROVED')}
+                  className="flex-1 flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 transition-colors">
+                  <CheckCircle2 size={14} /> Approve
+                </button>
+              </div>
+            </>
+          ) : (
+            <div className="flex justify-end pt-1">
+              <button onClick={onClose} className="btn-secondary justify-center">Close</button>
+            </div>
+          )}
         </div>
       </motion.div>
-    </motion.div>
+    </motion.div>,
+    document.body,
   )
 }
 
@@ -162,11 +269,12 @@ function ReportCard({
 
   return (
     <motion.div variants={fadeUp}
-      className="relative rounded-2xl p-5 border shadow-sm hover:shadow-md transition-shadow"
+      onClick={onReview}
+      className="relative rounded-2xl p-5 border shadow-sm hover:shadow-md transition-shadow cursor-pointer"
       style={{ background: 'var(--bg-card)', borderColor: meta.border, borderLeftWidth: 3, borderLeftColor: meta.color }}>
 
       {/* "..." menu button */}
-      <div className="absolute top-3 right-3">
+      <div className="absolute top-3 right-3" onClick={e => e.stopPropagation()}>
         {menuOpen && (
           <div className="fixed inset-0 z-20" onClick={() => setMenuOpen(false)} />
         )}
@@ -254,7 +362,7 @@ function ReportCard({
 
       {isManager && r.status === 'PENDING' && (
         <div className="mt-4 flex justify-end">
-          <button onClick={onReview}
+          <button onClick={e => { e.stopPropagation(); onReview() }}
             className="flex items-center gap-1.5 px-4 py-1.5 rounded-xl text-xs font-bold text-indigo-600 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 transition-colors">
             Review Report
           </button>
