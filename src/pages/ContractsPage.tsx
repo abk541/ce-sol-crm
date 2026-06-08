@@ -524,12 +524,23 @@ function ContractDetailDrawer({
 
   const nextStatus = STATUS_FLOW[contract.status]
   const meta = STATUS_META[contract.status]
-  const sourceOpportunity = contract.opportunityId ? opportunities.find(o => o.id === contract.opportunityId) : undefined
+  const sourceOpportunity =
+    (contract.opportunityId ? opportunities.find(o => o.id === contract.opportunityId) : undefined) ||
+    (contract.contractId ? opportunities.find(o => o.solicitationId === contract.contractId) : undefined)
   const proposalFiles = Array.from(new Set([
     ...(sourceOpportunity?.proposals ?? []),
     ...(sourceOpportunity?.assignedOpportunities ?? []),
   ].map(name => name.trim()).filter(Boolean)))
-  const uploadedProposalAttachments = sourceOpportunity?.proposalAttachments ?? []
+  const contractProposalAttachments = contract.proposalAttachments ?? []
+  const oppProposalAttachments = sourceOpportunity?.proposalAttachments ?? []
+  const seenProposalNames = new Set<string>()
+  const uploadedProposalAttachments: FileAttachment[] = []
+  ;[...contractProposalAttachments, ...oppProposalAttachments].forEach(att => {
+    const key = (att.id || att.name || '').trim()
+    if (!key || seenProposalNames.has(key)) return
+    seenProposalNames.add(key)
+    uploadedProposalAttachments.push(att)
+  })
   const uploadedProposalNames = new Set(uploadedProposalAttachments.map(att => att.name.trim()).filter(Boolean))
   const proposalAttachments = [
     ...uploadedProposalAttachments,
@@ -539,6 +550,16 @@ function ContractDetailDrawer({
     ),
   ]
   const proposalCount = proposalAttachments.length
+
+  // One-time backfill: if the contract has no persisted proposals but we found
+  // them on the source opportunity, snapshot them onto the contract so the
+  // proposal stays attached to the contract going forward.
+  useEffect(() => {
+    if (!contract.proposalAttachments?.length && oppProposalAttachments.length) {
+      updateContract(contract.id, { proposalAttachments: oppProposalAttachments })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contract.id])
   const allSourcingEntries = uniqueSourcingEntries([
     ...subcontractors,
     ...opportunities.flatMap(o => o.subcontractors || []),

@@ -673,6 +673,27 @@ export const useStore = create<AppState>()(
           }))
           upsertBDSubmission(trackerRow)
           upsertOpportunity(opp)
+          // If a contract already exists for this opportunity (e.g. proposal
+          // is being re-uploaded after award), propagate the latest proposal
+          // files onto the contract so it stays in sync.
+          if (values?.proposalAttachments?.length) {
+            const linkedContracts = get().contracts.filter(c =>
+              c.opportunityId === opp.id || c.contractId === opp.solicitationId
+            )
+            if (linkedContracts.length) {
+              set(s => ({
+                contracts: s.contracts.map(c =>
+                  linkedContracts.some(lc => lc.id === c.id)
+                    ? { ...c, proposalAttachments: values.proposalAttachments }
+                    : c
+                ),
+              }))
+              linkedContracts.forEach(lc => {
+                const updated = get().contracts.find(c => c.id === lc.id)
+                if (updated) upsertContract(updated)
+              })
+            }
+          }
           get().addNotification({
             type: 'CONTRACT_SUBMITTED',
             title: 'Proposal submitted',
@@ -1199,6 +1220,9 @@ export const useStore = create<AppState>()(
           status: assignments ? 'ASSIGNED' : existingFa.status,
         }
 
+        const sourceOpp = fa.opportunityId ? get().opportunities.find(o => o.id === fa.opportunityId) : undefined
+        const proposalAttachments = sourceOpp?.proposalAttachments?.length ? sourceOpp.proposalAttachments : undefined
+
         // Generate the contract ID once so it stays consistent on both the
         // contract record AND the fresh award's contractId field.
         const newContractId = `c${Date.now()}`
@@ -1223,6 +1247,7 @@ export const useStore = create<AppState>()(
           bdm: fa.assignedBDM,
           supportAgent: fa.assignedSupportAgent,
           opportunityId: fa.opportunityId,
+          proposalAttachments,
         }
 
         // Move the award into Contract Admin and remove it from Fresh Awards.

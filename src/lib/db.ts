@@ -234,6 +234,7 @@ function contractToDb(c: Contract): Record<string, unknown> {
     termination_date: c.terminationDate ?? null,
     termination_reason: c.terminationReason ?? null,
     assigned_to: c.assignedTo ?? null,
+    proposal_attachments: normalizeStoredAttachments(c.proposalAttachments),
   }
 }
 
@@ -270,6 +271,7 @@ function dbToContract(row: Record<string, unknown>): Partial<Contract> {
     terminationDate: row.termination_date as string | undefined,
     terminationReason: row.termination_reason as string | undefined,
     assignedTo: row.assigned_to as string | undefined,
+    proposalAttachments: normalizeStoredAttachments(row.proposal_attachments),
     // Initialize nested arrays — loaded separately if needed
     pocs: [],
     lockedSubcontractors: [],

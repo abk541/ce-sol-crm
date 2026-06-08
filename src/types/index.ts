@@ -279,6 +279,7 @@ export interface Contract {
   terminationDate?: string
   terminationReason?: string
   assignedTo?: string        // employee id
+  proposalAttachments?: FileAttachment[]
 }
 
 // ── BD Submission (BD Tracker) ────────────────────────────────────────
