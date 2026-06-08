@@ -1294,7 +1294,7 @@ function SubmitModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }
     setYearlyValue(val)
     if (!monthlyOverridden) {
       const n = parseFloat(val)
-      setMonthlyValue(isNaN(n) ? '' : String(Math.round(n / 12)))
+      setMonthlyValue(isNaN(n) ? '' : (n / 12).toFixed(2))
     }
   }
 
@@ -1368,6 +1368,7 @@ function SubmitModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }
                 </label>
                 <input
                   type="number"
+                  step="0.01"
                   value={monthlyValue}
                   onChange={e => { setMonthlyOverridden(true); setMonthlyValue(e.target.value) }}
                   className="input-field"
@@ -1394,6 +1395,7 @@ function SubmitModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }
                 </label>
                 <input
                   type="number"
+                  step="0.01"
                   value={monthlyValue}
                   onChange={e => { setMonthlyOverridden(true); setMonthlyValue(e.target.value) }}
                   className="input-field"
