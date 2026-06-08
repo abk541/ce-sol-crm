@@ -723,6 +723,7 @@ function empToDb(e: Employee): Record<string, unknown> {
     manager_id: e.managerId ?? null,
     department: e.department ?? null,
     avatar: e.avatar,
+    team: e.team ?? 'BD',
   }
 }
 
@@ -735,6 +736,7 @@ function dbToEmp(row: Record<string, unknown>): Employee {
     managerId: row.manager_id as string | null,
     department: row.department as string | undefined,
     avatar: row.avatar as string,
+    team: ((row.team as string | null | undefined) ?? 'BD') as Employee['team'],
   }
 }
 
