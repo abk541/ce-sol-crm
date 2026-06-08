@@ -773,71 +773,91 @@ function ContractDetailDrawer({
             <div className="lg:col-span-2 space-y-3">
               {/* Hero: Financial + POP */}
               <div
-                className="relative overflow-hidden rounded-2xl border border-indigo-100 p-4 shadow-sm"
-                style={{ background: 'linear-gradient(135deg, #EEF2FF 0%, #FFFFFF 45%, #ECFDF5 100%)' }}
+                className="relative overflow-hidden rounded-2xl border p-4 shadow-[0_8px_24px_rgba(0,0,0,0.25)]"
+                style={{
+                  background: 'linear-gradient(135deg, rgba(15,46,54,0.94) 0%, rgba(10,29,43,0.96) 60%, rgba(16,40,32,0.94) 100%)',
+                  borderColor: 'rgba(215,190,122,0.26)',
+                }}
               >
-                <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-4">
+                {/* subtle gold glow */}
+                <div
+                  className="pointer-events-none absolute -right-10 -top-10 h-32 w-32 rounded-full opacity-40 blur-3xl"
+                  style={{ background: 'radial-gradient(circle, rgba(215,190,122,0.35), transparent 70%)' }}
+                />
+                <div className="relative grid gap-4 sm:grid-cols-2 md:grid-cols-4">
                   {/* Contract Value */}
                   <div className="flex items-start gap-3">
-                    <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700">
+                    <div
+                      className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl border"
+                      style={{ background: 'rgba(215,190,122,0.12)', borderColor: 'rgba(215,190,122,0.32)', color: '#F8E8B8' }}
+                    >
                       <Receipt size={16} />
                     </div>
                     <div className="min-w-0">
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Contract Value</p>
-                      <p className="mt-0.5 text-xl font-black text-emerald-700">{formatCurrency(contract.value)}</p>
+                      <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">Contract Value</p>
+                      <p className="mt-0.5 text-xl font-black text-[#F8E8B8]">{formatCurrency(contract.value)}</p>
                       {contract.financeType && (
-                        <p className="text-[10px] text-slate-500">{contract.financeType}</p>
+                        <p className="text-[10px] text-slate-400">{contract.financeType}</p>
                       )}
                     </div>
                   </div>
 
-                  {/* Base Amount */}
-                  <div className="flex items-start gap-3 sm:border-l sm:border-slate-200/70 sm:pl-4">
-                    <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-600">
+                  {/* Base + Monthly */}
+                  <div className="flex items-start gap-3 sm:border-l sm:pl-4" style={{ borderColor: 'rgba(215,190,122,0.16)' }}>
+                    <div
+                      className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl border"
+                      style={{ background: 'rgba(255,255,255,0.04)', borderColor: 'rgba(255,255,255,0.10)', color: '#A5F3FC' }}
+                    >
                       <FileText size={16} />
                     </div>
                     <div className="min-w-0">
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Base Amount</p>
-                      <p className="mt-0.5 text-sm font-bold text-slate-800">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">Base Amount</p>
+                      <p className="mt-0.5 text-sm font-bold text-slate-100">
                         {contract.baseAmount != null ? formatCurrency(contract.baseAmount) : '—'}
                       </p>
-                      <p className="text-[10px] text-slate-500">
+                      <p className="text-[10px] text-slate-400">
                         {contract.monthlyPayment != null ? `${formatCurrency(contract.monthlyPayment)} / mo` : 'No monthly set'}
                       </p>
                     </div>
                   </div>
 
                   {/* POP */}
-                  <div className="flex items-start gap-3 md:border-l md:border-slate-200/70 md:pl-4">
-                    <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-indigo-100 text-indigo-700">
+                  <div className="flex items-start gap-3 md:border-l md:pl-4" style={{ borderColor: 'rgba(215,190,122,0.16)' }}>
+                    <div
+                      className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl border"
+                      style={{ background: 'rgba(125,211,252,0.10)', borderColor: 'rgba(125,211,252,0.30)', color: '#7DD3FC' }}
+                    >
                       <Calendar size={16} />
                     </div>
                     <div className="min-w-0">
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Period of Performance</p>
-                      <p className="mt-0.5 truncate text-sm font-bold text-slate-800">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">Period of Performance</p>
+                      <p className="mt-0.5 truncate text-sm font-bold text-slate-100">
                         {contract.popStart ? formatDate(contract.popStart) : 'TBD'} → {contract.popEnd ? formatDate(contract.popEnd) : 'TBD'}
                       </p>
                       {(() => {
-                        if (!contract.popEnd) return <p className="text-[10px] text-slate-500">Set the end date in POP tab</p>
+                        if (!contract.popEnd) return <p className="text-[10px] text-slate-400">Set the end date in POP tab</p>
                         const days = Math.ceil((new Date(`${contract.popEnd}T23:59:59`).getTime() - Date.now()) / 86_400_000)
-                        if (days < 0) return <p className="text-[10px] font-semibold text-red-600">{Math.abs(days)} days past end</p>
-                        if (days === 0) return <p className="text-[10px] font-semibold text-amber-600">Ends today</p>
-                        return <p className="text-[10px] font-semibold text-slate-600">{days} days remaining</p>
+                        if (days < 0) return <p className="text-[10px] font-semibold text-red-300">{Math.abs(days)} days past end</p>
+                        if (days === 0) return <p className="text-[10px] font-semibold text-amber-300">Ends today</p>
+                        return <p className="text-[10px] font-semibold text-emerald-300">{days} days remaining</p>
                       })()}
                     </div>
                   </div>
 
                   {/* Option Years */}
-                  <div className="flex items-start gap-3 sm:border-l sm:border-slate-200/70 sm:pl-4">
-                    <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-violet-100 text-violet-700">
+                  <div className="flex items-start gap-3 sm:border-l sm:pl-4" style={{ borderColor: 'rgba(215,190,122,0.16)' }}>
+                    <div
+                      className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl border"
+                      style={{ background: 'rgba(196,181,253,0.10)', borderColor: 'rgba(196,181,253,0.28)', color: '#C4B5FD' }}
+                    >
                       <Clock size={16} />
                     </div>
                     <div className="min-w-0">
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Option Years</p>
-                      <p className="mt-0.5 text-sm font-bold text-slate-800">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">Option Years</p>
+                      <p className="mt-0.5 text-sm font-bold text-slate-100">
                         {contract.optionYears != null ? `${contract.optionYears} remaining` : '—'}
                       </p>
-                      <p className="text-[10px] text-slate-500">
+                      <p className="text-[10px] text-slate-400">
                         {contract.optionYearDeadline ? `Deadline ${formatDate(contract.optionYearDeadline)}` : 'No deadline set'}
                       </p>
                     </div>
@@ -855,16 +875,21 @@ function ContractDetailDrawer({
                   label: string
                   count: number
                   icon: typeof UserPlus
-                  iconBg: string
-                  iconColor: string
+                  accent: { bg: string; border: string; color: string }
                   hint?: string
                   alert?: boolean
                 }[] = [
-                  { key: 'poc', label: 'Points of Contact', count: (contract.pocs || []).length, icon: UserPlus, iconBg: 'bg-sky-50', iconColor: 'text-sky-600' },
-                  { key: 'subk', label: 'Potential Subk', count: subkCandidates.length, icon: Building2, iconBg: 'bg-amber-50', iconColor: 'text-amber-600' },
-                  { key: 'lockSubk', label: 'Locked Subk', count: (contract.lockedSubcontractors || []).length, icon: Shield, iconBg: 'bg-emerald-50', iconColor: 'text-emerald-600' },
-                  { key: 'warnings', label: 'Gov Warnings', count: activeWarnings.length, icon: AlertTriangle, iconBg: activeWarnings.length > 0 ? 'bg-red-100' : 'bg-slate-100', iconColor: activeWarnings.length > 0 ? 'text-red-600' : 'text-slate-500', alert: activeWarnings.length > 0, hint: activeWarnings.length > 0 ? `${activeWarnings.length} active` : 'None active' },
-                  { key: 'deliverables', label: 'Deliverables', count: deliverables.length, icon: ListChecks, iconBg: deliverablesOverdue > 0 ? 'bg-red-100' : 'bg-indigo-50', iconColor: deliverablesOverdue > 0 ? 'text-red-600' : 'text-indigo-600', alert: deliverablesOverdue > 0, hint: deliverablesOverdue > 0 ? `${deliverablesOverdue} overdue` : `${deliverables.length} total` },
+                  { key: 'poc',          label: 'Points of Contact', count: (contract.pocs || []).length,                  icon: UserPlus,      accent: { bg: 'rgba(125,211,252,0.10)', border: 'rgba(125,211,252,0.30)', color: '#7DD3FC' } },
+                  { key: 'subk',         label: 'Potential Subk',    count: subkCandidates.length,                          icon: Building2,     accent: { bg: 'rgba(252,211,77,0.10)',  border: 'rgba(252,211,77,0.30)',  color: '#FCD34D' } },
+                  { key: 'lockSubk',     label: 'Locked Subk',       count: (contract.lockedSubcontractors || []).length,   icon: Shield,        accent: { bg: 'rgba(110,231,183,0.10)', border: 'rgba(110,231,183,0.30)', color: '#6EE7B7' } },
+                  { key: 'warnings',     label: 'Gov Warnings',      count: activeWarnings.length,                          icon: AlertTriangle, accent: activeWarnings.length > 0
+                    ? { bg: 'rgba(248,113,113,0.16)', border: 'rgba(248,113,113,0.42)', color: '#FCA5A5' }
+                    : { bg: 'rgba(255,255,255,0.04)', border: 'rgba(255,255,255,0.10)', color: '#94A3B8' },
+                    alert: activeWarnings.length > 0, hint: activeWarnings.length > 0 ? `${activeWarnings.length} active` : 'None active' },
+                  { key: 'deliverables', label: 'Deliverables',      count: deliverables.length,                            icon: ListChecks,    accent: deliverablesOverdue > 0
+                    ? { bg: 'rgba(248,113,113,0.16)', border: 'rgba(248,113,113,0.42)', color: '#FCA5A5' }
+                    : { bg: 'rgba(167,139,250,0.10)', border: 'rgba(167,139,250,0.30)', color: '#C4B5FD' },
+                    alert: deliverablesOverdue > 0, hint: deliverablesOverdue > 0 ? `${deliverablesOverdue} overdue` : `${deliverables.length} total` },
                 ]
                 return (
                   <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 md:grid-cols-5">
@@ -873,21 +898,32 @@ function ContractDetailDrawer({
                         key={t.key}
                         type="button"
                         onClick={() => setTab(t.key)}
-                        className={`group relative flex flex-col gap-2 rounded-xl border bg-white p-3 text-left transition-all hover:-translate-y-0.5 hover:shadow-md ${
-                          t.alert ? 'border-red-200 hover:border-red-300' : 'border-slate-200 hover:border-indigo-300'
-                        }`}
+                        className="group relative flex flex-col gap-2 rounded-xl border p-3 text-left transition-all hover:-translate-y-0.5 hover:shadow-[0_8px_20px_rgba(0,0,0,0.35)]"
+                        style={{
+                          background: t.alert
+                            ? 'linear-gradient(160deg, rgba(60,15,15,0.5), rgba(10,29,43,0.85))'
+                            : 'linear-gradient(160deg, rgba(255,255,255,0.045), rgba(10,29,43,0.6))',
+                          borderColor: t.accent.border,
+                        }}
                       >
                         <div className="flex items-center justify-between">
-                          <div className={`flex h-8 w-8 items-center justify-center rounded-lg ${t.iconBg} ${t.iconColor}`}>
+                          <div
+                            className="flex h-8 w-8 items-center justify-center rounded-lg border"
+                            style={{ background: t.accent.bg, borderColor: t.accent.border, color: t.accent.color }}
+                          >
                             <t.icon size={14} />
                           </div>
-                          <ChevronRight size={12} className="text-slate-300 transition-transform group-hover:translate-x-0.5 group-hover:text-indigo-500" />
+                          <ChevronRight size={12} className="text-slate-500 transition-transform group-hover:translate-x-0.5 group-hover:text-[#F8E8B8]" />
                         </div>
                         <div>
-                          <p className={`text-2xl font-black leading-none ${t.alert ? 'text-red-600' : 'text-slate-800'}`}>{t.count}</p>
-                          <p className="mt-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">{t.label}</p>
+                          <p className="text-2xl font-black leading-none" style={{ color: t.alert ? '#FCA5A5' : '#F8E8B8' }}>
+                            {t.count}
+                          </p>
+                          <p className="mt-1 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400">{t.label}</p>
                           {t.hint && (
-                            <p className={`mt-0.5 text-[10px] ${t.alert ? 'font-semibold text-red-500' : 'text-slate-400'}`}>{t.hint}</p>
+                            <p className="mt-0.5 text-[10px]" style={{ color: t.alert ? '#FCA5A5' : '#94A3B8', fontWeight: t.alert ? 600 : 400 }}>
+                              {t.hint}
+                            </p>
                           )}
                         </div>
                       </button>
