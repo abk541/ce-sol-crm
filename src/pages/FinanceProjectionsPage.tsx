@@ -6,10 +6,14 @@ import { formatCurrency } from '../lib/utils'
 import { generateContractInvoicePdf } from '../lib/invoicePdf'
 import { getFinanceProjectionRow, getFinanceProjectionSummary } from '../lib/financeProjections'
 
-async function generateInvoiceFile(contract: Contract) {
+async function generateInvoiceFile(contract: Contract, invoiceNumber?: number) {
   try {
-    await generateContractInvoicePdf(contract)
-    toast.success('Invoice PDF generated')
+    await generateContractInvoicePdf(contract, { invoiceNumber })
+    toast.success(
+      invoiceNumber
+        ? `Invoice INV-${String(invoiceNumber).padStart(4, '0')} generated`
+        : 'Invoice PDF generated'
+    )
   } catch (err) {
     console.error(err)
     toast.error(contract.type === 'OTJ'
@@ -19,7 +23,7 @@ async function generateInvoiceFile(contract: Contract) {
 }
 
 export default function FinanceProjectionsPage() {
-  const { contracts } = useStore()
+  const { contracts, consumeInvoiceNumber } = useStore()
   const {
     activeContracts,
     otjContracts,
@@ -117,7 +121,7 @@ export default function FinanceProjectionsPage() {
                     <td>
                       <button
                         type="button"
-                        onClick={() => generateInvoiceFile(contract)}
+                        onClick={() => generateInvoiceFile(contract, consumeInvoiceNumber())}
                         disabled={!invoiceReady}
                         title={!invoiceReady ? 'OTJ invoices are generated when the contract reaches Pending Payment.' : 'Generate invoice PDF'}
                         className="btn-primary gap-1 px-2.5 py-1 text-xs disabled:cursor-not-allowed disabled:opacity-45"

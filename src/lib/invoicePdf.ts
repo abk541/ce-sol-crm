@@ -63,7 +63,23 @@ export function subkMonthlyBillingRowsForContract(contract: Contract) {
   })
 }
 
-export async function generateContractInvoicePdf(contract: Contract) {
+export interface InvoiceGenerationOptions {
+  invoiceNumber?: number   // sequential id; printed as INV-{0000}. Falls back to a timestamped placeholder if omitted.
+}
+
+function formatInvoiceNumber(n?: number) {
+  if (n == null || !Number.isFinite(n) || n <= 0) return 'DRAFT'
+  return `INV-${String(Math.trunc(n)).padStart(4, '0')}`
+}
+
+function formatServiceDate(value?: string) {
+  if (!value) return '-'
+  const d = new Date(`${value}T00:00:00`)
+  if (!Number.isFinite(d.getTime())) return value
+  return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+}
+
+export async function generateContractInvoicePdf(contract: Contract, options: InvoiceGenerationOptions = {}) {
   if (!canGenerateContractInvoice(contract)) {
     throw new Error('OTJ invoices can only be generated when the contract is pending payment.')
   }
@@ -194,10 +210,12 @@ export async function generateContractInvoicePdf(contract: Contract) {
   type Field = { label: string; value: string }
   const rowFields: Field[][] = [
     [
-      { label: 'CONTRACT', value: contract.title },
+      { label: 'INVOICE #', value: formatInvoiceNumber(options.invoiceNumber) },
       { label: 'INVOICE DATE', value: new Date().toLocaleDateString('en-US') },
+      { label: 'SERVICE DATE', value: formatServiceDate(contract.serviceDate) },
     ],
     [
+      { label: 'CONTRACT', value: contract.title },
       { label: 'CONTRACT ID', value: contract.contractId || contract.id },
       { label: 'CLIENT / AGENCY', value: contract.client || '-' },
       { label: 'LOCATION', value: contract.location || '-' },
@@ -309,5 +327,8 @@ export async function generateContractInvoicePdf(contract: Contract) {
 
   const bytes = await pdf.save()
   const safeId = (contract.contractId || contract.id).replace(/[^a-z0-9_-]+/gi, '-')
-  download(bytes, `invoice-${safeId}.pdf`)
+  const numberSuffix = options.invoiceNumber && options.invoiceNumber > 0
+    ? `-${String(Math.trunc(options.invoiceNumber)).padStart(4, '0')}`
+    : ''
+  download(bytes, `invoice-${safeId}${numberSuffix}.pdf`)
 }

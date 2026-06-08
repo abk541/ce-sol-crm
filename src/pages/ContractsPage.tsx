@@ -125,10 +125,14 @@ function invoiceAmountFor(contract: Contract) {
   return invoiceAmountForContract(contract)
 }
 
-async function generateInvoiceFile(contract: Contract) {
+async function generateInvoiceFile(contract: Contract, invoiceNumber?: number) {
   try {
-    await generateContractInvoicePdf(contract)
-    toast.success('Invoice PDF generated')
+    await generateContractInvoicePdf(contract, { invoiceNumber })
+    toast.success(
+      invoiceNumber
+        ? `Invoice INV-${String(invoiceNumber).padStart(4, '0')} generated`
+        : 'Invoice PDF generated'
+    )
   } catch (err) {
     console.error(err)
     toast.error(contract.type === 'OTJ'
@@ -435,7 +439,129 @@ function uniqueSourcingEntries(entries: Subcontractor[]) {
   return Array.from(byId.values())
 }
 
-type ContractDrawerTab = 'overview' | 'pop' | 'poc' | 'subk' | 'lockSubk' | 'warnings' | 'deliverables' | 'assignment'
+type ContractDrawerTab = 'overview' | 'pop' | 'poc' | 'subk' | 'lockSubk' | 'warnings' | 'deliverables' | 'billing' | 'assignment'
+
+function ContractBillingTab({
+  contract,
+  nextInvoiceNumber,
+  invoiceReady,
+  onSaveServiceDate,
+  onGenerateInvoice,
+}: {
+  contract: Contract
+  nextInvoiceNumber: number
+  invoiceReady: boolean
+  onSaveServiceDate: (value: string) => Promise<void> | void
+  onGenerateInvoice: () => void
+}) {
+  const [draft, setDraft] = useState(contract.serviceDate || '')
+  const [saving, setSaving] = useState(false)
+  useEffect(() => { setDraft(contract.serviceDate || '') }, [contract.serviceDate])
+
+  const dirty = draft !== (contract.serviceDate || '')
+  const padded = String(Math.max(1, nextInvoiceNumber || 1)).padStart(4, '0')
+  const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+  const savedDisplay = (() => {
+    if (!contract.serviceDate) return null
+    const d = new Date(`${contract.serviceDate}T00:00:00`)
+    if (!Number.isFinite(d.getTime())) return contract.serviceDate
+    return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+  })()
+
+  return (
+    <div className="space-y-5">
+      <div
+        className="rounded-2xl border p-5"
+        style={{
+          background: 'linear-gradient(135deg, rgba(15,46,54,0.94), rgba(10,29,43,0.96))',
+          borderColor: 'rgba(215,190,122,0.24)',
+        }}
+      >
+        <p className="text-[10px] font-black uppercase tracking-[0.16em] text-[#D7BE7A]">Billing period</p>
+        <h3 className="text-base font-bold text-slate-100 mt-1">Service date for the next invoice</h3>
+        <p className="text-xs text-slate-400 mt-1 max-w-2xl">
+          The service date you enter here is printed on every invoice generated for this contract.
+          The invoice date is set to today and the invoice number is incremented automatically.
+        </p>
+
+        <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
+          <div>
+            <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">Service date</label>
+            <input
+              type="date"
+              value={draft}
+              onChange={e => setDraft(e.target.value)}
+              className="input-field w-full"
+            />
+            {savedDisplay && !dirty && (
+              <p className="text-[11px] text-slate-400 mt-1.5">Currently saved: <span className="text-slate-200 font-semibold">{savedDisplay}</span></p>
+            )}
+          </div>
+          <div className="flex gap-2 sm:justify-end">
+            {contract.serviceDate && (
+              <button
+                type="button"
+                disabled={saving}
+                onClick={async () => {
+                  setSaving(true)
+                  await onSaveServiceDate('')
+                  setSaving(false)
+                  setDraft('')
+                }}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold text-red-300 bg-red-900/30 border border-red-700/40 hover:bg-red-900/50 transition-colors disabled:opacity-45"
+              >
+                <Trash2 size={12} /> Clear
+              </button>
+            )}
+            <button
+              type="button"
+              disabled={!dirty || saving}
+              onClick={async () => {
+                setSaving(true)
+                await onSaveServiceDate(draft)
+                setSaving(false)
+              }}
+              className="btn-primary disabled:opacity-45 disabled:cursor-not-allowed"
+            >
+              <Save size={12} /> {saving ? 'Saving…' : 'Save service date'}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div
+        className="rounded-2xl border p-5"
+        style={{ background: 'rgba(8,24,37,0.72)', borderColor: 'rgba(215,190,122,0.24)' }}
+      >
+        <p className="text-[10px] font-black uppercase tracking-[0.16em] text-[#D7BE7A]">Next invoice</p>
+        <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="rounded-xl border p-3" style={{ background: 'rgba(255,255,255,0.04)', borderColor: 'rgba(215,190,122,0.22)' }}>
+            <p className="text-[10px] uppercase tracking-wide text-slate-400">Invoice #</p>
+            <p className="text-lg font-bold text-[#F8E8B8] mt-1 font-mono">INV-{padded}</p>
+          </div>
+          <div className="rounded-xl border p-3" style={{ background: 'rgba(255,255,255,0.04)', borderColor: 'rgba(215,190,122,0.22)' }}>
+            <p className="text-[10px] uppercase tracking-wide text-slate-400">Invoice date</p>
+            <p className="text-sm font-bold text-slate-100 mt-1">{today}</p>
+            <p className="text-[10px] text-slate-500 mt-0.5">Set automatically</p>
+          </div>
+          <div className="rounded-xl border p-3" style={{ background: 'rgba(255,255,255,0.04)', borderColor: 'rgba(215,190,122,0.22)' }}>
+            <p className="text-[10px] uppercase tracking-wide text-slate-400">Service date</p>
+            <p className="text-sm font-bold text-slate-100 mt-1">{savedDisplay || 'Not set'}</p>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onGenerateInvoice}
+          disabled={!invoiceReady}
+          title={!invoiceReady ? 'OTJ invoices are generated when the contract reaches Pending Payment.' : 'Generate invoice PDF'}
+          className="btn-primary mt-4 disabled:opacity-45 disabled:cursor-not-allowed"
+        >
+          <Receipt size={12} /> Generate invoice now
+        </button>
+      </div>
+    </div>
+  )
+}
 
 function ContractAssignmentTab({
   contract,
@@ -553,7 +679,7 @@ function ContractDetailDrawer({
   onClose: () => void
   onOpenSourcing?: (opp: Opportunity) => void
 }) {
-  const { updateContract, addContractPoC, updateContractPoC, removeContractPoC, addLockedSubcontractor, updateLockedSubcontractor, addGovernmentWarning, updateGovernmentWarning, removeGovernmentWarning, resolveGovernmentWarning, advanceContractStatus, terminateContract, currentUser, employees, opportunities, subcontractors } = useStore()
+  const { updateContract, addContractPoC, updateContractPoC, removeContractPoC, addLockedSubcontractor, updateLockedSubcontractor, addGovernmentWarning, updateGovernmentWarning, removeGovernmentWarning, resolveGovernmentWarning, advanceContractStatus, terminateContract, currentUser, employees, opportunities, subcontractors, nextInvoiceNumber, consumeInvoiceNumber } = useStore()
   const [tab, setTab] = useState<ContractDrawerTab>(initialTab)
   const [deliverableForm, setDeliverableForm] = useState({
     title: '',
@@ -838,6 +964,7 @@ function ContractDetailDrawer({
           { key: 'lockSubk', label: `Locked Subk (${(contract.lockedSubcontractors || []).length})`, icon: Shield },
           { key: 'warnings', label: `Warnings (${(contract.governmentWarnings || []).filter(w => !w.resolvedAt).length})`, icon: AlertTriangle },
           { key: 'deliverables', label: `Deliverables`, icon: ListChecks },
+          { key: 'billing', label: 'Billing Period', icon: Receipt },
           { key: 'assignment', label: 'Assignment', icon: UserCog },
         ].map(t => (
           <button key={t.key} onClick={() => setTab(t.key as any)}
@@ -1076,7 +1203,7 @@ function ContractDetailDrawer({
                 <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Finance Projection</p>
                 <button
                   type="button"
-                  onClick={() => generateInvoiceFile(contract)}
+                  onClick={() => generateInvoiceFile(contract, consumeInvoiceNumber())}
                   disabled={!invoiceReady}
                   title={!invoiceReady ? 'OTJ invoices are generated when the contract reaches Pending Payment.' : 'Generate invoice PDF'}
                   className="btn-secondary gap-1 px-2.5 py-1 text-xs disabled:cursor-not-allowed disabled:opacity-45"
@@ -2334,6 +2461,20 @@ function ContractDetailDrawer({
               </div>
             </div>
           </div>
+        )}
+
+        {/* BILLING PERIOD — Manual service date + invoice sequence preview */}
+        {tab === 'billing' && (
+          <ContractBillingTab
+            contract={contract}
+            nextInvoiceNumber={nextInvoiceNumber}
+            invoiceReady={invoiceReady}
+            onSaveServiceDate={async (value) => {
+              const saved = await updateContract(contract.id, { serviceDate: value || undefined })
+              if (saved) toast.success(value ? 'Service date saved' : 'Service date cleared')
+            }}
+            onGenerateInvoice={() => generateInvoiceFile(contract, consumeInvoiceNumber())}
+          />
         )}
 
         {/* ASSIGNMENT — Operations team picker (separate hierarchy from BD / opportunities) */}

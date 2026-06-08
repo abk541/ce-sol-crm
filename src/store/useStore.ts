@@ -73,6 +73,7 @@ interface AppState {
   sidebarCollapsed: boolean
   nonSubGraceHours: number
   nonSubGraceMinutes: number
+  nextInvoiceNumber: number   // global running sequence for generated contract invoices
 
   // ── Auth actions ───────────────────────────────────────────────────
   login: (email: string, password: string) => { ok: boolean; error?: string; needsFirst?: boolean; needsMFA?: boolean }
@@ -162,6 +163,7 @@ interface AppState {
   // ── UI ─────────────────────────────────────────────────────────────
   toggleSidebar: () => void
   updateNonSubGracePeriod: (hours: number, minutes: number) => void
+  consumeInvoiceNumber: () => number
 
   // ── DB ─────────────────────────────────────────────────────────────
   dbReady: boolean
@@ -365,6 +367,7 @@ export const useStore = create<AppState>()(
       sidebarCollapsed: false,
       nonSubGraceHours: 0,
       nonSubGraceMinutes: 5,
+      nextInvoiceNumber: 1,
       dbReady: false,
       needsPurge: false,
 
@@ -1648,12 +1651,17 @@ export const useStore = create<AppState>()(
         nonSubGraceHours: Math.max(0, Math.trunc(Number(hours) || 0)),
         nonSubGraceMinutes: Math.max(0, Math.trunc(Number(minutes) || 0)),
       }),
+      consumeInvoiceNumber: () => {
+        const current = Math.max(1, Math.trunc(Number(get().nextInvoiceNumber) || 1))
+        set({ nextInvoiceNumber: current + 1 })
+        return current
+      },
     }),
     {
       name: 'ces-crm-store',
-      // v11: capture SAM.gov pointOfContact on opportunities and propagate to
-      // FreshAward and Contract so imported contacts persist for the contract life.
-      version: 11,
+      // v12: global running invoice number + manual service date per contract
+      // (used by the Billing Period tab in contract admin).
+      version: 12,
       migrate: (persistedState: unknown, fromVersion: number) => {
         const s = persistedState as Record<string, unknown>
         if (fromVersion < 4) {
@@ -1684,6 +1692,7 @@ export const useStore = create<AppState>()(
             dbReady:         false,
             nonSubGraceHours: 0,
             nonSubGraceMinutes: 5,
+            nextInvoiceNumber: 1,
           }
         }
         return {
@@ -1694,6 +1703,7 @@ export const useStore = create<AppState>()(
           accessNoticeAccepted: Boolean(s.accessNoticeAccepted),
           nonSubGraceHours: Number(s.nonSubGraceHours ?? 0),
           nonSubGraceMinutes: Number(s.nonSubGraceMinutes ?? 5),
+          nextInvoiceNumber: Math.max(1, Math.trunc(Number(s.nextInvoiceNumber) || 1)),
           companyCertifications: Array.isArray(s.companyCertifications) ? s.companyCertifications : [],
           employeeRequests: Array.isArray(s.employeeRequests) ? s.employeeRequests : [],
           needsPurge: false,
@@ -1712,6 +1722,7 @@ export const useStore = create<AppState>()(
         sidebarCollapsed:  s.sidebarCollapsed,
         nonSubGraceHours:  s.nonSubGraceHours,
         nonSubGraceMinutes: s.nonSubGraceMinutes,
+        nextInvoiceNumber: s.nextInvoiceNumber,
         opportunities:     s.opportunities,
         contracts:         s.contracts,
         freshAwards:       s.freshAwards,

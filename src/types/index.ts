@@ -302,6 +302,7 @@ export interface Contract {
   assignedTo?: string        // employee id
   proposalAttachments?: FileAttachment[]
   samGovContacts?: SamGovContact[]   // copied from originating opportunity at award time
+  serviceDate?: string              // YYYY-MM-DD, entered in the Billing Period tab; printed on the invoice
 }
 
 // ── BD Submission (BD Tracker) ────────────────────────────────────────
