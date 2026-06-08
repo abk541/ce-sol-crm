@@ -1,9 +1,10 @@
-import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   Calendar,
   CalendarDays,
+  Check,
   CheckCircle2,
   ChevronDown,
   CreditCard,
@@ -455,51 +456,157 @@ type Row = {
   subStatus: SubInvoiceStatus
 }
 
-function FilterChip({
+function FilterSelect({
   icon,
   label,
+  value,
+  onChange,
+  options,
   active,
-  children,
 }: {
   icon: ReactNode
   label: string
+  value: string
+  onChange: (v: string) => void
+  options: { value: string; label: string }[]
   active: boolean
-  children: ReactNode
 }) {
+  const [open, setOpen] = useState(false)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const [coords, setCoords] = useState<{ top: number; left: number; width: number } | null>(null)
+
+  const current = options.find(o => o.value === value)?.label ?? ''
+
+  useLayoutEffect(() => {
+    if (!open || !triggerRef.current) return
+    const r = triggerRef.current.getBoundingClientRect()
+    setCoords({
+      top: r.bottom + 6,
+      left: r.left,
+      width: Math.max(r.width, 180),
+    })
+  }, [open])
+
+  useEffect(() => {
+    if (!open) return
+    const onDocClick = (e: MouseEvent) => {
+      if (triggerRef.current?.contains(e.target as Node)) return
+      const target = e.target as HTMLElement
+      if (target.closest('[data-filter-popover]')) return
+      setOpen(false)
+    }
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    const onScroll = () => setOpen(false)
+    document.addEventListener('mousedown', onDocClick)
+    document.addEventListener('keydown', onEsc)
+    window.addEventListener('scroll', onScroll, true)
+    window.addEventListener('resize', onScroll)
+    return () => {
+      document.removeEventListener('mousedown', onDocClick)
+      document.removeEventListener('keydown', onEsc)
+      window.removeEventListener('scroll', onScroll, true)
+      window.removeEventListener('resize', onScroll)
+    }
+  }, [open])
+
   return (
-    <label
-      className={
-        'group inline-flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-1.5 transition-colors focus-within:border-emerald-400 focus-within:bg-white focus-within:ring-2 focus-within:ring-emerald-100 ' +
-        (active
-          ? 'border-emerald-300 bg-emerald-50 hover:border-emerald-400'
-          : 'border-slate-200 bg-slate-50 hover:border-slate-300')
-      }
-    >
-      <span
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        onClick={() => setOpen(o => !o)}
         className={
-          'flex h-5 w-5 items-center justify-center rounded-md shadow-sm ' +
-          (active ? 'bg-emerald-500 text-white' : 'bg-white text-slate-500')
+          'group inline-flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-1.5 outline-none transition-colors ' +
+          (active
+            ? 'border-emerald-300 bg-emerald-50 hover:border-emerald-400'
+            : 'border-slate-200 bg-slate-50 hover:border-slate-300') +
+          (open ? ' ring-2 ring-emerald-100' : '')
         }
       >
-        {icon}
-      </span>
-      <span
-        className={
-          'text-[10px] font-bold uppercase tracking-wider ' +
-          (active ? 'text-emerald-600' : 'text-slate-400')
-        }
-      >
-        {label}
-      </span>
-      {children}
-      <ChevronDown
-        size={12}
-        className={
-          '-ml-1 transition-colors ' +
-          (active ? 'text-emerald-500' : 'text-slate-400 group-focus-within:text-emerald-500')
-        }
-      />
-    </label>
+        <span
+          className={
+            'flex h-5 w-5 items-center justify-center rounded-md shadow-sm ' +
+            (active ? 'bg-emerald-500 text-white' : 'bg-white text-slate-500')
+          }
+        >
+          {icon}
+        </span>
+        <span
+          className={
+            'text-[10px] font-bold uppercase tracking-wider ' +
+            (active ? 'text-emerald-600' : 'text-slate-400')
+          }
+        >
+          {label}
+        </span>
+        <span className="text-xs font-semibold text-slate-700">{current}</span>
+        <ChevronDown
+          size={12}
+          className={
+            '-ml-1 transition-transform ' +
+            (open ? 'rotate-180 text-emerald-500' : active ? 'text-emerald-500' : 'text-slate-400')
+          }
+        />
+      </button>
+
+      {open && coords && createPortal(
+        <div
+          data-filter-popover
+          style={{
+            position: 'fixed',
+            top: coords.top,
+            left: coords.left,
+            minWidth: coords.width,
+            zIndex: 60,
+          }}
+          className="overflow-hidden rounded-xl border"
+        >
+          <div
+            style={{
+              background: 'var(--bg-card)',
+              borderColor: 'var(--border-strong)',
+              boxShadow: '0 12px 32px rgba(0,0,0,0.45), 0 0 0 1px rgba(215,190,122,0.18)',
+            }}
+            className="overflow-hidden rounded-xl border"
+          >
+            <ul className="max-h-72 overflow-y-auto py-1">
+              {options.map(o => {
+                const selected = o.value === value
+                return (
+                  <li key={o.value}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onChange(o.value)
+                        setOpen(false)
+                      }}
+                      className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-xs transition-colors"
+                      style={{
+                        color: selected ? '#D7BE7A' : '#E2E8F0',
+                        background: selected ? 'rgba(215,190,122,0.12)' : 'transparent',
+                        fontWeight: selected ? 600 : 500,
+                      }}
+                      onMouseEnter={e => {
+                        if (!selected) e.currentTarget.style.background = 'rgba(215,190,122,0.08)'
+                      }}
+                      onMouseLeave={e => {
+                        if (!selected) e.currentTarget.style.background = 'transparent'
+                      }}
+                    >
+                      <span>{o.label}</span>
+                      {selected && <Check size={12} style={{ color: '#D7BE7A' }} />}
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+          </div>
+        </div>,
+        document.body,
+      )}
+    </>
   )
 }
 
@@ -823,55 +930,56 @@ export default function FinanceProjectionsPage() {
         </div>
 
         <div className="mt-3 flex flex-wrap gap-2">
-          <FilterChip icon={<Calendar size={12} />} label="Year" active={yearFilter !== defaultYear}>
-            <select
-              className="cursor-pointer appearance-none border-0 bg-transparent pr-0 text-xs font-semibold text-slate-700 outline-none focus:ring-0"
-              value={yearFilter}
-              onChange={e => setYearFilter(e.target.value)}
-            >
-              <option value="ALL">All years</option>
-              {yearOptions.map(y => <option key={y} value={y}>{y}</option>)}
-            </select>
-          </FilterChip>
+          <FilterSelect
+            icon={<Calendar size={12} />}
+            label="Year"
+            value={yearFilter}
+            onChange={setYearFilter}
+            active={yearFilter !== defaultYear}
+            options={[
+              { value: 'ALL', label: 'All years' },
+              ...yearOptions.map(y => ({ value: y, label: y })),
+            ]}
+          />
 
-          <FilterChip icon={<CalendarDays size={12} />} label="Month" active={monthFilter !== 'ALL'}>
-            <select
-              className="cursor-pointer appearance-none border-0 bg-transparent pr-0 text-xs font-semibold text-slate-700 outline-none focus:ring-0"
-              value={monthFilter}
-              onChange={e => setMonthFilter(e.target.value)}
-            >
-              <option value="ALL">All months</option>
-              {MONTHS_LONG.map((m, i) => (
-                <option key={m} value={String(i + 1).padStart(2, '0')}>{m}</option>
-              ))}
-            </select>
-          </FilterChip>
+          <FilterSelect
+            icon={<CalendarDays size={12} />}
+            label="Month"
+            value={monthFilter}
+            onChange={setMonthFilter}
+            active={monthFilter !== 'ALL'}
+            options={[
+              { value: 'ALL', label: 'All months' },
+              ...MONTHS_LONG.map((m, i) => ({
+                value: String(i + 1).padStart(2, '0'),
+                label: m,
+              })),
+            ]}
+          />
 
-          <FilterChip icon={<CheckCircle2 size={12} />} label="Status" active={statusFilter !== 'ALL'}>
-            <select
-              className="cursor-pointer appearance-none border-0 bg-transparent pr-0 text-xs font-semibold text-slate-700 outline-none focus:ring-0"
-              value={statusFilter}
-              onChange={e => setStatusFilter(e.target.value as GovBillingStatus | 'ALL')}
-            >
-              <option value="ALL">All statuses</option>
-              {STATUS_OPTIONS.map(o => (
-                <option key={o.value} value={o.value}>{o.label}</option>
-              ))}
-            </select>
-          </FilterChip>
+          <FilterSelect
+            icon={<CheckCircle2 size={12} />}
+            label="Status"
+            value={statusFilter}
+            onChange={v => setStatusFilter(v as GovBillingStatus | 'ALL')}
+            active={statusFilter !== 'ALL'}
+            options={[
+              { value: 'ALL', label: 'All statuses' },
+              ...STATUS_OPTIONS.map(o => ({ value: o.value, label: o.label })),
+            ]}
+          />
 
-          <FilterChip icon={<CreditCard size={12} />} label="Method" active={methodFilter !== 'ALL'}>
-            <select
-              className="cursor-pointer appearance-none border-0 bg-transparent pr-0 text-xs font-semibold text-slate-700 outline-none focus:ring-0"
-              value={methodFilter}
-              onChange={e => setMethodFilter(e.target.value as InvoicePaymentMethod | 'ALL')}
-            >
-              <option value="ALL">All methods</option>
-              {PAYMENT_METHOD_OPTIONS.map(o => (
-                <option key={o.value} value={o.value}>{o.label}</option>
-              ))}
-            </select>
-          </FilterChip>
+          <FilterSelect
+            icon={<CreditCard size={12} />}
+            label="Method"
+            value={methodFilter}
+            onChange={v => setMethodFilter(v as InvoicePaymentMethod | 'ALL')}
+            active={methodFilter !== 'ALL'}
+            options={[
+              { value: 'ALL', label: 'All methods' },
+              ...PAYMENT_METHOD_OPTIONS.map(o => ({ value: o.value, label: o.label })),
+            ]}
+          />
         </div>
       </div>
 
