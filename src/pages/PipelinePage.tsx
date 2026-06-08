@@ -9,6 +9,7 @@ import {
   FileText, PlusCircle, Download, Filter, MoreHorizontal, Upload,
   Ban, ChevronLeft, ChevronRight,
   Mail, Phone, User as UserIcon,
+  Search, Globe, MessageSquare, Copy, Building2, CheckCircle2, Paperclip,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import type { Opportunity, Priority, OppStatus, Comment, FileAttachment, SamGovContact } from '../types'
@@ -1117,249 +1118,651 @@ function serializeSourcingComments(comments: Comment[]) {
   return JSON.stringify(comments)
 }
 
+// Deterministic avatar background color from a string (company name).
+const SOURCING_AVATAR_PALETTE = [
+  'bg-indigo-500', 'bg-emerald-500', 'bg-rose-500', 'bg-amber-500',
+  'bg-sky-500', 'bg-violet-500', 'bg-teal-500', 'bg-fuchsia-500',
+]
+function avatarColor(seed: string) {
+  let hash = 0
+  for (let i = 0; i < seed.length; i++) hash = (hash * 31 + seed.charCodeAt(i)) | 0
+  return SOURCING_AVATAR_PALETTE[Math.abs(hash) % SOURCING_AVATAR_PALETTE.length]
+}
+function avatarInitials(name: string) {
+  const parts = name.trim().split(/\s+/).filter(Boolean)
+  if (parts.length === 0) return '?'
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+}
+function normalizeWebsite(url: string) {
+  const trimmed = url.trim()
+  if (!trimmed) return ''
+  return trimmed.startsWith('http://') || trimmed.startsWith('https://') ? trimmed : `https://${trimmed}`
+}
+
+const SET_ASIDE_OPTIONS: { value: string; label: string }[] = [
+  { value: 'SB',     label: 'Small Business' },
+  { value: 'SDVOSB', label: 'SDVOSB' },
+  { value: 'WOSB',   label: 'WOSB' },
+  { value: 'HUBZone',label: 'HUBZone' },
+  { value: 'VOSB',   label: 'VOSB' },
+  { value: '8(a)',   label: '8(a)' },
+  { value: 'UNRES',  label: 'Unrestricted' },
+]
+
+type SourcingDraft = {
+  companyName: string
+  contactName: string
+  email: string
+  phone: string
+  website: string
+  quoteFile: string
+  setAside: string
+  newComment: string
+}
+
+const EMPTY_DRAFT: SourcingDraft = {
+  companyName: '', contactName: '', email: '', phone: '', website: '',
+  quoteFile: '', setAside: 'SB', newComment: '',
+}
+
 export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) {
   const { subcontractors, addSubcontractor, updateSubcontractor, deleteSubcontractor, currentUser } = useStore()
-  const [tab, setTab] = useState<'list' | 'add'>('list')
-  const [form, setForm] = useState({ companyName: '', contactName: '', email: '', phone: '', website: '', comment: '', quoteFile: '' })
-  const [editingId, setEditingId] = useState<string | null>(null)
-  const [editForm, setEditForm] = useState({ companyName: '', contactName: '', email: '', phone: '', website: '', newComment: '', quoteFile: '', comments: [] as Comment[] })
+  const oppSubs = useMemo(
+    () => subcontractors
+      .filter(s => s.opportunityId === opp.id)
+      .sort((a, b) => (a.companyName || '').localeCompare(b.companyName || '')),
+    [subcontractors, opp.id],
+  )
 
-  const oppSubs = subcontractors.filter(s => s.opportunityId === opp.id)
-  const setF = (k: string, v: string) => setForm(p => ({ ...p, [k]: v }))
-  const setEF = (k: string, v: string) => setEditForm(p => ({ ...p, [k]: v }))
+  const [search, setSearch] = useState('')
+  const [filter, setFilter] = useState<'all' | 'quote' | 'comment'>('all')
+  const [mode, setMode] = useState<'view' | 'add'>(oppSubs.length === 0 ? 'add' : 'view')
+  const [selectedId, setSelectedId] = useState<string | null>(oppSubs[0]?.id ?? null)
+  const [draft, setDraft] = useState<SourcingDraft>(EMPTY_DRAFT)
+  const [dirty, setDirty] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const submit = (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!form.companyName) return
+  // Keep selection valid when the underlying list changes.
+  useEffect(() => {
+    if (mode === 'add') return
+    if (selectedId && oppSubs.some(s => s.id === selectedId)) return
+    setSelectedId(oppSubs[0]?.id ?? null)
+    if (oppSubs.length === 0) setMode('add')
+  }, [oppSubs, selectedId, mode])
+
+  const selected = mode === 'view' ? oppSubs.find(s => s.id === selectedId) ?? null : null
+
+  // Hydrate draft when entering view mode or switching selection.
+  useEffect(() => {
+    if (mode === 'add') {
+      setDraft(EMPTY_DRAFT)
+      setDirty(false)
+      return
+    }
+    if (selected) {
+      setDraft({
+        companyName: selected.companyName ?? '',
+        contactName: selected.contactName ?? '',
+        email:       selected.email ?? '',
+        phone:       selected.phone ?? '',
+        website:     selected.website ?? '',
+        quoteFile:   selected.quoteFile ?? '',
+        setAside:    selected.setAside || 'SB',
+        newComment:  '',
+      })
+      setDirty(false)
+    }
+  }, [mode, selected?.id])
+
+  const filtered = useMemo(() => {
+    const needle = search.trim().toLowerCase()
+    return oppSubs.filter(s => {
+      if (filter === 'quote'   && !s.quoteFile) return false
+      if (filter === 'comment' && parseSourcingComments(s.notes).length === 0) return false
+      if (!needle) return true
+      return [s.companyName, s.contactName, s.email, s.phone].some(v =>
+        (v || '').toLowerCase().includes(needle))
+    })
+  }, [oppSubs, search, filter])
+
+  const counts = useMemo(() => ({
+    all:     oppSubs.length,
+    quote:   oppSubs.filter(s => !!s.quoteFile).length,
+    comment: oppSubs.filter(s => parseSourcingComments(s.notes).length > 0).length,
+  }), [oppSubs])
+
+  const setD = <K extends keyof SourcingDraft>(k: K, v: SourcingDraft[K]) => {
+    setDraft(p => ({ ...p, [k]: v }))
+    setDirty(true)
+  }
+
+  const onPickFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) setD('quoteFile', file.name)
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }
+
+  const copyToClipboard = (text: string, label: string) => {
+    if (!text) return
+    navigator.clipboard?.writeText(text).then(
+      () => toast.success(`${label} copied`),
+      () => toast.error(`Could not copy ${label}`),
+    )
+  }
+
+  const saveAdd = (keepOpen: boolean) => {
+    if (!draft.companyName.trim()) {
+      toast.error('Company name is required')
+      return
+    }
     addSubcontractor({
-      companyName: form.companyName,
-      contactName: form.contactName,
-      email: form.email,
-      phone: form.phone,
-      website: form.website.trim() || undefined,
-      quoteFile: form.quoteFile,
-      notes: form.comment.trim()
+      companyName: draft.companyName.trim(),
+      contactName: draft.contactName.trim(),
+      email:       draft.email.trim(),
+      phone:       draft.phone.trim(),
+      website:     draft.website.trim() || undefined,
+      quoteFile:   draft.quoteFile,
+      notes: draft.newComment.trim()
         ? serializeSourcingComments([{
             id: crypto.randomUUID(),
-            text: form.comment.trim(),
+            text: draft.newComment.trim(),
             author: currentUser?.username ?? '',
             createdAt: new Date().toISOString(),
           }])
         : '',
       naicsCode: '',
-      setAside: 'SB',
+      setAside: draft.setAside || 'SB',
       opportunityId: opp.id,
       createdBy: currentUser?.username ?? '',
     })
-    toast.success('Sourcing entry added')
-    setForm({ companyName: '', contactName: '', email: '', phone: '', website: '', comment: '', quoteFile: '' })
-    setTab('list')
+    toast.success('Subcontractor added')
+    if (keepOpen) {
+      setDraft(EMPTY_DRAFT)
+      setDirty(false)
+    } else {
+      setMode('view')
+      setDraft(EMPTY_DRAFT)
+      setDirty(false)
+    }
   }
 
-  const startEdit = (s: any) => {
-    setEditingId(s.id)
-    setEditForm({ companyName: s.companyName, contactName: s.contactName, email: s.email, phone: s.phone, website: s.website ?? '', newComment: '', quoteFile: s.quoteFile ?? '', comments: parseSourcingComments(s.notes) })
-  }
-
-  const saveEdit = (id: string) => {
-    const comments = [...editForm.comments]
-    if (editForm.newComment.trim()) {
-      comments.push({
+  const saveEdit = () => {
+    if (!selected) return
+    if (!draft.companyName.trim()) {
+      toast.error('Company name is required')
+      return
+    }
+    const previousComments = parseSourcingComments(selected.notes)
+    const nextComments = [...previousComments]
+    if (draft.newComment.trim()) {
+      nextComments.push({
         id: crypto.randomUUID(),
-        text: editForm.newComment.trim(),
+        text: draft.newComment.trim(),
         author: currentUser?.username ?? '',
         createdAt: new Date().toISOString(),
       })
     }
-    updateSubcontractor(id, {
-      companyName: editForm.companyName,
-      contactName: editForm.contactName,
-      email: editForm.email,
-      phone: editForm.phone,
-      website: editForm.website.trim() || undefined,
-      quoteFile: editForm.quoteFile,
-      notes: serializeSourcingComments(comments),
+    updateSubcontractor(selected.id, {
+      companyName: draft.companyName.trim(),
+      contactName: draft.contactName.trim(),
+      email:       draft.email.trim(),
+      phone:       draft.phone.trim(),
+      website:     draft.website.trim() || undefined,
+      quoteFile:   draft.quoteFile,
+      setAside:    draft.setAside,
+      notes: serializeSourcingComments(nextComments),
     })
-    toast.success('Sourcing entry updated')
-    setEditingId(null)
+    toast.success('Saved')
+    setDraft(p => ({ ...p, newComment: '' }))
+    setDirty(false)
   }
 
-  return (
-    <ModalWrap onClose={onClose} title="Sourcing" subtitle={opp.solicitation} maxW="max-w-5xl">
-      <div className="px-6 pt-4 pb-2">
-        <div className="flex gap-0.5 p-1 bg-slate-100 rounded-xl border border-slate-200 inline-flex">
-          <button onClick={() => setTab('list')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${tab === 'list' ? 'bg-white text-indigo-600 shadow-sm border border-slate-200' : 'text-slate-500 hover:text-slate-700'}`}>
-            Sourcing ({oppSubs.length})
-          </button>
-          <button onClick={() => setTab('add')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1 ${tab === 'add' ? 'bg-white text-indigo-600 shadow-sm border border-slate-200' : 'text-slate-500 hover:text-slate-700'}`}>
-            <PlusCircle size={11} /> Add New
-          </button>
-        </div>
-      </div>
+  const removeSelected = () => {
+    if (!selected) return
+    if (!confirm(`Remove ${selected.companyName} from this sourcing list?`)) return
+    deleteSubcontractor(selected.id)
+    toast.success('Subcontractor removed')
+    setSelectedId(null)
+  }
 
-      <div className="px-6 pb-6">
-        {tab === 'list' && (
-          oppSubs.length === 0 ? (
-            <div className="py-10 text-center text-slate-400 text-sm">No sourcing entries registered yet</div>
-          ) : (
-            <div className="space-y-3 mt-2">
-              {oppSubs.map(s => (
-                <motion.div key={s.id} layout
-                  className="p-4 rounded-xl border border-slate-100 bg-slate-50 hover:bg-white hover:border-slate-200 transition-all">
-                  {editingId === s.id ? (
-                    <div className="space-y-3">
-                      <div className="grid grid-cols-2 gap-3">
-                        <div className="col-span-2">
-                          <label className="block text-xs font-semibold text-slate-500 mb-1">Company Name *</label>
-                          <input value={editForm.companyName} onChange={e => setEF('companyName', e.target.value)} className="input-field" />
-                        </div>
-                        <div>
-                          <label className="block text-xs font-semibold text-slate-500 mb-1">Contact Name</label>
-                          <input value={editForm.contactName} onChange={e => setEF('contactName', e.target.value)} className="input-field" />
-                        </div>
-                        <div>
-                          <label className="block text-xs font-semibold text-slate-500 mb-1">Email</label>
-                          <input value={editForm.email} onChange={e => setEF('email', e.target.value)} className="input-field" />
-                        </div>
-                        <div>
-                          <label className="block text-xs font-semibold text-slate-500 mb-1">Phone</label>
-                          <input value={editForm.phone} onChange={e => setEF('phone', e.target.value)} className="input-field" />
-                        </div>
-                        <div className="col-span-2">
-                          <label className="block text-xs font-semibold text-slate-500 mb-1">Website</label>
-                          <input value={editForm.website} onChange={e => setEF('website', e.target.value)} className="input-field" placeholder="https://example.com" />
-                        </div>
-                        <div>
-                          <label className="block text-xs font-semibold text-slate-500 mb-1">Quote File</label>
-                          <div className="flex gap-2">
-                            <input value={editForm.quoteFile} onChange={e => setEF('quoteFile', e.target.value)} className="input-field flex-1" placeholder="filename.pdf" />
-                            <button type="button" className="btn-secondary text-xs px-2" onClick={() => {
-                              const name = prompt('Enter file name:')
-                              if (name) setEF('quoteFile', name)
-                            }}>
-                              <FileText size={11} />
-                            </button>
-                          </div>
-                        </div>
-                        <div className="col-span-2">
-                          <label className="block text-xs font-semibold text-slate-500 mb-1">Comments</label>
-                          <div className="space-y-2 rounded-xl border border-slate-100 bg-white p-3">
-                            {editForm.comments.length === 0 && <p className="text-xs text-slate-400">No comments yet.</p>}
-                            {editForm.comments.map(c => (
-                              <div key={c.id} className="rounded-lg bg-slate-50 px-3 py-2">
-                                <div className="mb-1 flex items-center justify-between gap-3">
-                                  <span className="text-xs font-semibold text-slate-700">{c.author}</span>
-                                  <span className="text-[10px] text-slate-400">{formatDateTime(c.createdAt)}</span>
-                                </div>
-                                <p className="text-xs text-slate-600">{c.text}</p>
-                              </div>
-                            ))}
-                            <textarea value={editForm.newComment} onChange={e => setEF('newComment', e.target.value)} rows={3} className="input-field w-full resize-none" placeholder="Add a timestamped sourcing comment..." />
-                          </div>
-                        </div>
-                      </div>
-                      <div className="flex gap-2">
-                        <button type="button" onClick={() => setEditingId(null)} className="btn-secondary text-xs">Cancel</button>
-                        <button type="button" onClick={() => saveEdit(s.id)} className="btn-primary text-xs">Save</button>
-                      </div>
+  const detailComments = selected ? parseSourcingComments(selected.notes) : []
+
+  return (
+    <ModalWrap onClose={onClose} title="Sourcing" subtitle={opp.solicitation} maxW="max-w-6xl">
+      <div className="grid h-[min(82vh,720px)] grid-cols-1 md:grid-cols-[300px_1fr] bg-white">
+        {/* ── Left pane: searchable list ───────────────────────────── */}
+        <aside className="flex flex-col border-r border-slate-200 bg-slate-50">
+          <div className="px-3 pt-3 pb-2 space-y-2 border-b border-slate-200 bg-white">
+            <div className="relative">
+              <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+              <input
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="Search by company, contact, email…"
+                className="w-full pl-8 pr-7 py-2 text-xs rounded-lg border border-slate-200 bg-white focus:border-indigo-400 focus:outline-none"
+              />
+              {search && (
+                <button
+                  type="button"
+                  onClick={() => setSearch('')}
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded text-slate-400 hover:text-slate-700 hover:bg-slate-100"
+                >
+                  <X size={11} />
+                </button>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => { setMode('add'); setSelectedId(null) }}
+              className={`w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold transition-all ${
+                mode === 'add'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'bg-white border border-indigo-200 text-indigo-600 hover:bg-indigo-50'
+              }`}
+            >
+              <Plus size={13} /> New subcontractor
+            </button>
+            <div className="flex gap-1">
+              {([
+                { id: 'all',     label: `All ${counts.all}` },
+                { id: 'quote',   label: `Quote ${counts.quote}` },
+                { id: 'comment', label: `Notes ${counts.comment}` },
+              ] as const).map(chip => (
+                <button
+                  key={chip.id}
+                  type="button"
+                  onClick={() => setFilter(chip.id)}
+                  className={`flex-1 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider transition-all ${
+                    filter === chip.id
+                      ? 'bg-slate-900 text-white'
+                      : 'bg-white border border-slate-200 text-slate-500 hover:text-slate-700'
+                  }`}
+                >
+                  {chip.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="flex-1 overflow-y-auto px-2 py-2 space-y-1">
+            {filtered.length === 0 && (
+              <div className="px-3 py-10 text-center">
+                {oppSubs.length === 0 ? (
+                  <>
+                    <div className="mx-auto w-10 h-10 rounded-full bg-white border border-dashed border-slate-300 flex items-center justify-center mb-2">
+                      <Building2 size={16} className="text-slate-400" />
                     </div>
-                  ) : (
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-semibold text-slate-800">{s.companyName}</p>
-                        <p className="text-xs text-slate-500 mt-0.5">{s.contactName} - {s.email} - {s.phone}</p>
-                        {s.website && (
-                          <a href={s.website.startsWith('http') ? s.website : `https://${s.website}`} target="_blank" rel="noreferrer" className="text-[11px] text-indigo-600 hover:underline">
-                            {s.website}
-                          </a>
-                        )}
-                        {s.quoteFile && (
-                          <div className="flex items-center gap-1 mt-1.5">
-                            <FileText size={10} className="text-slate-400" />
-                            <span className="text-[10px] text-indigo-600 font-semibold">{s.quoteFile}</span>
-                          </div>
-                        )}
-                        {parseSourcingComments(s.notes).length > 0 && (
-                          <div className="mt-2 space-y-1.5">
-                            {parseSourcingComments(s.notes).map(c => (
-                              <div key={c.id} className="rounded-lg bg-white/80 px-3 py-2 border border-slate-100">
-                                <div className="flex items-center justify-between gap-3">
-                                  <span className="text-[10px] font-semibold text-slate-600">{c.author}</span>
-                                  <span className="text-[10px] text-slate-400">{formatDateTime(c.createdAt)}</span>
-                                </div>
-                                <p className="text-xs text-slate-600 mt-0.5">{c.text}</p>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                        <p className="text-[10px] mt-1.5 text-slate-400">Added by {s.createdBy} - {formatDateTime(s.createdAt)}</p>
+                    <p className="text-xs font-bold text-slate-700">No subcontractors yet</p>
+                    <p className="mt-1 text-[11px] text-slate-500">Use “New subcontractor” to add the first quote.</p>
+                  </>
+                ) : (
+                  <>
+                    <Search size={16} className="mx-auto text-slate-400 mb-1" />
+                    <p className="text-xs font-bold text-slate-700">No matches</p>
+                    <p className="mt-1 text-[11px] text-slate-500">Try a different search or filter.</p>
+                  </>
+                )}
+              </div>
+            )}
+            {filtered.map(s => {
+              const isSelected = mode === 'view' && selectedId === s.id
+              const commentCount = parseSourcingComments(s.notes).length
+              return (
+                <button
+                  key={s.id}
+                  type="button"
+                  onClick={() => { setMode('view'); setSelectedId(s.id) }}
+                  className={`w-full flex items-start gap-2.5 px-2.5 py-2 rounded-lg text-left transition-all border ${
+                    isSelected
+                      ? 'bg-indigo-50 border-indigo-200 shadow-sm'
+                      : 'bg-white border-transparent hover:bg-white hover:border-slate-200'
+                  }`}
+                >
+                  <span className={`flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-[10px] font-black text-white ${avatarColor(s.companyName)}`}>
+                    {avatarInitials(s.companyName)}
+                  </span>
+                  <span className="flex-1 min-w-0">
+                    <span className="block text-xs font-bold text-slate-800 truncate">{s.companyName}</span>
+                    <span className="block text-[10px] text-slate-500 truncate">
+                      {s.contactName || s.email || s.phone || '—'}
+                    </span>
+                  </span>
+                  <span className="flex-shrink-0 flex items-center gap-1 mt-0.5">
+                    {s.quoteFile && (
+                      <span title="Has quote file" className="w-4 h-4 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center">
+                        <Paperclip size={9} />
+                      </span>
+                    )}
+                    {commentCount > 0 && (
+                      <span title={`${commentCount} note${commentCount === 1 ? '' : 's'}`} className="inline-flex items-center gap-0.5 px-1 h-4 rounded-full bg-slate-100 text-slate-600 text-[9px] font-bold">
+                        <MessageSquare size={8} /> {commentCount}
+                      </span>
+                    )}
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+        </aside>
+
+        {/* ── Right pane: detail or new entry ───────────────────────── */}
+        <section className="flex flex-col overflow-hidden bg-white">
+          {mode === 'view' && selected && (
+            <>
+              <header className="flex-shrink-0 px-6 pt-5 pb-4 border-b border-slate-200">
+                <div className="flex items-start gap-3">
+                  <span className={`flex-shrink-0 w-12 h-12 rounded-xl flex items-center justify-center text-sm font-black text-white ${avatarColor(selected.companyName)}`}>
+                    {avatarInitials(selected.companyName)}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="text-base font-black text-slate-900 truncate">{selected.companyName}</h3>
+                    <p className="text-xs text-slate-500 truncate">
+                      {[selected.contactName, selected.email, selected.phone].filter(Boolean).join(' · ') || 'No contact info yet'}
+                    </p>
+                    <p className="mt-1 text-[10px] text-slate-400">
+                      Added by {selected.createdBy || '—'} · {formatDateTime(selected.createdAt)}
+                    </p>
+                  </div>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-1.5">
+                  <a
+                    href={selected.email ? `mailto:${selected.email}` : undefined}
+                    onClick={e => { if (!selected.email) e.preventDefault() }}
+                    className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold border transition-all ${
+                      selected.email
+                        ? 'border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100'
+                        : 'border-slate-200 bg-slate-50 text-slate-400 cursor-not-allowed'
+                    }`}
+                  >
+                    <Mail size={11} /> Email
+                  </a>
+                  <button
+                    type="button"
+                    disabled={!selected.email}
+                    onClick={() => copyToClipboard(selected.email, 'Email')}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    <Copy size={11} /> Copy
+                  </button>
+                  <a
+                    href={selected.phone ? `tel:${selected.phone}` : undefined}
+                    onClick={e => { if (!selected.phone) e.preventDefault() }}
+                    className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold border transition-all ${
+                      selected.phone
+                        ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                        : 'border-slate-200 bg-slate-50 text-slate-400 cursor-not-allowed'
+                    }`}
+                  >
+                    <Phone size={11} /> Call
+                  </a>
+                  <a
+                    href={selected.website ? normalizeWebsite(selected.website) : undefined}
+                    target="_blank" rel="noreferrer"
+                    onClick={e => { if (!selected.website) e.preventDefault() }}
+                    className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold border transition-all ${
+                      selected.website
+                        ? 'border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100'
+                        : 'border-slate-200 bg-slate-50 text-slate-400 cursor-not-allowed'
+                    }`}
+                  >
+                    <Globe size={11} /> Website
+                  </a>
+                </div>
+              </header>
+
+              <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400 mb-2">Profile</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="col-span-2">
+                      <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Company name *</label>
+                      <input value={draft.companyName} onChange={e => setD('companyName', e.target.value)} className="input-field" />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Contact name</label>
+                      <input value={draft.contactName} onChange={e => setD('contactName', e.target.value)} className="input-field" />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Set-aside</label>
+                      <select value={draft.setAside} onChange={e => setD('setAside', e.target.value)} className="input-field">
+                        {SET_ASIDE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Email</label>
+                      <input type="email" value={draft.email} onChange={e => setD('email', e.target.value)} className="input-field" placeholder="contact@vendor.com" />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Phone</label>
+                      <input value={draft.phone} onChange={e => setD('phone', e.target.value)} className="input-field" placeholder="+1 (555) 555-5555" />
+                    </div>
+                    <div className="col-span-2">
+                      <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Website</label>
+                      <input value={draft.website} onChange={e => setD('website', e.target.value)} className="input-field" placeholder="example.com" />
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400 mb-2">Quote file</p>
+                  <input ref={fileInputRef} type="file" className="hidden" onChange={onPickFile} />
+                  {draft.quoteFile ? (
+                    <div className="flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl border border-emerald-200 bg-emerald-50">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="w-7 h-7 rounded-md bg-white border border-emerald-200 flex items-center justify-center flex-shrink-0">
+                          <FileText size={13} className="text-emerald-600" />
+                        </span>
+                        <span className="text-xs font-bold text-emerald-900 truncate">{draft.quoteFile}</span>
                       </div>
-                      <div className="flex gap-1 flex-shrink-0">
-                        <button onClick={() => startEdit(s)}
-                          className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition-all">
-                          <Edit2 size={12} />
-                        </button>
-                        <button onClick={() => { deleteSubcontractor(s.id); toast.success('Sourcing entry removed') }}
-                          className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-red-500 hover:bg-red-50 transition-all">
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        <button type="button" onClick={() => fileInputRef.current?.click()} className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-emerald-700 hover:bg-emerald-100 rounded">Replace</button>
+                        <button type="button" onClick={() => setD('quoteFile', '')} className="w-6 h-6 rounded flex items-center justify-center text-emerald-700 hover:bg-emerald-100">
                           <X size={12} />
                         </button>
                       </div>
                     </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="w-full flex items-center justify-center gap-2 px-3 py-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 text-slate-500 text-xs font-semibold hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-600 transition-all"
+                    >
+                      <Upload size={13} /> Attach quote file
+                    </button>
                   )}
-                </motion.div>
-              ))}
-            </div>
-          )
-        )}
+                </div>
 
-        {tab === 'add' && (
-          <form onSubmit={submit} className="space-y-3 mt-2">
-            <div className="grid grid-cols-2 gap-3">
-              <div className="col-span-2">
-                <label className="block text-xs font-semibold text-slate-500 mb-1.5">Company Name *</label>
-                <input value={form.companyName} onChange={e => setF('companyName', e.target.value)} className="input-field" required placeholder="Legal company name" />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-500 mb-1.5">Contact Name</label>
-                <input value={form.contactName} onChange={e => setF('contactName', e.target.value)} className="input-field" />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-500 mb-1.5">Email</label>
-                <input type="email" value={form.email} onChange={e => setF('email', e.target.value)} className="input-field" />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-500 mb-1.5">Phone</label>
-                <input value={form.phone} onChange={e => setF('phone', e.target.value)} className="input-field" />
-              </div>
-              <div className="col-span-2">
-                <label className="block text-xs font-semibold text-slate-500 mb-1.5">Website</label>
-                <input value={form.website} onChange={e => setF('website', e.target.value)} className="input-field" placeholder="https://example.com" />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-500 mb-1.5">Quote File</label>
-                <div className="flex gap-2">
-                  <input value={form.quoteFile} onChange={e => setF('quoteFile', e.target.value)} className="input-field flex-1" placeholder="filename.pdf" />
-                  <button type="button" className="btn-secondary text-xs px-2" onClick={() => {
-                    const name = prompt('Enter file name:')
-                    if (name) setF('quoteFile', name)
-                  }}>
-                    <FileText size={11} />
-                  </button>
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400 mb-2">
+                    Notes <span className="text-slate-300">·</span> {detailComments.length}
+                  </p>
+                  <div className="space-y-2">
+                    {detailComments.length === 0 && (
+                      <p className="text-xs text-slate-400 px-1">No notes yet — drop a quick update so the team has context.</p>
+                    )}
+                    {detailComments.map(c => (
+                      <div key={c.id} className="flex items-start gap-2">
+                        <span className={`flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-black text-white ${avatarColor(c.author || 'anon')}`}>
+                          {avatarInitials(c.author || '?')}
+                        </span>
+                        <div className="flex-1 min-w-0 rounded-xl bg-slate-50 border border-slate-100 px-3 py-2">
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="text-[11px] font-bold text-slate-700">{c.author || 'unknown'}</span>
+                            <span className="text-[10px] text-slate-400">{formatDateTime(c.createdAt)}</span>
+                          </div>
+                          <p className="mt-0.5 text-xs text-slate-600 whitespace-pre-wrap">{c.text}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-3">
+                    <textarea
+                      value={draft.newComment}
+                      onChange={e => setD('newComment', e.target.value)}
+                      rows={2}
+                      placeholder="Add a timestamped note (saves on Save changes)…"
+                      className="input-field w-full resize-none"
+                    />
+                  </div>
                 </div>
               </div>
-              <div className="col-span-2">
-                <label className="block text-xs font-semibold text-slate-500 mb-1.5">Initial Comment</label>
-                <textarea value={form.comment} onChange={e => setF('comment', e.target.value)} rows={4} className="input-field w-full resize-none" placeholder="Add the first sourcing comment..." />
+
+              <footer className="flex-shrink-0 flex items-center justify-between gap-3 px-6 py-3 border-t border-slate-200 bg-slate-50">
+                <button
+                  type="button"
+                  onClick={removeSelected}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[11px] font-bold text-rose-600 hover:bg-rose-50"
+                >
+                  <Trash2 size={12} /> Delete
+                </button>
+                <div className="flex items-center gap-2">
+                  {dirty && <span className="text-[10px] font-bold text-amber-600">Unsaved changes</span>}
+                  <button
+                    type="button"
+                    disabled={!dirty}
+                    onClick={saveEdit}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed transition-all"
+                  >
+                    <CheckCircle2 size={12} /> Save changes
+                  </button>
+                </div>
+              </footer>
+            </>
+          )}
+
+          {mode === 'view' && !selected && (
+            <div className="flex-1 flex items-center justify-center p-10">
+              <div className="text-center">
+                <div className="mx-auto w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center mb-3">
+                  <Building2 size={20} className="text-slate-400" />
+                </div>
+                <p className="text-sm font-bold text-slate-700">Select a subcontractor</p>
+                <p className="mt-1 text-xs text-slate-500">Pick one from the list, or add a new candidate.</p>
               </div>
             </div>
-            <div className="flex gap-3 pt-1">
-              <button type="button" onClick={() => setTab('list')} className="btn-secondary">Cancel</button>
-              <button type="submit" className="btn-primary"><PlusCircle size={13} /> Add Sourcing</button>
-            </div>
-          </form>
-        )}
+          )}
+
+          {mode === 'add' && (
+            <>
+              <header className="flex-shrink-0 px-6 pt-5 pb-4 border-b border-slate-200">
+                <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-indigo-500">Sourcing</p>
+                <h3 className="mt-0.5 text-base font-black text-slate-900">Add a new subcontractor</h3>
+                <p className="text-xs text-slate-500">Quick capture — only the company name is required. The rest can be filled in over time.</p>
+              </header>
+              <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400 mb-2">Profile</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="col-span-2">
+                      <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Company name *</label>
+                      <input
+                        autoFocus
+                        value={draft.companyName}
+                        onChange={e => setD('companyName', e.target.value)}
+                        className="input-field"
+                        placeholder="Legal company name"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Contact name</label>
+                      <input value={draft.contactName} onChange={e => setD('contactName', e.target.value)} className="input-field" />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Set-aside</label>
+                      <select value={draft.setAside} onChange={e => setD('setAside', e.target.value)} className="input-field">
+                        {SET_ASIDE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Email</label>
+                      <input type="email" value={draft.email} onChange={e => setD('email', e.target.value)} className="input-field" placeholder="contact@vendor.com" />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Phone</label>
+                      <input value={draft.phone} onChange={e => setD('phone', e.target.value)} className="input-field" placeholder="+1 (555) 555-5555" />
+                    </div>
+                    <div className="col-span-2">
+                      <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Website</label>
+                      <input value={draft.website} onChange={e => setD('website', e.target.value)} className="input-field" placeholder="example.com" />
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400 mb-2">Quote file</p>
+                  <input ref={fileInputRef} type="file" className="hidden" onChange={onPickFile} />
+                  {draft.quoteFile ? (
+                    <div className="flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl border border-emerald-200 bg-emerald-50">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="w-7 h-7 rounded-md bg-white border border-emerald-200 flex items-center justify-center flex-shrink-0">
+                          <FileText size={13} className="text-emerald-600" />
+                        </span>
+                        <span className="text-xs font-bold text-emerald-900 truncate">{draft.quoteFile}</span>
+                      </div>
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        <button type="button" onClick={() => fileInputRef.current?.click()} className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-emerald-700 hover:bg-emerald-100 rounded">Replace</button>
+                        <button type="button" onClick={() => setD('quoteFile', '')} className="w-6 h-6 rounded flex items-center justify-center text-emerald-700 hover:bg-emerald-100">
+                          <X size={12} />
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="w-full flex items-center justify-center gap-2 px-3 py-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 text-slate-500 text-xs font-semibold hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-600 transition-all"
+                    >
+                      <Upload size={13} /> Attach quote file
+                    </button>
+                  )}
+                </div>
+
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400 mb-2">Initial note</p>
+                  <textarea
+                    value={draft.newComment}
+                    onChange={e => setD('newComment', e.target.value)}
+                    rows={3}
+                    placeholder="Where did this lead come from? Any context for the team?"
+                    className="input-field w-full resize-none"
+                  />
+                </div>
+              </div>
+              <footer className="flex-shrink-0 flex items-center justify-between gap-3 px-6 py-3 border-t border-slate-200 bg-slate-50">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (oppSubs.length === 0) {
+                      onClose()
+                    } else {
+                      setMode('view')
+                      setSelectedId(oppSubs[0]?.id ?? null)
+                    }
+                  }}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[11px] font-bold text-slate-500 hover:bg-slate-100"
+                >
+                  Cancel
+                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => saveAdd(true)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-indigo-200 text-indigo-600 hover:bg-indigo-50"
+                  >
+                    Save & add another
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => saveAdd(false)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700"
+                  >
+                    <Plus size={12} /> Add subcontractor
+                  </button>
+                </div>
+              </footer>
+            </>
+          )}
+        </section>
       </div>
     </ModalWrap>
   )
