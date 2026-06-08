@@ -768,24 +768,133 @@ function ContractDetailDrawer({
                 <Pencil size={12} /> Edit Details
               </button>
             </div>
-            {/* Quick stats */}
-            <div className="grid grid-cols-2 gap-3 lg:col-span-2">
-              <div className="p-3 rounded-xl bg-slate-50 border border-slate-100">
-                <p className="text-[10px] text-slate-400 uppercase tracking-wider mb-0.5">Contract Value</p>
-                <p className="text-lg font-black text-emerald-600">{formatCurrency(contract.value)}</p>
+
+            {/* ──── Snapshot: hero + tile row ──── */}
+            <div className="lg:col-span-2 space-y-3">
+              {/* Hero: Financial + POP */}
+              <div
+                className="relative overflow-hidden rounded-2xl border border-indigo-100 p-4 shadow-sm"
+                style={{ background: 'linear-gradient(135deg, #EEF2FF 0%, #FFFFFF 45%, #ECFDF5 100%)' }}
+              >
+                <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-4">
+                  {/* Contract Value */}
+                  <div className="flex items-start gap-3">
+                    <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700">
+                      <Receipt size={16} />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Contract Value</p>
+                      <p className="mt-0.5 text-xl font-black text-emerald-700">{formatCurrency(contract.value)}</p>
+                      {contract.financeType && (
+                        <p className="text-[10px] text-slate-500">{contract.financeType}</p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Base Amount */}
+                  <div className="flex items-start gap-3 sm:border-l sm:border-slate-200/70 sm:pl-4">
+                    <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-600">
+                      <FileText size={16} />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Base Amount</p>
+                      <p className="mt-0.5 text-sm font-bold text-slate-800">
+                        {contract.baseAmount != null ? formatCurrency(contract.baseAmount) : '—'}
+                      </p>
+                      <p className="text-[10px] text-slate-500">
+                        {contract.monthlyPayment != null ? `${formatCurrency(contract.monthlyPayment)} / mo` : 'No monthly set'}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* POP */}
+                  <div className="flex items-start gap-3 md:border-l md:border-slate-200/70 md:pl-4">
+                    <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-indigo-100 text-indigo-700">
+                      <Calendar size={16} />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Period of Performance</p>
+                      <p className="mt-0.5 truncate text-sm font-bold text-slate-800">
+                        {contract.popStart ? formatDate(contract.popStart) : 'TBD'} → {contract.popEnd ? formatDate(contract.popEnd) : 'TBD'}
+                      </p>
+                      {(() => {
+                        if (!contract.popEnd) return <p className="text-[10px] text-slate-500">Set the end date in POP tab</p>
+                        const days = Math.ceil((new Date(`${contract.popEnd}T23:59:59`).getTime() - Date.now()) / 86_400_000)
+                        if (days < 0) return <p className="text-[10px] font-semibold text-red-600">{Math.abs(days)} days past end</p>
+                        if (days === 0) return <p className="text-[10px] font-semibold text-amber-600">Ends today</p>
+                        return <p className="text-[10px] font-semibold text-slate-600">{days} days remaining</p>
+                      })()}
+                    </div>
+                  </div>
+
+                  {/* Option Years */}
+                  <div className="flex items-start gap-3 sm:border-l sm:border-slate-200/70 sm:pl-4">
+                    <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-violet-100 text-violet-700">
+                      <Clock size={16} />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Option Years</p>
+                      <p className="mt-0.5 text-sm font-bold text-slate-800">
+                        {contract.optionYears != null ? `${contract.optionYears} remaining` : '—'}
+                      </p>
+                      <p className="text-[10px] text-slate-500">
+                        {contract.optionYearDeadline ? `Deadline ${formatDate(contract.optionYearDeadline)}` : 'No deadline set'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
               </div>
-              {contract.baseAmount && (
-                <div className="p-3 rounded-xl bg-slate-50 border border-slate-100">
-                  <p className="text-[10px] text-slate-400 uppercase tracking-wider mb-0.5">Base Amount</p>
-                  <p className="text-sm font-semibold text-slate-700">{formatCurrency(contract.baseAmount)}</p>
-                </div>
-              )}
-              {contract.monthlyPayment && (
-                <div className="p-3 rounded-xl bg-slate-50 border border-slate-100">
-                  <p className="text-[10px] text-slate-400 uppercase tracking-wider mb-0.5">Monthly Payment</p>
-                  <p className="text-sm font-semibold text-slate-700">{formatCurrency(contract.monthlyPayment)}</p>
-                </div>
-              )}
+
+              {/* Tile row: cross-tab counts */}
+              {(() => {
+                const activeWarnings = (contract.governmentWarnings || []).filter(w => !w.resolvedAt)
+                const now = Date.now()
+                const deliverablesOverdue = deliverables.filter(d => d.deadline && new Date(`${d.deadline}T23:59:59`).getTime() < now).length
+                const tiles: {
+                  key: ContractDrawerTab
+                  label: string
+                  count: number
+                  icon: typeof UserPlus
+                  iconBg: string
+                  iconColor: string
+                  hint?: string
+                  alert?: boolean
+                }[] = [
+                  { key: 'poc', label: 'Points of Contact', count: (contract.pocs || []).length, icon: UserPlus, iconBg: 'bg-sky-50', iconColor: 'text-sky-600' },
+                  { key: 'subk', label: 'Potential Subk', count: subkCandidates.length, icon: Building2, iconBg: 'bg-amber-50', iconColor: 'text-amber-600' },
+                  { key: 'lockSubk', label: 'Locked Subk', count: (contract.lockedSubcontractors || []).length, icon: Shield, iconBg: 'bg-emerald-50', iconColor: 'text-emerald-600' },
+                  { key: 'warnings', label: 'Gov Warnings', count: activeWarnings.length, icon: AlertTriangle, iconBg: activeWarnings.length > 0 ? 'bg-red-100' : 'bg-slate-100', iconColor: activeWarnings.length > 0 ? 'text-red-600' : 'text-slate-500', alert: activeWarnings.length > 0, hint: activeWarnings.length > 0 ? `${activeWarnings.length} active` : 'None active' },
+                  { key: 'deliverables', label: 'Deliverables', count: deliverables.length, icon: ListChecks, iconBg: deliverablesOverdue > 0 ? 'bg-red-100' : 'bg-indigo-50', iconColor: deliverablesOverdue > 0 ? 'text-red-600' : 'text-indigo-600', alert: deliverablesOverdue > 0, hint: deliverablesOverdue > 0 ? `${deliverablesOverdue} overdue` : `${deliverables.length} total` },
+                ]
+                return (
+                  <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 md:grid-cols-5">
+                    {tiles.map(t => (
+                      <button
+                        key={t.key}
+                        type="button"
+                        onClick={() => setTab(t.key)}
+                        className={`group relative flex flex-col gap-2 rounded-xl border bg-white p-3 text-left transition-all hover:-translate-y-0.5 hover:shadow-md ${
+                          t.alert ? 'border-red-200 hover:border-red-300' : 'border-slate-200 hover:border-indigo-300'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className={`flex h-8 w-8 items-center justify-center rounded-lg ${t.iconBg} ${t.iconColor}`}>
+                            <t.icon size={14} />
+                          </div>
+                          <ChevronRight size={12} className="text-slate-300 transition-transform group-hover:translate-x-0.5 group-hover:text-indigo-500" />
+                        </div>
+                        <div>
+                          <p className={`text-2xl font-black leading-none ${t.alert ? 'text-red-600' : 'text-slate-800'}`}>{t.count}</p>
+                          <p className="mt-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">{t.label}</p>
+                          {t.hint && (
+                            <p className={`mt-0.5 text-[10px] ${t.alert ? 'font-semibold text-red-500' : 'text-slate-400'}`}>{t.hint}</p>
+                          )}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )
+              })()}
             </div>
 
             <div
@@ -1043,200 +1152,6 @@ function ContractDetailDrawer({
                 <Trash2 size={12} /> Terminate Contract
               </button>
             )}
-
-            {/* ──── Cross-tab snapshot ──── */}
-            <div className="lg:col-span-2">
-              <p className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">Snapshot</p>
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                {/* POP */}
-                <button
-                  type="button"
-                  onClick={() => setTab('pop')}
-                  className="rounded-xl border border-slate-200 bg-white p-3 text-left transition-colors hover:border-indigo-300 hover:bg-indigo-50/40"
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                      <Calendar size={11} /> Period of Performance
-                    </div>
-                    <span className="text-[10px] font-semibold text-indigo-600">View →</span>
-                  </div>
-                  <p className="mt-1.5 text-xs font-semibold text-slate-800">
-                    {formatDate(contract.popStart)} → {formatDate(contract.popEnd) || 'TBD'}
-                  </p>
-                </button>
-
-                {/* Financials */}
-                <div className="rounded-xl border border-slate-200 bg-white p-3">
-                  <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                    <Receipt size={11} /> Financials
-                  </div>
-                  <div className="mt-1.5 space-y-0.5 text-xs">
-                    <p className="font-semibold text-slate-800">Value: ${(contract.value || 0).toLocaleString()}</p>
-                    {contract.baseAmount ? <p className="text-slate-600">Base: ${contract.baseAmount.toLocaleString()}</p> : null}
-                    {contract.monthlyPayment ? <p className="text-slate-600">Monthly: ${contract.monthlyPayment.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p> : null}
-                  </div>
-                </div>
-
-                {/* PoCs */}
-                <button
-                  type="button"
-                  onClick={() => setTab('poc')}
-                  className="rounded-xl border border-slate-200 bg-white p-3 text-left transition-colors hover:border-indigo-300 hover:bg-indigo-50/40"
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                      <UserPlus size={11} /> Points of Contact ({(contract.pocs || []).length})
-                    </div>
-                    <span className="text-[10px] font-semibold text-indigo-600">View →</span>
-                  </div>
-                  {(contract.pocs || []).length === 0 ? (
-                    <p className="mt-1.5 text-xs text-slate-400">No PoCs added yet.</p>
-                  ) : (
-                    <div className="mt-1.5 space-y-0.5">
-                      {(contract.pocs || []).slice(0, 3).map(p => (
-                        <p key={p.id} className="truncate text-xs text-slate-700">
-                          <span className="font-semibold">{POC_ROLE_LABELS[p.role]}:</span> {p.name || '—'}
-                        </p>
-                      ))}
-                      {(contract.pocs || []).length > 3 && (
-                        <p className="text-[10px] text-slate-400">+{(contract.pocs || []).length - 3} more</p>
-                      )}
-                    </div>
-                  )}
-                </button>
-
-                {/* Locked Subk */}
-                <button
-                  type="button"
-                  onClick={() => setTab('lockSubk')}
-                  className="rounded-xl border border-slate-200 bg-white p-3 text-left transition-colors hover:border-indigo-300 hover:bg-indigo-50/40"
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                      <Shield size={11} /> Locked Subk ({(contract.lockedSubcontractors || []).length})
-                    </div>
-                    <span className="text-[10px] font-semibold text-indigo-600">View →</span>
-                  </div>
-                  {(contract.lockedSubcontractors || []).length === 0 ? (
-                    <p className="mt-1.5 text-xs text-slate-400">No subcontractors locked.</p>
-                  ) : (
-                    <div className="mt-1.5 space-y-0.5">
-                      {(contract.lockedSubcontractors || []).slice(0, 3).map(s => (
-                        <p key={s.id} className="truncate text-xs text-slate-700">{s.companyName}</p>
-                      ))}
-                      {(contract.lockedSubcontractors || []).length > 3 && (
-                        <p className="text-[10px] text-slate-400">+{(contract.lockedSubcontractors || []).length - 3} more</p>
-                      )}
-                    </div>
-                  )}
-                </button>
-
-                {/* Potential Subk */}
-                <button
-                  type="button"
-                  onClick={() => setTab('subk')}
-                  className="rounded-xl border border-slate-200 bg-white p-3 text-left transition-colors hover:border-indigo-300 hover:bg-indigo-50/40"
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                      <Building2 size={11} /> Potential Subk ({subkCandidates.length})
-                    </div>
-                    <span className="text-[10px] font-semibold text-indigo-600">View →</span>
-                  </div>
-                  {subkCandidates.length === 0 ? (
-                    <p className="mt-1.5 text-xs text-slate-400">No sourced candidates.</p>
-                  ) : (
-                    <div className="mt-1.5 space-y-0.5">
-                      {subkCandidates.slice(0, 3).map(c => (
-                        <p key={c.key} className="truncate text-xs text-slate-700">{c.companyName}</p>
-                      ))}
-                      {subkCandidates.length > 3 && (
-                        <p className="text-[10px] text-slate-400">+{subkCandidates.length - 3} more</p>
-                      )}
-                    </div>
-                  )}
-                </button>
-
-                {/* Warnings */}
-                {(() => {
-                  const activeWarnings = (contract.governmentWarnings || []).filter(w => !w.resolvedAt)
-                  const warningTone = activeWarnings.length > 0
-                  return (
-                    <button
-                      type="button"
-                      onClick={() => setTab('warnings')}
-                      className={`rounded-xl border p-3 text-left transition-colors ${
-                        warningTone
-                          ? 'border-red-200 bg-red-50/60 hover:border-red-300 hover:bg-red-50'
-                          : 'border-slate-200 bg-white hover:border-indigo-300 hover:bg-indigo-50/40'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <div className={`flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider ${warningTone ? 'text-red-600' : 'text-slate-500'}`}>
-                          <AlertTriangle size={11} /> Gov Warnings ({activeWarnings.length})
-                        </div>
-                        <span className={`text-[10px] font-semibold ${warningTone ? 'text-red-600' : 'text-indigo-600'}`}>View →</span>
-                      </div>
-                      {activeWarnings.length === 0 ? (
-                        <p className="mt-1.5 text-xs text-slate-400">No active warnings.</p>
-                      ) : (
-                        <div className="mt-1.5 space-y-0.5">
-                          {activeWarnings.slice(0, 3).map(w => (
-                            <p key={w.id} className="truncate text-xs text-red-700">
-                              <span className="font-semibold">{GOV_WARNING_META[w.type]?.label || w.type}</span>
-                              {w.deadline ? ` · due ${formatDate(w.deadline)}` : ''}
-                            </p>
-                          ))}
-                          {activeWarnings.length > 3 && (
-                            <p className="text-[10px] text-red-500">+{activeWarnings.length - 3} more</p>
-                          )}
-                        </div>
-                      )}
-                    </button>
-                  )
-                })()}
-
-                {/* Deliverables */}
-                {(() => {
-                  const now = Date.now()
-                  const overdue = deliverables.filter(d => d.deadline && new Date(`${d.deadline}T23:59:59`).getTime() < now)
-                  const nextDue = [...deliverables]
-                    .filter(d => d.deadline && new Date(`${d.deadline}T23:59:59`).getTime() >= now)
-                    .sort((a, b) => new Date(a.deadline).getTime() - new Date(b.deadline).getTime())[0]
-                  return (
-                    <button
-                      type="button"
-                      onClick={() => setTab('deliverables')}
-                      className="rounded-xl border border-slate-200 bg-white p-3 text-left transition-colors hover:border-indigo-300 hover:bg-indigo-50/40 md:col-span-2"
-                    >
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                          <ListChecks size={11} /> Deliverables ({deliverables.length})
-                        </div>
-                        <span className="text-[10px] font-semibold text-indigo-600">View →</span>
-                      </div>
-                      {deliverables.length === 0 ? (
-                        <p className="mt-1.5 text-xs text-slate-400">No deliverables tracked.</p>
-                      ) : (
-                        <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-700">
-                          {overdue.length > 0 && (
-                            <span className="font-semibold text-red-600">{overdue.length} overdue</span>
-                          )}
-                          {nextDue && (
-                            <span className="text-slate-500">
-                              Next due: <span className="font-semibold text-slate-800">{nextDue.title || 'Deliverable'}</span> · {formatDate(nextDue.deadline)}
-                            </span>
-                          )}
-                          {!nextDue && overdue.length === 0 && (
-                            <span className="text-slate-400">All deliverables in the past.</span>
-                          )}
-                        </div>
-                      )}
-                    </button>
-                  )
-                })()}
-              </div>
-            </div>
           </div>
         )}
 
