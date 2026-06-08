@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Plus, Pencil, Trash2, X, Check, Shield, Search, Clock, Save, Network, List, GripVertical } from 'lucide-react'
 import { useStore } from '../store/useStore'
@@ -100,8 +101,8 @@ function UserModal({ user, defaultRole, onClose }: { user: User | null; defaultR
 
   useEscapeKey(onClose)
 
-  return (
-    <motion.div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+  return createPortal(
+    <motion.div className="fixed inset-0 z-[80] flex items-center justify-center p-4"
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
       <motion.div
@@ -161,7 +162,8 @@ function UserModal({ user, defaultRole, onClose }: { user: User | null; defaultR
           </div>
         </form>
       </motion.div>
-    </motion.div>
+    </motion.div>,
+    document.body,
   )
 }
 
