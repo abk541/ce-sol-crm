@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, Fragment } from 'react'
 import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Plus, Pencil, Trash2, X, Check, Shield, Search, Clock, Save, Network, List, GripVertical, Eye, EyeOff, KeyRound, RotateCcw, Users } from 'lucide-react'
@@ -577,72 +577,52 @@ export default function AdminPage() {
         </div>
         <p className="text-[11px] text-slate-500 ml-1">
           {view === 'hierarchy'
-            ? 'Drop a card on a Manager to make them a Team Lead, on a Team Lead to make them an Associate, or on a team header to make them a Manager.'
+            ? 'Click a person to edit. Hover a row for quick actions. Drag onto another row to reparent.'
             : 'Tabular view of all user accounts.'}
         </p>
       </div>
 
-      {/* Hierarchy view — true org tree (Manager → Team Lead → Associate) */}
-      {view === 'hierarchy' && (() => {
-        const captures = users.filter(u => u.role === 'CAPTURE_MANAGER')
-        const bdManagers = users.filter(u => u.role === 'BD_MANAGER')
-        const opsManagers = users.filter(u => u.role === 'OPS_MANAGER')
-        // Orphans = TLs/Associates with no manager assigned, grouped by team.
-        const orphan = (team: EmployeeTeam) => ({
-          tls: users.filter(u => u.role === 'TEAM_LEAD' && !u.managerId && (u.team ?? 'BD') === team),
-          ass: users.filter(u => u.role === 'ASSOCIATE' && !u.managerId && (u.team ?? 'BD') === team),
-        })
+      {/* Hierarchy view — clean indented tree, side-by-side teams */}
+      {view === 'hierarchy' && (
+        <div className="space-y-4">
+          <CaptureStrip
+            users={users.filter(u => u.role === 'CAPTURE_MANAGER')}
+            dragId={dragId}
+            isOver={dragOverKey === targetKey({ kind: 'capture' })}
+            currentUserId={currentUser?.id}
+            onDragOver={() => dragId && setDragOverKey(targetKey({ kind: 'capture' }))}
+            onDragLeave={() => dragOverKey === targetKey({ kind: 'capture' }) && setDragOverKey(null)}
+            onDrop={() => handleDrop({ kind: 'capture' })}
+            onCardDragStart={id => setDragId(id)}
+            onCardDragEnd={() => { setDragId(null); setDragOverKey(null) }}
+            onCardClick={u => setModal(u)}
+            onAdd={() => openCreate('CAPTURE_MANAGER', null, null)}
+            onDelete={handleDelete}
+          />
 
-        return (
-          <div className="space-y-3">
-            {/* Capture Managers row */}
-            <CaptureRow
-              users={captures}
-              dragId={dragId}
-              isOver={dragOverKey === targetKey({ kind: 'capture' })}
-              currentUserId={currentUser?.id}
-              onDragOver={() => dragId && setDragOverKey(targetKey({ kind: 'capture' }))}
-              onDragLeave={() => dragOverKey === targetKey({ kind: 'capture' }) && setDragOverKey(null)}
-              onDrop={() => handleDrop({ kind: 'capture' })}
-              onCardDragStart={id => setDragId(id)}
-              onCardDragEnd={() => { setDragId(null); setDragOverKey(null) }}
-              onCardClick={u => setModal(u)}
-              onAdd={() => openCreate('CAPTURE_MANAGER', null, null)}
-            />
-
-            <div className="flex justify-center py-0.5">
-              <div className="w-px h-4" style={{ background: 'linear-gradient(to bottom, rgba(215,190,122,0.55), rgba(215,190,122,0.05))' }} />
-            </div>
-
-            {/* Two team columns side-by-side */}
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-              {([
-                { team: 'BD'  as const, label: 'BD Team',  managers: bdManagers,  orphans: orphan('BD') },
-                { team: 'OPS' as const, label: 'OPS Team', managers: opsManagers, orphans: orphan('OPS') },
-              ]).map(col => (
-                <TeamColumn
-                  key={col.team}
-                  team={col.team}
-                  label={col.label}
-                  managers={col.managers}
-                  orphans={col.orphans}
-                  allUsers={users}
-                  dragId={dragId}
-                  dragOverKey={dragOverKey}
-                  currentUserId={currentUser?.id}
-                  onDragOver={key => dragId && setDragOverKey(key)}
-                  onDragLeave={key => dragOverKey === key && setDragOverKey(null)}
-                  onDrop={t => handleDrop(t)}
-                  onCardDragStart={id => setDragId(id)}
-                  onCardDragEnd={() => { setDragId(null); setDragOverKey(null) }}
-                  onCardClick={u => setModal(u)}
-                  onAdd={(role, team, mgrId) => openCreate(role, team, mgrId)}
-                />
-              ))}
-            </div>
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+            {(['BD', 'OPS'] as EmployeeTeam[]).map(t => (
+              <TeamPanel
+                key={t}
+                team={t}
+                label={t === 'BD' ? 'BD Team' : 'OPS Team'}
+                allUsers={users}
+                dragId={dragId}
+                dragOverKey={dragOverKey}
+                currentUserId={currentUser?.id}
+                onDragOver={key => dragId && setDragOverKey(key)}
+                onDragLeave={key => dragOverKey === key && setDragOverKey(null)}
+                onDrop={target => handleDrop(target)}
+                onCardDragStart={id => setDragId(id)}
+                onCardDragEnd={() => { setDragId(null); setDragOverKey(null) }}
+                onCardClick={u => setModal(u)}
+                onAdd={(role, team, mgrId) => openCreate(role, team, mgrId)}
+                onDelete={handleDelete}
+              />
+            ))}
           </div>
-        )
-      })()}
+        </div>
+      )}
 
       {/* Search */}
       {view === 'table' && (
@@ -746,14 +726,13 @@ export default function AdminPage() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Org-tree components — Capture row, Team column, Manager / TL / Associate
+// Org-tree components — Capture strip + Team panels with indented PersonRows
 // ─────────────────────────────────────────────────────────────────────────────
 
-const TEAM_PALETTE: Record<EmployeeTeam, { bg: string; border: string; pill: string; accent: string; text: string; soft: string }> = {
+const TEAM_PALETTE: Record<EmployeeTeam, { bg: string; border: string; accent: string; text: string; soft: string }> = {
   BD: {
-    bg: 'rgba(184,145,78,0.06)',
+    bg: 'rgba(184,145,78,0.05)',
     border: 'rgba(215,190,122,0.22)',
-    pill: 'rgba(184,145,78,0.18)',
     accent: '#D7BE7A',
     text: '#E8C77B',
     soft: 'rgba(215,190,122,0.12)',
@@ -761,7 +740,6 @@ const TEAM_PALETTE: Record<EmployeeTeam, { bg: string; border: string; pill: str
   OPS: {
     bg: 'rgba(31,122,120,0.06)',
     border: 'rgba(31,122,120,0.32)',
-    pill: 'rgba(31,122,120,0.20)',
     accent: '#5EBCB9',
     text: '#7DD3CF',
     soft: 'rgba(31,122,120,0.14)',
@@ -770,77 +748,16 @@ const TEAM_PALETTE: Record<EmployeeTeam, { bg: string; border: string; pill: str
 
 const CAPTURE_ACCENT = '#D7BE7A'
 
-type CardProps = {
-  user: User
-  dragging: boolean
-  isCurrentUser: boolean
-  onDragStart: () => void
-  onDragEnd: () => void
-  onClick: () => void
+function confirmDelete(user: User, currentUserId: string | undefined, onDelete: (u: User) => void) {
+  if (user.id === currentUserId) { toast.error("You can't delete your own account."); return }
+  if (window.confirm(`Remove ${user.name}? This action cannot be undone.`)) onDelete(user)
 }
 
-function UserCard({ user, dragging, isCurrentUser, onDragStart, onDragEnd, onClick, accent, compact }: CardProps & { accent: string; compact?: boolean }) {
-  return (
-    <div
-      draggable
-      onDragStart={e => { onDragStart(); e.dataTransfer.effectAllowed = 'move' }}
-      onDragEnd={onDragEnd}
-      onClick={onClick}
-      className="group relative flex items-center gap-2 pl-2 pr-3 py-2 rounded-xl cursor-grab active:cursor-grabbing transition-all"
-      style={{
-        background: 'var(--bg-raised)',
-        border: `1px solid ${accent}33`,
-        opacity: dragging ? 0.4 : 1,
-        minWidth: compact ? 180 : 220,
-      }}>
-      <GripVertical size={12} className="opacity-30 group-hover:opacity-70 transition-opacity flex-shrink-0" style={{ color: accent }} />
-      <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold text-white bg-gradient-to-br ${avatarColor(user.avatar)} flex-shrink-0`}>
-        {user.avatar.slice(0, 2)}
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-1.5">
-          <p className="text-xs font-semibold truncate" style={{ color: 'var(--text-primary)' }}>{user.name}</p>
-          {isCurrentUser && (
-            <span className="text-[8px] font-bold px-1 py-0.5 rounded" style={{ background: `${CAPTURE_ACCENT}26`, color: CAPTURE_ACCENT }}>YOU</span>
-          )}
-          {user.status === 'inactive' && (
-            <span className="text-[8px] font-bold text-rose-300 bg-rose-400/15 px-1 py-0.5 rounded">OFF</span>
-          )}
-          {user.firstLogin && (
-            <span className="text-[8px] font-bold text-amber-300 bg-amber-400/15 px-1 py-0.5 rounded" title="Pending first login">1ST</span>
-          )}
-        </div>
-        <p className="text-[10px] truncate" style={{ color: 'rgba(248,251,247,0.45)' }}>@{user.username} · {ROLE_LABELS[user.role]}</p>
-      </div>
-    </div>
-  )
-}
-
-function AddButton({ label, accent, onClick, minWidth = 180 }: { label: string; accent: string; onClick: () => void; minWidth?: number }) {
-  return (
-    <button
-      onClick={onClick}
-      className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-colors"
-      style={{
-        background: 'transparent',
-        border: `1px dashed ${accent}66`,
-        color: `${accent}cc`,
-        minWidth,
-        justifyContent: 'center',
-      }}
-      onMouseEnter={e => { e.currentTarget.style.color = accent; e.currentTarget.style.borderColor = accent }}
-      onMouseLeave={e => { e.currentTarget.style.color = `${accent}cc`; e.currentTarget.style.borderColor = `${accent}66` }}
-    >
-      <Plus size={13} /> {label}
-    </button>
-  )
-}
-
-// ─── Capture Managers — full-width row at the top of the chart
-function CaptureRow({
+// ─── Capture Managers strip — compact horizontal pills with inline delete
+function CaptureStrip({
   users, isOver, dragId, currentUserId,
   onDragOver, onDragLeave, onDrop,
-  onCardDragStart, onCardDragEnd, onCardClick, onAdd,
+  onCardDragStart, onCardDragEnd, onCardClick, onAdd, onDelete,
 }: {
   users: User[]
   isOver: boolean
@@ -853,321 +770,61 @@ function CaptureRow({
   onCardDragEnd: () => void
   onCardClick: (u: User) => void
   onAdd: () => void
+  onDelete: (u: User) => void
 }) {
   return (
     <div
       onDragOver={e => { e.preventDefault(); onDragOver() }}
       onDragLeave={onDragLeave}
       onDrop={onDrop}
-      className="rounded-2xl p-4 transition-all"
+      className="rounded-2xl p-3 transition-all"
       style={{
         background: 'var(--bg-card)',
         border: `1px solid ${isOver ? CAPTURE_ACCENT : 'var(--border-default)'}`,
         boxShadow: isOver ? `0 0 0 2px ${CAPTURE_ACCENT}55, 0 12px 32px ${CAPTURE_ACCENT}22` : undefined,
-      }}
-    >
-      <div className="flex items-center justify-between mb-3 gap-3">
+      }}>
+      <div className="flex items-center justify-between gap-3 px-1 mb-2">
         <div className="flex items-center gap-2 min-w-0">
-          <span
-            className="px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider"
-            style={{ background: `${CAPTURE_ACCENT}1F`, color: CAPTURE_ACCENT, border: `1px solid ${CAPTURE_ACCENT}55` }}
-          >
-            Capture Managers
-          </span>
-          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md" style={{ background: 'rgba(255,255,255,0.05)', color: 'rgba(248,251,247,0.6)' }}>{users.length}</span>
-          <p className="text-[11px] hidden sm:block truncate" style={{ color: 'rgba(248,251,247,0.45)' }}>Executive tier · oversees BD &amp; OPS</p>
+          <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: CAPTURE_ACCENT, boxShadow: `0 0 8px ${CAPTURE_ACCENT}` }} />
+          <h3 className="text-[11px] font-bold uppercase tracking-wider" style={{ color: CAPTURE_ACCENT }}>Capture Managers</h3>
+          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ background: 'rgba(255,255,255,0.04)', color: 'rgba(248,251,247,0.55)' }}>{users.length}</span>
+          {isOver && <span className="text-[10px] font-bold uppercase tracking-wider" style={{ color: CAPTURE_ACCENT }}>Drop to promote</span>}
         </div>
-        {isOver && (
-          <p className="text-[10px] font-bold uppercase tracking-wide whitespace-nowrap" style={{ color: CAPTURE_ACCENT }}>Drop to promote</p>
-        )}
+        <button
+          onClick={onAdd}
+          className="flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-md transition-colors"
+          style={{ color: `${CAPTURE_ACCENT}cc`, background: 'rgba(215,190,122,0.06)', border: `1px solid ${CAPTURE_ACCENT}33` }}
+          onMouseEnter={e => { e.currentTarget.style.color = CAPTURE_ACCENT; e.currentTarget.style.background = 'rgba(215,190,122,0.14)' }}
+          onMouseLeave={e => { e.currentTarget.style.color = `${CAPTURE_ACCENT}cc`; e.currentTarget.style.background = 'rgba(215,190,122,0.06)' }}>
+          <Plus size={11} /> Capture Manager
+        </button>
       </div>
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-1.5">
+        {users.length === 0 && (
+          <p className="text-[11px] italic px-2 py-1.5" style={{ color: 'rgba(248,251,247,0.4)' }}>None yet — click &ldquo;+ Capture Manager&rdquo; to add one.</p>
+        )}
         {users.map(u => (
-          <UserCard
-            key={u.id}
-            user={u}
-            accent={CAPTURE_ACCENT}
+          <CapturePill key={u.id} user={u}
             dragging={dragId === u.id}
             isCurrentUser={u.id === currentUserId}
             onDragStart={() => onCardDragStart(u.id)}
             onDragEnd={onCardDragEnd}
             onClick={() => onCardClick(u)}
-          />
+            onDelete={() => confirmDelete(u, currentUserId, onDelete)} />
         ))}
-        <AddButton label="Add Capture Manager" accent={CAPTURE_ACCENT} onClick={onAdd} minWidth={200} />
       </div>
     </div>
   )
 }
 
-// ─── Team column (BD or OPS) — rendered side-by-side
-function TeamColumn({
-  team, label, managers, orphans, allUsers, dragId, dragOverKey, currentUserId,
-  onDragOver, onDragLeave, onDrop, onCardDragStart, onCardDragEnd, onCardClick, onAdd,
-}: {
-  team: EmployeeTeam
-  label: string
-  managers: User[]
-  orphans: { tls: User[]; ass: User[] }
-  allUsers: User[]
-  dragId: string | null
-  dragOverKey: string | null
-  currentUserId: string | undefined
-  onDragOver: (key: string) => void
-  onDragLeave: (key: string) => void
-  onDrop: (target: DropTarget) => void
-  onCardDragStart: (id: string) => void
-  onCardDragEnd: () => void
-  onCardClick: (u: User) => void
-  onAdd: (role: Role, team: EmployeeTeam | null, managerId: string | null) => void
-}) {
-  const palette = TEAM_PALETTE[team]
-  const teamTargetKey = targetKey({ kind: 'team', team })
-  const isTeamOver = dragOverKey === teamTargetKey
-  const teamManagers = managers.filter(m => (m.team ?? 'BD') === team)
-
-  return (
-    <div
-      onDragOver={e => { e.preventDefault(); onDragOver(teamTargetKey) }}
-      onDragLeave={() => onDragLeave(teamTargetKey)}
-      onDrop={() => onDrop({ kind: 'team', team })}
-      className="rounded-2xl p-4 transition-all space-y-3"
-      style={{
-        background: palette.bg,
-        border: `1px solid ${isTeamOver ? palette.accent : palette.border}`,
-        boxShadow: isTeamOver ? `0 0 0 2px ${palette.accent}66, 0 12px 32px ${palette.accent}22` : undefined,
-      }}
-    >
-      {/* Team header — drop here to make a Manager */}
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2 min-w-0">
-          <span
-            className="px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider"
-            style={{ background: palette.pill, color: palette.text, border: `1px solid ${palette.accent}55` }}
-          >
-            {label}
-          </span>
-          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md" style={{ background: 'rgba(255,255,255,0.05)', color: 'rgba(248,251,247,0.6)' }}>
-            {teamManagers.length} mgr · {allUsers.filter(u => (u.team ?? 'BD') === team && u.role === 'TEAM_LEAD').length} TL · {allUsers.filter(u => (u.team ?? 'BD') === team && u.role === 'ASSOCIATE').length} assoc
-          </span>
-        </div>
-        <div className="flex items-center gap-2">
-          {isTeamOver && (
-            <p className="text-[10px] font-bold uppercase tracking-wide whitespace-nowrap" style={{ color: palette.accent }}>Drop to make Manager</p>
-          )}
-          <button
-            onClick={() => onAdd(team === 'BD' ? 'BD_MANAGER' : 'OPS_MANAGER', team, null)}
-            className="flex items-center gap-1 text-[10px] font-semibold px-2 py-1 rounded-md transition-colors"
-            style={{ background: palette.soft, color: palette.text, border: `1px solid ${palette.accent}44` }}>
-            <Plus size={11} /> Manager
-          </button>
-        </div>
-      </div>
-
-      {/* Manager cards — each is its own subtree */}
-      <div className="space-y-3">
-        {teamManagers.map(mgr => (
-          <ManagerCard
-            key={mgr.id}
-            manager={mgr}
-            team={team}
-            allUsers={allUsers}
-            dragId={dragId}
-            dragOverKey={dragOverKey}
-            currentUserId={currentUserId}
-            onDragOver={onDragOver}
-            onDragLeave={onDragLeave}
-            onDrop={onDrop}
-            onCardDragStart={onCardDragStart}
-            onCardDragEnd={onCardDragEnd}
-            onCardClick={onCardClick}
-            onAdd={onAdd}
-          />
-        ))}
-        {teamManagers.length === 0 && (
-          <div className="text-[11px] italic px-2 py-3 rounded-lg" style={{ color: 'rgba(248,251,247,0.4)', background: 'rgba(255,255,255,0.02)', border: `1px dashed ${palette.border}` }}>
-            No managers on the {team} team yet. Drop someone here, or click &ldquo;+ Manager&rdquo;.
-          </div>
-        )}
-
-        {/* Orphan section — TLs/Associates with no manager */}
-        {(orphans.tls.length > 0 || orphans.ass.length > 0) && (
-          <div className="rounded-xl p-3" style={{ background: 'rgba(255,255,255,0.02)', border: `1px dashed ${palette.border}` }}>
-            <p className="text-[10px] font-bold uppercase tracking-wider mb-2" style={{ color: 'rgba(248,251,247,0.5)' }}>Unassigned ({orphans.tls.length + orphans.ass.length})</p>
-            <div className="flex flex-wrap gap-2">
-              {orphans.tls.map(u => (
-                <UserCard key={u.id} user={u} accent={palette.accent} compact dragging={dragId === u.id} isCurrentUser={u.id === currentUserId}
-                  onDragStart={() => onCardDragStart(u.id)} onDragEnd={onCardDragEnd} onClick={() => onCardClick(u)} />
-              ))}
-              {orphans.ass.map(u => (
-                <UserCard key={u.id} user={u} accent={palette.accent} compact dragging={dragId === u.id} isCurrentUser={u.id === currentUserId}
-                  onDragStart={() => onCardDragStart(u.id)} onDragEnd={onCardDragEnd} onClick={() => onCardClick(u)} />
-              ))}
-            </div>
-            <p className="text-[10px] mt-2" style={{ color: 'rgba(248,251,247,0.35)' }}>Drag onto a manager or team lead to assign a parent.</p>
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
-// ─── Manager card — drop here to become a Team Lead under this manager
-function ManagerCard({
-  manager, team, allUsers, dragId, dragOverKey, currentUserId,
-  onDragOver, onDragLeave, onDrop, onCardDragStart, onCardDragEnd, onCardClick, onAdd,
-}: {
-  manager: User
-  team: EmployeeTeam
-  allUsers: User[]
-  dragId: string | null
-  dragOverKey: string | null
-  currentUserId: string | undefined
-  onDragOver: (key: string) => void
-  onDragLeave: (key: string) => void
-  onDrop: (target: DropTarget) => void
-  onCardDragStart: (id: string) => void
-  onCardDragEnd: () => void
-  onCardClick: (u: User) => void
-  onAdd: (role: Role, team: EmployeeTeam | null, managerId: string | null) => void
-}) {
-  const palette = TEAM_PALETTE[team]
-  const key = targetKey({ kind: 'manager', id: manager.id, team })
-  const isOver = dragOverKey === key
-  const teamLeads = allUsers.filter(u => u.role === 'TEAM_LEAD' && u.managerId === manager.id)
-
-  return (
-    <div
-      onDragOver={e => { e.preventDefault(); e.stopPropagation(); onDragOver(key) }}
-      onDragLeave={e => { e.stopPropagation(); onDragLeave(key) }}
-      onDrop={e => { e.stopPropagation(); onDrop({ kind: 'manager', id: manager.id, team }) }}
-      className="rounded-xl p-3 transition-all"
-      style={{
-        background: 'var(--bg-card)',
-        border: `1px solid ${isOver ? palette.accent : palette.border}`,
-        boxShadow: isOver ? `0 0 0 2px ${palette.accent}66, 0 8px 24px ${palette.accent}22` : undefined,
-      }}
-    >
-      {/* Manager header */}
-      <div className="flex items-center justify-between gap-2 mb-2">
-        <UserCard user={manager} accent={palette.accent} dragging={dragId === manager.id} isCurrentUser={manager.id === currentUserId}
-          onDragStart={() => onCardDragStart(manager.id)} onDragEnd={onCardDragEnd} onClick={() => onCardClick(manager)} />
-        <div className="flex items-center gap-2">
-          {isOver && (
-            <p className="text-[10px] font-bold uppercase tracking-wide whitespace-nowrap" style={{ color: palette.accent }}>Drop to make Team Lead</p>
-          )}
-          <button
-            onClick={() => onAdd('TEAM_LEAD', team, manager.id)}
-            className="flex items-center gap-1 text-[10px] font-semibold px-2 py-1 rounded-md transition-colors"
-            style={{ background: palette.soft, color: palette.text, border: `1px solid ${palette.accent}33` }}>
-            <Plus size={11} /> Team Lead
-          </button>
-        </div>
-      </div>
-
-      {/* Team Leads under this manager */}
-      <div className="pl-4 border-l-2 space-y-2" style={{ borderColor: `${palette.accent}33` }}>
-        {teamLeads.map(tl => (
-          <TeamLeadNode
-            key={tl.id}
-            tl={tl}
-            team={team}
-            allUsers={allUsers}
-            dragId={dragId}
-            dragOverKey={dragOverKey}
-            currentUserId={currentUserId}
-            onDragOver={onDragOver}
-            onDragLeave={onDragLeave}
-            onDrop={onDrop}
-            onCardDragStart={onCardDragStart}
-            onCardDragEnd={onCardDragEnd}
-            onCardClick={onCardClick}
-            onAdd={onAdd}
-          />
-        ))}
-        {teamLeads.length === 0 && (
-          <div className="text-[10px] italic px-2 py-1.5 rounded-md" style={{ color: 'rgba(248,251,247,0.35)' }}>
-            No team leads yet — drop a card on this manager or click &ldquo;+ Team Lead&rdquo;.
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
-// ─── Team Lead node — drop here to become an Associate under this TL
-function TeamLeadNode({
-  tl, team, allUsers, dragId, dragOverKey, currentUserId,
-  onDragOver, onDragLeave, onDrop, onCardDragStart, onCardDragEnd, onCardClick, onAdd,
-}: {
-  tl: User
-  team: EmployeeTeam
-  allUsers: User[]
-  dragId: string | null
-  dragOverKey: string | null
-  currentUserId: string | undefined
-  onDragOver: (key: string) => void
-  onDragLeave: (key: string) => void
-  onDrop: (target: DropTarget) => void
-  onCardDragStart: (id: string) => void
-  onCardDragEnd: () => void
-  onCardClick: (u: User) => void
-  onAdd: (role: Role, team: EmployeeTeam | null, managerId: string | null) => void
-}) {
-  const palette = TEAM_PALETTE[team]
-  const key = targetKey({ kind: 'tl', id: tl.id, team })
-  const isOver = dragOverKey === key
-  const associates = allUsers.filter(u => u.role === 'ASSOCIATE' && u.managerId === tl.id)
-
-  return (
-    <div
-      onDragOver={e => { e.preventDefault(); e.stopPropagation(); onDragOver(key) }}
-      onDragLeave={e => { e.stopPropagation(); onDragLeave(key) }}
-      onDrop={e => { e.stopPropagation(); onDrop({ kind: 'tl', id: tl.id, team }) }}
-      className="rounded-lg p-2 transition-all"
-      style={{
-        background: 'var(--bg-raised)',
-        border: `1px solid ${isOver ? palette.accent : 'transparent'}`,
-        boxShadow: isOver ? `0 0 0 2px ${palette.accent}55` : undefined,
-      }}
-    >
-      <div className="flex items-center justify-between gap-2 mb-1.5 flex-wrap">
-        <UserCard user={tl} accent={palette.accent} compact dragging={dragId === tl.id} isCurrentUser={tl.id === currentUserId}
-          onDragStart={() => onCardDragStart(tl.id)} onDragEnd={onCardDragEnd} onClick={() => onCardClick(tl)} />
-        <div className="flex items-center gap-2">
-          {isOver && (
-            <p className="text-[10px] font-bold uppercase tracking-wide whitespace-nowrap" style={{ color: palette.accent }}>Drop to make Associate</p>
-          )}
-          <button
-            onClick={() => onAdd('ASSOCIATE', team, tl.id)}
-            className="flex items-center gap-1 text-[10px] font-semibold px-2 py-1 rounded-md transition-colors"
-            style={{ background: palette.soft, color: palette.text, border: `1px solid ${palette.accent}33` }}>
-            <Plus size={11} /> Associate
-          </button>
-        </div>
-      </div>
-
-      {associates.length > 0 && (
-        <div className="pl-4 border-l-2 mt-1.5 flex flex-wrap gap-1.5" style={{ borderColor: `${palette.accent}33` }}>
-          {associates.map(a => (
-            <AssociateChip key={a.id} user={a} accent={palette.accent} dragging={dragId === a.id} isCurrentUser={a.id === currentUserId}
-              onDragStart={() => onCardDragStart(a.id)} onDragEnd={onCardDragEnd} onClick={() => onCardClick(a)} />
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
-
-// ─── Associate chip — leaf node, draggable
-function AssociateChip({ user, accent, dragging, isCurrentUser, onDragStart, onDragEnd, onClick }: {
+function CapturePill({ user, dragging, isCurrentUser, onDragStart, onDragEnd, onClick, onDelete }: {
   user: User
-  accent: string
   dragging: boolean
   isCurrentUser: boolean
   onDragStart: () => void
   onDragEnd: () => void
   onClick: () => void
+  onDelete: () => void
 }) {
   return (
     <div
@@ -1175,27 +832,305 @@ function AssociateChip({ user, accent, dragging, isCurrentUser, onDragStart, onD
       onDragStart={e => { onDragStart(); e.dataTransfer.effectAllowed = 'move' }}
       onDragEnd={onDragEnd}
       onClick={onClick}
-      className="flex items-center gap-1.5 pl-1.5 pr-2 py-1 rounded-md text-[11px] cursor-grab active:cursor-grabbing transition-all"
+      className="group relative flex items-center gap-2 pl-1.5 pr-2 py-1 rounded-full cursor-grab active:cursor-grabbing transition-all"
       style={{
-        background: 'rgba(255,255,255,0.03)',
-        border: `1px solid ${accent}33`,
+        background: 'var(--bg-raised)',
+        border: `1px solid ${CAPTURE_ACCENT}33`,
         opacity: dragging ? 0.4 : 1,
-        color: 'var(--text-primary)',
-      }}
-    >
-      <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[8px] font-bold text-white bg-gradient-to-br ${avatarColor(user.avatar)}`}>
+      }}>
+      <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-bold text-white bg-gradient-to-br ${avatarColor(user.avatar)} flex-shrink-0`}>
         {user.avatar.slice(0, 2)}
       </div>
-      <span className="font-medium truncate max-w-[140px]">{user.name}</span>
+      <span className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>{user.name}</span>
       {isCurrentUser && (
         <span className="text-[8px] font-bold px-1 rounded" style={{ background: `${CAPTURE_ACCENT}26`, color: CAPTURE_ACCENT }}>YOU</span>
       )}
-      {user.status === 'inactive' && (
-        <span className="text-[8px] font-bold text-rose-300 bg-rose-400/15 px-1 rounded">OFF</span>
+      {user.status === 'inactive' && <span className="w-1.5 h-1.5 rounded-full bg-rose-400" title="Inactive" />}
+      {user.firstLogin && <span className="w-1.5 h-1.5 rounded-full bg-amber-400" title="Pending first login" />}
+      <button
+        type="button"
+        draggable={false}
+        onClick={e => { e.stopPropagation(); onDelete() }}
+        className="ml-0.5 opacity-0 group-hover:opacity-100 p-0.5 rounded transition-opacity hover:bg-rose-500/15"
+        style={{ color: 'rgba(248,113,113,0.85)' }}
+        title="Remove user">
+        <Trash2 size={11} />
+      </button>
+    </div>
+  )
+}
+
+// ─── Team panel — one container per team, holding an indented PersonRow tree
+function TeamPanel({
+  team, label, allUsers, dragId, dragOverKey, currentUserId,
+  onDragOver, onDragLeave, onDrop,
+  onCardDragStart, onCardDragEnd, onCardClick, onAdd, onDelete,
+}: {
+  team: EmployeeTeam
+  label: string
+  allUsers: User[]
+  dragId: string | null
+  dragOverKey: string | null
+  currentUserId: string | undefined
+  onDragOver: (key: string) => void
+  onDragLeave: (key: string) => void
+  onDrop: (target: DropTarget) => void
+  onCardDragStart: (id: string) => void
+  onCardDragEnd: () => void
+  onCardClick: (u: User) => void
+  onAdd: (role: Role, team: EmployeeTeam | null, managerId: string | null) => void
+  onDelete: (u: User) => void
+}) {
+  const palette = TEAM_PALETTE[team]
+  const teamKey = targetKey({ kind: 'team', team })
+  const isTeamOver = dragOverKey === teamKey
+  const managers = allUsers.filter(u =>
+    (team === 'BD' ? u.role === 'BD_MANAGER' : u.role === 'OPS_MANAGER') && (u.team ?? 'BD') === team
+  )
+  const tlsOf = (mgrId: string) => allUsers.filter(u => u.role === 'TEAM_LEAD' && u.managerId === mgrId)
+  const assocsOf = (tlId: string) => allUsers.filter(u => u.role === 'ASSOCIATE' && u.managerId === tlId)
+  const orphanTLs = allUsers.filter(u => u.role === 'TEAM_LEAD' && !u.managerId && (u.team ?? 'BD') === team)
+  const orphanAssoc = allUsers.filter(u => u.role === 'ASSOCIATE' && !u.managerId && (u.team ?? 'BD') === team)
+  const tlCount = allUsers.filter(u => u.role === 'TEAM_LEAD' && (u.team ?? 'BD') === team).length
+  const assocCount = allUsers.filter(u => u.role === 'ASSOCIATE' && (u.team ?? 'BD') === team).length
+
+  return (
+    <div
+      onDragOver={e => { e.preventDefault(); onDragOver(teamKey) }}
+      onDragLeave={() => onDragLeave(teamKey)}
+      onDrop={() => onDrop({ kind: 'team', team })}
+      className="rounded-2xl transition-all overflow-hidden"
+      style={{
+        background: 'var(--bg-card)',
+        border: `1px solid ${isTeamOver ? palette.accent : 'var(--border-default)'}`,
+        boxShadow: isTeamOver ? `0 0 0 2px ${palette.accent}55, 0 12px 32px ${palette.accent}22` : undefined,
+      }}>
+      {/* Header — drop target for new Manager */}
+      <div className="flex items-center justify-between gap-3 px-4 py-3"
+        style={{ borderBottom: `1px solid ${palette.border}`, background: palette.bg }}>
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: palette.accent, boxShadow: `0 0 8px ${palette.accent}` }} />
+          <h3 className="text-[12px] font-bold uppercase tracking-wider" style={{ color: palette.text }}>{label}</h3>
+          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ background: 'rgba(255,255,255,0.04)', color: 'rgba(248,251,247,0.55)' }}>
+            {managers.length} mgr · {tlCount} TL · {assocCount} assoc
+          </span>
+          {isTeamOver && (
+            <span className="text-[10px] font-bold uppercase tracking-wider whitespace-nowrap" style={{ color: palette.accent }}>Drop to make Manager</span>
+          )}
+        </div>
+        <button
+          onClick={() => onAdd(team === 'BD' ? 'BD_MANAGER' : 'OPS_MANAGER', team, null)}
+          className="flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-md transition-colors flex-shrink-0"
+          style={{ color: palette.text, background: palette.soft, border: `1px solid ${palette.accent}44` }}>
+          <Plus size={11} /> Manager
+        </button>
+      </div>
+
+      <div className="p-3 space-y-0.5">
+        {managers.length === 0 && (
+          <div className="text-[11px] italic px-3 py-5 text-center rounded-lg"
+            style={{ color: 'rgba(248,251,247,0.45)', background: 'rgba(255,255,255,0.02)', border: `1px dashed ${palette.border}` }}>
+            No managers on the {team} team yet.<br />
+            <span className="text-[10px]">Drop someone on this panel header or click &ldquo;+ Manager&rdquo;.</span>
+          </div>
+        )}
+        {managers.map(mgr => {
+          const tls = tlsOf(mgr.id)
+          return (
+            <Fragment key={mgr.id}>
+              <PersonRow
+                user={mgr} level={0} palette={palette}
+                dragId={dragId} currentUserId={currentUserId} dragOverKey={dragOverKey}
+                dropTargetForChild={{ kind: 'manager', id: mgr.id, team }}
+                addChildLabel="Team Lead"
+                onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}
+                onCardDragStart={onCardDragStart} onCardDragEnd={onCardDragEnd}
+                onCardClick={onCardClick} onDelete={onDelete}
+                onAddChild={() => onAdd('TEAM_LEAD', team, mgr.id)} />
+              {tls.map(tl => {
+                const assocs = assocsOf(tl.id)
+                return (
+                  <Fragment key={tl.id}>
+                    <PersonRow
+                      user={tl} level={1} palette={palette}
+                      dragId={dragId} currentUserId={currentUserId} dragOverKey={dragOverKey}
+                      dropTargetForChild={{ kind: 'tl', id: tl.id, team }}
+                      addChildLabel="Associate"
+                      onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}
+                      onCardDragStart={onCardDragStart} onCardDragEnd={onCardDragEnd}
+                      onCardClick={onCardClick} onDelete={onDelete}
+                      onAddChild={() => onAdd('ASSOCIATE', team, tl.id)} />
+                    {assocs.map(a => (
+                      <PersonRow key={a.id}
+                        user={a} level={2} palette={palette}
+                        dragId={dragId} currentUserId={currentUserId} dragOverKey={dragOverKey}
+                        onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}
+                        onCardDragStart={onCardDragStart} onCardDragEnd={onCardDragEnd}
+                        onCardClick={onCardClick} onDelete={onDelete} />
+                    ))}
+                  </Fragment>
+                )
+              })}
+            </Fragment>
+          )
+        })}
+
+        {(orphanTLs.length > 0 || orphanAssoc.length > 0) && (
+          <div className="mt-3 pt-2" style={{ borderTop: `1px dashed ${palette.border}` }}>
+            <p className="text-[10px] font-bold uppercase tracking-wider px-2 mb-1" style={{ color: 'rgba(248,251,247,0.5)' }}>
+              Unassigned ({orphanTLs.length + orphanAssoc.length})
+            </p>
+            {orphanTLs.map(u => (
+              <PersonRow key={u.id}
+                user={u} level={0} palette={palette}
+                dragId={dragId} currentUserId={currentUserId} dragOverKey={dragOverKey}
+                onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}
+                onCardDragStart={onCardDragStart} onCardDragEnd={onCardDragEnd}
+                onCardClick={onCardClick} onDelete={onDelete} />
+            ))}
+            {orphanAssoc.map(u => (
+              <PersonRow key={u.id}
+                user={u} level={0} palette={palette}
+                dragId={dragId} currentUserId={currentUserId} dragOverKey={dragOverKey}
+                onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}
+                onCardDragStart={onCardDragStart} onCardDragEnd={onCardDragEnd}
+                onCardClick={onCardClick} onDelete={onDelete} />
+            ))}
+            <p className="text-[10px] mt-1 px-2" style={{ color: 'rgba(248,251,247,0.35)' }}>
+              Drag onto a manager or team lead to assign a parent.
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ─── PersonRow — the single row component used at every level of the tree.
+// Level 0 = Manager (or orphan), 1 = Team Lead, 2 = Associate.
+// dropTargetForChild makes the row a drop zone that re-parents the dragged
+// user as this row's child.
+function PersonRow({
+  user, level, palette,
+  dragId, currentUserId, dragOverKey,
+  dropTargetForChild, addChildLabel,
+  onDragOver, onDragLeave, onDrop,
+  onCardDragStart, onCardDragEnd, onCardClick, onDelete, onAddChild,
+}: {
+  user: User
+  level: 0 | 1 | 2
+  palette: { accent: string; text: string; soft: string; bg: string; border: string }
+  dragId: string | null
+  currentUserId: string | undefined
+  dragOverKey: string | null
+  dropTargetForChild?: DropTarget
+  addChildLabel?: string
+  onDragOver: (key: string) => void
+  onDragLeave: (key: string) => void
+  onDrop: (target: DropTarget) => void
+  onCardDragStart: (id: string) => void
+  onCardDragEnd: () => void
+  onCardClick: (u: User) => void
+  onDelete: (u: User) => void
+  onAddChild?: () => void
+}) {
+  const INDENT = 24
+  const childKey = dropTargetForChild ? targetKey(dropTargetForChild) : null
+  const isChildDropOver = childKey !== null && dragOverKey === childKey
+  const isDragging = dragId === user.id
+
+  const dropProps = dropTargetForChild ? {
+    onDragOver: (e: React.DragEvent) => { e.preventDefault(); e.stopPropagation(); onDragOver(childKey!) },
+    onDragLeave: (e: React.DragEvent) => { e.stopPropagation(); onDragLeave(childKey!) },
+    onDrop: (e: React.DragEvent) => { e.stopPropagation(); onDrop(dropTargetForChild) },
+  } : {}
+
+  return (
+    <div
+      {...dropProps}
+      className="relative rounded-lg transition-colors"
+      style={{
+        marginLeft: level * INDENT,
+        background: isChildDropOver ? `${palette.accent}14` : 'transparent',
+      }}>
+      {/* Tree guides: one vertical for each parent level + horizontal connector on innermost */}
+      {Array.from({ length: level }, (_, i) => {
+        const offset = -(INDENT / 2) - i * INDENT
+        const innermost = i === 0
+        return (
+          <Fragment key={i}>
+            <div className="absolute top-0 bottom-0 w-px pointer-events-none"
+              style={{ left: offset, background: `${palette.accent}33` }} />
+            {innermost && (
+              <div className="absolute w-3 h-px pointer-events-none"
+                style={{ left: offset, top: '50%', background: `${palette.accent}33` }} />
+            )}
+          </Fragment>
+        )
+      })}
+      {/* Drop highlight bar at the row's left edge */}
+      {isChildDropOver && (
+        <div className="absolute top-1 bottom-1 w-0.5 rounded-full pointer-events-none"
+          style={{ left: 3, background: palette.accent, boxShadow: `0 0 8px ${palette.accent}` }} />
       )}
-      {user.firstLogin && (
-        <span className="text-[8px] font-bold text-amber-300 bg-amber-400/15 px-1 rounded" title="Pending first login">1ST</span>
-      )}
+
+      <div
+        draggable
+        onDragStart={e => { onCardDragStart(user.id); e.dataTransfer.effectAllowed = 'move' }}
+        onDragEnd={onCardDragEnd}
+        onClick={() => onCardClick(user)}
+        className="group flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-grab active:cursor-grabbing transition-colors hover:bg-white/[0.03]"
+        style={{ opacity: isDragging ? 0.4 : 1 }}>
+        <GripVertical size={11} className="opacity-0 group-hover:opacity-40 transition-opacity flex-shrink-0" style={{ color: palette.accent }} />
+        <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold text-white bg-gradient-to-br ${avatarColor(user.avatar)} flex-shrink-0`}>
+          {user.avatar.slice(0, 2)}
+        </div>
+        <div className="min-w-0 flex-1 flex items-center gap-2">
+          <span className="text-xs font-semibold truncate" style={{ color: 'var(--text-primary)' }}>{user.name}</span>
+          <span className="text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded flex-shrink-0"
+            style={{ color: palette.text, background: palette.soft, border: `1px solid ${palette.accent}33` }}>
+            {ROLE_LABELS[user.role]}
+          </span>
+          {currentUserId === user.id && (
+            <span className="text-[8px] font-bold px-1 rounded flex-shrink-0" style={{ background: `${CAPTURE_ACCENT}26`, color: CAPTURE_ACCENT }}>YOU</span>
+          )}
+          {user.status === 'inactive' && <span className="w-1.5 h-1.5 rounded-full bg-rose-400 flex-shrink-0" title="Inactive" />}
+          {user.firstLogin && <span className="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0" title="Pending first login" />}
+        </div>
+        <span className="text-[10px] truncate hidden md:block max-w-[140px]" style={{ color: 'rgba(248,251,247,0.35)' }}>@{user.username}</span>
+
+        {isChildDropOver && addChildLabel && (
+          <span className="text-[9px] font-bold uppercase tracking-wider whitespace-nowrap flex-shrink-0" style={{ color: palette.accent }}>
+            Drop to add as {addChildLabel}
+          </span>
+        )}
+
+        <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
+          onClick={e => e.stopPropagation()}>
+          {addChildLabel && onAddChild && (
+            <button
+              type="button"
+              draggable={false}
+              onClick={e => { e.stopPropagation(); onAddChild() }}
+              className="flex items-center gap-1 text-[10px] font-semibold px-1.5 py-1 rounded transition-colors"
+              style={{ color: palette.text, border: `1px solid ${palette.accent}44`, background: 'transparent' }}
+              onMouseEnter={e => { e.currentTarget.style.background = palette.soft }}
+              onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
+              title={`Add ${addChildLabel}`}>
+              <Plus size={10} /> {addChildLabel}
+            </button>
+          )}
+          <button
+            type="button"
+            draggable={false}
+            onClick={e => { e.stopPropagation(); confirmDelete(user, currentUserId, onDelete) }}
+            className="p-1 rounded transition-colors hover:bg-rose-500/15"
+            style={{ color: 'rgba(248,113,113,0.7)' }}
+            title="Remove user">
+            <Trash2 size={11} />
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
