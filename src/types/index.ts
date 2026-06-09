@@ -38,6 +38,10 @@ export interface User {
   // ASSOCIATE; BD_MANAGER is implicitly 'BD', OPS_MANAGER 'OPS', and
   // CAPTURE_MANAGER has no team. Treat undefined as 'BD' for legacy data.
   team?: EmployeeTeam
+  // Parent in the org chart. Null/undefined for managers (top of tree).
+  // For TEAM_LEAD: points to a BD_MANAGER or OPS_MANAGER user id.
+  // For ASSOCIATE: points to a TEAM_LEAD user id.
+  managerId?: string | null
 }
 
 export type Priority = 'VERY_HIGH' | 'HIGH' | 'MEDIUM'

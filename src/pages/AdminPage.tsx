@@ -26,39 +26,44 @@ function teamOf(u: User): EmployeeTeam | null {
   return u.team ?? 'BD'
 }
 
-type ZoneKey =
-  | 'capture'
-  | 'bd-manager' | 'bd-leads' | 'bd-associates'
-  | 'ops-manager' | 'ops-leads' | 'ops-associates'
+// ─────────────────────────────────────────────────────────────────────────────
+// Org-chart drop target system
+//
+// The hierarchy is a real tree:
+//   Capture Managers (top)
+//     ├─ BD_MANAGER ─ TEAM_LEAD ─ ASSOCIATE
+//     └─ OPS_MANAGER ─ TEAM_LEAD ─ ASSOCIATE
+//
+// Dropping a card on a target re-roles, re-teams, and re-parents the user in
+// one go. The semantics are intentionally simple:
+//
+//   * Drop on Capture row     → CAPTURE_MANAGER, team=null, no parent
+//   * Drop on Team header     → BD_MANAGER / OPS_MANAGER, team=BD/OPS, no parent
+//   * Drop on a Manager card  → TEAM_LEAD under that manager (inherits team)
+//   * Drop on a TL card       → ASSOCIATE under that TL  (inherits team)
+// ─────────────────────────────────────────────────────────────────────────────
+type DropTarget =
+  | { kind: 'capture' }
+  | { kind: 'team'; team: EmployeeTeam }
+  | { kind: 'manager'; id: string; team: EmployeeTeam }
+  | { kind: 'tl'; id: string; team: EmployeeTeam }
 
-type DropZone = {
-  key: ZoneKey
-  title: string
-  subtitle: string
-  role: Role
-  team: EmployeeTeam | null
-  accent: string
-  pillClass: string
+function resolveDrop(target: DropTarget): { role: Role; team: EmployeeTeam | null; managerId: string | null } {
+  switch (target.kind) {
+    case 'capture':  return { role: 'CAPTURE_MANAGER', team: null, managerId: null }
+    case 'team':     return { role: target.team === 'BD' ? 'BD_MANAGER' : 'OPS_MANAGER', team: target.team, managerId: null }
+    case 'manager':  return { role: 'TEAM_LEAD', team: target.team, managerId: target.id }
+    case 'tl':       return { role: 'ASSOCIATE', team: target.team, managerId: target.id }
+  }
 }
 
-const ZONES: Record<ZoneKey, DropZone> = {
-  'capture':        { key: 'capture',        title: 'Capture Manager', subtitle: 'Top-level admin & oversight',  role: 'CAPTURE_MANAGER', team: null,  accent: 'rgba(245,158,11,0.45)', pillClass: 'bg-amber-500/15 text-amber-300 border-amber-500/30' },
-  'bd-manager':     { key: 'bd-manager',     title: 'BD Manager',      subtitle: 'Leads the BD team',             role: 'BD_MANAGER',      team: 'BD',  accent: 'rgba(99,102,241,0.45)', pillClass: 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30' },
-  'bd-leads':       { key: 'bd-leads',       title: 'Team Leads',      subtitle: 'BD coordinators',               role: 'TEAM_LEAD',       team: 'BD',  accent: 'rgba(139,92,246,0.45)', pillClass: 'bg-violet-500/15 text-violet-300 border-violet-500/30' },
-  'bd-associates':  { key: 'bd-associates',  title: 'Associates',      subtitle: 'BD analysts & writers',         role: 'ASSOCIATE',       team: 'BD',  accent: 'rgba(16,185,129,0.45)', pillClass: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30' },
-  'ops-manager':    { key: 'ops-manager',    title: 'Operations Manager', subtitle: 'Leads the OPS team',         role: 'OPS_MANAGER',     team: 'OPS', accent: 'rgba(34,211,238,0.45)', pillClass: 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30' },
-  'ops-leads':      { key: 'ops-leads',      title: 'Team Leads',      subtitle: 'OPS coordinators',              role: 'TEAM_LEAD',       team: 'OPS', accent: 'rgba(139,92,246,0.45)', pillClass: 'bg-violet-500/15 text-violet-300 border-violet-500/30' },
-  'ops-associates': { key: 'ops-associates', title: 'Associates',      subtitle: 'OPS analysts & writers',        role: 'ASSOCIATE',       team: 'OPS', accent: 'rgba(16,185,129,0.45)', pillClass: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30' },
-}
-
-// Map a user to its zone on the org chart.
-function zoneOfUser(u: User): ZoneKey {
-  if (u.role === 'CAPTURE_MANAGER') return 'capture'
-  if (u.role === 'BD_MANAGER') return 'bd-manager'
-  if (u.role === 'OPS_MANAGER') return 'ops-manager'
-  const t = u.team ?? 'BD'
-  if (u.role === 'TEAM_LEAD') return t === 'OPS' ? 'ops-leads' : 'bd-leads'
-  return t === 'OPS' ? 'ops-associates' : 'bd-associates'
+function targetKey(t: DropTarget): string {
+  switch (t.kind) {
+    case 'capture': return 'capture'
+    case 'team':    return `team:${t.team}`
+    case 'manager': return `manager:${t.id}`
+    case 'tl':      return `tl:${t.id}`
+  }
 }
 
 type FormState = {
@@ -66,6 +71,7 @@ type FormState = {
   email: string
   role: Role
   team: EmployeeTeam | null
+  managerId: string | null
   status: 'active' | 'inactive'
   password: string
   forceFirstLogin: boolean
@@ -78,42 +84,79 @@ function teamForRole(role: Role, fallback: EmployeeTeam | null): EmployeeTeam | 
   return fallback ?? 'BD'
 }
 
-function UserModal({ user, defaultRole, defaultTeam, onClose }: {
+// Returns the role of the user whose id is `managerId` if they're a valid
+// parent for `role`, else null.
+function validParentRole(role: Role): Role | null {
+  if (role === 'TEAM_LEAD') return 'BD_MANAGER' // also OPS_MANAGER — checked elsewhere
+  if (role === 'ASSOCIATE') return 'TEAM_LEAD'
+  return null
+}
+
+function UserModal({ user, defaultRole, defaultTeam, defaultManagerId, onClose }: {
   user: User | null
   defaultRole?: Role
   defaultTeam?: EmployeeTeam | null
+  defaultManagerId?: string | null
   onClose: () => void
 }) {
-  const { createUser, updateUser } = useStore()
+  const { createUser, updateUser, users } = useStore()
   const isEdit = !!user
   const initialRole: Role = user?.role ?? defaultRole ?? 'ASSOCIATE'
   const initialTeam: EmployeeTeam | null = user
     ? teamOf(user)
     : teamForRole(initialRole, defaultTeam ?? 'BD')
+  const initialManagerId: string | null = user?.managerId ?? defaultManagerId ?? null
 
   const [form, setForm] = useState<FormState>({
     name:   user?.name   ?? '',
     email:  user?.email  ?? '',
     role:   initialRole,
     team:   initialTeam,
+    managerId: initialManagerId,
     status: user?.status ?? 'active',
     password: '',
     forceFirstLogin: user ? false : true,
   })
   const [showPassword, setShowPassword] = useState(false)
 
-  // When role changes, snap team to the role's required value (or keep editable for TL/Associate)
+  // When role changes, snap team and clear an invalid parent.
   const handleRoleChange = (r: Role) => {
-    setForm(p => ({ ...p, role: r, team: teamForRole(r, p.team) }))
+    setForm(p => {
+      const newTeam = teamForRole(r, p.team)
+      const parentRole = validParentRole(r)
+      const stillValid = parentRole && p.managerId
+        ? users.some(u => u.id === p.managerId && (
+            r === 'TEAM_LEAD'
+              ? (u.role === 'BD_MANAGER' || u.role === 'OPS_MANAGER') && teamOf(u) === newTeam
+              : u.role === 'TEAM_LEAD' && teamOf(u) === newTeam
+          ))
+        : false
+      return { ...p, role: r, team: newTeam, managerId: stillValid ? p.managerId : null }
+    })
   }
 
   const teamEditable = form.role === 'TEAM_LEAD' || form.role === 'ASSOCIATE'
+  const managerNeeded = form.role === 'TEAM_LEAD' || form.role === 'ASSOCIATE'
+
+  // Candidate parents based on role + team.
+  const parentCandidates = managerNeeded
+    ? users.filter(u => {
+        if (u.id === user?.id) return false // can't parent yourself
+        if (form.role === 'TEAM_LEAD') {
+          if (u.role !== 'BD_MANAGER' && u.role !== 'OPS_MANAGER') return false
+        } else {
+          if (u.role !== 'TEAM_LEAD') return false
+        }
+        return teamOf(u) === form.team
+      })
+    : []
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (!form.name || !form.email) return
     const username = form.email.split('@')[0]
     const team = teamForRole(form.role, form.team)
+    const managerId = managerNeeded ? form.managerId : null
     if (isEdit) {
       const patch: Partial<User> = {
         name: form.name,
@@ -122,6 +165,7 @@ function UserModal({ user, defaultRole, defaultTeam, onClose }: {
         role: form.role,
         status: form.status,
         team: team ?? undefined,
+        managerId,
       }
       if (form.password.trim()) patch.password = form.password
       if (form.forceFirstLogin) {
@@ -141,6 +185,7 @@ function UserModal({ user, defaultRole, defaultTeam, onClose }: {
         firstLogin: form.forceFirstLogin,
         mfaEnabled: false,
         team: team ?? undefined,
+        managerId,
         password: form.password.trim() || undefined,
       })
       toast.success(form.password.trim()
@@ -218,17 +263,20 @@ function UserModal({ user, defaultRole, defaultTeam, onClose }: {
                   {(['BD', 'OPS'] as EmployeeTeam[]).map(t => {
                     const selected = form.team === t
                     const disabled = !teamEditable && form.team !== t
+                    const palette = t === 'BD'
+                      ? { bg: 'rgba(184,145,78,0.14)', border: 'rgba(215,190,122,0.45)', text: '#E8C77B' }
+                      : { bg: 'rgba(31,122,120,0.16)',  border: 'rgba(31,122,120,0.55)',  text: '#7DD3CF' }
                     return (
                       <button
                         key={t}
                         type="button"
                         disabled={disabled}
-                        onClick={() => teamEditable && setForm(p => ({ ...p, team: t }))}
+                        onClick={() => teamEditable && setForm(p => ({ ...p, team: t, managerId: null }))}
                         className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold transition-all"
                         style={{
-                          background: selected ? (t === 'OPS' ? 'rgba(34,211,238,0.15)' : 'rgba(99,102,241,0.15)') : 'rgba(15,23,42,0.5)',
-                          border: `1px solid ${selected ? (t === 'OPS' ? 'rgba(34,211,238,0.45)' : 'rgba(99,102,241,0.45)') : 'rgba(99,102,241,0.15)'}`,
-                          color: selected ? (t === 'OPS' ? '#67e8f9' : '#a5b4fc') : '#94a3b8',
+                          background: selected ? palette.bg : 'rgba(255,255,255,0.02)',
+                          border: `1px solid ${selected ? palette.border : 'var(--border-default)'}`,
+                          color: selected ? palette.text : 'rgba(248,251,247,0.55)',
                           cursor: disabled ? 'not-allowed' : (teamEditable ? 'pointer' : 'default'),
                           opacity: disabled ? 0.5 : 1,
                         }}>
@@ -237,6 +285,28 @@ function UserModal({ user, defaultRole, defaultTeam, onClose }: {
                     )
                   })}
                 </div>
+              </div>
+            )}
+
+            {managerNeeded && (
+              <div>
+                <label className="text-xs text-slate-500 block mb-1">
+                  {form.role === 'TEAM_LEAD' ? 'Reports to (Manager)' : 'Reports to (Team Lead)'}
+                </label>
+                <select
+                  value={form.managerId ?? ''}
+                  onChange={e => setForm(p => ({ ...p, managerId: e.target.value || null }))}
+                  className="select-field">
+                  <option value="">— Unassigned —</option>
+                  {parentCandidates.map(p => (
+                    <option key={p.id} value={p.id}>{p.name} · {ROLE_LABELS[p.role]}</option>
+                  ))}
+                </select>
+                {parentCandidates.length === 0 && (
+                  <p className="text-[10px] text-slate-500 mt-1">
+                    No {form.role === 'TEAM_LEAD' ? 'managers' : 'team leads'} on the {form.team} team yet.
+                  </p>
+                )}
               </div>
             )}
 
@@ -318,9 +388,10 @@ export default function AdminPage() {
   const [modal, setModal] = useState<'create' | User | null>(null)
   const [createRole, setCreateRole] = useState<Role | null>(null)
   const [createTeam, setCreateTeam] = useState<EmployeeTeam | null>(null)
+  const [createManagerId, setCreateManagerId] = useState<string | null>(null)
   const [view, setView] = useState<'hierarchy' | 'table'>('hierarchy')
   const [dragId, setDragId] = useState<string | null>(null)
-  const [dragOverZone, setDragOverZone] = useState<ZoneKey | null>(null)
+  const [dragOverKey, setDragOverKey] = useState<string | null>(null)
   const [graceHours, setGraceHours] = useState(String(nonSubGraceHours))
   const [graceMinutes, setGraceMinutes] = useState(String(nonSubGraceMinutes))
 
@@ -347,27 +418,72 @@ export default function AdminPage() {
     toast.success(`${u.name} removed.`)
   }
 
-  const openCreate = (role?: Role, team?: EmployeeTeam | null) => {
+  const openCreate = (role?: Role, team?: EmployeeTeam | null, managerId?: string | null) => {
     setCreateRole(role ?? null)
     setCreateTeam(team ?? null)
+    setCreateManagerId(managerId ?? null)
     setModal('create')
   }
 
-  const handleDrop = (zone: DropZone) => {
-    setDragOverZone(null)
+  // Recursively cascade a team change to a user's descendants in the org tree.
+  // Used when a manager is moved between teams so their subtree follows.
+  const collectDescendants = (rootId: string): string[] => {
+    const out: string[] = []
+    const visit = (parentId: string) => {
+      for (const u of users) {
+        if (u.managerId === parentId) {
+          out.push(u.id)
+          visit(u.id)
+        }
+      }
+    }
+    visit(rootId)
+    return out
+  }
+
+  const handleDrop = (target: DropTarget) => {
+    setDragOverKey(null)
     const id = dragId
     setDragId(null)
     if (!id) return
     const user = users.find(u => u.id === id)
     if (!user) return
-    if (zoneOfUser(user) === zone.key) return
-    if (user.id === currentUser?.id && zone.role !== 'CAPTURE_MANAGER') {
+    // Disallow dropping a user onto themselves or onto one of their own descendants
+    if (target.kind === 'manager' && target.id === user.id) return
+    if (target.kind === 'tl' && target.id === user.id) return
+    const desc = collectDescendants(user.id)
+    if ((target.kind === 'manager' || target.kind === 'tl') && desc.includes(target.id)) {
+      toast.error("Can't reparent under a descendant.")
+      return
+    }
+    const next = resolveDrop(target)
+    if (user.id === currentUser?.id && next.role !== 'CAPTURE_MANAGER') {
       toast.error("You can't change your own role away from Capture Manager.")
       return
     }
-    updateUser(user.id, { role: zone.role, team: zone.team ?? undefined })
-    const where = zone.team ? ` (${zone.team})` : ''
-    toast.success(`${user.name} \u2192 ${ROLE_LABELS[zone.role]}${where}`)
+    // No-op detection
+    if (
+      user.role === next.role &&
+      (user.team ?? null) === next.team &&
+      (user.managerId ?? null) === next.managerId
+    ) return
+
+    updateUser(user.id, {
+      role: next.role,
+      team: next.team ?? undefined,
+      managerId: next.managerId,
+    })
+    // If a manager moved teams, drag their whole subtree along.
+    if (next.team && (target.kind === 'team' || target.kind === 'capture')) {
+      for (const did of desc) {
+        const d = users.find(u => u.id === did)
+        if (d && (d.team ?? 'BD') !== next.team) {
+          updateUser(did, { team: next.team })
+        }
+      }
+    }
+    const where = next.team ? ` (${next.team})` : ''
+    toast.success(`${user.name} \u2192 ${ROLE_LABELS[next.role]}${where}`)
   }
 
   const saveNonSubTiming = () => {
@@ -460,76 +576,73 @@ export default function AdminPage() {
           </button>
         </div>
         <p className="text-[11px] text-slate-500 ml-1">
-          {view === 'hierarchy' ? 'Click \u201C+\u201D to add a user, or drag a card between zones to change role / team.' : 'Tabular view of all user accounts.'}
+          {view === 'hierarchy'
+            ? 'Drop a card on a Manager to make them a Team Lead, on a Team Lead to make them an Associate, or on a team header to make them a Manager.'
+            : 'Tabular view of all user accounts.'}
         </p>
       </div>
 
-      {/* Hierarchy view — top-down org chart with BD and OPS columns */}
-      {view === 'hierarchy' && (
-        <div className="space-y-3">
-          {/* Executive tier — full width */}
-          <HierarchyZone
-            zone={ZONES['capture']}
-            users={users.filter(u => zoneOfUser(u) === 'capture')}
-            isOver={dragOverZone === 'capture'}
-            dragId={dragId}
-            currentUserId={currentUser?.id}
-            onDragOver={() => dragId && setDragOverZone('capture')}
-            onDragLeave={() => dragOverZone === 'capture' && setDragOverZone(null)}
-            onDrop={() => handleDrop(ZONES['capture'])}
-            onCardDragStart={(id) => setDragId(id)}
-            onCardDragEnd={() => { setDragId(null); setDragOverZone(null) }}
-            onCardClick={(u) => setModal(u)}
-            onAdd={() => openCreate(ZONES['capture'].role, ZONES['capture'].team)}
-          />
+      {/* Hierarchy view — true org tree (Manager → Team Lead → Associate) */}
+      {view === 'hierarchy' && (() => {
+        const captures = users.filter(u => u.role === 'CAPTURE_MANAGER')
+        const bdManagers = users.filter(u => u.role === 'BD_MANAGER')
+        const opsManagers = users.filter(u => u.role === 'OPS_MANAGER')
+        // Orphans = TLs/Associates with no manager assigned, grouped by team.
+        const orphan = (team: EmployeeTeam) => ({
+          tls: users.filter(u => u.role === 'TEAM_LEAD' && !u.managerId && (u.team ?? 'BD') === team),
+          ass: users.filter(u => u.role === 'ASSOCIATE' && !u.managerId && (u.team ?? 'BD') === team),
+        })
 
-          {/* Connector line */}
-          <div className="flex justify-center py-1">
-            <div className="w-px h-4" style={{ background: 'linear-gradient(to bottom, rgba(99,102,241,0.4), rgba(99,102,241,0.05))' }} />
-          </div>
+        return (
+          <div className="space-y-3">
+            {/* Capture Managers row */}
+            <CaptureRow
+              users={captures}
+              dragId={dragId}
+              isOver={dragOverKey === targetKey({ kind: 'capture' })}
+              currentUserId={currentUser?.id}
+              onDragOver={() => dragId && setDragOverKey(targetKey({ kind: 'capture' }))}
+              onDragLeave={() => dragOverKey === targetKey({ kind: 'capture' }) && setDragOverKey(null)}
+              onDrop={() => handleDrop({ kind: 'capture' })}
+              onCardDragStart={id => setDragId(id)}
+              onCardDragEnd={() => { setDragId(null); setDragOverKey(null) }}
+              onCardClick={u => setModal(u)}
+              onAdd={() => openCreate('CAPTURE_MANAGER', null, null)}
+            />
 
-          {/* Two-column team grid */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-            {([
-              { team: 'BD' as const,  header: 'BD Team',  headerClass: 'bg-indigo-500/15 text-indigo-200 border-indigo-500/30', zones: ['bd-manager', 'bd-leads', 'bd-associates'] as ZoneKey[] },
-              { team: 'OPS' as const, header: 'OPS Team', headerClass: 'bg-cyan-500/15 text-cyan-200 border-cyan-500/30',       zones: ['ops-manager', 'ops-leads', 'ops-associates'] as ZoneKey[] },
-            ]).map(col => (
-              <div key={col.team} className="space-y-3">
-                <div className="flex items-center gap-2 px-1">
-                  <span className={`badge border text-[10px] font-bold uppercase tracking-wider ${col.headerClass}`}>{col.header}</span>
-                  <div className="flex-1 h-px" style={{ background: col.team === 'OPS' ? 'rgba(34,211,238,0.2)' : 'rgba(99,102,241,0.2)' }} />
-                </div>
-                {col.zones.map((zk, idx) => {
-                  const zone = ZONES[zk]
-                  return (
-                    <div key={zk}>
-                      <HierarchyZone
-                        zone={zone}
-                        users={users.filter(u => zoneOfUser(u) === zk)}
-                        isOver={dragOverZone === zk}
-                        dragId={dragId}
-                        currentUserId={currentUser?.id}
-                        onDragOver={() => dragId && setDragOverZone(zk)}
-                        onDragLeave={() => dragOverZone === zk && setDragOverZone(null)}
-                        onDrop={() => handleDrop(zone)}
-                        onCardDragStart={(id) => setDragId(id)}
-                        onCardDragEnd={() => { setDragId(null); setDragOverZone(null) }}
-                        onCardClick={(u) => setModal(u)}
-                        onAdd={() => openCreate(zone.role, zone.team)}
-                      />
-                      {idx < col.zones.length - 1 && (
-                        <div className="flex justify-center py-1">
-                          <div className="w-px h-3" style={{ background: 'linear-gradient(to bottom, rgba(99,102,241,0.4), rgba(99,102,241,0.05))' }} />
-                        </div>
-                      )}
-                    </div>
-                  )
-                })}
-              </div>
-            ))}
+            <div className="flex justify-center py-0.5">
+              <div className="w-px h-4" style={{ background: 'linear-gradient(to bottom, rgba(215,190,122,0.55), rgba(215,190,122,0.05))' }} />
+            </div>
+
+            {/* Two team columns side-by-side */}
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+              {([
+                { team: 'BD'  as const, label: 'BD Team',  managers: bdManagers,  orphans: orphan('BD') },
+                { team: 'OPS' as const, label: 'OPS Team', managers: opsManagers, orphans: orphan('OPS') },
+              ]).map(col => (
+                <TeamColumn
+                  key={col.team}
+                  team={col.team}
+                  label={col.label}
+                  managers={col.managers}
+                  orphans={col.orphans}
+                  allUsers={users}
+                  dragId={dragId}
+                  dragOverKey={dragOverKey}
+                  currentUserId={currentUser?.id}
+                  onDragOver={key => dragId && setDragOverKey(key)}
+                  onDragLeave={key => dragOverKey === key && setDragOverKey(null)}
+                  onDrop={t => handleDrop(t)}
+                  onCardDragStart={id => setDragId(id)}
+                  onCardDragEnd={() => { setDragId(null); setDragOverKey(null) }}
+                  onCardClick={u => setModal(u)}
+                  onAdd={(role, team, mgrId) => openCreate(role, team, mgrId)}
+                />
+              ))}
+            </div>
           </div>
-        </div>
-      )}
+        )
+      })()}
 
       {/* Search */}
       {view === 'table' && (
@@ -623,7 +736,8 @@ export default function AdminPage() {
             user={modal === 'create' ? null : modal as User}
             defaultRole={createRole ?? undefined}
             defaultTeam={createTeam ?? undefined}
-            onClose={() => { setModal(null); setCreateRole(null); setCreateTeam(null) }}
+            defaultManagerId={createManagerId}
+            onClose={() => { setModal(null); setCreateRole(null); setCreateTeam(null); setCreateManagerId(null) }}
           />
         )}
       </AnimatePresence>
@@ -632,14 +746,102 @@ export default function AdminPage() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// HierarchyZone — a single drop target on the org chart
+// Org-tree components — Capture row, Team column, Manager / TL / Associate
 // ─────────────────────────────────────────────────────────────────────────────
-function HierarchyZone({
-  zone, users, isOver, dragId, currentUserId,
+
+const TEAM_PALETTE: Record<EmployeeTeam, { bg: string; border: string; pill: string; accent: string; text: string; soft: string }> = {
+  BD: {
+    bg: 'rgba(184,145,78,0.06)',
+    border: 'rgba(215,190,122,0.22)',
+    pill: 'rgba(184,145,78,0.18)',
+    accent: '#D7BE7A',
+    text: '#E8C77B',
+    soft: 'rgba(215,190,122,0.12)',
+  },
+  OPS: {
+    bg: 'rgba(31,122,120,0.06)',
+    border: 'rgba(31,122,120,0.32)',
+    pill: 'rgba(31,122,120,0.20)',
+    accent: '#5EBCB9',
+    text: '#7DD3CF',
+    soft: 'rgba(31,122,120,0.14)',
+  },
+}
+
+const CAPTURE_ACCENT = '#D7BE7A'
+
+type CardProps = {
+  user: User
+  dragging: boolean
+  isCurrentUser: boolean
+  onDragStart: () => void
+  onDragEnd: () => void
+  onClick: () => void
+}
+
+function UserCard({ user, dragging, isCurrentUser, onDragStart, onDragEnd, onClick, accent, compact }: CardProps & { accent: string; compact?: boolean }) {
+  return (
+    <div
+      draggable
+      onDragStart={e => { onDragStart(); e.dataTransfer.effectAllowed = 'move' }}
+      onDragEnd={onDragEnd}
+      onClick={onClick}
+      className="group relative flex items-center gap-2 pl-2 pr-3 py-2 rounded-xl cursor-grab active:cursor-grabbing transition-all"
+      style={{
+        background: 'var(--bg-raised)',
+        border: `1px solid ${accent}33`,
+        opacity: dragging ? 0.4 : 1,
+        minWidth: compact ? 180 : 220,
+      }}>
+      <GripVertical size={12} className="opacity-30 group-hover:opacity-70 transition-opacity flex-shrink-0" style={{ color: accent }} />
+      <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold text-white bg-gradient-to-br ${avatarColor(user.avatar)} flex-shrink-0`}>
+        {user.avatar.slice(0, 2)}
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-1.5">
+          <p className="text-xs font-semibold truncate" style={{ color: 'var(--text-primary)' }}>{user.name}</p>
+          {isCurrentUser && (
+            <span className="text-[8px] font-bold px-1 py-0.5 rounded" style={{ background: `${CAPTURE_ACCENT}26`, color: CAPTURE_ACCENT }}>YOU</span>
+          )}
+          {user.status === 'inactive' && (
+            <span className="text-[8px] font-bold text-rose-300 bg-rose-400/15 px-1 py-0.5 rounded">OFF</span>
+          )}
+          {user.firstLogin && (
+            <span className="text-[8px] font-bold text-amber-300 bg-amber-400/15 px-1 py-0.5 rounded" title="Pending first login">1ST</span>
+          )}
+        </div>
+        <p className="text-[10px] truncate" style={{ color: 'rgba(248,251,247,0.45)' }}>@{user.username} · {ROLE_LABELS[user.role]}</p>
+      </div>
+    </div>
+  )
+}
+
+function AddButton({ label, accent, onClick, minWidth = 180 }: { label: string; accent: string; onClick: () => void; minWidth?: number }) {
+  return (
+    <button
+      onClick={onClick}
+      className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-colors"
+      style={{
+        background: 'transparent',
+        border: `1px dashed ${accent}66`,
+        color: `${accent}cc`,
+        minWidth,
+        justifyContent: 'center',
+      }}
+      onMouseEnter={e => { e.currentTarget.style.color = accent; e.currentTarget.style.borderColor = accent }}
+      onMouseLeave={e => { e.currentTarget.style.color = `${accent}cc`; e.currentTarget.style.borderColor = `${accent}66` }}
+    >
+      <Plus size={13} /> {label}
+    </button>
+  )
+}
+
+// ─── Capture Managers — full-width row at the top of the chart
+function CaptureRow({
+  users, isOver, dragId, currentUserId,
   onDragOver, onDragLeave, onDrop,
   onCardDragStart, onCardDragEnd, onCardClick, onAdd,
 }: {
-  zone: DropZone
   users: User[]
   isOver: boolean
   dragId: string | null
@@ -657,67 +859,344 @@ function HierarchyZone({
       onDragOver={e => { e.preventDefault(); onDragOver() }}
       onDragLeave={onDragLeave}
       onDrop={onDrop}
-      className="glass rounded-2xl p-4 transition-all"
+      className="rounded-2xl p-4 transition-all"
       style={{
-        border: `1px solid ${isOver ? zone.accent : 'rgba(99,102,241,0.12)'}`,
-        boxShadow: isOver ? `0 0 0 2px ${zone.accent}, 0 12px 32px ${zone.accent}` : undefined,
-        background: isOver ? 'rgba(99,102,241,0.05)' : undefined,
-      }}>
+        background: 'var(--bg-card)',
+        border: `1px solid ${isOver ? CAPTURE_ACCENT : 'var(--border-default)'}`,
+        boxShadow: isOver ? `0 0 0 2px ${CAPTURE_ACCENT}55, 0 12px 32px ${CAPTURE_ACCENT}22` : undefined,
+      }}
+    >
       <div className="flex items-center justify-between mb-3 gap-3">
         <div className="flex items-center gap-2 min-w-0">
-          <span className={`badge border text-[10px] ${zone.pillClass}`}>{zone.title}</span>
-          <span className="text-[10px] font-bold text-slate-500 bg-slate-700/30 px-1.5 py-0.5 rounded-md">{users.length}</span>
-          <p className="text-[11px] text-slate-500 hidden sm:block truncate">{zone.subtitle}</p>
+          <span
+            className="px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider"
+            style={{ background: `${CAPTURE_ACCENT}1F`, color: CAPTURE_ACCENT, border: `1px solid ${CAPTURE_ACCENT}55` }}
+          >
+            Capture Managers
+          </span>
+          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md" style={{ background: 'rgba(255,255,255,0.05)', color: 'rgba(248,251,247,0.6)' }}>{users.length}</span>
+          <p className="text-[11px] hidden sm:block truncate" style={{ color: 'rgba(248,251,247,0.45)' }}>Executive tier · oversees BD &amp; OPS</p>
         </div>
         {isOver && (
-          <p className="text-[10px] font-bold uppercase tracking-wide whitespace-nowrap" style={{ color: zone.accent }}>
-            Drop here
-          </p>
+          <p className="text-[10px] font-bold uppercase tracking-wide whitespace-nowrap" style={{ color: CAPTURE_ACCENT }}>Drop to promote</p>
         )}
       </div>
       <div className="flex flex-wrap gap-2">
         {users.map(u => (
-          <div
+          <UserCard
             key={u.id}
-            draggable
-            onDragStart={e => { onCardDragStart(u.id); e.dataTransfer.effectAllowed = 'move' }}
+            user={u}
+            accent={CAPTURE_ACCENT}
+            dragging={dragId === u.id}
+            isCurrentUser={u.id === currentUserId}
+            onDragStart={() => onCardDragStart(u.id)}
             onDragEnd={onCardDragEnd}
             onClick={() => onCardClick(u)}
-            className="group relative flex items-center gap-2 pl-2 pr-3 py-2 rounded-xl cursor-grab active:cursor-grabbing transition-all"
-            style={{
-              background: 'rgba(15,23,42,0.7)',
-              border: '1px solid rgba(99,102,241,0.18)',
-              opacity: dragId === u.id ? 0.4 : 1,
-              minWidth: 200,
-            }}>
-            <GripVertical size={12} className="text-slate-600 group-hover:text-slate-400 transition-colors flex-shrink-0" />
-            <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold text-white bg-gradient-to-br ${avatarColor(u.avatar)} flex-shrink-0`}>
-              {u.avatar.slice(0, 2)}
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-1.5">
-                <p className="text-xs font-semibold text-slate-200 truncate">{u.name}</p>
-                {u.id === currentUserId && (
-                  <span className="text-[8px] font-bold text-indigo-300 bg-indigo-400/15 px-1 py-0.5 rounded">YOU</span>
-                )}
-                {u.status === 'inactive' && (
-                  <span className="text-[8px] font-bold text-rose-300 bg-rose-400/15 px-1 py-0.5 rounded">OFF</span>
-                )}
-                {u.firstLogin && (
-                  <span className="text-[8px] font-bold text-amber-300 bg-amber-400/15 px-1 py-0.5 rounded" title="Pending first login">1ST</span>
-                )}
-              </div>
-              <p className="text-[10px] text-slate-500 truncate">@{u.username} · {ROLE_LABELS[u.role]}</p>
-            </div>
-          </div>
+          />
         ))}
-        <button
-          onClick={onAdd}
-          className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:text-indigo-300 transition-colors"
-          style={{ background: 'transparent', border: '1px dashed rgba(99,102,241,0.3)', minWidth: 200, justifyContent: 'center' }}>
-          <Plus size={13} /> Add
-        </button>
+        <AddButton label="Add Capture Manager" accent={CAPTURE_ACCENT} onClick={onAdd} minWidth={200} />
       </div>
     </div>
   )
 }
+
+// ─── Team column (BD or OPS) — rendered side-by-side
+function TeamColumn({
+  team, label, managers, orphans, allUsers, dragId, dragOverKey, currentUserId,
+  onDragOver, onDragLeave, onDrop, onCardDragStart, onCardDragEnd, onCardClick, onAdd,
+}: {
+  team: EmployeeTeam
+  label: string
+  managers: User[]
+  orphans: { tls: User[]; ass: User[] }
+  allUsers: User[]
+  dragId: string | null
+  dragOverKey: string | null
+  currentUserId: string | undefined
+  onDragOver: (key: string) => void
+  onDragLeave: (key: string) => void
+  onDrop: (target: DropTarget) => void
+  onCardDragStart: (id: string) => void
+  onCardDragEnd: () => void
+  onCardClick: (u: User) => void
+  onAdd: (role: Role, team: EmployeeTeam | null, managerId: string | null) => void
+}) {
+  const palette = TEAM_PALETTE[team]
+  const teamTargetKey = targetKey({ kind: 'team', team })
+  const isTeamOver = dragOverKey === teamTargetKey
+  const teamManagers = managers.filter(m => (m.team ?? 'BD') === team)
+
+  return (
+    <div
+      onDragOver={e => { e.preventDefault(); onDragOver(teamTargetKey) }}
+      onDragLeave={() => onDragLeave(teamTargetKey)}
+      onDrop={() => onDrop({ kind: 'team', team })}
+      className="rounded-2xl p-4 transition-all space-y-3"
+      style={{
+        background: palette.bg,
+        border: `1px solid ${isTeamOver ? palette.accent : palette.border}`,
+        boxShadow: isTeamOver ? `0 0 0 2px ${palette.accent}66, 0 12px 32px ${palette.accent}22` : undefined,
+      }}
+    >
+      {/* Team header — drop here to make a Manager */}
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 min-w-0">
+          <span
+            className="px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider"
+            style={{ background: palette.pill, color: palette.text, border: `1px solid ${palette.accent}55` }}
+          >
+            {label}
+          </span>
+          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md" style={{ background: 'rgba(255,255,255,0.05)', color: 'rgba(248,251,247,0.6)' }}>
+            {teamManagers.length} mgr · {allUsers.filter(u => (u.team ?? 'BD') === team && u.role === 'TEAM_LEAD').length} TL · {allUsers.filter(u => (u.team ?? 'BD') === team && u.role === 'ASSOCIATE').length} assoc
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          {isTeamOver && (
+            <p className="text-[10px] font-bold uppercase tracking-wide whitespace-nowrap" style={{ color: palette.accent }}>Drop to make Manager</p>
+          )}
+          <button
+            onClick={() => onAdd(team === 'BD' ? 'BD_MANAGER' : 'OPS_MANAGER', team, null)}
+            className="flex items-center gap-1 text-[10px] font-semibold px-2 py-1 rounded-md transition-colors"
+            style={{ background: palette.soft, color: palette.text, border: `1px solid ${palette.accent}44` }}>
+            <Plus size={11} /> Manager
+          </button>
+        </div>
+      </div>
+
+      {/* Manager cards — each is its own subtree */}
+      <div className="space-y-3">
+        {teamManagers.map(mgr => (
+          <ManagerCard
+            key={mgr.id}
+            manager={mgr}
+            team={team}
+            allUsers={allUsers}
+            dragId={dragId}
+            dragOverKey={dragOverKey}
+            currentUserId={currentUserId}
+            onDragOver={onDragOver}
+            onDragLeave={onDragLeave}
+            onDrop={onDrop}
+            onCardDragStart={onCardDragStart}
+            onCardDragEnd={onCardDragEnd}
+            onCardClick={onCardClick}
+            onAdd={onAdd}
+          />
+        ))}
+        {teamManagers.length === 0 && (
+          <div className="text-[11px] italic px-2 py-3 rounded-lg" style={{ color: 'rgba(248,251,247,0.4)', background: 'rgba(255,255,255,0.02)', border: `1px dashed ${palette.border}` }}>
+            No managers on the {team} team yet. Drop someone here, or click &ldquo;+ Manager&rdquo;.
+          </div>
+        )}
+
+        {/* Orphan section — TLs/Associates with no manager */}
+        {(orphans.tls.length > 0 || orphans.ass.length > 0) && (
+          <div className="rounded-xl p-3" style={{ background: 'rgba(255,255,255,0.02)', border: `1px dashed ${palette.border}` }}>
+            <p className="text-[10px] font-bold uppercase tracking-wider mb-2" style={{ color: 'rgba(248,251,247,0.5)' }}>Unassigned ({orphans.tls.length + orphans.ass.length})</p>
+            <div className="flex flex-wrap gap-2">
+              {orphans.tls.map(u => (
+                <UserCard key={u.id} user={u} accent={palette.accent} compact dragging={dragId === u.id} isCurrentUser={u.id === currentUserId}
+                  onDragStart={() => onCardDragStart(u.id)} onDragEnd={onCardDragEnd} onClick={() => onCardClick(u)} />
+              ))}
+              {orphans.ass.map(u => (
+                <UserCard key={u.id} user={u} accent={palette.accent} compact dragging={dragId === u.id} isCurrentUser={u.id === currentUserId}
+                  onDragStart={() => onCardDragStart(u.id)} onDragEnd={onCardDragEnd} onClick={() => onCardClick(u)} />
+              ))}
+            </div>
+            <p className="text-[10px] mt-2" style={{ color: 'rgba(248,251,247,0.35)' }}>Drag onto a manager or team lead to assign a parent.</p>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ─── Manager card — drop here to become a Team Lead under this manager
+function ManagerCard({
+  manager, team, allUsers, dragId, dragOverKey, currentUserId,
+  onDragOver, onDragLeave, onDrop, onCardDragStart, onCardDragEnd, onCardClick, onAdd,
+}: {
+  manager: User
+  team: EmployeeTeam
+  allUsers: User[]
+  dragId: string | null
+  dragOverKey: string | null
+  currentUserId: string | undefined
+  onDragOver: (key: string) => void
+  onDragLeave: (key: string) => void
+  onDrop: (target: DropTarget) => void
+  onCardDragStart: (id: string) => void
+  onCardDragEnd: () => void
+  onCardClick: (u: User) => void
+  onAdd: (role: Role, team: EmployeeTeam | null, managerId: string | null) => void
+}) {
+  const palette = TEAM_PALETTE[team]
+  const key = targetKey({ kind: 'manager', id: manager.id, team })
+  const isOver = dragOverKey === key
+  const teamLeads = allUsers.filter(u => u.role === 'TEAM_LEAD' && u.managerId === manager.id)
+
+  return (
+    <div
+      onDragOver={e => { e.preventDefault(); e.stopPropagation(); onDragOver(key) }}
+      onDragLeave={e => { e.stopPropagation(); onDragLeave(key) }}
+      onDrop={e => { e.stopPropagation(); onDrop({ kind: 'manager', id: manager.id, team }) }}
+      className="rounded-xl p-3 transition-all"
+      style={{
+        background: 'var(--bg-card)',
+        border: `1px solid ${isOver ? palette.accent : palette.border}`,
+        boxShadow: isOver ? `0 0 0 2px ${palette.accent}66, 0 8px 24px ${palette.accent}22` : undefined,
+      }}
+    >
+      {/* Manager header */}
+      <div className="flex items-center justify-between gap-2 mb-2">
+        <UserCard user={manager} accent={palette.accent} dragging={dragId === manager.id} isCurrentUser={manager.id === currentUserId}
+          onDragStart={() => onCardDragStart(manager.id)} onDragEnd={onCardDragEnd} onClick={() => onCardClick(manager)} />
+        <div className="flex items-center gap-2">
+          {isOver && (
+            <p className="text-[10px] font-bold uppercase tracking-wide whitespace-nowrap" style={{ color: palette.accent }}>Drop to make Team Lead</p>
+          )}
+          <button
+            onClick={() => onAdd('TEAM_LEAD', team, manager.id)}
+            className="flex items-center gap-1 text-[10px] font-semibold px-2 py-1 rounded-md transition-colors"
+            style={{ background: palette.soft, color: palette.text, border: `1px solid ${palette.accent}33` }}>
+            <Plus size={11} /> Team Lead
+          </button>
+        </div>
+      </div>
+
+      {/* Team Leads under this manager */}
+      <div className="pl-4 border-l-2 space-y-2" style={{ borderColor: `${palette.accent}33` }}>
+        {teamLeads.map(tl => (
+          <TeamLeadNode
+            key={tl.id}
+            tl={tl}
+            team={team}
+            allUsers={allUsers}
+            dragId={dragId}
+            dragOverKey={dragOverKey}
+            currentUserId={currentUserId}
+            onDragOver={onDragOver}
+            onDragLeave={onDragLeave}
+            onDrop={onDrop}
+            onCardDragStart={onCardDragStart}
+            onCardDragEnd={onCardDragEnd}
+            onCardClick={onCardClick}
+            onAdd={onAdd}
+          />
+        ))}
+        {teamLeads.length === 0 && (
+          <div className="text-[10px] italic px-2 py-1.5 rounded-md" style={{ color: 'rgba(248,251,247,0.35)' }}>
+            No team leads yet — drop a card on this manager or click &ldquo;+ Team Lead&rdquo;.
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ─── Team Lead node — drop here to become an Associate under this TL
+function TeamLeadNode({
+  tl, team, allUsers, dragId, dragOverKey, currentUserId,
+  onDragOver, onDragLeave, onDrop, onCardDragStart, onCardDragEnd, onCardClick, onAdd,
+}: {
+  tl: User
+  team: EmployeeTeam
+  allUsers: User[]
+  dragId: string | null
+  dragOverKey: string | null
+  currentUserId: string | undefined
+  onDragOver: (key: string) => void
+  onDragLeave: (key: string) => void
+  onDrop: (target: DropTarget) => void
+  onCardDragStart: (id: string) => void
+  onCardDragEnd: () => void
+  onCardClick: (u: User) => void
+  onAdd: (role: Role, team: EmployeeTeam | null, managerId: string | null) => void
+}) {
+  const palette = TEAM_PALETTE[team]
+  const key = targetKey({ kind: 'tl', id: tl.id, team })
+  const isOver = dragOverKey === key
+  const associates = allUsers.filter(u => u.role === 'ASSOCIATE' && u.managerId === tl.id)
+
+  return (
+    <div
+      onDragOver={e => { e.preventDefault(); e.stopPropagation(); onDragOver(key) }}
+      onDragLeave={e => { e.stopPropagation(); onDragLeave(key) }}
+      onDrop={e => { e.stopPropagation(); onDrop({ kind: 'tl', id: tl.id, team }) }}
+      className="rounded-lg p-2 transition-all"
+      style={{
+        background: 'var(--bg-raised)',
+        border: `1px solid ${isOver ? palette.accent : 'transparent'}`,
+        boxShadow: isOver ? `0 0 0 2px ${palette.accent}55` : undefined,
+      }}
+    >
+      <div className="flex items-center justify-between gap-2 mb-1.5 flex-wrap">
+        <UserCard user={tl} accent={palette.accent} compact dragging={dragId === tl.id} isCurrentUser={tl.id === currentUserId}
+          onDragStart={() => onCardDragStart(tl.id)} onDragEnd={onCardDragEnd} onClick={() => onCardClick(tl)} />
+        <div className="flex items-center gap-2">
+          {isOver && (
+            <p className="text-[10px] font-bold uppercase tracking-wide whitespace-nowrap" style={{ color: palette.accent }}>Drop to make Associate</p>
+          )}
+          <button
+            onClick={() => onAdd('ASSOCIATE', team, tl.id)}
+            className="flex items-center gap-1 text-[10px] font-semibold px-2 py-1 rounded-md transition-colors"
+            style={{ background: palette.soft, color: palette.text, border: `1px solid ${palette.accent}33` }}>
+            <Plus size={11} /> Associate
+          </button>
+        </div>
+      </div>
+
+      {associates.length > 0 && (
+        <div className="pl-4 border-l-2 mt-1.5 flex flex-wrap gap-1.5" style={{ borderColor: `${palette.accent}33` }}>
+          {associates.map(a => (
+            <AssociateChip key={a.id} user={a} accent={palette.accent} dragging={dragId === a.id} isCurrentUser={a.id === currentUserId}
+              onDragStart={() => onCardDragStart(a.id)} onDragEnd={onCardDragEnd} onClick={() => onCardClick(a)} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Associate chip — leaf node, draggable
+function AssociateChip({ user, accent, dragging, isCurrentUser, onDragStart, onDragEnd, onClick }: {
+  user: User
+  accent: string
+  dragging: boolean
+  isCurrentUser: boolean
+  onDragStart: () => void
+  onDragEnd: () => void
+  onClick: () => void
+}) {
+  return (
+    <div
+      draggable
+      onDragStart={e => { onDragStart(); e.dataTransfer.effectAllowed = 'move' }}
+      onDragEnd={onDragEnd}
+      onClick={onClick}
+      className="flex items-center gap-1.5 pl-1.5 pr-2 py-1 rounded-md text-[11px] cursor-grab active:cursor-grabbing transition-all"
+      style={{
+        background: 'rgba(255,255,255,0.03)',
+        border: `1px solid ${accent}33`,
+        opacity: dragging ? 0.4 : 1,
+        color: 'var(--text-primary)',
+      }}
+    >
+      <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[8px] font-bold text-white bg-gradient-to-br ${avatarColor(user.avatar)}`}>
+        {user.avatar.slice(0, 2)}
+      </div>
+      <span className="font-medium truncate max-w-[140px]">{user.name}</span>
+      {isCurrentUser && (
+        <span className="text-[8px] font-bold px-1 rounded" style={{ background: `${CAPTURE_ACCENT}26`, color: CAPTURE_ACCENT }}>YOU</span>
+      )}
+      {user.status === 'inactive' && (
+        <span className="text-[8px] font-bold text-rose-300 bg-rose-400/15 px-1 rounded">OFF</span>
+      )}
+      {user.firstLogin && (
+        <span className="text-[8px] font-bold text-amber-300 bg-amber-400/15 px-1 rounded" title="Pending first login">1ST</span>
+      )}
+    </div>
+  )
+}
+
