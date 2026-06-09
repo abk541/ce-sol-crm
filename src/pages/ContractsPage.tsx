@@ -985,7 +985,7 @@ function ContractAssignmentTab({
             <h3 className="text-base font-bold text-slate-100 mt-1">Who owns this contract day-to-day?</h3>
             <p className="text-xs text-slate-400 mt-1 max-w-2xl">
               Contracts are assigned to the <span className="text-slate-200 font-semibold">Operations</span> hierarchy —
-              a separate team from BD (which owns opportunities and sourcing). Pick a Manager → Team Lead → Associate.
+              a separate team from BD (which owns opportunities and sourcing). Pick a Manager → Team Lead → Contract Specialist.
             </p>
           </div>
           <div className="flex items-center gap-2.5 rounded-xl px-3 py-2 border"

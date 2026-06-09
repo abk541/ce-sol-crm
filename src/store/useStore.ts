@@ -299,6 +299,16 @@ function normalizePersistedUserRole<T>(value: T): T {
 
 function mergeSeedUsers(users: unknown, refreshSeedHierarchy = false): User[] {
   const existing = Array.isArray(users) ? users.map(normalizePersistedUserRole as (value: User) => User) : []
+  if (refreshSeedHierarchy) {
+    const seedIds = new Set(MOCK_USERS.map(user => user.id))
+    const seedEmails = new Set(MOCK_USERS.map(user => user.email.toLowerCase()))
+    const customUsers = existing.filter(user =>
+      !seedIds.has(user.id) &&
+      !seedEmails.has(user.email.toLowerCase())
+    )
+    return [...MOCK_USERS, ...customUsers]
+  }
+
   const byEmail = new Map(existing.map(user => [user.email.toLowerCase(), user]))
 
   MOCK_USERS.forEach(seedUser => {
@@ -307,17 +317,6 @@ function mergeSeedUsers(users: unknown, refreshSeedHierarchy = false): User[] {
     if (!current) {
       byEmail.set(key, seedUser)
       return
-    }
-
-    if (refreshSeedHierarchy) {
-      byEmail.set(key, {
-        ...current,
-        name: seedUser.name,
-        role: seedUser.role,
-        avatar: seedUser.avatar,
-        team: seedUser.team,
-        managerId: seedUser.managerId ?? null,
-      })
     }
   })
 
@@ -2001,9 +2000,10 @@ export const useStore = create<AppState>()(
     }),
     {
       name: 'ces-crm-store',
+      // v14: refresh seeded department users to the Moroccan BD/OPS hierarchy.
       // v13: assignment employees are derived strictly from active users so
       // deleted/inactive users disappear from assignment pickers.
-      version: 13,
+      version: 14,
       migrate: (persistedState: unknown, fromVersion: number) => {
         const s = persistedState as Record<string, unknown>
         if (fromVersion < 4) {
@@ -2038,10 +2038,17 @@ export const useStore = create<AppState>()(
             prefs:           { notificationSound: true },
           }
         }
-        const nextUsers = mergeSeedUsers(s.users, fromVersion < 13)
+        const nextUsers = mergeSeedUsers(s.users, fromVersion < 14)
+        const normalizedCurrentUser = normalizePersistedUserRole(s.currentUser) as User | null
+        const nextCurrentUser = normalizedCurrentUser
+          ? nextUsers.find(user =>
+              user.id === normalizedCurrentUser.id ||
+              user.email.toLowerCase() === normalizedCurrentUser.email.toLowerCase()
+            ) ?? normalizedCurrentUser
+          : null
         return {
           ...s,
-          currentUser: normalizePersistedUserRole(s.currentUser),
+          currentUser: nextCurrentUser,
           users: nextUsers,
           employees: syncEmployeesWithUsers(nextUsers, []),
           accessNoticeAccepted: Boolean(s.accessNoticeAccepted),

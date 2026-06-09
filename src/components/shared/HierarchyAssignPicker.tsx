@@ -20,6 +20,11 @@ const ROLE_LABEL: Record<HierarchyRole, string> = {
   ASSOCIATE:  'Associate',
 }
 
+function roleLabel(role: HierarchyRole, team?: EmployeeTeam): string {
+  if (team === 'OPS' && role === 'ASSOCIATE') return 'Contract Specialist'
+  return ROLE_LABEL[role]
+}
+
 // Avatar bg color by role
 const ROLE_AVATAR_CLS: Record<HierarchyRole, string> = {
   BD_MANAGER: 'bg-[#102820] text-[#D7BE7A] border-[#D7BE7A]/40',
@@ -32,6 +37,11 @@ const COLUMN_DEFS: { role: HierarchyRole; header: string }[] = [
   { role: 'TEAM_LEAD',  header: 'Team Leads' },
   { role: 'ASSOCIATE',  header: 'Associates' },
 ]
+
+function columnHeader(role: HierarchyRole, fallback: string, team?: EmployeeTeam): string {
+  if (team === 'OPS' && role === 'ASSOCIATE') return 'Contract Specialists'
+  return fallback
+}
 
 const EMPTY_WORKLOAD = {
   activeTotal: 0,
@@ -169,7 +179,7 @@ export default function HierarchyAssignPicker({
               {/* Column header */}
               <div className="border-b border-[#D7BE7A]/20 bg-[#0A1D2B] px-4 py-3">
                 <p className="truncate text-[10px] font-black uppercase tracking-[0.16em] text-[#D7BE7A]">
-                  {col.header}
+                  {columnHeader(col.role, col.header, team)}
                 </p>
               </div>
 
@@ -209,7 +219,7 @@ export default function HierarchyAssignPicker({
                           </p>
 
                           {/* Role label */}
-                          <p className="truncate text-[10px] font-medium text-slate-400">{ROLE_LABEL[emp.role]}</p>
+                          <p className="truncate text-[10px] font-medium text-slate-400">{roleLabel(emp.role, team)}</p>
 
                           <div className="mt-2 space-y-0.5 text-[10px] font-semibold leading-4 text-slate-400">
                             <p className="flex items-center justify-between gap-2">
@@ -245,7 +255,7 @@ export default function HierarchyAssignPicker({
           </div>
           <p className="min-w-0 text-sm font-bold" style={{ color: '#F8FBF7' }}>
             Assigned to: {selectedEmp.name}
-            {' - '}{ROLE_LABEL[selectedEmp.role]}
+            {' - '}{roleLabel(selectedEmp.role, team)}
           </p>
         </div>
       )}
