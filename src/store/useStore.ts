@@ -1925,7 +1925,10 @@ export const useStore = create<AppState>()(
             })
 
             set({
-              employees: data.employees.length > 0 ? data.employees : get().employees,
+              employees: syncEmployeesWithUsers(
+                get().users,
+                data.employees.length > 0 ? data.employees : get().employees,
+              ),
               opportunities: data.opportunities.filter(o => o.status !== 'CANCELED'),
               contracts: data.contracts,
               freshAwards: data.freshAwards,
