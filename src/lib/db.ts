@@ -740,6 +740,18 @@ function dbToEmp(row: Record<string, unknown>): Employee {
   }
 }
 
+function employeeSyncRank(employee: Employee): number {
+  if (!employee.managerId) return 0
+  if (employee.role === 'TEAM_LEAD') return 1
+  return 2
+}
+
+function employeeRowsForSync(employees: Employee[]): Record<string, unknown>[] {
+  return [...employees]
+    .sort((a, b) => employeeSyncRank(a) - employeeSyncRank(b))
+    .map(empToDb)
+}
+
 // ── Load all data ────────────────────────────────────────────────────────────
 
 function nonSubReportToDb(report: NonSubmissionReport): Record<string, unknown> {
@@ -1245,28 +1257,19 @@ export async function clearBusinessData(): Promise<void> {
 
 // ── Seed if empty ────────────────────────────────────────────────────────────
 
-export async function seedEmployeesIfEmpty(employees: Employee[]): Promise<void> {
-  if (!isSupabaseConnected || !supabase || employees.length === 0) return
+export async function seedEmployeesIfEmpty(employees: Employee[]): Promise<boolean> {
+  if (!isSupabaseConnected || !supabase || employees.length === 0) return true
 
   try {
-    const { count, error } = await supabase
-      .from('employees')
-      .select('*', { count: 'exact', head: true })
-
-    if (error) {
-      console.error('[db] seedEmployeesIfEmpty count check error', error)
-      return
-    }
-
-    if ((count ?? 0) > 0) return
-
-    const inserted = await insertBatched(
+    const synced = await upsertBatched(
       'employees',
-      employees.map(empToDb),
+      employeeRowsForSync(employees),
     )
-    if (inserted) console.log('[db] Seeded employee hierarchy in Supabase.')
+    if (synced) console.log('[db] Synced employee hierarchy in Supabase.')
+    return synced
   } catch (err) {
     console.error('[db] seedEmployeesIfEmpty failed', err)
+    return false
   }
 }
 
@@ -1281,6 +1284,23 @@ async function insertBatched<T>(
     const { error } = await supabase.from(table).insert(batch).select()
     if (error) {
       console.error(`[db] insert batch into ${table} error`, error)
+      return false
+    }
+  }
+  return true
+}
+
+async function upsertBatched(
+  table: string,
+  rows: Record<string, unknown>[],
+  batchSize = 20,
+): Promise<boolean> {
+  if (!supabase) return false
+  for (let i = 0; i < rows.length; i += batchSize) {
+    const batch = rows.slice(i, i + batchSize)
+    const { error } = await supabase.from(table).upsert(batch, { onConflict: 'id' }).select()
+    if (error) {
+      console.error(`[db] upsert batch into ${table} error`, error)
       return false
     }
   }

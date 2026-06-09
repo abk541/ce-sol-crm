@@ -288,6 +288,33 @@ function showDatabaseSaveError(recordLabel: string) {
   toast.error(`${recordLabel} was not saved to the database. Check Supabase connection and try again.`)
 }
 
+async function ensureAssignmentEmployeesSynced(employees: Employee[]): Promise<boolean> {
+  const synced = await seedEmployeesIfEmpty(employees)
+  if (synced === false) {
+    showDatabaseSaveError('Employee assignment')
+    return false
+  }
+  return true
+}
+
+function persistAssignedOpportunity(opp: Opportunity, employees: Employee[], recordLabel = 'Opportunity') {
+  void ensureAssignmentEmployeesSynced(employees).then(synced => {
+    if (!synced) return
+    void upsertOpportunity(opp).then(saved => {
+      if (!saved) showDatabaseSaveError(recordLabel)
+    })
+  })
+}
+
+function persistAssignedContract(contract: Contract, employees: Employee[], recordLabel = 'Contract') {
+  void ensureAssignmentEmployeesSynced(employees).then(synced => {
+    if (!synced) return
+    void upsertContract(contract).then(saved => {
+      if (!saved) showDatabaseSaveError(recordLabel)
+    })
+  })
+}
+
 function normalizePersistedUserRole<T>(value: T): T {
   if (!value || typeof value !== 'object') return value
   const user = value as Record<string, unknown>
@@ -700,6 +727,7 @@ export const useStore = create<AppState>()(
         if (!allowed) return false
 
         const opp = normalizeOpportunityAssignmentStatus({ ...data, solicitationId, id: `o${Date.now()}` }, get().employees)
+        if (opp.assignedTo && !(await ensureAssignmentEmployeesSynced(get().employees))) return false
         const saved = await upsertOpportunity(opp)
         if (!saved) {
           showDatabaseSaveError('Opportunity')
@@ -764,6 +792,10 @@ export const useStore = create<AppState>()(
         }))
         const updated = get().opportunities.find(o => o.id === id)
         if (!updated) return false
+        if (updated.assignedTo && !(await ensureAssignmentEmployeesSynced(get().employees))) {
+          set({ opportunities: previous })
+          return false
+        }
         const saved = await upsertOpportunity(updated)
         if (!saved) {
           set({ opportunities: previous })
@@ -1070,6 +1102,7 @@ export const useStore = create<AppState>()(
           return false
         }
         const contract: Contract = { ...data, id: `c${Date.now()}` }
+        if (contract.assignedTo && !(await ensureAssignmentEmployeesSynced(get().employees))) return false
         const saved = await upsertContract(contract)
         if (!saved) {
           showDatabaseSaveError('Contract')
@@ -1105,6 +1138,10 @@ export const useStore = create<AppState>()(
         }))
         const updated = get().contracts.find(c => c.id === id)
         if (!updated) return false
+        if (updated.assignedTo && !(await ensureAssignmentEmployeesSynced(get().employees))) {
+          set({ contracts: previous })
+          return false
+        }
         const saved = await upsertContract(updated)
         if (!saved) {
           set({ contracts: previous })
@@ -1626,7 +1663,7 @@ export const useStore = create<AppState>()(
           freshAwards: s.freshAwards.filter(f => f.id !== id),
         }))
 
-        upsertContract(contract)
+        persistAssignedContract(contract, get().employees)
         deleteFreshAwardRecord(id)
 
         get().addNotification({
@@ -1891,7 +1928,7 @@ export const useStore = create<AppState>()(
         }))
         const emp = target
         const opp = get().opportunities.find(o => o.id === opportunityId)
-        if (opp) upsertOpportunity(opp)
+        if (opp) persistAssignedOpportunity(opp, get().employees, 'Opportunity assignment')
         if (emp && opp) {
           get().addNotification({
             type: 'ASSIGNMENT',
@@ -1916,7 +1953,7 @@ export const useStore = create<AppState>()(
         }))
         const emp = target
         const contract = get().contracts.find(c => c.id === contractId)
-        if (contract) upsertContract(contract)
+        if (contract) persistAssignedContract(contract, get().employees, 'Contract assignment')
         if (emp && contract) {
           get().addNotification({
             type: 'ASSIGNMENT',
@@ -2000,10 +2037,11 @@ export const useStore = create<AppState>()(
     }),
     {
       name: 'ces-crm-store',
-      // v14: refresh seeded department users to the Moroccan BD/OPS hierarchy.
+      // v15: refresh seeded department users to the Moroccan BD/OPS hierarchy.
+      // v14: first forced refresh of seeded department users.
       // v13: assignment employees are derived strictly from active users so
       // deleted/inactive users disappear from assignment pickers.
-      version: 14,
+      version: 15,
       migrate: (persistedState: unknown, fromVersion: number) => {
         const s = persistedState as Record<string, unknown>
         if (fromVersion < 4) {
@@ -2038,7 +2076,7 @@ export const useStore = create<AppState>()(
             prefs:           { notificationSound: true },
           }
         }
-        const nextUsers = mergeSeedUsers(s.users, fromVersion < 14)
+        const nextUsers = mergeSeedUsers(s.users, fromVersion < 15)
         const normalizedCurrentUser = normalizePersistedUserRole(s.currentUser) as User | null
         const nextCurrentUser = normalizedCurrentUser
           ? nextUsers.find(user =>

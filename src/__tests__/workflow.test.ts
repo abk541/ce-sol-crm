@@ -21,6 +21,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 vi.mock('../lib/db', () => ({
   loadAllData: vi.fn().mockResolvedValue(null),
   seedIfEmpty: vi.fn().mockResolvedValue(null),
+  seedEmployeesIfEmpty: vi.fn().mockResolvedValue(true),
   clearBusinessData: vi.fn().mockResolvedValue(null),
   findActiveOpportunityDuplicate: vi.fn().mockResolvedValue({ ok: true, duplicate: false }),
   upsertOpportunity: vi.fn().mockResolvedValue(true),
