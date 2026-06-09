@@ -104,37 +104,14 @@ export default function HierarchyAssignPicker({
   )
 
   const workloadByEmp = useMemo(() => {
-    const result = assignmentWorkloadByEmployee({
+    return assignmentWorkloadByEmployee({
       employees,
       opportunities,
       contracts,
       selectedDueDay: deadline,
       excludeOpportunityId,
     })
-    if (typeof window !== 'undefined') {
-      // Temporary diagnostic: surface what the picker actually sees so we can verify the workload pipeline.
-      const assignedContracts = contracts.filter(c => c.assignedTo)
-      const assignedOpps = opportunities.filter(o => o.assignedTo)
-      const empById = new Map(employees.map(e => [e.id, e]))
-      const stateSnapshot = useStore.getState()
-       
-      console.log('[HierarchyAssignPicker]', {
-        team,
-        employeesCount: employees.length,
-        allEmployeesCount: stateSnapshot.employees.length,
-        sampleEmployeeIds: employees.slice(0, 5).map(e => `${e.id}:${e.name}:${e.team}`),
-        contractsTotal: contracts.length,
-        contractsRaw: contracts.map(c => ({ id: c.id, contractId: c.contractId, status: c.status, assignedTo: c.assignedTo, popEnd: c.popEnd })),
-        contractsAssigned: assignedContracts.map(c => ({ id: c.id, contractId: c.contractId, status: c.status, assignedTo: c.assignedTo, assignedToInEmployees: empById.has(c.assignedTo!), popEnd: c.popEnd })),
-        opportunitiesTotal: opportunities.length,
-        opportunitiesAssignedAll: assignedOpps.map(o => ({ id: o.id, status: o.status, assignedTo: o.assignedTo, assignedToInEmployees: empById.has(o.assignedTo!), isDeleted: o.isDeleted, nonSubmissionReportId: o.nonSubmissionReportId, dueDate: o.dueDate })),
-        workloadByEmpNonZero: Object.entries(result).filter(([, w]) => w.activeTotal > 0 || w.sameDueDay > 0),
-        deadline,
-        dbReady: stateSnapshot.dbReady,
-      })
-    }
-    return result
-  }, [contracts, employees, opportunities, deadline, excludeOpportunityId, team])
+  }, [contracts, employees, opportunities, deadline, excludeOpportunityId])
 
   // Get the list of employees for each column
   function getColumnItems(colIdx: number): { emp: Employee; enabled: boolean }[] {

@@ -1563,6 +1563,11 @@ export const useStore = create<AppState>()(
             ? sourceOpp.samGovContacts
             : undefined
 
+        const opsEmployees = get().employees.filter(employee => (employee.team ?? 'BD') === 'OPS')
+        const assignedEmployee = opsEmployees.find(employee => employee.name === fa.assignedSupportAgent)
+          ?? opsEmployees.find(employee => employee.name === fa.assignedBDS)
+          ?? opsEmployees.find(employee => employee.name === fa.assignedBDM)
+
         // Generate the contract ID once so it stays consistent on both the
         // contract record AND the fresh award's contractId field.
         const newContractId = `c${Date.now()}`
@@ -1589,6 +1594,7 @@ export const useStore = create<AppState>()(
           opportunityId: fa.opportunityId,
           proposalAttachments,
           samGovContacts,
+          assignedTo: assignedEmployee?.id,
         }
 
         // Move the award into Contract Admin and remove it from Fresh Awards.

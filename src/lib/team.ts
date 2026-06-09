@@ -34,6 +34,28 @@ function normalizeDate(date?: string) {
   return date ? date.slice(0, 10) : ''
 }
 
+function normalizeName(name?: string) {
+  return (name ?? '').trim().toLowerCase()
+}
+
+function findEmployeeIdByName(employees: Employee[], name?: string): string | undefined {
+  const normalized = normalizeName(name)
+  if (!normalized) return undefined
+  return employees.find(employee => normalizeName(employee.name) === normalized)?.id
+}
+
+function contractWorkloadAssignee(contract: Contract, employees: Employee[]): string | undefined {
+  if (contract.assignedTo && employees.some(employee => employee.id === contract.assignedTo)) {
+    return contract.assignedTo
+  }
+
+  return findEmployeeIdByName(employees, contract.supportAgent)
+    ?? findEmployeeIdByName(employees, contract.pm)
+    ?? findEmployeeIdByName(employees, contract.spm)
+    ?? findEmployeeIdByName(employees, contract.bds)
+    ?? findEmployeeIdByName(employees, contract.bdm)
+}
+
 export function getAssignmentChain(employees: Employee[], assignedTo?: string): AssignmentChain {
   const byId = new Map(employees.map(employee => [employee.id, employee]))
   const assigned = assignedTo ? byId.get(assignedTo) : undefined
@@ -165,9 +187,8 @@ export function assignmentWorkloadByEmployee({
   }
 
   for (const contract of contracts) {
-    if (!contract.assignedTo) continue
     if (ACTIVE_STATUSES_EXCLUDE.includes(contract.status)) continue
-    addDirect(contract.assignedTo, contract.popEnd)
+    addDirect(contractWorkloadAssignee(contract, employees), contract.popEnd)
   }
 
   return employees.reduce<Record<string, AssignmentWorkload>>((map, employee) => {

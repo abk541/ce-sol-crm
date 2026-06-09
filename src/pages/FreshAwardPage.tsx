@@ -13,6 +13,8 @@ import type { FreshAward, ContractType, SetAside, FileAttachment } from '../type
 import { formatCurrency, useEscapeKey } from '../lib/utils'
 import toast from 'react-hot-toast'
 import FloatingActionMenu from '../components/shared/FloatingActionMenu'
+import HierarchyAssignPicker from '../components/shared/HierarchyAssignPicker'
+import { getAssignmentChain } from '../lib/team'
 
 const STATUS_META = {
   PENDING_ASSIGNMENT: { label: 'Pending Assignment', color: '#D97706', bg: '#FEF3C7', border: '#FDE68A' },
@@ -20,210 +22,10 @@ const STATUS_META = {
   MOVED_TO_ACTIVE:    { label: 'Moved to Active',    color: '#15803D', bg: '#DCFCE7', border: '#86EFAC' },
 }
 
-type OperationsRole = 'OPERATIONS_MANAGER' | 'OPERATIONS_TEAM_LEAD' | 'CONTRACT_SPECIALIST'
-
-interface OperationsPerson {
-  id: string
-  name: string
-  role: OperationsRole
-  managerId: string | null
-}
-
-const OPERATIONS_PEOPLE: OperationsPerson[] = [
-  { id: 'ops-mgr-1', name: 'Nadia El Mansouri', role: 'OPERATIONS_MANAGER', managerId: null },
-  { id: 'ops-mgr-2', name: 'Youssef Benali', role: 'OPERATIONS_MANAGER', managerId: null },
-  { id: 'ops-tl-1', name: 'Salma Idrissi', role: 'OPERATIONS_TEAM_LEAD', managerId: 'ops-mgr-1' },
-  { id: 'ops-tl-2', name: 'Omar Haddad', role: 'OPERATIONS_TEAM_LEAD', managerId: 'ops-mgr-1' },
-  { id: 'ops-tl-3', name: 'Leila Berrada', role: 'OPERATIONS_TEAM_LEAD', managerId: 'ops-mgr-2' },
-  { id: 'ops-tl-4', name: 'Karim Alaoui', role: 'OPERATIONS_TEAM_LEAD', managerId: 'ops-mgr-2' },
-  { id: 'ops-cs-1', name: 'Hiba Amrani', role: 'CONTRACT_SPECIALIST', managerId: 'ops-tl-1' },
-  { id: 'ops-cs-2', name: 'Adam Chraibi', role: 'CONTRACT_SPECIALIST', managerId: 'ops-tl-1' },
-  { id: 'ops-cs-3', name: 'Ines Tazi', role: 'CONTRACT_SPECIALIST', managerId: 'ops-tl-2' },
-  { id: 'ops-cs-4', name: 'Rayan El Fassi', role: 'CONTRACT_SPECIALIST', managerId: 'ops-tl-2' },
-  { id: 'ops-cs-5', name: 'Sara Lahlou', role: 'CONTRACT_SPECIALIST', managerId: 'ops-tl-3' },
-  { id: 'ops-cs-6', name: 'Mehdi Skalli', role: 'CONTRACT_SPECIALIST', managerId: 'ops-tl-3' },
-  { id: 'ops-cs-7', name: 'Amine Belkadi', role: 'CONTRACT_SPECIALIST', managerId: 'ops-tl-4' },
-  { id: 'ops-cs-8', name: 'Meryem Rami', role: 'CONTRACT_SPECIALIST', managerId: 'ops-tl-4' },
-]
-
-const OPERATION_MANAGERS = OPERATIONS_PEOPLE.filter(person => person.role === 'OPERATIONS_MANAGER')
-
-const OPS_ROLE_LABEL: Record<OperationsRole, string> = {
-  OPERATIONS_MANAGER: 'Operations Manager',
-  OPERATIONS_TEAM_LEAD: 'Operations Team Lead',
-  CONTRACT_SPECIALIST: 'Contract Specialist',
-}
-
-const OPS_ROLE_AVATAR_CLS: Record<OperationsRole, string> = {
-  OPERATIONS_MANAGER: 'bg-[#102820] text-[#D7BE7A] border-[#D7BE7A]/40',
-  OPERATIONS_TEAM_LEAD: 'bg-[#0A1D2B] text-[#7DD3FC] border-[#7DD3FC]/35',
-  CONTRACT_SPECIALIST: 'bg-[#082F49] text-[#A5F3FC] border-[#A5F3FC]/35',
-}
-
-const OPS_COLUMN_DEFS: { role: OperationsRole; header: string }[] = [
-  { role: 'OPERATIONS_MANAGER', header: 'Operations Managers' },
-  { role: 'OPERATIONS_TEAM_LEAD', header: 'Operations Team Leads' },
-  { role: 'CONTRACT_SPECIALIST', header: 'Contract Specialists' },
-]
-
-const initials = (name: string) =>
-  name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map(part => part[0]?.toUpperCase())
-    .join('')
-
 interface AssignModalProps {
   award: FreshAward
   onClose: () => void
   onMove: (id: string, assignments?: Partial<FreshAward>) => void
-}
-
-function OperationsAssignPicker({
-  managerId,
-  teamLeadId,
-  specialistId,
-  onManagerChange,
-  onTeamLeadChange,
-  onSpecialistChange,
-}: {
-  managerId: string
-  teamLeadId: string
-  specialistId: string
-  onManagerChange: (id: string) => void
-  onTeamLeadChange: (id: string) => void
-  onSpecialistChange: (id: string) => void
-}) {
-  const selectionChain = [managerId || undefined, teamLeadId || undefined, specialistId || undefined]
-  const selectedPerson = specialistId
-    ? OPERATIONS_PEOPLE.find(person => person.id === specialistId)
-    : teamLeadId
-      ? OPERATIONS_PEOPLE.find(person => person.id === teamLeadId)
-      : managerId
-        ? OPERATIONS_PEOPLE.find(person => person.id === managerId)
-        : undefined
-
-  const getColumnItems = (colIdx: number) => {
-    const role = OPS_COLUMN_DEFS[colIdx].role
-    const allAtTier = OPERATIONS_PEOPLE.filter(person => person.role === role)
-
-    if (colIdx === 0) {
-      return allAtTier.map(person => ({ person, enabled: true }))
-    }
-
-    const parentId = selectionChain[colIdx - 1]
-    if (!parentId) {
-      return allAtTier.map(person => ({ person, enabled: false }))
-    }
-
-    return allAtTier
-      .filter(person => person.managerId === parentId)
-      .map(person => ({ person, enabled: true }))
-  }
-
-  const handleSelect = (person: OperationsPerson, enabled: boolean) => {
-    if (!enabled) return
-
-    if (person.role === 'OPERATIONS_MANAGER') {
-      onManagerChange(person.id)
-      onTeamLeadChange('')
-      onSpecialistChange('')
-      return
-    }
-
-    if (person.role === 'OPERATIONS_TEAM_LEAD') {
-      onTeamLeadChange(person.id)
-      onSpecialistChange('')
-      return
-    }
-
-    onSpecialistChange(person.id)
-  }
-
-  return (
-    <div>
-      <label className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-slate-400">
-        Select Operations Team
-      </label>
-
-      <div className="grid overflow-hidden rounded-2xl border border-[#D7BE7A]/20 bg-[#06131F]/90 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] md:grid-cols-3">
-        {OPS_COLUMN_DEFS.map((col, colIdx) => {
-          const items = getColumnItems(colIdx)
-          const selectedId = selectionChain[colIdx]
-
-          return (
-            <div
-              key={col.role}
-              className="min-w-0 border-b border-[#D7BE7A]/20 last:border-b-0 md:border-b-0 md:border-r md:last:border-r-0 md:border-[#D7BE7A]/20"
-            >
-              <div className="border-b border-[#D7BE7A]/20 bg-[#0A1D2B] px-4 py-3">
-                <p className="truncate text-[10px] font-black uppercase tracking-[0.16em] text-[#D7BE7A]">
-                  {col.header}
-                </p>
-              </div>
-
-              <div className="max-h-[min(34vh,320px)] min-h-[210px] overflow-y-auto">
-                {items.length === 0 && (
-                  <div className="px-3 py-8 text-center text-[11px] text-slate-500">No options</div>
-                )}
-                {items.map(({ person, enabled }) => {
-                  const isSelected = selectedId === person.id
-
-                  return (
-                    <button
-                      key={person.id}
-                      type="button"
-                      disabled={!enabled}
-                      onClick={() => handleSelect(person, enabled)}
-                      className={[
-                        'w-full border-b border-[#D7BE7A]/10 px-4 py-3 text-left transition-all last:border-b-0',
-                        enabled ? 'cursor-pointer hover:bg-[#D7BE7A]/10' : 'cursor-default opacity-35',
-                        isSelected ? 'border-l-2 border-l-[#D7BE7A] bg-[#D7BE7A]/20 shadow-[inset_0_0_0_1px_rgba(215,190,122,0.10)]' : '',
-                      ].join(' ')}
-                    >
-                      <div className="flex items-start gap-2">
-                        <div className={`flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full border text-[10px] font-bold ${OPS_ROLE_AVATAR_CLS[person.role]}`}>
-                          {initials(person.name)}
-                        </div>
-
-                        <div className="min-w-0 flex-1">
-                          <p className={`truncate text-sm font-bold ${isSelected ? 'text-[#F8FBF7]' : 'text-slate-100'}`}>
-                            {person.name}
-                          </p>
-                          <p className="truncate text-[10px] font-medium text-slate-400">{OPS_ROLE_LABEL[person.role]}</p>
-                          <div className="mt-1 flex flex-wrap items-center gap-1">
-                            <span className="rounded-full border border-white/10 bg-white/5 px-1.5 py-0.5 text-[9px] font-semibold text-slate-400">
-                              Operations
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-          )
-        })}
-      </div>
-
-      {selectedPerson && (
-        <div
-          className="mt-3 flex items-center gap-3 rounded-2xl border px-4 py-3"
-          style={{ background: 'rgba(184,145,78,0.12)', borderColor: 'rgba(215,190,122,0.28)' }}
-        >
-          <div className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full border text-[10px] font-bold ${OPS_ROLE_AVATAR_CLS[selectedPerson.role]}`}>
-            {initials(selectedPerson.name)}
-          </div>
-          <p className="min-w-0 text-sm font-bold text-[#F8FBF7]">
-            Assigned to: {selectedPerson.name}
-            {' - '}{OPS_ROLE_LABEL[selectedPerson.role]}
-          </p>
-        </div>
-      )}
-    </div>
-  )
 }
 
 // Edit modal for fixing typos / metadata after award creation
@@ -390,21 +192,16 @@ function EditModal({ award, onClose }: { award: FreshAward; onClose: () => void 
 }
 
 function AssignModal({ award, onClose, onMove }: AssignModalProps) {
-  const existingManager = OPERATION_MANAGERS.find(person => person.name === award.assignedBDM)
-  const existingTeamLead = OPERATIONS_PEOPLE.find(person => person.role === 'OPERATIONS_TEAM_LEAD' && person.name === award.assignedBDS)
-  const existingSpecialist = OPERATIONS_PEOPLE.find(person => person.role === 'CONTRACT_SPECIALIST' && person.name === award.assignedSupportAgent)
-  const [operationsManagerId, setOperationsManagerId] = useState(existingManager?.id || '')
-  const [operationsTeamLeadId, setOperationsTeamLeadId] = useState(
-    existingTeamLead && existingTeamLead.managerId === existingManager?.id ? existingTeamLead.id : '',
-  )
-  const [contractSpecialistId, setContractSpecialistId] = useState(
-    existingSpecialist && existingSpecialist.managerId === existingTeamLead?.id ? existingSpecialist.id : '',
-  )
+  const employees = useStore(s => s.employees)
+  const opsEmployees = employees.filter(employee => (employee.team ?? 'BD') === 'OPS')
+  const existingAssignee = opsEmployees.find(employee => employee.name === award.assignedSupportAgent)
+    ?? opsEmployees.find(employee => employee.name === award.assignedBDS)
+    ?? opsEmployees.find(employee => employee.name === award.assignedBDM)
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState(existingAssignee?.id || '')
 
-  const selectedManager = OPERATIONS_PEOPLE.find(person => person.id === operationsManagerId)
-  const selectedTeamLead = OPERATIONS_PEOPLE.find(person => person.id === operationsTeamLeadId)
-  const selectedSpecialist = OPERATIONS_PEOPLE.find(person => person.id === contractSpecialistId)
-  const allAssigned = selectedManager && selectedTeamLead && selectedSpecialist
+  const selectedEmployee = opsEmployees.find(employee => employee.id === selectedEmployeeId)
+  const assignmentChain = getAssignmentChain(opsEmployees, selectedEmployeeId)
+  const hasContractSpecialist = selectedEmployee?.role === 'ASSOCIATE'
 
   useEscapeKey(onClose)
 
@@ -470,27 +267,30 @@ function AssignModal({ award, onClose, onMove }: AssignModalProps) {
             </div>
           </div>
 
-          <OperationsAssignPicker
-            managerId={operationsManagerId}
-            teamLeadId={operationsTeamLeadId}
-            specialistId={contractSpecialistId}
-            onManagerChange={setOperationsManagerId}
-            onTeamLeadChange={setOperationsTeamLeadId}
-            onSpecialistChange={setContractSpecialistId}
+          <HierarchyAssignPicker
+            label="Select Operations Team"
+            value={selectedEmployeeId}
+            onChange={setSelectedEmployeeId}
+            team="OPS"
           />
+          {!hasContractSpecialist && (
+            <p className="mt-3 rounded-xl border border-amber-300/20 bg-amber-400/10 px-3 py-2 text-xs font-semibold text-amber-100">
+              Select a contract specialist before moving this award to Contract Admin.
+            </p>
+          )}
         </div>
 
         <div className="flex flex-col gap-3 border-t border-[#D7BE7A]/15 bg-[#07131F]/95 px-6 py-4 sm:flex-row">
           <button type="button" onClick={onClose} className="btn-secondary flex-1 justify-center">Cancel</button>
           <button
-            disabled={!allAssigned}
+            disabled={!hasContractSpecialist}
             onClick={() => {
               const assignments = {
-                assignedBDM: selectedManager?.name,
-                assignedBDS: selectedTeamLead?.name,
+                assignedBDM: assignmentChain.manager?.name,
+                assignedBDS: assignmentChain.teamLead?.name,
                 assignedSPM: undefined,
                 assignedPM: undefined,
-                assignedSupportAgent: selectedSpecialist?.name,
+                assignedSupportAgent: assignmentChain.associate?.name,
               }
               onMove(award.id, assignments)
               toast.success('Assigned and moved to Contract Admin')
