@@ -320,6 +320,43 @@ function mergeSeedEmployees(employees: unknown): Employee[] {
   return Array.from(byId.values())
 }
 
+// Admin manages `users`; the assignment picker reads from `employees`. Mirror each user with a
+// hierarchy role into an employee record (sharing the same id) so people created/moved in Admin
+// appear in the picker and their workload counters work. CAPTURE_MANAGER is not assignable.
+function userToEmployee(user: User): Employee | null {
+  if (user.role === 'CAPTURE_MANAGER') return null
+  const role: Employee['role'] =
+    user.role === 'OPS_MANAGER' ? 'BD_MANAGER' : user.role
+  const team: Employee['team'] =
+    user.role === 'OPS_MANAGER' ? 'OPS' :
+    user.role === 'BD_MANAGER' ? 'BD' :
+    (user.team ?? 'BD')
+  return {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    role,
+    managerId: user.managerId ?? null,
+    avatar: user.avatar,
+    team,
+  }
+}
+
+// Merge user-mirrored employees over the existing employees array. Preserves any employee record
+// that doesn't correspond to a user (e.g. seeded MOCK_EMPLOYEES) and drops the employee mirror for
+// any user whose role is no longer assignable (CAPTURE_MANAGER).
+function syncEmployeesWithUsers(users: User[], employees: Employee[]): Employee[] {
+  const userIds = new Set(users.map(u => u.id))
+  const userMirrors = users.map(userToEmployee).filter((e): e is Employee => e !== null)
+  const byId = new Map<string, Employee>(employees.map(e => [e.id, e]))
+  // Drop stale mirrors for users that became CAPTURE_MANAGER (still in users, no mirror produced).
+  for (const id of Array.from(byId.keys())) {
+    if (userIds.has(id) && !userMirrors.some(m => m.id === id)) byId.delete(id)
+  }
+  for (const mirror of userMirrors) byId.set(mirror.id, mirror)
+  return Array.from(byId.values())
+}
+
 function normalizedSolicitationId(value?: string) {
   return (value ?? '').trim().toLowerCase()
 }
@@ -446,7 +483,10 @@ export const useStore = create<AppState>()(
           id: `u${Date.now()}`,
           createdAt: new Date().toISOString().split('T')[0],
         }
-        set(s => ({ users: [...s.users, user] }))
+        set(s => ({
+          users: [...s.users, user],
+          employees: syncEmployeesWithUsers([...s.users, user], s.employees),
+        }))
         get().logActivity({
           action: `Created user: ${user.name} (${user.email}) as ${user.role}`,
           user: actor?.name || 'System',
@@ -464,9 +504,10 @@ export const useStore = create<AppState>()(
           return
         }
         const before = get().users.find(u => u.id === id)
-        set(s => ({
-          users: s.users.map(u => u.id === id ? { ...u, ...data } : u)
-        }))
+        set(s => {
+          const nextUsers = s.users.map(u => u.id === id ? { ...u, ...data } : u)
+          return { users: nextUsers, employees: syncEmployeesWithUsers(nextUsers, s.employees) }
+        })
         const after = get().users.find(u => u.id === id)
         if (before && after) {
           const changes: string[] = []
@@ -497,9 +538,10 @@ export const useStore = create<AppState>()(
           return
         }
         const target = get().users.find(u => u.id === id)
-        set(s => ({
-          users: s.users.filter(u => u.id !== id)
-        }))
+        set(s => {
+          const nextUsers = s.users.filter(u => u.id !== id)
+          return { users: nextUsers, employees: syncEmployeesWithUsers(nextUsers, s.employees) }
+        })
         if (target) {
           get().logActivity({
             action: `Removed user: ${target.name} (${target.email})`,
@@ -1953,11 +1995,12 @@ export const useStore = create<AppState>()(
             prefs:           { notificationSound: true },
           }
         }
+        const nextUsers = mergeSeedUsers(s.users)
         return {
           ...s,
           currentUser: normalizePersistedUserRole(s.currentUser),
-          users: mergeSeedUsers(s.users),
-          employees: mergeSeedEmployees(s.employees),
+          users: nextUsers,
+          employees: syncEmployeesWithUsers(nextUsers, mergeSeedEmployees(s.employees)),
           accessNoticeAccepted: Boolean(s.accessNoticeAccepted),
           nonSubGraceHours: Number(s.nonSubGraceHours ?? 0),
           nonSubGraceMinutes: Number(s.nonSubGraceMinutes ?? 5),
