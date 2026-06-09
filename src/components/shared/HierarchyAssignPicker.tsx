@@ -104,14 +104,32 @@ export default function HierarchyAssignPicker({
   )
 
   const workloadByEmp = useMemo(() => {
-    return assignmentWorkloadByEmployee({
+    const result = assignmentWorkloadByEmployee({
       employees,
       opportunities,
       contracts,
       selectedDueDay: deadline,
       excludeOpportunityId,
     })
-  }, [contracts, employees, opportunities, deadline, excludeOpportunityId])
+    if (typeof window !== 'undefined') {
+      // Temporary diagnostic: surface what the picker actually sees so we can verify the workload pipeline.
+      const assignedContracts = contracts.filter(c => c.assignedTo)
+      const assignedOpps = opportunities.filter(o => o.assignedTo && !o.isDeleted && !o.nonSubmissionReportId)
+       
+      console.log('[HierarchyAssignPicker]', {
+        team,
+        employeesCount: employees.length,
+        sampleEmployeeIds: employees.slice(0, 5).map(e => `${e.id}:${e.name}:${e.team}`),
+        contractsTotal: contracts.length,
+        contractsAssigned: assignedContracts.map(c => ({ id: c.id, contractId: c.contractId, status: c.status, assignedTo: c.assignedTo, popEnd: c.popEnd })),
+        opportunitiesTotal: opportunities.length,
+        opportunitiesAssigned: assignedOpps.map(o => ({ id: o.id, status: o.status, assignedTo: o.assignedTo, dueDate: o.dueDate })),
+        workloadByEmpNonZero: Object.entries(result).filter(([, w]) => w.activeTotal > 0 || w.sameDueDay > 0),
+        deadline,
+      })
+    }
+    return result
+  }, [contracts, employees, opportunities, deadline, excludeOpportunityId, team])
 
   // Get the list of employees for each column
   function getColumnItems(colIdx: number): { emp: Employee; enabled: boolean }[] {
