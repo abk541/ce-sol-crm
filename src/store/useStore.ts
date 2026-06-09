@@ -8,7 +8,7 @@ import type {
   ContractPoC, LockedSubcontractor, GovernmentWarning, Employee,
   BDSubmission, FileAttachment, CompanyCertification, EmployeeRequest,
   CompanyCertificationStatus, EmployeeRequestStatus,
-  ContractLineItem, ContractInvoice,
+  ContractLineItem, ContractInvoice, UserPreferences,
 } from '../types'
 import {
   MOCK_USERS, MOCK_OPPORTUNITIES, MOCK_NOTIFICATIONS,
@@ -79,6 +79,7 @@ interface AppState {
   nonSubGraceHours: number
   nonSubGraceMinutes: number
   nextInvoiceNumber: number   // global running sequence for generated contract invoices
+  prefs: UserPreferences
 
   // ── Auth actions ───────────────────────────────────────────────────
   login: (email: string, password: string) => { ok: boolean; error?: string; needsFirst?: boolean; needsMFA?: boolean }
@@ -177,6 +178,7 @@ interface AppState {
   toggleSidebar: () => void
   updateNonSubGracePeriod: (hours: number, minutes: number) => void
   consumeInvoiceNumber: () => number
+  setPref: <K extends keyof UserPreferences>(key: K, value: UserPreferences[K]) => void
 
   // ── DB ─────────────────────────────────────────────────────────────
   dbReady: boolean
@@ -381,6 +383,7 @@ export const useStore = create<AppState>()(
       nonSubGraceHours: 0,
       nonSubGraceMinutes: 5,
       nextInvoiceNumber: 1,
+      prefs: { notificationSound: true },
       dbReady: false,
       needsPurge: false,
 
@@ -433,37 +436,80 @@ export const useStore = create<AppState>()(
 
       // ── User management ─────────────────────────────────────────────
       createUser: (data) => {
-        if (!hasPermission(get().currentUser, 'admin:manageUsers')) {
+        const actor = get().currentUser
+        if (!hasPermission(actor, 'admin:manageUsers')) {
           toast.error('Only the Capture Manager can manage users.')
           return
         }
-        set(s => ({
-          users: [...s.users, {
-            ...data,
-            id: `u${Date.now()}`,
-            createdAt: new Date().toISOString().split('T')[0],
-          }]
-        }))
+        const user: User = {
+          ...data,
+          id: `u${Date.now()}`,
+          createdAt: new Date().toISOString().split('T')[0],
+        }
+        set(s => ({ users: [...s.users, user] }))
+        get().logActivity({
+          action: `Created user: ${user.name} (${user.email}) as ${user.role}`,
+          user: actor?.name || 'System',
+          userRole: actor?.role || 'CAPTURE_MANAGER',
+          entityType: 'user',
+          entityId: user.id,
+          entityName: user.name,
+        })
       },
 
       updateUser: (id, data) => {
-        if (!hasPermission(get().currentUser, 'admin:manageUsers')) {
+        const actor = get().currentUser
+        if (!hasPermission(actor, 'admin:manageUsers')) {
           toast.error('Only the Capture Manager can manage users.')
           return
         }
+        const before = get().users.find(u => u.id === id)
         set(s => ({
           users: s.users.map(u => u.id === id ? { ...u, ...data } : u)
         }))
+        const after = get().users.find(u => u.id === id)
+        if (before && after) {
+          const changes: string[] = []
+          if (data.role && data.role !== before.role) changes.push(`role: ${before.role} → ${after.role}`)
+          if (data.team !== undefined && data.team !== before.team) changes.push(`team: ${before.team ?? '-'} → ${after.team ?? '-'}`)
+          if (data.managerId !== undefined && data.managerId !== before.managerId) changes.push('manager updated')
+          if (data.status && data.status !== before.status) changes.push(`status: ${before.status} → ${after.status}`)
+          if (data.password && data.password !== before.password) changes.push('password reset')
+          if (data.firstLogin && !before.firstLogin) changes.push('first-login forced')
+          if (changes.length > 0 || data.name || data.email) {
+            const detail = changes.length ? ` (${changes.join(', ')})` : ''
+            get().logActivity({
+              action: `Updated user: ${after.name}${detail}`,
+              user: actor?.name || 'System',
+              userRole: actor?.role || 'CAPTURE_MANAGER',
+              entityType: 'user',
+              entityId: after.id,
+              entityName: after.name,
+            })
+          }
+        }
       },
 
       deleteUser: (id) => {
-        if (!hasPermission(get().currentUser, 'admin:manageUsers')) {
+        const actor = get().currentUser
+        if (!hasPermission(actor, 'admin:manageUsers')) {
           toast.error('Only the Capture Manager can manage users.')
           return
         }
+        const target = get().users.find(u => u.id === id)
         set(s => ({
           users: s.users.filter(u => u.id !== id)
         }))
+        if (target) {
+          get().logActivity({
+            action: `Removed user: ${target.name} (${target.email})`,
+            user: actor?.name || 'System',
+            userRole: actor?.role || 'CAPTURE_MANAGER',
+            entityType: 'user',
+            entityId: target.id,
+            entityName: target.name,
+          })
+        }
       },
 
       // ── Opportunity management ──────────────────────────────────────
@@ -591,7 +637,8 @@ export const useStore = create<AppState>()(
       },
 
       createOpportunity: async (data) => {
-        if (!hasPermission(get().currentUser, 'opportunity:create')) {
+        const actor = get().currentUser
+        if (!hasPermission(actor, 'opportunity:create')) {
           toast.error('Only the Capture Manager can add new opportunities.')
           return false
         }
@@ -612,6 +659,14 @@ export const useStore = create<AppState>()(
           message: `${data.solicitation} was added to the pipeline.`,
           read: false,
           relatedId: opp.id,
+        })
+        get().logActivity({
+          action: `Created opportunity: ${opp.solicitation} [${opp.solicitationId}]`,
+          user: actor?.name || 'System',
+          userRole: actor?.role || 'CAPTURE_MANAGER',
+          entityType: 'opportunity',
+          entityId: opp.id,
+          entityName: opp.solicitation,
         })
         get().syncDueOpportunities()
         return true
@@ -663,6 +718,7 @@ export const useStore = create<AppState>()(
       },
 
       assignOpportunity: (id, bdm, bds) => {
+        const actor = get().currentUser
         set(s => ({
           opportunities: s.opportunities.map(o => o.id === id ? { ...o, bdm, bds } : o)
         }))
@@ -676,11 +732,20 @@ export const useStore = create<AppState>()(
             read: false,
             relatedId: id,
           })
+          get().logActivity({
+            action: `Assigned opportunity ${opp.solicitation} → BDM: ${bdm}, BDS: ${bds}`,
+            user: actor?.name || 'System',
+            userRole: actor?.role || 'CAPTURE_MANAGER',
+            entityType: 'opportunity',
+            entityId: opp.id,
+            entityName: opp.solicitation,
+          })
         }
       },
 
       submitOpportunity: (id, values) => {
-        if (!hasPermission(get().currentUser, 'opportunity:submitProposal')) {
+        const actor = get().currentUser
+        if (!hasPermission(actor, 'opportunity:submitProposal')) {
           toast.error('You do not have permission to submit proposals.')
           return
         }
@@ -744,11 +809,20 @@ export const useStore = create<AppState>()(
             read: false,
             relatedId: id,
           })
+          get().logActivity({
+            action: `Submitted proposal for ${opp.solicitation}${values?.contractAmount ? ` ($${Number(values.contractAmount).toLocaleString()})` : ''}`,
+            user: actor?.name || 'System',
+            userRole: actor?.role || 'CAPTURE_MANAGER',
+            entityType: 'opportunity',
+            entityId: opp.id,
+            entityName: opp.solicitation,
+          })
         }
       },
 
       moveOpportunityToBDTracker: (id, status, comment) => {
-        if (status === 'CANCELED' && !hasPermission(get().currentUser, 'opportunity:cancel')) {
+        const actor = get().currentUser
+        if (status === 'CANCELED' && !hasPermission(actor, 'opportunity:cancel')) {
           toast.error('Only the Capture Manager can cancel contract opportunities.')
           return
         }
@@ -769,6 +843,21 @@ export const useStore = create<AppState>()(
           }))
           upsertBDSubmission(trackerRow)
           deleteOpportunityRecord(id)
+          get().logActivity({
+            action: `Canceled opportunity ${opp.solicitation}${comment ? ` — ${comment}` : ''}`,
+            user: actor?.name || 'System',
+            userRole: actor?.role || 'CAPTURE_MANAGER',
+            entityType: 'opportunity',
+            entityId: opp.id,
+            entityName: opp.solicitation,
+          })
+          get().addNotification({
+            type: 'STATUS_CHANGE',
+            title: 'Opportunity canceled',
+            message: `${opp.solicitation} was canceled${comment ? `: ${comment}` : '.'}`,
+            read: false,
+            relatedId: id,
+          })
           return
         }
 
@@ -791,6 +880,15 @@ export const useStore = create<AppState>()(
         }))
         upsertOpportunity(updatedOpp)
         upsertBDSubmission(trackerRow)
+
+        get().logActivity({
+          action: `Moved ${opp.solicitation} to ${status.replace(/_/g, ' ')}${comment ? ` — ${comment}` : ''}`,
+          user: actor?.name || 'System',
+          userRole: actor?.role || 'CAPTURE_MANAGER',
+          entityType: 'opportunity',
+          entityId: opp.id,
+          entityName: opp.solicitation,
+        })
 
         if (status === 'AWARDED') get().markOpportunityWon(id)
       },
@@ -909,6 +1007,7 @@ export const useStore = create<AppState>()(
       },
 
       createContract: async (data) => {
+        const actor = get().currentUser
         const contract: Contract = { ...data, id: `c${Date.now()}` }
         const saved = await upsertContract(contract)
         if (!saved) {
@@ -922,6 +1021,14 @@ export const useStore = create<AppState>()(
           message: `${data.title} has been added to active contracts.`,
           read: false,
           relatedId: contract.id,
+        })
+        get().logActivity({
+          action: `Created contract: ${contract.title}${contract.contractId ? ` [${contract.contractId}]` : ''}`,
+          user: actor?.name || 'System',
+          userRole: actor?.role || 'CAPTURE_MANAGER',
+          entityType: 'contract',
+          entityId: contract.id,
+          entityName: contract.title,
         })
         return true
       },
@@ -1192,6 +1299,7 @@ export const useStore = create<AppState>()(
       },
 
       advanceContractStatus: (id) => {
+        const actor = get().currentUser
         const contract = get().contracts.find(c => c.id === id)
         if (!contract) return
         const nextStatus = STATUS_FLOW[contract.status]
@@ -1203,6 +1311,21 @@ export const useStore = create<AppState>()(
         }))
         const advancedContract = get().contracts.find(c => c.id === id)
         if (advancedContract) upsertContract(advancedContract)
+        get().logActivity({
+          action: `Advanced contract ${contract.title}: ${contract.status} → ${nextStatus}`,
+          user: actor?.name || 'System',
+          userRole: actor?.role || 'CAPTURE_MANAGER',
+          entityType: 'contract',
+          entityId: contract.id,
+          entityName: contract.title,
+        })
+        get().addNotification({
+          type: 'STATUS_CHANGE',
+          title: 'Contract status changed',
+          message: `${contract.title}: ${contract.status} → ${nextStatus}`,
+          read: false,
+          relatedId: contract.id,
+        })
         // If moved to ARCHIVED, auto-create PastPerformance
         if (nextStatus === 'ARCHIVED') {
           const pp: PastPerformance = {
@@ -1789,6 +1912,7 @@ export const useStore = create<AppState>()(
         set({ nextInvoiceNumber: current + 1 })
         return current
       },
+      setPref: (key, value) => set(s => ({ prefs: { ...s.prefs, [key]: value } })),
     }),
     {
       name: 'ces-crm-store',
@@ -1826,6 +1950,7 @@ export const useStore = create<AppState>()(
             nonSubGraceHours: 0,
             nonSubGraceMinutes: 5,
             nextInvoiceNumber: 1,
+            prefs:           { notificationSound: true },
           }
         }
         return {
@@ -1839,6 +1964,9 @@ export const useStore = create<AppState>()(
           nextInvoiceNumber: Math.max(1, Math.trunc(Number(s.nextInvoiceNumber) || 1)),
           companyCertifications: Array.isArray(s.companyCertifications) ? s.companyCertifications : [],
           employeeRequests: Array.isArray(s.employeeRequests) ? s.employeeRequests : [],
+          prefs: {
+            notificationSound: (s.prefs as Record<string, unknown> | undefined)?.notificationSound !== false,
+          },
           needsPurge: false,
           dbReady: false,
         }
@@ -1871,6 +1999,7 @@ export const useStore = create<AppState>()(
         companyCertifications: s.companyCertifications,
         employeeRequests:  s.employeeRequests,
         notifications:     s.notifications,
+        prefs:             s.prefs,
         needsPurge:        false,
         dbReady:           false,
       }),

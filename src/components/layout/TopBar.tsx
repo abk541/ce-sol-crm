@@ -34,6 +34,8 @@ import type { Contract, Employee, NotifType, Notification as AppNotification, Op
 import { ROUTE_LABELS } from '../../config/navigation'
 import { buildGlobalSearchResults, type GlobalSearchResult } from '../../lib/globalSearch'
 import { ROLE_LABELS } from '../../lib/permissions'
+import { playNotificationDing } from '../../lib/sound'
+import PreferencesMenu from './PreferencesMenu'
 
 const TYPE_CONFIG: Record<NotifType, { icon: typeof Bell; color: string; label: string }> = {
   ASSIGNMENT:          { icon: UserPlus,       color: '#7DD3FC', label: 'Assignment' },
@@ -118,6 +120,7 @@ export default function TopBar() {
     nonSubReports,
     pastPerformances,
   } = useStore()
+  const soundEnabled = useStore(s => s.prefs.notificationSound)
   const location = useLocation()
   const navigate = useNavigate()
   const searchInputRef = useRef<HTMLInputElement>(null)
@@ -125,6 +128,8 @@ export default function TopBar() {
   const [showGlobalSearch, setShowGlobalSearch] = useState(false)
   const [showNotifications, setShowNotifications] = useState(false)
   const [selectedNotification, setSelectedNotification] = useState<AppNotification | null>(null)
+  const [bellPulse, setBellPulse] = useState(false)
+  const seenNotificationIds = useRef<Set<string> | null>(null)
 
   useEscapeKey(() => setSelectedNotification(null), Boolean(selectedNotification))
   useEscapeKey(() => setShowGlobalSearch(false), showGlobalSearch)
@@ -166,6 +171,24 @@ export default function TopBar() {
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [])
+
+  // Live notification feedback: when a new visible notification arrives,
+  // play the configured sound (if enabled) and pulse the bell briefly.
+  // Initial mount seeds the seen-set so existing data does not re-trigger.
+  useEffect(() => {
+    if (seenNotificationIds.current === null) {
+      seenNotificationIds.current = new Set(visibleNotifications.map(n => n.id))
+      return
+    }
+    const seen = seenNotificationIds.current
+    const fresh = visibleNotifications.filter(n => !seen.has(n.id))
+    if (fresh.length === 0) return
+    fresh.forEach(n => seen.add(n.id))
+    if (soundEnabled) playNotificationDing()
+    setBellPulse(true)
+    const timer = window.setTimeout(() => setBellPulse(false), 1400)
+    return () => window.clearTimeout(timer)
+  }, [visibleNotifications, soundEnabled])
 
   const openGlobalSearchResult = (result: GlobalSearchResult) => {
     navigate(result.route)
@@ -292,6 +315,8 @@ export default function TopBar() {
       </div>
 
       <div className="ml-auto flex items-center gap-2">
+        <PreferencesMenu />
+
         <div className="relative">
           <button
             type="button"
@@ -299,7 +324,13 @@ export default function TopBar() {
             className="relative w-9 h-9 rounded-xl flex items-center justify-center text-stone-300 transition-all hover:text-white hover:bg-white/10"
             aria-label="Open notifications"
           >
-            <Bell size={16} />
+            <motion.span
+              animate={bellPulse ? { rotate: [0, -14, 12, -10, 8, 0] } : { rotate: 0 }}
+              transition={{ duration: 0.9, ease: 'easeInOut' }}
+              className="inline-flex"
+            >
+              <Bell size={16} />
+            </motion.span>
             {unread > 0 && (
               <span
                 className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] rounded-full px-1 text-[10px] font-black text-[#07131F] ring-2 ring-[#07131F] flex items-center justify-center"
@@ -307,6 +338,12 @@ export default function TopBar() {
               >
                 {unread > 9 ? '9+' : unread}
               </span>
+            )}
+            {bellPulse && (
+              <span
+                className="pointer-events-none absolute inset-0 rounded-xl"
+                style={{ boxShadow: '0 0 0 0 rgba(215,190,122,0.55)', animation: 'topbarBellPulse 1.2s ease-out 1' }}
+              />
             )}
           </button>
 

@@ -525,6 +525,14 @@ export interface Notification {
   targetRole?: Role | 'ALL'
 }
 
+// ── User preferences ──────────────────────────────────────────────────
+// Persisted per-user UI preferences. Only `notificationSound` is wired
+// today; the rest are placeholders for the upcoming customization panel.
+export interface UserPreferences {
+  notificationSound: boolean
+  // future: theme, fontSize, density, accent, etc.
+}
+
 // ── Agent Stats ───────────────────────────────────────────────────────
 export interface AgentStats {
   username: string
