@@ -1,4 +1,4 @@
-import type { Contract, Employee, Opportunity, User } from '../types'
+import type { Contract, Employee, EmployeeTeam, Opportunity, User } from '../types'
 
 export const ROLE_DISPLAY_LABELS: Record<string, string> = {
   BD_MANAGER: 'Manager',
@@ -104,27 +104,29 @@ export function findEmployeeForUser(employees: Employee[], user?: User | null): 
   )
 }
 
-export function assignableEmployeesForUser(employees: Employee[], user?: User | null): Employee[] {
+export function assignableEmployeesForUser(employees: Employee[], user?: User | null, team?: EmployeeTeam): Employee[] {
   if (!user) return []
-  if (user.role === 'CAPTURE_MANAGER') return employees
+  const pool = team ? employees.filter(employee => (employee.team ?? 'BD') === team) : employees
+  if (user.role === 'CAPTURE_MANAGER') return pool
   if (user.role === 'ASSOCIATE') return []
 
-  const currentEmployee = findEmployeeForUser(employees, user)
+  const currentEmployee = findEmployeeForUser(pool, user)
   if (!currentEmployee) {
-    if (user.role === 'BD_MANAGER') return employees.filter(employee => employee.role !== 'BD_MANAGER')
-    if (user.role === 'TEAM_LEAD') return employees.filter(employee => employee.role === 'ASSOCIATE')
+    if (!team && user.role === 'BD_MANAGER') return pool.filter(employee => employee.role !== 'BD_MANAGER')
+    if (!team && user.role === 'OPS_MANAGER') return pool.filter(employee => (employee.team ?? 'BD') === 'OPS' && employee.role !== 'BD_MANAGER')
+    if (!team && user.role === 'TEAM_LEAD') return pool.filter(employee => employee.role === 'ASSOCIATE')
     return []
   }
 
   if (currentEmployee.role === 'BD_MANAGER') {
-    const teamLeads = employees.filter(employee => employee.managerId === currentEmployee.id && employee.role === 'TEAM_LEAD')
+    const teamLeads = pool.filter(employee => employee.managerId === currentEmployee.id && employee.role === 'TEAM_LEAD')
     const teamLeadIds = new Set(teamLeads.map(employee => employee.id))
-    const associates = employees.filter(employee => employee.role === 'ASSOCIATE' && employee.managerId && teamLeadIds.has(employee.managerId))
+    const associates = pool.filter(employee => employee.role === 'ASSOCIATE' && employee.managerId && teamLeadIds.has(employee.managerId))
     return [...teamLeads, ...associates]
   }
 
   if (currentEmployee.role === 'TEAM_LEAD') {
-    return employees.filter(employee => employee.managerId === currentEmployee.id && employee.role === 'ASSOCIATE')
+    return pool.filter(employee => employee.managerId === currentEmployee.id && employee.role === 'ASSOCIATE')
   }
 
   return []

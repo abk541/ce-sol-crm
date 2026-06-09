@@ -8,13 +8,13 @@ import type {
   ContractPoC, LockedSubcontractor, GovernmentWarning, Employee,
   BDSubmission, FileAttachment, CompanyCertification, EmployeeRequest,
   CompanyCertificationStatus, EmployeeRequestStatus,
-  ContractLineItem, ContractInvoice, UserPreferences,
+  ContractLineItem, ContractInvoice, UserPreferences, EmployeeTeam,
 } from '../types'
 import {
   MOCK_USERS, MOCK_OPPORTUNITIES, MOCK_NOTIFICATIONS,
   MOCK_SUBCONTRACTORS, MOCK_NON_SUB_REPORTS, MOCK_DELETION_REQUESTS,
   MOCK_CONTRACTS, MOCK_FRESH_AWARDS, MOCK_PAST_PERFORMANCES,
-  MOCK_SUBK_DATABASE, MOCK_ACTIVITY_LOGS, MOCK_EMPLOYEES,
+  MOCK_SUBK_DATABASE, MOCK_ACTIVITY_LOGS,
   MOCK_BD_SUBMISSIONS, MOCK_COMPANY_CERTIFICATIONS, MOCK_EMPLOYEE_REQUESTS,
 } from '../data/mock'
 import { isSupabaseConnected } from '../lib/supabase'
@@ -297,33 +297,38 @@ function normalizePersistedUserRole<T>(value: T): T {
   return value
 }
 
-function mergeSeedUsers(users: unknown): User[] {
+function mergeSeedUsers(users: unknown, refreshSeedHierarchy = false): User[] {
   const existing = Array.isArray(users) ? users.map(normalizePersistedUserRole as (value: User) => User) : []
   const byEmail = new Map(existing.map(user => [user.email.toLowerCase(), user]))
 
   MOCK_USERS.forEach(seedUser => {
     const key = seedUser.email.toLowerCase()
-    if (!byEmail.has(key)) byEmail.set(key, seedUser)
+    const current = byEmail.get(key)
+    if (!current) {
+      byEmail.set(key, seedUser)
+      return
+    }
+
+    if (refreshSeedHierarchy) {
+      byEmail.set(key, {
+        ...current,
+        name: seedUser.name,
+        role: seedUser.role,
+        avatar: seedUser.avatar,
+        team: seedUser.team,
+        managerId: seedUser.managerId ?? null,
+      })
+    }
   })
 
   return Array.from(byEmail.values())
-}
-
-// Adds any seeded employees that aren't already in the persisted list (matched by id) and
-// back-fills the `team` field on legacy BD employees so the contract picker can filter correctly.
-function mergeSeedEmployees(employees: unknown): Employee[] {
-  const existing = Array.isArray(employees) ? (employees as Employee[]) : []
-  const byId = new Map<string, Employee>(existing.map(emp => [emp.id, { ...emp, team: emp.team ?? 'BD' }]))
-  MOCK_EMPLOYEES.forEach(seed => {
-    if (!byId.has(seed.id)) byId.set(seed.id, seed)
-  })
-  return Array.from(byId.values())
 }
 
 // Admin manages `users`; the assignment picker reads from `employees`. Mirror each user with a
 // hierarchy role into an employee record (sharing the same id) so people created/moved in Admin
 // appear in the picker and their workload counters work. CAPTURE_MANAGER is not assignable.
 function userToEmployee(user: User): Employee | null {
+  if (user.status !== 'active') return null
   if (user.role === 'CAPTURE_MANAGER') return null
   const role: Employee['role'] =
     user.role === 'OPS_MANAGER' ? 'BD_MANAGER' : user.role
@@ -342,19 +347,22 @@ function userToEmployee(user: User): Employee | null {
   }
 }
 
-// Merge user-mirrored employees over the existing employees array. Preserves any employee record
-// that doesn't correspond to a user (e.g. seeded MOCK_EMPLOYEES) and drops the employee mirror for
-// any user whose role is no longer assignable (CAPTURE_MANAGER).
+// Admin users are the source of truth for assignment. We intentionally do not
+// preserve standalone employee records here: if a user is inactive/deleted, they
+// must disappear from every assignment picker immediately.
 function syncEmployeesWithUsers(users: User[], employees: Employee[]): Employee[] {
-  const userIds = new Set(users.map(u => u.id))
   const userMirrors = users.map(userToEmployee).filter((e): e is Employee => e !== null)
-  const byId = new Map<string, Employee>(employees.map(e => [e.id, e]))
-  // Drop stale mirrors for users that became CAPTURE_MANAGER (still in users, no mirror produced).
-  for (const id of Array.from(byId.keys())) {
-    if (userIds.has(id) && !userMirrors.some(m => m.id === id)) byId.delete(id)
-  }
-  for (const mirror of userMirrors) byId.set(mirror.id, mirror)
-  return Array.from(byId.values())
+  const validIds = new Set(userMirrors.map(employee => employee.id))
+  return userMirrors.map(employee => {
+    const parentId = employee.managerId
+    return parentId && !validIds.has(parentId)
+      ? { ...employee, managerId: null }
+      : employee
+  })
+}
+
+function employeeBelongsToTeam(employee: Employee | undefined, team: EmployeeTeam): employee is Employee {
+  return !!employee && (employee.team ?? 'BD') === team
 }
 
 function normalizedSolicitationId(value?: string) {
@@ -412,7 +420,7 @@ export const useStore = create<AppState>()(
       pastPerformances: MOCK_PAST_PERFORMANCES,
       subkDatabase: MOCK_SUBK_DATABASE,
       activityLogs: MOCK_ACTIVITY_LOGS,
-      employees: MOCK_EMPLOYEES,
+      employees: syncEmployeesWithUsers(MOCK_USERS, []),
       bdSubmissions: MOCK_BD_SUBMISSIONS,
       companyCertifications: MOCK_COMPANY_CERTIFICATIONS,
       employeeRequests: MOCK_EMPLOYEE_REQUESTS,
@@ -684,6 +692,10 @@ export const useStore = create<AppState>()(
           toast.error('Only the Capture Manager can add new opportunities.')
           return false
         }
+        if (data.assignedTo && !employeeBelongsToTeam(get().employees.find(e => e.id === data.assignedTo), 'BD')) {
+          toast.error('Opportunities can only be assigned to Business Development users.')
+          return false
+        }
         const solicitationId = data.solicitationId.trim()
         const allowed = await canUseSolicitationId(solicitationId, get().opportunities)
         if (!allowed) return false
@@ -734,6 +746,10 @@ export const useStore = create<AppState>()(
         }
 
         const current = get().opportunities.find(o => o.id === id)
+        if (data.assignedTo && data.assignedTo !== current?.assignedTo && !employeeBelongsToTeam(get().employees.find(e => e.id === data.assignedTo), 'BD')) {
+          toast.error('Opportunities can only be assigned to Business Development users.')
+          return false
+        }
         const nextSolicitationId = data.solicitationId?.trim()
         if (nextSolicitationId && normalizedSolicitationId(nextSolicitationId) !== normalizedSolicitationId(current?.solicitationId)) {
           const allowed = await canUseSolicitationId(nextSolicitationId, get().opportunities, id)
@@ -1050,6 +1066,10 @@ export const useStore = create<AppState>()(
 
       createContract: async (data) => {
         const actor = get().currentUser
+        if (data.assignedTo && !employeeBelongsToTeam(get().employees.find(e => e.id === data.assignedTo), 'OPS')) {
+          toast.error('Contracts can only be assigned to Operations users.')
+          return false
+        }
         const contract: Contract = { ...data, id: `c${Date.now()}` }
         const saved = await upsertContract(contract)
         if (!saved) {
@@ -1076,6 +1096,10 @@ export const useStore = create<AppState>()(
       },
 
       updateContract: async (id, data) => {
+        if (data.assignedTo && !employeeBelongsToTeam(get().employees.find(e => e.id === data.assignedTo), 'OPS')) {
+          toast.error('Contracts can only be assigned to Operations users.')
+          return false
+        }
         const previous = get().contracts
         set(s => ({
           contracts: s.contracts.map(c => c.id === id ? { ...c, ...data } : c)
@@ -1854,6 +1878,11 @@ export const useStore = create<AppState>()(
           toast.error('You do not have permission to assign opportunities.')
           return
         }
+        const target = get().employees.find(e => e.id === employeeId)
+        if (!employeeBelongsToTeam(target, 'BD')) {
+          toast.error('Opportunities can only be assigned to Business Development users.')
+          return
+        }
         set(s => ({
           opportunities: s.opportunities.map(o =>
             o.id === opportunityId
@@ -1861,7 +1890,7 @@ export const useStore = create<AppState>()(
               : o
           )
         }))
-        const emp = get().employees.find(e => e.id === employeeId)
+        const emp = target
         const opp = get().opportunities.find(o => o.id === opportunityId)
         if (opp) upsertOpportunity(opp)
         if (emp && opp) {
@@ -1876,12 +1905,17 @@ export const useStore = create<AppState>()(
       },
 
       assignContractToEmployee: (contractId, employeeId) => {
+        const target = get().employees.find(e => e.id === employeeId)
+        if (!employeeBelongsToTeam(target, 'OPS')) {
+          toast.error('Contracts can only be assigned to Operations users.')
+          return
+        }
         set(s => ({
           contracts: s.contracts.map(c =>
             c.id === contractId ? { ...c, assignedTo: employeeId } : c
           )
         }))
-        const emp = get().employees.find(e => e.id === employeeId)
+        const emp = target
         const contract = get().contracts.find(c => c.id === contractId)
         if (contract) upsertContract(contract)
         if (emp && contract) {
@@ -1901,7 +1935,7 @@ export const useStore = create<AppState>()(
         if (get().dbReady) return
 
         try {
-          await seedEmployeesIfEmpty(MOCK_EMPLOYEES)
+          await seedEmployeesIfEmpty(syncEmployeesWithUsers(get().users, []))
 
           // seedIfEmpty is now a no-op (all mock arrays are empty)
           await seedIfEmpty({
@@ -1967,9 +2001,9 @@ export const useStore = create<AppState>()(
     }),
     {
       name: 'ces-crm-store',
-      // v12: global running invoice number + manual service date per contract
-      // (used by the Billing Period tab in contract admin).
-      version: 12,
+      // v13: assignment employees are derived strictly from active users so
+      // deleted/inactive users disappear from assignment pickers.
+      version: 13,
       migrate: (persistedState: unknown, fromVersion: number) => {
         const s = persistedState as Record<string, unknown>
         if (fromVersion < 4) {
@@ -1982,7 +2016,7 @@ export const useStore = create<AppState>()(
             loginTimestamp:  null,
             accessNoticeAccepted: false,
             users:           MOCK_USERS,
-            employees:       MOCK_EMPLOYEES,
+            employees:       syncEmployeesWithUsers(MOCK_USERS, []),
             opportunities:   [],
             contracts:       [],
             freshAwards:     [],
@@ -2004,12 +2038,12 @@ export const useStore = create<AppState>()(
             prefs:           { notificationSound: true },
           }
         }
-        const nextUsers = mergeSeedUsers(s.users)
+        const nextUsers = mergeSeedUsers(s.users, fromVersion < 13)
         return {
           ...s,
           currentUser: normalizePersistedUserRole(s.currentUser),
           users: nextUsers,
-          employees: syncEmployeesWithUsers(nextUsers, mergeSeedEmployees(s.employees)),
+          employees: syncEmployeesWithUsers(nextUsers, []),
           accessNoticeAccepted: Boolean(s.accessNoticeAccepted),
           nonSubGraceHours: Number(s.nonSubGraceHours ?? 0),
           nonSubGraceMinutes: Number(s.nonSubGraceMinutes ?? 5),

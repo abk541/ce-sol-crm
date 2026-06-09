@@ -15,7 +15,7 @@ const ASSIGNABLE_STATUSES = ['ACTIVE', 'NEW_ASSIGNMENT', 'DISCUSSION'] as const
 function AssignModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) {
   const { assignOpportunityToEmployee, employees, currentUser } = useStore()
   const [selectedEmpId, setSelectedEmpId] = useState<string | undefined>(opp.assignedTo)
-  const assignable = useMemo(() => assignableEmployeesForUser(employees, currentUser), [employees, currentUser])
+  const assignable = useMemo(() => assignableEmployeesForUser(employees, currentUser, 'BD'), [employees, currentUser])
 
   const handleAssign = () => {
     if (!selectedEmpId) { toast.error('Please select an assignee'); return }
@@ -80,6 +80,7 @@ function AssignModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }
             deadline={opp.dueDate}
             excludeOpportunityId={opp.id}
             allowedEmployeeIds={assignable.map(emp => emp.id)}
+            team="BD"
           />
         </div>
 
@@ -101,7 +102,7 @@ export default function ProposalsPage() {
   const [searchParams] = useSearchParams()
   const globalRecordId = searchParams.get('record')
   const [assignTarget, setAssignTarget] = useState<Opportunity | null>(null)
-  const assignable = useMemo(() => assignableEmployeesForUser(employees, currentUser), [employees, currentUser])
+  const assignable = useMemo(() => assignableEmployeesForUser(employees, currentUser, 'BD'), [employees, currentUser])
   const canAssign = hasPermission(currentUser, 'opportunity:assign')
 
   const rows = useMemo(() =>

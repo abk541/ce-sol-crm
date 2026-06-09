@@ -683,7 +683,7 @@ export function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => v
   const canRequestDelete = hasPermission(currentUser, 'opportunity:deleteRequest')
   const hasPendingDelete = deletionRequests.some(r => r.opportunityId === opp.id && r.status === 'PENDING')
   const allowedAssignees = useMemo(() => {
-    const ids = assignableEmployeesForUser(employees, currentUser).map(employee => employee.id)
+    const ids = assignableEmployeesForUser(employees, currentUser, 'BD').map(employee => employee.id)
     if (form.assignedTo && !ids.includes(form.assignedTo)) ids.push(form.assignedTo)
     return ids
   }, [employees, currentUser, form.assignedTo])
@@ -919,6 +919,7 @@ export function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => v
             deadline={form.dueDate || opp.dueDate || undefined}
             excludeOpportunityId={opp.id}
             allowedEmployeeIds={allowedAssignees}
+            team="BD"
           />
         </div>
       )}
@@ -2110,7 +2111,7 @@ function CreateModal({ onClose }: { onClose: () => void }) {
     comments: [], proposals: [], proposalAttachments: [], subcontractors: [], assignedTo: undefined,
   })
   const allowedAssignees = useMemo(
-    () => assignableEmployeesForUser(employees, currentUser).map(employee => employee.id),
+    () => assignableEmployeesForUser(employees, currentUser, 'BD').map(employee => employee.id),
     [employees, currentUser],
   )
   const set = (k: keyof Opportunity, v: any) => setForm(p => ({ ...p, [k]: v }))
@@ -2389,6 +2390,7 @@ function CreateModal({ onClose }: { onClose: () => void }) {
             onChange={v => set('assignedTo', v)}
             deadline={form.dueDate || undefined}
             allowedEmployeeIds={allowedAssignees}
+            team="BD"
           />
         </div>
       )}
