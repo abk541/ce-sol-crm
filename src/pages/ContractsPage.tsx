@@ -441,6 +441,26 @@ const LINE_YEAR_LABELS: Record<ContractLineYear, string> = {
 
 const LINE_YEAR_ORDER: ContractLineYear[] = ['base', 'option1', 'option2', 'option3', 'option4']
 
+const INVOICE_UNIT_OPTIONS = [
+  { value: 'EA', label: 'Per Each (EA)' },
+  { value: 'HR', label: 'Per Hour (HR)' },
+  { value: 'DY', label: 'Per Day (DY)' },
+  { value: 'MO', label: 'Per Month (MO)' },
+  { value: 'JB', label: 'Per Job (JB)' },
+  { value: 'SF', label: 'Per Square Foot (SF)' },
+  { value: 'AC', label: 'Per Acre (AC)' },
+]
+
+function normalizeInvoiceUnit(value?: string) {
+  const code = (value || '').trim().toUpperCase()
+  return INVOICE_UNIT_OPTIONS.some(unit => unit.value === code) ? code : 'EA'
+}
+
+function invoiceUnitLabel(value?: string) {
+  const code = normalizeInvoiceUnit(value)
+  return INVOICE_UNIT_OPTIONS.find(unit => unit.value === code)?.label || code
+}
+
 function QuantityStepper({
   value,
   onChange,
@@ -558,7 +578,7 @@ function ContractLineItemsTab({
       year: draft.year,
       description: draft.description.trim(),
       quantity: Number(draft.quantity) || 0,
-      unit: (draft.unit || 'EA').trim().toUpperCase(),
+      unit: normalizeInvoiceUnit(draft.unit),
       rate: Number(draft.rate) || 0,
     })
     if (id) {
@@ -624,15 +644,17 @@ function ContractLineItemsTab({
               onChange={v => setDraft({ ...draft, quantity: v })}
             />
           </div>
-          <div>
+          <div className="sm:col-span-2">
             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">Unit</label>
-            <input
-              type="text"
+            <select
               value={draft.unit}
               onChange={e => setDraft({ ...draft, unit: e.target.value })}
-              placeholder="EA"
-              className="input-field w-full uppercase"
-            />
+              className="input-field w-full"
+            >
+              {INVOICE_UNIT_OPTIONS.map(unit => (
+                <option key={unit.value} value={unit.value}>{unit.label}</option>
+              ))}
+            </select>
           </div>
           <div>
             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">Rate ($)</label>
@@ -654,7 +676,7 @@ function ContractLineItemsTab({
               {formatCurrency(draftAmount)}
             </div>
           </div>
-          <div className="sm:col-span-2 flex items-end">
+          <div className="flex items-end">
             <button
               type="button"
               onClick={handleAdd}
@@ -778,7 +800,7 @@ function LineItemRow({
   const [draft, setDraft] = useState({
     description: line.description,
     quantity: String(line.quantity),
-    unit: line.unit,
+    unit: normalizeInvoiceUnit(line.unit),
     rate: String(line.rate),
   })
 
@@ -787,7 +809,7 @@ function LineItemRow({
       setDraft({
         description: line.description,
         quantity: String(line.quantity),
-        unit: line.unit,
+        unit: normalizeInvoiceUnit(line.unit),
         rate: String(line.rate),
       })
     }
@@ -799,7 +821,7 @@ function LineItemRow({
     onUpdate({
       description: draft.description.trim(),
       quantity,
-      unit: (draft.unit || 'EA').trim().toUpperCase(),
+      unit: normalizeInvoiceUnit(draft.unit),
       rate,
     })
     setEditing(false)
@@ -829,8 +851,16 @@ function LineItemRow({
             compact
           />
         </td>
-        <td className="px-3 py-2 w-20">
-          <input className="input-field w-full text-xs uppercase" value={draft.unit} onChange={e => setDraft({ ...draft, unit: e.target.value })} />
+        <td className="px-3 py-2 min-w-[10rem]">
+          <select
+            className="input-field w-full text-xs"
+            value={draft.unit}
+            onChange={e => setDraft({ ...draft, unit: e.target.value })}
+          >
+            {INVOICE_UNIT_OPTIONS.map(unit => (
+              <option key={unit.value} value={unit.value}>{unit.label}</option>
+            ))}
+          </select>
         </td>
         <td className="px-3 py-2 w-28">
           <input className="input-field w-full text-xs text-right no-spin" type="number" min={0} step="0.01" value={draft.rate} onChange={e => setDraft({ ...draft, rate: e.target.value })} />
@@ -861,7 +891,7 @@ function LineItemRow({
       <td className="px-3 py-2 text-slate-400 text-[11px]">{LINE_YEAR_LABELS[line.year]}</td>
       <td className="px-3 py-2 text-slate-200">{line.description || <span className="italic text-slate-500">(no description)</span>}</td>
       <td className="px-3 py-2 text-right text-slate-200">{line.quantity}</td>
-      <td className="px-3 py-2 text-slate-300">{line.unit}</td>
+      <td className="px-3 py-2 text-slate-300" title={invoiceUnitLabel(line.unit)}>{normalizeInvoiceUnit(line.unit)}</td>
       <td className="px-3 py-2 text-right text-slate-200">{formatCurrency(line.rate)}</td>
       <td className="px-3 py-2 text-right text-[#F8E8B8] font-bold">{formatCurrency(line.amount)}</td>
       <td className="px-3 py-2">
@@ -1084,7 +1114,7 @@ function ContractBillingTab({
                     <span className="font-mono text-sm font-black text-[#F8E8B8]">{line.clin}</span>
                     <span className="ml-2 text-slate-200">{line.description || 'No description'}</span>
                     <span className="mt-1 block text-[11px] text-slate-400">
-                      {line.quantity} {line.unit || 'unit'} x {formatCurrency(line.rate || 0)}
+                      {line.quantity} {normalizeInvoiceUnit(line.unit)} x {formatCurrency(line.rate || 0)}
                     </span>
                   </span>
                   <span className="self-center whitespace-nowrap text-sm font-black text-emerald-300">
