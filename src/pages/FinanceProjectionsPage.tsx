@@ -261,6 +261,7 @@ function InvoiceForm({
 }) {
   const [state, setState] = useState<InvoiceFormState>(initial)
   const mounted = useRef(false)
+  const isEditing = Boolean(onDelete)
   const set = <K extends keyof InvoiceFormState>(k: K, v: InvoiceFormState[K]) =>
     setState(prev => ({ ...prev, [k]: v }))
 
@@ -334,7 +335,7 @@ function InvoiceForm({
 
   const submit = () => {
     if (!state.contractId) { toast.error('Pick a contract'); return }
-    if (!state.invoiceNumber.trim()) { toast.error('Invoice number is required'); return }
+    if (isEditing && !state.invoiceNumber.trim()) { toast.error('Invoice number is required'); return }
     if (!state.invoiceDate) { toast.error('Invoice date is required'); return }
     if (!state.serviceFrom || !state.serviceTo) { toast.error('Service from and service to are required'); return }
     const amt = Number(state.amount)
@@ -370,12 +371,19 @@ function InvoiceForm({
       <div className="grid gap-3 sm:grid-cols-2">
         <div>
           <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500">Invoice number</label>
-          <input
-            className="input-field mt-1 w-full"
-            value={state.invoiceNumber}
-            onChange={e => set('invoiceNumber', e.target.value)}
-            placeholder="INV-CES-26-0001"
-          />
+          {isEditing ? (
+            <input
+              className="input-field mt-1 w-full font-mono"
+              value={state.invoiceNumber}
+              onChange={e => set('invoiceNumber', e.target.value)}
+              placeholder="INV-CES-26-0001"
+            />
+          ) : (
+            <div className="mt-1 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+              <p className="font-mono text-sm font-black text-slate-900">{state.invoiceNumber || 'Generated from Billing Period'}</p>
+              <p className="mt-0.5 text-[10px] font-semibold text-slate-400">Generated in Contract Admin - Billing Period</p>
+            </div>
+          )}
         </div>
         <div>
           <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500">Invoice date</label>
@@ -802,7 +810,7 @@ export default function FinanceProjectionsPage() {
   const firstLineItems = defaultLineItems(firstContract, firstPopYear)
   const seedCreate: InvoiceFormState = {
     contractId: firstContract?.id ?? '',
-    invoiceNumber: formatInvoiceSequence(nextInvoiceNumber, today),
+    invoiceNumber: formatInvoiceSequence(nextInvoiceNumber),
     invoiceDate: today,
     serviceFrom: defaultServiceFrom(firstContract),
     serviceTo: defaultServiceTo(firstContract),
@@ -831,9 +839,9 @@ export default function FinanceProjectionsPage() {
   })
 
   const handleCreate = (state: InvoiceFormState) => {
-    const generatedNumber = formatInvoiceSequence(consumeInvoiceNumber(), state.invoiceDate)
+    const generatedNumber = formatInvoiceSequence(consumeInvoiceNumber())
     addContractInvoice(state.contractId, {
-      invoiceNumber: state.invoiceNumber.trim() || generatedNumber,
+      invoiceNumber: generatedNumber,
       invoiceDate: state.invoiceDate,
       amount: Number(state.amount) || 0,
       paymentMethod: state.paymentMethod || undefined,
@@ -1245,7 +1253,7 @@ export default function FinanceProjectionsPage() {
       >
         {creating && (
           <InvoiceForm
-            key="create"
+            key={`create-${nextInvoiceNumber}`}
             initial={seedCreate}
             contracts={contracts}
             onCancel={closeCreate}
