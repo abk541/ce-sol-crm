@@ -518,26 +518,102 @@ const OPP_FORM_TABS: { id: OppFormTab; label: string }[] = [
 ]
 
 // ── SAM.gov contacts panel (shared between create + edit modals) ──────
-export function SamGovContactsPanel({ contacts, emptyHint }: { contacts?: SamGovContact[]; emptyHint?: string }) {
+function makeOpportunityContact(): SamGovContact {
+  return {
+    id: crypto.randomUUID(),
+    kind: 'POC',
+    type: 'Manual',
+    fullName: '',
+  }
+}
+
+function opportunityContactHasData(contact: SamGovContact) {
+  return Boolean(
+    contact.fullName?.trim() ||
+    contact.title?.trim() ||
+    contact.type?.trim() ||
+    contact.email?.trim() ||
+    contact.phone?.trim() ||
+    contact.fax?.trim() ||
+    contact.additionalInfo?.trim()
+  )
+}
+
+function sanitizeOpportunityContacts(contacts?: SamGovContact[]) {
+  return (contacts ?? [])
+    .map(contact => ({
+      ...contact,
+      id: contact.id || crypto.randomUUID(),
+      kind: contact.kind ?? 'POC',
+      type: contact.type?.trim() || (contact.kind === 'CONTRACTING_OFFICE' ? 'Contracting Office' : undefined),
+      title: contact.title?.trim() || undefined,
+      fullName: contact.fullName?.trim() || undefined,
+      email: contact.email?.trim() || undefined,
+      phone: contact.phone?.trim() || undefined,
+      fax: contact.fax?.trim() || undefined,
+      additionalInfo: contact.additionalInfo?.trim() || undefined,
+    }))
+    .filter(opportunityContactHasData)
+}
+
+export function SamGovContactsPanel({
+  contacts,
+  emptyHint,
+  editable = false,
+  onChange,
+}: {
+  contacts?: SamGovContact[]
+  emptyHint?: string
+  editable?: boolean
+  onChange?: (contacts: SamGovContact[]) => void
+}) {
   const list = contacts ?? []
+  const updateContact = (id: string, patch: Partial<SamGovContact>) => {
+    if (!onChange) return
+    onChange(list.map(contact => contact.id === id ? { ...contact, ...patch } : contact))
+  }
+  const addContact = () => onChange?.([...list, makeOpportunityContact()])
+  const removeContact = (id: string) => onChange?.(list.filter(contact => contact.id !== id))
+
   if (list.length === 0) {
     return (
-      <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/60 p-8 text-center">
-        <div className="mx-auto w-10 h-10 rounded-full flex items-center justify-center bg-white border border-slate-200 mb-3">
-          <UserIcon size={16} className="text-slate-400" />
+      <div
+        className="rounded-xl border border-dashed p-8 text-center"
+        style={{ background: 'rgba(255,255,255,0.045)', borderColor: 'rgba(215,190,122,0.24)' }}
+      >
+        <div
+          className="mx-auto w-10 h-10 rounded-full flex items-center justify-center mb-3"
+          style={{ background: 'rgba(125,211,252,0.1)', border: '1px solid rgba(125,211,252,0.26)' }}
+        >
+          <UserIcon size={16} className="text-sky-200" />
         </div>
-        <p className="text-sm font-semibold text-slate-700">No contacts on file</p>
+        <p className="text-sm font-semibold text-slate-100">No contacts on file</p>
         <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">
           {emptyHint ?? 'Contacts are pulled automatically when the opportunity is imported from SAM.gov.'}
         </p>
+        {editable && (
+          <button type="button" onClick={addContact} className="btn-secondary mt-4 mx-auto">
+            <Plus size={13} /> Add POC
+          </button>
+        )}
       </div>
     )
   }
+
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <p className="text-sm font-semibold text-slate-700">Imported from SAM.gov</p>
-        <span className="text-[10px] uppercase tracking-widest text-slate-400">Read only - stays with the contract</span>
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <p className="text-sm font-semibold text-slate-100">Contracting Information</p>
+          <p className="text-xs text-slate-400">
+            {editable ? 'Add or update POCs and contracting office details.' : 'Imported and manually entered contacts stay with the opportunity.'}
+          </p>
+        </div>
+        {editable && (
+          <button type="button" onClick={addContact} className="btn-secondary flex-shrink-0">
+            <Plus size={13} /> Add POC
+          </button>
+        )}
       </div>
       {list.map(c => (
         <div
@@ -545,43 +621,112 @@ export function SamGovContactsPanel({ contacts, emptyHint }: { contacts?: SamGov
           className="p-4 rounded-xl border"
           style={{ background: 'rgba(255,255,255,0.045)', borderColor: 'rgba(215,190,122,0.24)' }}
         >
-          <div className="flex items-start justify-between gap-3 mb-2">
-            <div className="min-w-0">
-              <p className="text-sm font-semibold text-slate-800 truncate">
-                {c.fullName || c.title || 'Unnamed contact'}
-              </p>
-              {c.title && c.fullName && (
-                <p className="text-xs text-slate-500 mt-0.5 truncate">{c.title}</p>
-              )}
+          {editable ? (
+            <div className="space-y-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 flex-1">
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Contact Type</label>
+                    <select
+                      value={c.kind ?? 'POC'}
+                      onChange={event => {
+                        const kind = event.target.value as SamGovContact['kind']
+                        updateContact(c.id, {
+                          kind,
+                          type: kind === 'CONTRACTING_OFFICE' ? 'Contracting Office' : (c.type === 'Contracting Office' ? 'Manual' : c.type),
+                          title: kind === 'CONTRACTING_OFFICE' ? 'Contracting Office' : c.title,
+                        })
+                      }}
+                      className="select-field"
+                    >
+                      <option value="POC">POC</option>
+                      <option value="CONTRACTING_OFFICE">Contracting Office</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Name / Office</label>
+                    <input value={c.fullName ?? ''} onChange={event => updateContact(c.id, { fullName: event.target.value })} className="input-field" placeholder="Name or office" />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Title / Role</label>
+                    <input value={c.title ?? ''} onChange={event => updateContact(c.id, { title: event.target.value })} className="input-field" placeholder="Contracting Officer" />
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => removeContact(c.id)}
+                  className="mt-6 w-9 h-9 rounded-xl border border-red-400/35 text-red-200 hover:bg-red-500/15 transition-colors flex items-center justify-center"
+                  title="Remove contact"
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Email</label>
+                  <input value={c.email ?? ''} onChange={event => updateContact(c.id, { email: event.target.value })} className="input-field" placeholder="email@example.com" />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Phone</label>
+                  <input value={c.phone ?? ''} onChange={event => updateContact(c.id, { phone: event.target.value })} className="input-field" placeholder="+1..." />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Fax</label>
+                  <input value={c.fax ?? ''} onChange={event => updateContact(c.id, { fax: event.target.value })} className="input-field" placeholder="Optional" />
+                </div>
+              </div>
+              <div>
+                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Notes / Office Address</label>
+                <textarea
+                  value={c.additionalInfo ?? ''}
+                  onChange={event => updateContact(c.id, { additionalInfo: event.target.value })}
+                  rows={2}
+                  className="input-field w-full resize-none"
+                  placeholder="Address, extension, office notes..."
+                />
+              </div>
             </div>
-            {c.type && (
-              <span
-                className="text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-full whitespace-nowrap"
-                style={{ background: 'rgba(215,190,122,0.18)', color: '#F8E8B8', border: '1px solid rgba(215,190,122,0.35)' }}
-              >
-                {c.type}
-              </span>
-            )}
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-1.5 gap-x-4 text-xs">
-            {c.email && (
-              <a href={`mailto:${c.email}`} className="flex items-center gap-1.5 text-slate-600 hover:text-indigo-600 break-all">
-                <Mail size={11} className="flex-shrink-0" /> {c.email}
-              </a>
-            )}
-            {c.phone && (
-              <a href={`tel:${c.phone}`} className="flex items-center gap-1.5 text-slate-600 hover:text-indigo-600">
-                <Phone size={11} className="flex-shrink-0" /> {c.phone}
-              </a>
-            )}
-            {c.fax && (
-              <span className="flex items-center gap-1.5 text-slate-500">
-                <span className="text-[10px] font-bold">FAX</span> {c.fax}
-              </span>
-            )}
-          </div>
-          {c.additionalInfo && (
-            <p className="text-[11px] text-slate-500 mt-2 leading-relaxed">{c.additionalInfo}</p>
+          ) : (
+            <>
+              <div className="flex items-start justify-between gap-3 mb-2">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-slate-100 truncate">
+                    {c.fullName || c.title || 'Unnamed contact'}
+                  </p>
+                  {c.title && c.fullName && (
+                    <p className="text-xs text-slate-400 mt-0.5 truncate">{c.title}</p>
+                  )}
+                </div>
+                {c.type && (
+                  <span
+                    className="text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-full whitespace-nowrap"
+                    style={{ background: 'rgba(215,190,122,0.18)', color: '#F8E8B8', border: '1px solid rgba(215,190,122,0.35)' }}
+                  >
+                    {c.type}
+                  </span>
+                )}
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-1.5 gap-x-4 text-xs">
+                {c.email && (
+                  <a href={`mailto:${c.email}`} className="flex items-center gap-1.5 text-slate-300 hover:text-sky-200 break-all">
+                    <Mail size={11} className="flex-shrink-0" /> {c.email}
+                  </a>
+                )}
+                {c.phone && (
+                  <a href={`tel:${c.phone}`} className="flex items-center gap-1.5 text-slate-300 hover:text-sky-200">
+                    <Phone size={11} className="flex-shrink-0" /> {c.phone}
+                  </a>
+                )}
+                {c.fax && (
+                  <span className="flex items-center gap-1.5 text-slate-400">
+                    <span className="text-[10px] font-bold">FAX</span> {c.fax}
+                  </span>
+                )}
+              </div>
+              {c.additionalInfo && (
+                <p className="text-[11px] text-slate-400 mt-2 leading-relaxed">{c.additionalInfo}</p>
+              )}
+            </>
           )}
         </div>
       ))}
@@ -734,6 +879,7 @@ export function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => v
       return
     }
     const updatedComments = [...(form.comments ?? [])]
+    const cleanedContacts = sanitizeOpportunityContacts(form.samGovContacts)
     if (newComment.trim()) {
       updatedComments.push({
         id: crypto.randomUUID(),
@@ -744,7 +890,7 @@ export function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => v
       })
     }
     setSaving(true)
-    const saved = await updateOpportunity(opp.id, { ...form, comments: updatedComments })
+    const saved = await updateOpportunity(opp.id, { ...form, comments: updatedComments, samGovContacts: cleanedContacts })
     setSaving(false)
     if (saved) {
       toast.success('Opportunity updated')
@@ -929,6 +1075,8 @@ export function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => v
       {tab === 'contacts' && (
         <SamGovContactsPanel
           contacts={form.samGovContacts}
+          editable={canEditDetails}
+          onChange={contacts => set('samGovContacts', contacts)}
           emptyHint="No contacts captured. They are populated automatically when an opportunity is imported from SAM.gov."
         />
       )}
@@ -2377,6 +2525,7 @@ function CreateModal({ onClose }: { onClose: () => void }) {
       return
     }
     const comments: Comment[] = []
+    const cleanedContacts = sanitizeOpportunityContacts(form.samGovContacts)
     if (initialComment.trim()) {
       comments.push({
         id: crypto.randomUUID(),
@@ -2387,7 +2536,7 @@ function CreateModal({ onClose }: { onClose: () => void }) {
       })
     }
     setSaving(true)
-    const saved = await createOpportunity({ ...form, comments } as Omit<Opportunity, 'id'>)
+    const saved = await createOpportunity({ ...form, comments, samGovContacts: cleanedContacts } as Omit<Opportunity, 'id'>)
     setSaving(false)
     if (saved) {
       toast.success('Opportunity created and saved to Supabase.')
@@ -2579,6 +2728,8 @@ function CreateModal({ onClose }: { onClose: () => void }) {
       {tab === 'contacts' && (
         <SamGovContactsPanel
           contacts={form.samGovContacts}
+          editable
+          onChange={contacts => set('samGovContacts', contacts)}
           emptyHint="Paste a SAM.gov URL above and click Import to pull the agency points of contact."
         />
       )}
