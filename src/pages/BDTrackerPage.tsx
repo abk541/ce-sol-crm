@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { Filter, MoreHorizontal, Paperclip, Search, TrendingUp } from 'lucide-react'
+import { Edit2, Eye, Filter, MoreHorizontal, Paperclip, Search, TrendingUp } from 'lucide-react'
 import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import type { BDSubmission, FileAttachment } from '../types'
+import type { BDSubmission, ContractType, FileAttachment, Opportunity, SetAside } from '../types'
 import { useStore } from '../store/useStore'
 import toast from 'react-hot-toast'
 import PeriodFilter, { type Period, filterByPeriod } from '../components/shared/PeriodFilter'
@@ -11,8 +11,11 @@ import { getAssignmentChain } from '../lib/team'
 import { formatCurrency } from '../lib/utils'
 import FloatingActionMenu from '../components/shared/FloatingActionMenu'
 import { hasPermission } from '../lib/permissions'
-import type { Opportunity } from '../types'
-import { EditModal as OpportunityEditModal } from './PipelinePage'
+import DetailDrawer, { DrawerField, DrawerSection } from '../components/shared/DetailDrawer'
+import {
+  formatOpportunityMoroccoDueDateTime,
+  formatOpportunitySourceDueDateTime,
+} from './PipelinePage'
 
 type BDTab = BDSubmission['status']
 
@@ -51,6 +54,8 @@ const FILTERS = [
 type FilterKey = typeof FILTERS[number]['key']
 type Filters = Record<FilterKey, string>
 const EMPTY_FILTERS: Filters = FILTERS.reduce((acc, filter) => ({ ...acc, [filter.key]: '' }), {} as Filters)
+const CONTRACT_TYPES: ContractType[] = ['OTJ', 'RECURRING', 'BPA', 'IDIQ', 'S&D']
+const SET_ASIDES: SetAside[] = ['SB', 'SDVOSB', 'WOSB', 'HUBZone', 'VOSB', '8(a)', 'UNRES']
 
 function typeLabel(value: string) {
   return value === 'S&D' || value === 'SUPPLY' ? 'S&D' : value
@@ -115,6 +120,147 @@ function ProposalCell({ attachments }: { attachments: FileAttachment[] }) {
   )
 }
 
+function formatSubmittedOn(value: string) {
+  if (!value) return '-'
+  const d = new Date(value)
+  if (!Number.isFinite(d.getTime())) return value
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+function formatStatusLabel(status: BDTab) {
+  return BD_TABS.find(tab => tab.key === status)?.label ?? status.replace(/_/g, ' ')
+}
+
+function trackerEditInitial(row: BDSubmission, opp?: Opportunity | null) {
+  return {
+    solicitation: row.solicitation ?? '',
+    client: opp?.client ?? '',
+    type: row.type,
+    setAside: row.setAside,
+    naicsCode: opp?.naicsCode ?? '',
+    dueDate: row.dueDate ?? '',
+    localTime: opp?.localTime ?? row.localTime ?? '',
+    timezone: opp?.timezone ?? '',
+    location: row.location ?? '',
+    value: String(row.value ?? 0),
+    comment: row.comment ?? '',
+    mandatoryEvents: opp?.mandatoryEvents ?? '',
+  }
+}
+
+type TrackerEditForm = ReturnType<typeof trackerEditInitial>
+
+function BDTrackerEditModal({
+  row,
+  opportunity,
+  onClose,
+  onSave,
+}: {
+  row: BDSubmission
+  opportunity?: Opportunity | null
+  onClose: () => void
+  onSave: (form: TrackerEditForm) => Promise<boolean>
+}) {
+  const [form, setForm] = useState(() => trackerEditInitial(row, opportunity))
+  const [saving, setSaving] = useState(false)
+  const update = (key: keyof TrackerEditForm, value: string) => setForm(prev => ({ ...prev, [key]: value }))
+
+  const save = async () => {
+    if (!form.solicitation.trim()) {
+      toast.error('Solicitation title is required.')
+      return
+    }
+    setSaving(true)
+    const saved = await onSave(form)
+    setSaving(false)
+    if (saved) onClose()
+  }
+
+  return (
+    <DetailDrawer
+      isOpen
+      onClose={onClose}
+      title="Edit Tracker Details"
+      subtitle={`${row.solicitationId} - ${row.solicitation}`}
+      width={840}
+      placement="modal"
+      showBackdrop
+      variant="premium"
+    >
+      <div className="space-y-5">
+        <div className="rounded-2xl border border-[#D7BE7A]/20 bg-[#06131F]/90 p-4">
+          <p className="mb-1 text-[10px] font-black uppercase tracking-[0.22em] text-[#D7BE7A]">BD Tracker Record</p>
+          <p className="text-sm leading-6 text-slate-300">
+            These fields update the tracker row. When the original opportunity is still linked, matching opportunity fields are updated too.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <label className="md:col-span-2">
+            <span className="mb-1 block text-[10px] font-black uppercase tracking-wide text-slate-400">Solicitation *</span>
+            <input className="input-field w-full" value={form.solicitation} onChange={e => update('solicitation', e.target.value)} />
+          </label>
+          {opportunity && (
+            <label>
+              <span className="mb-1 block text-[10px] font-black uppercase tracking-wide text-slate-400">Agency / Client</span>
+              <input className="input-field w-full" value={form.client} onChange={e => update('client', e.target.value)} />
+            </label>
+          )}
+          <label>
+            <span className="mb-1 block text-[10px] font-black uppercase tracking-wide text-slate-400">Contract Type</span>
+            <select className="input-field w-full" value={form.type} onChange={e => update('type', e.target.value)}>
+              {CONTRACT_TYPES.map(type => <option key={type} value={type}>{typeLabel(type)}</option>)}
+            </select>
+          </label>
+          <label>
+            <span className="mb-1 block text-[10px] font-black uppercase tracking-wide text-slate-400">Set Aside</span>
+            <select className="input-field w-full" value={form.setAside} onChange={e => update('setAside', e.target.value)}>
+              {SET_ASIDES.map(setAside => <option key={setAside} value={setAside}>{setAside}</option>)}
+            </select>
+          </label>
+          {opportunity && (
+            <label>
+              <span className="mb-1 block text-[10px] font-black uppercase tracking-wide text-slate-400">NAICS</span>
+              <input className="input-field w-full" value={form.naicsCode} onChange={e => update('naicsCode', e.target.value)} />
+            </label>
+          )}
+          <label>
+            <span className="mb-1 block text-[10px] font-black uppercase tracking-wide text-slate-400">Due Date</span>
+            <input className="input-field w-full" value={form.dueDate} onChange={e => update('dueDate', e.target.value)} placeholder="YYYY-MM-DD" />
+          </label>
+          <label>
+            <span className="mb-1 block text-[10px] font-black uppercase tracking-wide text-slate-400">Source Time</span>
+            <input className="input-field w-full opacity-70" value={form.localTime || '-'} disabled />
+          </label>
+          <label>
+            <span className="mb-1 block text-[10px] font-black uppercase tracking-wide text-slate-400">Location</span>
+            <input className="input-field w-full" value={form.location} onChange={e => update('location', e.target.value)} />
+          </label>
+          <label>
+            <span className="mb-1 block text-[10px] font-black uppercase tracking-wide text-slate-400">Value</span>
+            <input className="input-field w-full" type="number" min="0" value={form.value} onChange={e => update('value', e.target.value)} />
+          </label>
+          <label className="md:col-span-2">
+            <span className="mb-1 block text-[10px] font-black uppercase tracking-wide text-slate-400">Comment</span>
+            <textarea className="input-field min-h-[90px] w-full resize-none" value={form.comment} onChange={e => update('comment', e.target.value)} />
+          </label>
+          {opportunity && (
+            <label className="md:col-span-2">
+              <span className="mb-1 block text-[10px] font-black uppercase tracking-wide text-slate-400">Mandatory Events</span>
+              <textarea className="input-field min-h-[90px] w-full resize-none" value={form.mandatoryEvents} onChange={e => update('mandatoryEvents', e.target.value)} />
+            </label>
+          )}
+        </div>
+
+        <div className="sticky bottom-0 -mx-6 -mb-5 flex justify-end gap-3 border-t border-[#D7BE7A]/15 bg-[#07131F]/95 px-6 py-4 backdrop-blur">
+          <button className="btn-secondary" onClick={onClose}>Cancel</button>
+          <button className="btn-primary" onClick={save} disabled={saving}>{saving ? 'Saving...' : 'Save Details'}</button>
+        </div>
+      </div>
+    </DetailDrawer>
+  )
+}
+
 function filterValue(
   row: BDSubmission,
   key: FilterKey,
@@ -157,9 +303,10 @@ function FilterInput({
 }
 
 export default function BDTrackerPage() {
-  const { bdSubmissions, updateBDSubmission, opportunities, employees, currentUser } = useStore()
+  const { bdSubmissions, updateBDSubmission, updateBDSubmissionDetails, updateOpportunity, opportunities, employees, currentUser } = useStore()
   const canEditOpportunities = hasPermission(currentUser, 'opportunity:edit')
-  const [editOpp, setEditOpp] = useState<Opportunity | null>(null)
+  const [selectedRowId, setSelectedRowId] = useState<number | null>(null)
+  const [editingRowId, setEditingRowId] = useState<number | null>(null)
   const [searchParams] = useSearchParams()
   const globalRecordId = searchParams.get('record')
   const globalTab = searchParams.get('tab') as BDTab | null
@@ -223,6 +370,10 @@ export default function BDTrackerPage() {
   const safePage = Math.min(page, totalPages)
   const pageStart = (safePage - 1) * perPageNum
   const pageRows = perPage === 'All' ? filtered : filtered.slice(pageStart, pageStart + perPageNum)
+  const selectedRow = selectedRowId === null ? null : bdSubmissions.find(row => row.id === selectedRowId) ?? null
+  const selectedOpportunity = selectedRow ? rowOpportunity(selectedRow, opportunities) ?? null : null
+  const editingRow = editingRowId === null ? null : bdSubmissions.find(row => row.id === editingRowId) ?? null
+  const editingOpportunity = editingRow ? rowOpportunity(editingRow, opportunities) ?? null : null
 
   const stats = {
     submitted: baseFiltered.filter(s => s.status === 'SUBMITTED').length,
@@ -251,6 +402,42 @@ export default function BDTrackerPage() {
     setFilters({ ...EMPTY_FILTERS })
     setPeriod(null)
     setPage(1)
+  }
+
+  const openEditForRow = (row: BDSubmission) => {
+    setSelectedRowId(null)
+    setEditingRowId(row.id)
+  }
+
+  const saveTrackerDetails = async (row: BDSubmission, opportunity: Opportunity | null | undefined, form: TrackerEditForm) => {
+    const value = Number(form.value) || 0
+    if (opportunity) {
+      const saved = await updateOpportunity(opportunity.id, {
+        solicitation: form.solicitation.trim(),
+        client: form.client,
+        type: form.type as ContractType,
+        setAside: form.setAside as SetAside,
+        naicsCode: form.naicsCode,
+        dueDate: form.dueDate,
+        location: form.location,
+        contractAmount: value,
+        value,
+        mandatoryEvents: form.mandatoryEvents,
+      })
+      if (!saved) return false
+    }
+    updateBDSubmissionDetails(row.id, {
+      solicitation: form.solicitation.trim(),
+      type: form.type as ContractType,
+      setAside: form.setAside as SetAside,
+      dueDate: form.dueDate,
+      localTime: row.localTime,
+      location: form.location,
+      value,
+      comment: form.comment,
+    })
+    toast.success('Tracker details updated.')
+    return true
   }
 
   return (
@@ -401,7 +588,11 @@ export default function BDTrackerPage() {
                       initial={{ opacity: 0, y: 4 }}
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: i * 0.02 }}
-                      className={isGlobalTarget ? 'ring-1 ring-[#D7BE7A] ring-inset bg-[#D7BE7A]/10' : undefined}
+                      onClick={() => setSelectedRowId(s.id)}
+                      className={[
+                        'cursor-pointer transition-colors hover:bg-[#D7BE7A]/10',
+                        isGlobalTarget ? 'ring-1 ring-[#D7BE7A] ring-inset bg-[#D7BE7A]/10' : '',
+                      ].join(' ')}
                     >
                       <td className="text-xs text-slate-600">{s.submittedOn}</td>
                       <td className="font-mono text-xs font-semibold text-indigo-600">{s.solicitationId}</td>
@@ -424,20 +615,22 @@ export default function BDTrackerPage() {
                           onOpenChange={open => setMenuOpen(open ? String(s.id) : null)}
                           trigger={<MoreHorizontal size={14} />}
                         >
-                                {canEditOpportunities && (() => {
-                                  const linkedOpp = opportunities.find(o => o.solicitationId === s.solicitationId)
-                                  if (!linkedOpp) return null
-                                  return (
-                                    <>
-                                      <button
-                                        onClick={() => { setEditOpp(linkedOpp); setMenuOpen(null) }}
-                                        className="block w-full px-3 py-2 text-left text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50 hover:text-slate-900">
-                                        Edit Details
-                                      </button>
-                                      <div className="my-1 border-t border-slate-100" />
-                                    </>
-                                  )
-                                })()}
+                                <button
+                                  onClick={() => { setSelectedRowId(s.id); setMenuOpen(null) }}
+                                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50 hover:text-slate-900">
+                                  <Eye size={12} /> View Details
+                                </button>
+                                {canEditOpportunities && (
+                                  <>
+                                    <button
+                                      onClick={() => { openEditForRow(s); setMenuOpen(null) }}
+                                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50 hover:text-slate-900">
+                                      <Edit2 size={12} />
+                                      Edit Details
+                                    </button>
+                                    <div className="my-1 border-t border-slate-100" />
+                                  </>
+                                )}
                                 <p className="px-3 py-1 text-[9px] font-bold uppercase tracking-wider text-slate-400">Move to</p>
                                 {BD_TABS.filter(t => t.key !== s.status).map(t => {
                                   const itemMeta = STATUS_META[t.key]
@@ -480,7 +673,147 @@ export default function BDTrackerPage() {
           </div>
         </div>
       </div>
-      {editOpp && <OpportunityEditModal opp={editOpp} onClose={() => setEditOpp(null)} />}
+
+      <DetailDrawer
+        isOpen={!!selectedRow}
+        onClose={() => setSelectedRowId(null)}
+        title={selectedRow?.solicitation ?? ''}
+        subtitle={selectedRow ? `${selectedRow.solicitationId} - ${formatStatusLabel(selectedRow.status)}` : ''}
+        width={1040}
+        placement="modal"
+        showBackdrop
+        variant="premium"
+      >
+        {selectedRow && (
+          <>
+            {(() => {
+              const meta = STATUS_META[selectedRow.status]
+              const chain = getAssignmentChain(employees, selectedOpportunity?.assignedTo)
+              const proposalAttachments = selectedOpportunity?.proposalAttachments ?? []
+              return (
+                <>
+                  <div className="mb-6 rounded-3xl border border-[#D7BE7A]/20 bg-gradient-to-r from-[#102820]/90 via-[#0A2327]/90 to-[#0A1D2B]/90 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="rounded-lg border px-2.5 py-1 text-[10px] font-black uppercase tracking-wide" style={{ color: meta.color, background: meta.bg, borderColor: meta.border }}>
+                        {formatStatusLabel(selectedRow.status)}
+                      </span>
+                      <span className="rounded-lg border border-[#7DD3FC]/30 bg-[#7DD3FC]/10 px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-[#BAE6FD]">{typeLabel(selectedRow.type)}</span>
+                      <span className="rounded-lg border border-[#D7BE7A]/25 bg-[#D7BE7A]/10 px-2.5 py-1 font-mono text-[10px] font-bold text-[#F8FBF7]">{selectedRow.solicitationId}</span>
+                    </div>
+                    <div className="mt-3 grid gap-3 text-xs text-slate-300 md:grid-cols-4">
+                      <div className="min-w-0">
+                        <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">Submitted</p>
+                        <p className="truncate font-semibold text-[#F8FBF7]">{formatSubmittedOn(selectedRow.submittedOn)}</p>
+                      </div>
+                      <div className="min-w-0">
+                        <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">Due</p>
+                        <p className="truncate font-semibold text-[#F8FBF7]">
+                          {selectedOpportunity ? formatOpportunitySourceDueDateTime(selectedOpportunity) : selectedRow.dueDate}
+                        </p>
+                      </div>
+                      <div className="min-w-0">
+                        <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">Location</p>
+                        <p className="truncate font-semibold text-[#F8FBF7]" title={selectedRow.location}>{selectedRow.location || '-'}</p>
+                      </div>
+                      <div className="min-w-0">
+                        <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">Value</p>
+                        <p className="truncate font-semibold text-emerald-300">{formatCurrency(selectedRow.value)}</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                    <DrawerSection title="Tracker Details" variant="premium">
+                      <DrawerField label="Solicitation ID" value={selectedRow.solicitationId} variant="premium" />
+                      <DrawerField label="Solicitation" value={selectedRow.solicitation} variant="premium" />
+                      <DrawerField label="Status" value={formatStatusLabel(selectedRow.status)} variant="premium" />
+                      <DrawerField label="Type" value={typeLabel(selectedRow.type)} variant="premium" />
+                      <DrawerField label="Set Aside" value={selectedRow.setAside} variant="premium" />
+                      <DrawerField label="Comment" value={selectedRow.comment || '-'} variant="premium" />
+                    </DrawerSection>
+
+                    <DrawerSection title="Opportunity Details" variant="premium">
+                      <DrawerField label="Agency / Client" value={selectedOpportunity?.client || '-'} variant="premium" />
+                      <DrawerField label="NAICS" value={selectedOpportunity?.naicsCode || '-'} variant="premium" />
+                      <DrawerField label="Priority" value={selectedOpportunity?.priority || '-'} variant="premium" />
+                      <DrawerField label="Captured On" value={selectedOpportunity?.capturedOn || '-'} variant="premium" />
+                      <DrawerField label="Source Link" value={selectedOpportunity?.link ? <a className="text-[#7DD3FC] hover:underline" href={selectedOpportunity.link} target="_blank" rel="noreferrer">Open source</a> : '-'} variant="premium" />
+                    </DrawerSection>
+
+                    <DrawerSection title="Schedule" variant="premium">
+                      <DrawerField label="Due Date" value={selectedRow.dueDate || '-'} variant="premium" />
+                      <DrawerField label="Source Time" value={selectedOpportunity ? formatOpportunitySourceDueDateTime(selectedOpportunity) : (selectedRow.localTime || '-')} variant="premium" />
+                      <DrawerField label="Morocco Time" value={selectedOpportunity ? (formatOpportunityMoroccoDueDateTime(selectedOpportunity) || '-') : '-'} variant="premium" />
+                      <DrawerField label="Submitted On" value={formatSubmittedOn(selectedRow.submittedOn)} variant="premium" />
+                    </DrawerSection>
+
+                    <DrawerSection title="Team" variant="premium">
+                      <DrawerField label="Manager" value={chain.manager?.name || selectedRow.bdm || '-'} variant="premium" />
+                      <DrawerField label="Team Lead" value={chain.teamLead?.name || selectedRow.bds || '-'} variant="premium" />
+                      <DrawerField label="Associate" value={chain.associate?.name || selectedRow.supportAgent || '-'} variant="premium" />
+                    </DrawerSection>
+                  </div>
+
+                  {proposalAttachments.length > 0 && (
+                    <DrawerSection title={`Proposal Files (${proposalAttachments.length})`} variant="premium">
+                      <div className="space-y-2 py-3">
+                        {proposalAttachments.map(att => (
+                          <button
+                            key={att.id}
+                            type="button"
+                            onClick={() => downloadProposalAttachment(att)}
+                            className="flex w-full items-center justify-between gap-3 rounded-xl border border-[#D7BE7A]/15 bg-white/5 px-3 py-2 text-left text-xs font-semibold text-slate-200 transition-colors hover:border-[#D7BE7A]/35 hover:bg-[#D7BE7A]/10"
+                          >
+                            <span className="min-w-0 truncate"><Paperclip size={12} className="mr-2 inline text-[#D7BE7A]" />{att.name}</span>
+                            <span className="text-[10px] uppercase tracking-wide text-[#D7BE7A]">Open</span>
+                          </button>
+                        ))}
+                      </div>
+                    </DrawerSection>
+                  )}
+
+                  {selectedOpportunity?.mandatoryEvents && (
+                    <DrawerSection title="Mandatory Events" variant="premium">
+                      <p className="py-3 text-sm leading-6 text-slate-200">{selectedOpportunity.mandatoryEvents}</p>
+                    </DrawerSection>
+                  )}
+
+                  {selectedOpportunity?.comments?.length ? (
+                    <DrawerSection title={`Comments (${selectedOpportunity.comments.length})`} variant="premium">
+                      {selectedOpportunity.comments.map(comment => (
+                        <div key={comment.id} className="border-b border-[#D7BE7A]/15 py-3 last:border-0">
+                          <div className="mb-1 flex items-center justify-between gap-3">
+                            <span className="text-xs font-bold text-[#F8FBF7]">{comment.author}</span>
+                            <span className="text-[10px] font-medium text-slate-400">{formatSubmittedOn(comment.createdAt)}</span>
+                          </div>
+                          <p className="text-xs leading-5 text-slate-300">{comment.text}</p>
+                        </div>
+                      ))}
+                    </DrawerSection>
+                  ) : null}
+
+                  {canEditOpportunities && (
+                    <div className="sticky bottom-0 -mx-6 -mb-5 mt-4 flex justify-end gap-2 border-t border-[#D7BE7A]/15 bg-[#07131F]/95 px-6 py-4 backdrop-blur">
+                      <button className="btn-primary gap-2 text-xs" onClick={() => openEditForRow(selectedRow)}>
+                        <Edit2 size={13} /> Edit Details
+                      </button>
+                    </div>
+                  )}
+                </>
+              )
+            })()}
+          </>
+        )}
+      </DetailDrawer>
+
+      {editingRow && (
+        <BDTrackerEditModal
+          row={editingRow}
+          opportunity={editingOpportunity}
+          onClose={() => setEditingRowId(null)}
+          onSave={form => saveTrackerDetails(editingRow, editingOpportunity, form)}
+        />
+      )}
     </div>
   )
 }

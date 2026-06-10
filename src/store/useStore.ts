@@ -138,6 +138,7 @@ interface AppState {
 
   // ── BD Submissions ─────────────────────────────────────────────────
   updateBDSubmission: (id: number, status: BDSubmission['status']) => void
+  updateBDSubmissionDetails: (id: number, data: Partial<Omit<BDSubmission, 'id' | 'status'>>) => void
 
   // ── Fresh Awards ───────────────────────────────────────────────────
   assignFreshAward: (id: string, assignments: Partial<FreshAward>) => void
@@ -1740,6 +1741,14 @@ export const useStore = create<AppState>()(
             if (status === 'AWARDED') get().markOpportunityWon(opp.id)
           }
         }
+      },
+
+      updateBDSubmissionDetails: (id, data) => {
+        set(s => ({
+          bdSubmissions: s.bdSubmissions.map(b => b.id === id ? { ...b, ...data } : b)
+        }))
+        const updated = get().bdSubmissions.find(b => b.id === id)
+        if (updated) upsertBDSubmission(updated)
       },
 
       // ── Activity Logs ───────────────────────────────────────────────
