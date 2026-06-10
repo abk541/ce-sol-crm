@@ -496,14 +496,22 @@ function QuantityStepper({
 
 function ContractLineItemsTab({
   contract,
+  selectedInvoiceLineItemIds,
   onAdd,
   onUpdate,
   onRemove,
+  onToggleInvoiceLine,
+  onSelectAllInvoiceLines,
+  onClearInvoiceLines,
 }: {
   contract: Contract
+  selectedInvoiceLineItemIds: string[]
   onAdd: (line: { year: ContractLineYear; description: string; quantity: number; unit: string; rate: number }) => string | null
   onUpdate: (lineId: string, data: Partial<Omit<ContractLineItem, 'id' | 'contractId' | 'clin'>>) => void
   onRemove: (lineId: string) => void
+  onToggleInvoiceLine: (lineId: string) => void
+  onSelectAllInvoiceLines: () => void
+  onClearInvoiceLines: () => void
 }) {
   const lineItems = useMemo(() => {
     return [...(contract.lineItems || [])].sort((a, b) => {
@@ -566,6 +574,9 @@ function ContractLineItemsTab({
   }, [lineItems])
 
   const grandTotal = lineItems.reduce((s, l) => s + l.amount, 0)
+  const selectedInvoiceLines = lineItems.filter(line => selectedInvoiceLineItemIds.includes(line.id))
+  const selectedInvoiceTotal = selectedInvoiceLines.reduce((s, l) => s + l.amount, 0)
+  const allSelectedForInvoice = lineItems.length > 0 && selectedInvoiceLines.length === lineItems.length
 
   return (
     <div className="space-y-5">
@@ -670,16 +681,43 @@ function ContractLineItemsTab({
           className="rounded-2xl border overflow-hidden"
           style={{ background: 'rgba(8,24,37,0.72)', borderColor: 'rgba(215,190,122,0.24)' }}
         >
-          <div className="flex items-center justify-between px-5 py-3 border-b" style={{ borderColor: 'rgba(215,190,122,0.18)' }}>
-            <p className="text-[10px] font-black uppercase tracking-[0.16em] text-[#D7BE7A]">All lines</p>
-            <p className="text-xs text-slate-300 font-semibold">
-              Total: <span className="text-[#F8E8B8] font-bold">{formatCurrency(grandTotal)}</span>
-            </p>
+          <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 border-b" style={{ borderColor: 'rgba(215,190,122,0.18)' }}>
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-[0.16em] text-[#D7BE7A]">All lines</p>
+              <p className="mt-1 text-[11px] font-semibold text-slate-400">
+                Invoice selection: <span className="text-[#F8E8B8]">{selectedInvoiceLines.length} selected</span>
+                {' '}({formatCurrency(selectedInvoiceTotal)})
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <p className="mr-2 text-xs text-slate-300 font-semibold">
+                Total: <span className="text-[#F8E8B8] font-bold">{formatCurrency(grandTotal)}</span>
+              </p>
+              <button
+                type="button"
+                onClick={onSelectAllInvoiceLines}
+                disabled={allSelectedForInvoice}
+                className="rounded-lg border px-2.5 py-1 text-[11px] font-semibold text-slate-200 transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-45"
+                style={{ borderColor: 'rgba(215,190,122,0.22)' }}
+              >
+                Select all
+              </button>
+              <button
+                type="button"
+                onClick={onClearInvoiceLines}
+                disabled={!selectedInvoiceLines.length}
+                className="rounded-lg border px-2.5 py-1 text-[11px] font-semibold text-slate-200 transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-45"
+                style={{ borderColor: 'rgba(215,190,122,0.22)' }}
+              >
+                Clear
+              </button>
+            </div>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
                 <tr style={{ background: 'rgba(215,190,122,0.10)' }}>
+                  <th className="text-center px-3 py-2 font-bold uppercase tracking-wide text-[10px] text-[#D7BE7A]">Invoice</th>
                   <th className="text-left px-3 py-2 font-bold uppercase tracking-wide text-[10px] text-[#D7BE7A]">CLIN</th>
                   <th className="text-left px-3 py-2 font-bold uppercase tracking-wide text-[10px] text-[#D7BE7A]">Year</th>
                   <th className="text-left px-3 py-2 font-bold uppercase tracking-wide text-[10px] text-[#D7BE7A]">Description</th>
@@ -697,7 +735,7 @@ function ContractLineItemsTab({
                   return (
                     <>
                       <tr key={`hdr-${year}`}>
-                        <td colSpan={8} className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide text-slate-400" style={{ background: 'rgba(255,255,255,0.025)' }}>
+                        <td colSpan={9} className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide text-slate-400" style={{ background: 'rgba(255,255,255,0.025)' }}>
                           {LINE_YEAR_LABELS[year]} · {formatCurrency(totalsByYear[year] || 0)}
                         </td>
                       </tr>
@@ -705,6 +743,8 @@ function ContractLineItemsTab({
                         <LineItemRow
                           key={line.id}
                           line={line}
+                          selectedForInvoice={selectedInvoiceLineItemIds.includes(line.id)}
+                          onToggleInvoiceLine={() => onToggleInvoiceLine(line.id)}
                           onUpdate={data => onUpdate(line.id, data)}
                           onRemove={() => onRemove(line.id)}
                         />
@@ -723,10 +763,14 @@ function ContractLineItemsTab({
 
 function LineItemRow({
   line,
+  selectedForInvoice,
+  onToggleInvoiceLine,
   onUpdate,
   onRemove,
 }: {
   line: ContractLineItem
+  selectedForInvoice: boolean
+  onToggleInvoiceLine: () => void
   onUpdate: (data: Partial<Omit<ContractLineItem, 'id' | 'contractId' | 'clin'>>) => void
   onRemove: () => void
 }) {
@@ -764,6 +808,15 @@ function LineItemRow({
   if (editing) {
     return (
       <tr style={{ borderTop: '1px solid rgba(215,190,122,0.10)' }}>
+        <td className="px-3 py-2 text-center">
+          <input
+            type="checkbox"
+            className="h-4 w-4 accent-[#D7BE7A]"
+            checked={selectedForInvoice}
+            onChange={onToggleInvoiceLine}
+            aria-label={`Include CLIN ${line.clin} on invoice`}
+          />
+        </td>
         <td className="px-3 py-2 font-mono font-bold text-[#F8E8B8]">{line.clin}</td>
         <td className="px-3 py-2 text-slate-300 text-[11px]">{LINE_YEAR_LABELS[line.year]}</td>
         <td className="px-3 py-2">
@@ -795,6 +848,15 @@ function LineItemRow({
 
   return (
     <tr style={{ borderTop: '1px solid rgba(215,190,122,0.10)' }}>
+      <td className="px-3 py-2 text-center">
+        <input
+          type="checkbox"
+          className="h-4 w-4 accent-[#D7BE7A]"
+          checked={selectedForInvoice}
+          onChange={onToggleInvoiceLine}
+          aria-label={`Include CLIN ${line.clin} on invoice`}
+        />
+      </td>
       <td className="px-3 py-2 font-mono font-bold text-[#F8E8B8]">{line.clin}</td>
       <td className="px-3 py-2 text-slate-400 text-[11px]">{LINE_YEAR_LABELS[line.year]}</td>
       <td className="px-3 py-2 text-slate-200">{line.description || <span className="italic text-slate-500">(no description)</span>}</td>
@@ -1476,8 +1538,13 @@ function ContractDetailDrawer({
   const deliverables = normalizeContractDeliverables(contract.deliverables)
   const invoicePopYear = contract.currentPopYear || 'base'
   const availableInvoiceLineItems = useMemo(
-    () => (contract.lineItems || []).filter(line => line.year === invoicePopYear),
-    [contract.lineItems, invoicePopYear],
+    () => [...(contract.lineItems || [])].sort((a, b) => {
+      const ay = LINE_YEAR_ORDER.indexOf(a.year)
+      const by = LINE_YEAR_ORDER.indexOf(b.year)
+      if (ay !== by) return ay - by
+      return a.clin.localeCompare(b.clin)
+    }),
+    [contract.lineItems],
   )
   const availableInvoiceLineItemKey = availableInvoiceLineItems.map(line => line.id).join('|')
   useEffect(() => {
@@ -3239,9 +3306,19 @@ function ContractDetailDrawer({
         {tab === 'lineItems' && (
           <ContractLineItemsTab
             contract={contract}
+            selectedInvoiceLineItemIds={selectedInvoiceLineItemIds}
             onAdd={(line) => addContractLineItem(contract.id, line)}
             onUpdate={(lineId, data) => updateContractLineItem(contract.id, lineId, data)}
             onRemove={(lineId) => removeContractLineItem(contract.id, lineId)}
+            onToggleInvoiceLine={(lineId) => {
+              setSelectedInvoiceLineItemIds(prev =>
+                prev.includes(lineId)
+                  ? prev.filter(id => id !== lineId)
+                  : [...prev, lineId],
+              )
+            }}
+            onSelectAllInvoiceLines={() => setSelectedInvoiceLineItemIds(availableInvoiceLineItems.map(line => line.id))}
+            onClearInvoiceLines={() => setSelectedInvoiceLineItemIds([])}
           />
         )}
 
