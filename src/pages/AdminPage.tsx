@@ -225,7 +225,7 @@ function UserModal({ user, defaultRole, defaultTeam, defaultManagerId, onClose }
             <div>
               <label className="text-xs text-slate-500 block mb-1">Full Name *</label>
               <input value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))}
-                className="input-field" placeholder="e.g. Aymane Chhouma" required />
+                className="input-field" placeholder="e.g. BD Manager 01" required />
             </div>
             <div>
               <label className="text-xs text-slate-500 block mb-1">Email *</label>
