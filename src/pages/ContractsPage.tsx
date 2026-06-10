@@ -823,14 +823,24 @@ function ContractBillingTab({
   contract,
   nextInvoiceNumber,
   invoiceReady,
+  availableLineItems,
   invoiceLineItems,
+  selectedLineItemIds,
+  onToggleLineItem,
+  onSelectAllLineItems,
+  onClearLineItems,
   onSaveBillingPeriod,
   onGenerateInvoice,
 }: {
   contract: Contract
   nextInvoiceNumber: number
   invoiceReady: boolean
+  availableLineItems: ContractLineItem[]
   invoiceLineItems: ContractLineItem[]
+  selectedLineItemIds: string[]
+  onToggleLineItem: (lineId: string) => void
+  onSelectAllLineItems: () => void
+  onClearLineItems: () => void
   onSaveBillingPeriod: (value: { start: string; end: string }) => Promise<void> | void
   onGenerateInvoice: () => void
 }) {
@@ -860,6 +870,15 @@ function ContractBillingTab({
         : null
   const selectedYear = contract.currentPopYear || 'base'
   const selectedClinTotal = invoiceLineItems.reduce((sum, line) => sum + (line.amount || 0), 0)
+  const allClinTotal = availableLineItems.reduce((sum, line) => sum + (line.amount || 0), 0)
+  const hasAvailableClins = availableLineItems.length > 0
+  const allSelected = hasAvailableClins && selectedLineItemIds.length === availableLineItems.length
+  const invoiceCanGenerate = invoiceReady && (!hasAvailableClins || invoiceLineItems.length > 0)
+  const generateTitle = !invoiceReady
+    ? 'OTJ invoices are generated when the contract reaches Pending Payment.'
+    : hasAvailableClins && invoiceLineItems.length === 0
+      ? 'Select at least one CLIN to include on the invoice.'
+      : 'Generate invoice PDF'
 
   return (
     <div className="space-y-5">
@@ -949,6 +968,91 @@ function ContractBillingTab({
         className="rounded-2xl border p-5"
         style={{ background: 'rgba(8,24,37,0.72)', borderColor: 'rgba(215,190,122,0.24)' }}
       >
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-[0.16em] text-[#D7BE7A]">Invoice lines</p>
+            <h3 className="mt-1 text-base font-bold text-slate-100">Choose what appears on the invoice</h3>
+            <p className="mt-1 text-xs text-slate-400">
+              {hasAvailableClins
+                ? `${invoiceLineItems.length} of ${availableLineItems.length} CLINs selected - ${formatCurrency(selectedClinTotal)} selected`
+                : `${LINE_YEAR_LABELS[selectedYear]} has no CLINs yet. The invoice will use the contract amount fallback.`}
+            </p>
+          </div>
+          {hasAvailableClins && (
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={onSelectAllLineItems}
+                disabled={allSelected}
+                className="rounded-lg border px-3 py-1.5 text-xs font-semibold text-slate-200 transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-45"
+                style={{ borderColor: 'rgba(215,190,122,0.24)' }}
+              >
+                Select all
+              </button>
+              <button
+                type="button"
+                onClick={onClearLineItems}
+                disabled={!selectedLineItemIds.length}
+                className="rounded-lg border px-3 py-1.5 text-xs font-semibold text-slate-200 transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-45"
+                style={{ borderColor: 'rgba(215,190,122,0.24)' }}
+              >
+                Clear
+              </button>
+            </div>
+          )}
+        </div>
+
+        {hasAvailableClins ? (
+          <div className="mt-4 max-h-64 overflow-y-auto rounded-xl border" style={{ borderColor: 'rgba(215,190,122,0.22)' }}>
+            {availableLineItems.map(line => {
+              const checked = selectedLineItemIds.includes(line.id)
+              return (
+                <label
+                  key={line.id}
+                  className="grid cursor-pointer grid-cols-[auto_1fr_auto] gap-3 border-b px-3 py-3 text-xs transition-colors last:border-b-0 hover:bg-white/5"
+                  style={{ borderColor: 'rgba(215,190,122,0.14)' }}
+                >
+                  <input
+                    type="checkbox"
+                    className="mt-1 h-4 w-4 accent-[#D7BE7A]"
+                    checked={checked}
+                    onChange={() => onToggleLineItem(line.id)}
+                  />
+                  <span className="min-w-0">
+                    <span className="font-mono text-sm font-black text-[#F8E8B8]">{line.clin}</span>
+                    <span className="ml-2 text-slate-200">{line.description || 'No description'}</span>
+                    <span className="mt-1 block text-[11px] text-slate-400">
+                      {line.quantity} {line.unit || 'unit'} x {formatCurrency(line.rate || 0)}
+                    </span>
+                  </span>
+                  <span className="self-center whitespace-nowrap text-sm font-black text-emerald-300">
+                    {formatCurrency(line.amount || 0)}
+                  </span>
+                </label>
+              )
+            })}
+          </div>
+        ) : (
+          <div
+            className="mt-4 rounded-xl border border-dashed px-4 py-4 text-sm text-slate-400"
+            style={{ borderColor: 'rgba(215,190,122,0.22)', background: 'rgba(255,255,255,0.035)' }}
+          >
+            Add CLINs in the Line Items tab when you need line-by-line invoice control.
+          </div>
+        )}
+
+        {hasAvailableClins && (
+          <div className="mt-3 flex flex-wrap justify-between gap-2 text-xs text-slate-400">
+            <span>All CLINs: {formatCurrency(allClinTotal)}</span>
+            <span className="font-semibold text-[#F8E8B8]">Selected total: {formatCurrency(selectedClinTotal)}</span>
+          </div>
+        )}
+      </div>
+
+      <div
+        className="rounded-2xl border p-5"
+        style={{ background: 'rgba(8,24,37,0.72)', borderColor: 'rgba(215,190,122,0.24)' }}
+      >
         <p className="text-[10px] font-black uppercase tracking-[0.16em] text-[#D7BE7A]">Next invoice</p>
         <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
           <div className="rounded-xl border p-3" style={{ background: 'rgba(255,255,255,0.04)', borderColor: 'rgba(215,190,122,0.22)' }}>
@@ -974,8 +1078,8 @@ function ContractBillingTab({
         <button
           type="button"
           onClick={onGenerateInvoice}
-          disabled={!invoiceReady}
-          title={!invoiceReady ? 'OTJ invoices are generated when the contract reaches Pending Payment.' : 'Generate invoice PDF'}
+          disabled={!invoiceCanGenerate}
+          title={generateTitle}
           className="btn-primary mt-4 disabled:opacity-45 disabled:cursor-not-allowed"
         >
           <Receipt size={12} /> Generate invoice now
@@ -1116,6 +1220,7 @@ function ContractDetailDrawer({
     currentPopYear: contract.currentPopYear || 'base' as ContractLineYear,
   })
   const [contractNumberDraft, setContractNumberDraft] = useState(contract.contractNumber || '')
+  const [selectedInvoiceLineItemIds, setSelectedInvoiceLineItemIds] = useState<string[]>([])
 
   // Edit Details form
   const buildEditForm = (c: Contract) => ({
@@ -1370,17 +1475,41 @@ function ContractDetailDrawer({
   const invoiceReady = canGenerateContractInvoice(contract)
   const deliverables = normalizeContractDeliverables(contract.deliverables)
   const invoicePopYear = contract.currentPopYear || 'base'
-  const invoiceLineItems = (contract.lineItems || []).filter(line => line.year === invoicePopYear)
+  const availableInvoiceLineItems = useMemo(
+    () => (contract.lineItems || []).filter(line => line.year === invoicePopYear),
+    [contract.lineItems, invoicePopYear],
+  )
+  const availableInvoiceLineItemKey = availableInvoiceLineItems.map(line => line.id).join('|')
+  useEffect(() => {
+    const availableIds = availableInvoiceLineItems.map(line => line.id)
+    setSelectedInvoiceLineItemIds(prev => {
+      const valid = prev.filter(id => availableIds.includes(id))
+      return valid.length ? valid : availableIds
+    })
+  }, [contract.id, invoicePopYear, availableInvoiceLineItemKey])
+  const invoiceLineItems = availableInvoiceLineItems.filter(line => selectedInvoiceLineItemIds.includes(line.id))
   const invoiceAmount = invoiceLineItems.length > 0
     ? invoiceLineItems.reduce((sum, line) => sum + (line.amount || 0), 0)
     : invoiceAmountFor(contract)
   const invoiceServiceFrom = contract.billingPeriodStart || contract.serviceDate || contract.popStart || ''
   const invoiceServiceTo = contract.billingPeriodEnd || contract.serviceDate || contract.popEnd || ''
+  const invoiceHasSelectableLines = availableInvoiceLineItems.length > 0
+  const invoiceHasSelectedLines = invoiceLineItems.length > 0
+  const canGenerateSelectedInvoice = invoiceReady && (!invoiceHasSelectableLines || invoiceHasSelectedLines)
+  const selectedInvoiceTitle = !invoiceReady
+    ? 'OTJ invoices are generated when the contract reaches Pending Payment.'
+    : invoiceHasSelectableLines && !invoiceHasSelectedLines
+      ? 'Select at least one CLIN in Billing Period before generating this invoice.'
+      : 'Generate invoice PDF'
   const createTrackedInvoiceAndPdf = async () => {
     if (!invoiceReady) {
       toast.error(contract.type === 'OTJ'
         ? 'OTJ invoices can only be generated in Pending Payment.'
         : 'Could not generate invoice PDF.')
+      return
+    }
+    if (invoiceHasSelectableLines && !invoiceHasSelectedLines) {
+      toast.error('Select at least one CLIN for this invoice.')
       return
     }
     const sequence = consumeInvoiceNumber()
@@ -1692,8 +1821,8 @@ function ContractDetailDrawer({
                 <button
                   type="button"
                   onClick={createTrackedInvoiceAndPdf}
-                  disabled={!invoiceReady}
-                  title={!invoiceReady ? 'OTJ invoices are generated when the contract reaches Pending Payment.' : 'Generate invoice PDF'}
+                  disabled={!canGenerateSelectedInvoice}
+                  title={selectedInvoiceTitle}
                   className="btn-secondary gap-1 px-2.5 py-1 text-xs disabled:cursor-not-allowed disabled:opacity-45"
                 >
                   <Receipt size={12} /> Generate Invoice
@@ -3122,7 +3251,18 @@ function ContractDetailDrawer({
             contract={contract}
             nextInvoiceNumber={nextInvoiceNumber}
             invoiceReady={invoiceReady}
+            availableLineItems={availableInvoiceLineItems}
             invoiceLineItems={invoiceLineItems}
+            selectedLineItemIds={selectedInvoiceLineItemIds}
+            onToggleLineItem={(lineId) => {
+              setSelectedInvoiceLineItemIds(prev =>
+                prev.includes(lineId)
+                  ? prev.filter(id => id !== lineId)
+                  : [...prev, lineId],
+              )
+            }}
+            onSelectAllLineItems={() => setSelectedInvoiceLineItemIds(availableInvoiceLineItems.map(line => line.id))}
+            onClearLineItems={() => setSelectedInvoiceLineItemIds([])}
             onSaveBillingPeriod={async ({ start, end }) => {
               const saved = await updateContract(contract.id, {
                 billingPeriodStart: start || undefined,
