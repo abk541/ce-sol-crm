@@ -1170,6 +1170,7 @@ const EMPTY_DRAFT: SourcingDraft = {
 
 export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) {
   const { subcontractors, addSubcontractor, updateSubcontractor, deleteSubcontractor, currentUser } = useStore()
+  const canWriteSourcing = hasPermission(currentUser, 'sourcing:write')
   const oppSubs = useMemo(
     () => subcontractors
       .filter(s => s.opportunityId === opp.id)
@@ -1322,6 +1323,10 @@ export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () 
 
   const removeSelected = () => {
     if (!selected) return
+    if (!canWriteSourcing) {
+      toast.error('You do not have permission to update sourcing.')
+      return
+    }
     if (!confirm(`Remove ${selected.companyName} from this sourcing list?`)) return
     deleteSubcontractor(selected.id)
     toast.success('Subcontractor removed')
@@ -1465,6 +1470,16 @@ export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () 
                       Added by {selected.createdBy || '—'} · {formatDateTime(selected.createdAt)}
                     </p>
                   </div>
+                  {canWriteSourcing && (
+                    <button
+                      type="button"
+                      onClick={removeSelected}
+                      className="inline-flex flex-shrink-0 items-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] font-black text-rose-700 transition-all hover:bg-rose-100"
+                      title="Delete subcontractor"
+                    >
+                      <Trash2 size={12} /> Delete
+                    </button>
+                  )}
                 </div>
                 <div className="mt-3 flex flex-wrap gap-1.5">
                   <a
@@ -1610,13 +1625,15 @@ export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () 
               </div>
 
               <footer className="flex-shrink-0 flex items-center justify-between gap-3 px-6 py-3 border-t border-slate-200 bg-slate-50">
-                <button
-                  type="button"
-                  onClick={removeSelected}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[11px] font-bold text-rose-600 hover:bg-rose-50"
-                >
-                  <Trash2 size={12} /> Delete
-                </button>
+                {canWriteSourcing ? (
+                  <button
+                    type="button"
+                    onClick={removeSelected}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[11px] font-bold text-rose-600 hover:bg-rose-50"
+                  >
+                    <Trash2 size={12} /> Delete
+                  </button>
+                ) : <span />}
                 <div className="flex items-center gap-2">
                   {dirty && <span className="text-[10px] font-bold text-amber-600">Unsaved changes</span>}
                   <button
@@ -2803,7 +2820,7 @@ function DueDateTimeCell({ opp }: { opp: Opportunity }) {
 }
 
 export default function PipelinePage() {
-  const { opportunities, employees, currentUser, deletionRequests, moveOpportunityToBDTracker } = useStore()
+  const { opportunities, employees, currentUser, deletionRequests, moveOpportunityToBDTracker, deleteSubcontractor } = useStore()
   const [searchParams] = useSearchParams()
   const globalRecordId = searchParams.get('record')
 
@@ -2832,6 +2849,7 @@ export default function PipelinePage() {
   const canCommentOpportunities = hasPermission(currentUser, 'opportunity:comment')
   const canCancelOpportunities = hasPermission(currentUser, 'opportunity:cancel')
   const canRequestDeletion = hasPermission(currentUser, 'opportunity:deleteRequest')
+  const canWriteSourcing = hasPermission(currentUser, 'sourcing:write')
   const canOpenEditModal = canEditOpportunities || canCommentOpportunities
   const pendingDeletionIds = useMemo(
     () => new Set(deletionRequests.filter(r => r.status === 'PENDING').map(r => r.opportunityId)),
@@ -2926,6 +2944,21 @@ export default function PipelinePage() {
       return
     }
     setDeleteOpp(o)
+  }
+
+  const handleDeleteSourcing = (subId: string, companyName?: string) => {
+    if (!canWriteSourcing) {
+      toast.error('You do not have permission to update sourcing.')
+      return
+    }
+    if (!confirm(`Remove ${companyName || 'this subcontractor'} from this opportunity?`)) return
+    deleteSubcontractor(subId)
+    setSelectedOpp(prev =>
+      prev
+        ? { ...prev, subcontractors: (prev.subcontractors || []).filter(s => s.id !== subId) }
+        : prev,
+    )
+    toast.success('Subcontractor removed')
   }
 
   return (
@@ -3211,13 +3244,27 @@ export default function PipelinePage() {
               <DrawerSection title={`Sourcing (${selectedOpp.subcontractors.length})`} variant="premium">
                 {selectedOpp.subcontractors.map(s => (
                   <div key={s.id} className="border-b border-[#D7BE7A]/15 py-3 last:border-0">
-                    <p className="text-sm font-bold text-[#F8FBF7]">{s.companyName}</p>
-                    <p className="text-xs text-slate-400">{s.contactName}</p>
-                    {s.quoteFile && (
-                      <p className="mt-1 flex items-center gap-1 text-[10px] font-semibold text-[#7DD3FC]">
-                        <FileText size={9} /> {s.quoteFile}
-                      </p>
-                    )}
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-bold text-[#F8FBF7]">{s.companyName}</p>
+                        <p className="text-xs text-slate-400">{s.contactName || s.email || s.phone || '-'}</p>
+                        {s.quoteFile && (
+                          <p className="mt-1 flex items-center gap-1 text-[10px] font-semibold text-[#7DD3FC]">
+                            <FileText size={9} /> {s.quoteFile}
+                          </p>
+                        )}
+                      </div>
+                      {canWriteSourcing && (
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteSourcing(s.id, s.companyName)}
+                          className="inline-flex flex-shrink-0 items-center gap-1.5 rounded-lg border border-rose-400/30 bg-rose-500/10 px-2.5 py-1.5 text-[11px] font-bold text-rose-200 transition-all hover:border-rose-300/60 hover:bg-rose-500/20 hover:text-rose-100"
+                          title="Delete subcontractor"
+                        >
+                          <Trash2 size={11} /> Delete
+                        </button>
+                      )}
+                    </div>
                   </div>
                 ))}
               </DrawerSection>
