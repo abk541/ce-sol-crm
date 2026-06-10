@@ -16,7 +16,9 @@ import type {
   LockedSubkDocuments,
   NonSubmissionReport,
   PastPerformance,
+  SamGovContact,
   Subcontractor,
+  SubcontractorContact,
 } from '../types'
 import {
   normalizeContractDeliverables,
@@ -25,11 +27,120 @@ import {
 
 // ── Opportunity mappers ──────────────────────────────────────────────────────
 
-function oppToDb(o: Opportunity): Record<string, unknown> {
+const OPPORTUNITY_CONTACT_META_PREFIX = '__SAM_GOV_CONTACTS__:'
+const SOURCING_META_PREFIX = '__SOURCING_META__:'
+
+function serializeJsonMeta<T>(prefix: string, value: T): string {
+  return `${prefix}${JSON.stringify(value)}`
+}
+
+function parseJsonMeta<T>(prefix: string, value: unknown): T | null {
+  if (typeof value !== 'string' || !value.startsWith(prefix)) return null
+  try {
+    return JSON.parse(value.slice(prefix.length)) as T
+  } catch {
+    return null
+  }
+}
+
+function normalizeSamGovContacts(value: unknown): SamGovContact[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .filter(item => item && typeof item === 'object')
+    .map((item, index) => {
+      const row = item as Record<string, unknown>
+      const contact: SamGovContact = {
+        id: typeof row.id === 'string' ? row.id : `sam-contact-${index}`,
+      }
+      if (row.kind === 'POC' || row.kind === 'CONTRACTING_OFFICE') contact.kind = row.kind
+      if (typeof row.type === 'string') contact.type = row.type
+      if (typeof row.title === 'string') contact.title = row.title
+      if (typeof row.fullName === 'string') contact.fullName = row.fullName
+      if (typeof row.email === 'string') contact.email = row.email
+      if (typeof row.phone === 'string') contact.phone = row.phone
+      if (typeof row.fax === 'string') contact.fax = row.fax
+      if (typeof row.additionalInfo === 'string') contact.additionalInfo = row.additionalInfo
+      return contact
+    })
+    .filter(contact =>
+      contact.fullName || contact.email || contact.phone || contact.fax || contact.title || contact.additionalInfo
+    )
+}
+
+function normalizeSubcontractorContacts(value: unknown): SubcontractorContact[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .filter(item => item && typeof item === 'object')
+    .map((item, index) => {
+      const row = item as Record<string, unknown>
+      const contact: SubcontractorContact = {
+        id: typeof row.id === 'string' ? row.id : `subk-contact-${index}`,
+        name: typeof row.name === 'string' ? row.name : '',
+      }
+      if (typeof row.title === 'string') contact.title = row.title
+      if (typeof row.email === 'string') contact.email = row.email
+      if (typeof row.phone === 'string') contact.phone = row.phone
+      if (typeof row.notes === 'string') contact.notes = row.notes
+      return contact
+    })
+    .filter(contact => contact.name || contact.email || contact.phone || contact.title || contact.notes)
+}
+
+function primarySubcontractorContact(sub: Pick<Subcontractor, 'contactName' | 'email' | 'phone'>): SubcontractorContact | null {
+  if (!(sub.contactName || sub.email || sub.phone)) return null
+  return {
+    id: 'primary',
+    name: sub.contactName || '',
+    email: sub.email || undefined,
+    phone: sub.phone || undefined,
+  }
+}
+
+function mergeSubcontractorContacts(sub: Pick<Subcontractor, 'contactName' | 'email' | 'phone' | 'contacts'>): SubcontractorContact[] {
+  const contacts = normalizeSubcontractorContacts(sub.contacts)
+  const primary = primarySubcontractorContact(sub)
+  if (!primary) return contacts
+  const hasPrimary = contacts.some(contact =>
+    (contact.email && primary.email && contact.email.toLowerCase() === primary.email.toLowerCase()) ||
+    (contact.phone && primary.phone && contact.phone === primary.phone) ||
+    (contact.name && primary.name && contact.name.toLowerCase() === primary.name.toLowerCase())
+  )
+  return hasPrimary ? contacts : [primary, ...contacts]
+}
+
+function parseSourcingMeta(notes: unknown): { comments?: unknown; contacts?: unknown } | null {
+  return parseJsonMeta<{ comments?: unknown; contacts?: unknown }>(SOURCING_META_PREFIX, notes)
+}
+
+function notesWithSourcingContacts(notes: string | undefined, contacts?: SubcontractorContact[]) {
+  const normalizedContacts = normalizeSubcontractorContacts(contacts)
+  if (!normalizedContacts.length) return notes ?? ''
+
+  const meta = parseSourcingMeta(notes)
+  let comments: unknown = []
+  if (meta) comments = meta.comments ?? []
+  else if (notes) {
+    try {
+      const parsed = JSON.parse(notes)
+      comments = Array.isArray(parsed) ? parsed : []
+    } catch {
+      comments = notes
+    }
+  }
+
+  return serializeJsonMeta(SOURCING_META_PREFIX, {
+    comments,
+    contacts: normalizedContacts,
+  })
+}
+
+function oppToDb(o: Opportunity, opts: { includeSamGovContacts?: boolean } = {}): Record<string, unknown> {
+  const includeSamGovContacts = opts.includeSamGovContacts !== false
   const proposalNames = o.proposals?.length ? o.proposals : attachmentNames(o.proposalAttachments) ?? []
   const assignedOpportunityNames = o.assignedOpportunities?.length ? o.assignedOpportunities : proposalNames
+  const samGovContacts = normalizeSamGovContacts(o.samGovContacts)
 
-  return {
+  const row: Record<string, unknown> = {
     id: o.id,
     solicitation: o.solicitation,
     solicitation_id: o.solicitationId?.trim(),
@@ -47,7 +158,7 @@ function oppToDb(o: Opportunity): Record<string, unknown> {
     bdm: o.bdm,
     bds: o.bds,
     support_agent: o.supportAgent ?? null,
-    poc: o.poc ?? null,
+    poc: samGovContacts.length ? serializeJsonMeta(OPPORTUNITY_CONTACT_META_PREFIX, samGovContacts) : o.poc ?? null,
     contract_amount: o.contractAmount ?? null,
     base_amount: o.baseAmount ?? null,
     monthly_payment: o.monthlyPayment ?? null,
@@ -65,6 +176,8 @@ function oppToDb(o: Opportunity): Record<string, unknown> {
     assigned_opportunities: assignedOpportunityNames,
     proposal_attachments: normalizeStoredAttachments(o.proposalAttachments),
   }
+  if (includeSamGovContacts) row.sam_gov_contacts = samGovContacts
+  return row
 }
 
 export type OpportunityDuplicateCheckResult =
@@ -107,6 +220,10 @@ export async function findActiveOpportunityDuplicate(
 }
 
 function dbToOpp(row: Record<string, unknown>): Partial<Opportunity> {
+  const contactMeta = parseJsonMeta<unknown[]>(OPPORTUNITY_CONTACT_META_PREFIX, row.poc)
+  const samGovContacts = normalizeSamGovContacts(row.sam_gov_contacts).length
+    ? normalizeSamGovContacts(row.sam_gov_contacts)
+    : normalizeSamGovContacts(contactMeta)
   return {
     id: row.id as string,
     solicitation: row.solicitation as string,
@@ -125,7 +242,7 @@ function dbToOpp(row: Record<string, unknown>): Partial<Opportunity> {
     bdm: row.bdm as string,
     bds: row.bds as string,
     supportAgent: row.support_agent as string | undefined,
-    poc: row.poc as string | undefined,
+    poc: contactMeta ? undefined : row.poc as string | undefined,
     contractAmount: row.contract_amount as number | undefined,
     baseAmount: row.base_amount as number | undefined,
     monthlyPayment: row.monthly_payment as number | undefined,
@@ -142,6 +259,7 @@ function dbToOpp(row: Record<string, unknown>): Partial<Opportunity> {
     proposals: Array.isArray(row.proposals) ? row.proposals as string[] : [],
     assignedOpportunities: Array.isArray(row.assigned_opportunities) ? row.assigned_opportunities as string[] : [],
     proposalAttachments: normalizeStoredAttachments(row.proposal_attachments),
+    samGovContacts,
     // Initialize nested arrays — loaded separately if needed
     comments: [],
     subcontractors: [],
@@ -169,8 +287,10 @@ function dbToComment(row: Record<string, unknown>): Comment {
   }
 }
 
-function subcontractorToDb(sub: Subcontractor): Record<string, unknown> {
-  return {
+function subcontractorToDb(sub: Subcontractor, opts: { includeContacts?: boolean } = {}): Record<string, unknown> {
+  const includeContacts = opts.includeContacts !== false
+  const contacts = mergeSubcontractorContacts(sub)
+  const row: Record<string, unknown> = {
     id: sub.id,
     opportunity_id: sub.opportunityId,
     company_name: sub.companyName,
@@ -180,14 +300,20 @@ function subcontractorToDb(sub: Subcontractor): Record<string, unknown> {
     website: sub.website ?? null,
     naics_code: sub.naicsCode || null,
     set_aside: sub.setAside || null,
-    notes: sub.notes,
+    notes: notesWithSourcingContacts(sub.notes, contacts),
     quote_file: sub.quoteFile ?? null,
     created_at: sub.createdAt,
     created_by: sub.createdBy,
   }
+  if (includeContacts) row.contacts = contacts
+  return row
 }
 
 function dbToSubcontractor(row: Record<string, unknown>): Subcontractor {
+  const meta = parseSourcingMeta(row.notes)
+  const contacts = normalizeSubcontractorContacts(row.contacts).length
+    ? normalizeSubcontractorContacts(row.contacts)
+    : normalizeSubcontractorContacts(meta?.contacts)
   return {
     id: row.id as string,
     opportunityId: row.opportunity_id as string,
@@ -198,8 +324,9 @@ function dbToSubcontractor(row: Record<string, unknown>): Subcontractor {
     website: (row.website as string | null) ?? undefined,
     naicsCode: (row.naics_code as string | null) ?? '',
     setAside: (row.set_aside as string | null) ?? '',
-    notes: (row.notes as string | null) ?? '',
+    notes: meta ? JSON.stringify(meta.comments ?? []) : (row.notes as string | null) ?? '',
     quoteFile: row.quote_file as string | undefined,
+    contacts,
     createdAt: row.created_at as string,
     createdBy: row.created_by as string,
   }
@@ -973,7 +1100,11 @@ export async function upsertOpportunity(o: Opportunity): Promise<boolean> {
     return false
   }
   try {
-    const { error } = await supabase.from('opportunities').upsert(oppToDb(o))
+    let { error } = await supabase.from('opportunities').upsert(oppToDb(o))
+    if (error && String(error.message ?? '').includes('sam_gov_contacts')) {
+      const retry = await supabase.from('opportunities').upsert(oppToDb(o, { includeSamGovContacts: false }))
+      error = retry.error
+    }
     if (error) {
       console.error('[db] upsertOpportunity error', error)
       return false
@@ -1017,7 +1148,11 @@ export async function deleteOpportunityRecord(id: string): Promise<boolean> {
 export async function upsertSubcontractor(sub: Subcontractor): Promise<void> {
   if (!isSupabaseConnected || !supabase) return
   try {
-    const { error } = await supabase.from('subcontractors').upsert(subcontractorToDb(sub))
+    let { error } = await supabase.from('subcontractors').upsert(subcontractorToDb(sub))
+    if (error && String(error.message ?? '').includes('contacts')) {
+      const retry = await supabase.from('subcontractors').upsert(subcontractorToDb(sub, { includeContacts: false }))
+      error = retry.error
+    }
     if (error) console.error('[db] upsertSubcontractor error', error)
   } catch (err) {
     console.error('[db] upsertSubcontractor failed', err)
@@ -1332,7 +1467,7 @@ export async function seedIfEmpty(mockData: {
 
     await insertBatched(
       'opportunities',
-      mockData.opportunities.map(oppToDb),
+      mockData.opportunities.map(opp => oppToDb(opp)),
     )
     await insertBatched(
       'contracts',

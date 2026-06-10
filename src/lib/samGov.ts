@@ -194,31 +194,92 @@ export function extractSamGovAgency(opp: any): string {
 
 export function extractSamGovContacts(opp: any): SamGovContact[] {
   const raw = opp?.pointOfContact
-  if (!Array.isArray(raw)) return []
   const trim = (v: unknown) => (typeof v === 'string' ? v.trim() : '')
   const out: SamGovContact[] = []
-  raw.forEach((c: any, idx: number) => {
-    if (!c || typeof c !== 'object') return
-    const fullName = trim(c.fullName) || trim(c.name)
-    const email = trim(c.email)
-    const phone = trim(c.phone)
-    const fax = trim(c.fax)
-    const title = trim(c.title)
-    const type = trim(c.type)
-    const additionalInfo = trim(c.additionalInfo?.content) || trim(c.additionalInfo)
-    if (!(fullName || email || phone || fax || title || additionalInfo)) return
-    out.push({
-      id: `sgc-${idx}-${(fullName || email || phone || 'contact').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 32)}`,
-      type: type || undefined,
-      title: title || undefined,
-      fullName: fullName || undefined,
-      email: email || undefined,
-      phone: phone || undefined,
-      fax: fax || undefined,
-      additionalInfo: additionalInfo || undefined,
+
+  if (Array.isArray(raw)) {
+    raw.forEach((c: any, idx: number) => {
+      if (!c || typeof c !== 'object') return
+      const fullName = trim(c.fullName) || trim(c.name)
+      const email = trim(c.email)
+      const phone = trim(c.phone)
+      const fax = trim(c.fax)
+      const title = trim(c.title)
+      const type = trim(c.type)
+      const additionalInfo = trim(c.additionalInfo?.content) || trim(c.additionalInfo)
+      if (!(fullName || email || phone || fax || title || additionalInfo)) return
+      out.push({
+        id: `sgc-${idx}-${(fullName || email || phone || 'contact').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 32)}`,
+        kind: 'POC',
+        type: type || undefined,
+        title: title || undefined,
+        fullName: fullName || undefined,
+        email: email || undefined,
+        phone: phone || undefined,
+        fax: fax || undefined,
+        additionalInfo: additionalInfo || undefined,
+      })
     })
-  })
+  }
+
+  const contractingOffice = extractSamGovContractingOfficeContact(opp)
+  if (contractingOffice) out.push(contractingOffice)
+
   return out
+}
+
+function formatSamGovAddress(address: any): string {
+  const trim = (v: unknown) => (typeof v === 'string' ? v.trim() : '')
+  if (!address) return ''
+  if (typeof address === 'string') return trim(address)
+  const city = trim(address.city?.name) || trim(address.city)
+  const state = trim(address.state?.code) || trim(address.state?.name) || trim(address.state)
+  const country = trim(address.country?.code) || trim(address.country?.name) || trim(address.countryCode)
+  const lineParts = [
+    trim(address.streetAddress),
+    trim(address.streetAddress2),
+    trim(address.line1),
+    trim(address.line2),
+    [city, state, trim(address.zip) || trim(address.zipcode) || trim(address.postalCode)].filter(Boolean).join(', '),
+    country,
+  ].filter(Boolean)
+  return lineParts.join(' - ')
+}
+
+function extractSamGovContractingOfficeContact(opp: any): SamGovContact | null {
+  const trim = (v: unknown) => (typeof v === 'string' ? v.trim() : '')
+  const officeAddress =
+    opp?.officeAddress ??
+    opp?.contractingOfficeAddress ??
+    opp?.organizationAddress ??
+    opp?.office?.address
+  const officeName =
+    trim(opp?.officeName) ||
+    trim(opp?.contractingOfficeName) ||
+    trim(opp?.contractingOffice) ||
+    trim(opp?.office?.name) ||
+    trim(opp?.organizationName)
+  const email =
+    trim(opp?.contractingOfficeEmail) ||
+    trim(opp?.officeEmail) ||
+    trim(opp?.office?.email)
+  const phone =
+    trim(opp?.contractingOfficePhone) ||
+    trim(opp?.officePhone) ||
+    trim(opp?.office?.phone)
+  const address = formatSamGovAddress(officeAddress)
+
+  if (!(officeName || email || phone || address)) return null
+  return {
+    id: `sgc-office-${(officeName || email || phone || 'contracting-office').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 32)}`,
+    kind: 'CONTRACTING_OFFICE',
+    type: 'Contracting Office',
+    title: 'Contracting Office',
+    fullName: officeName || 'Contracting Office',
+    email: email || undefined,
+    phone: phone || undefined,
+    additionalInfo: address || undefined,
+  }
 }
 
 export function mapSamGovOpportunityToForm(opp: any, url: string) {

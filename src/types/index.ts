@@ -110,8 +110,18 @@ export interface Subcontractor {
   setAside: string
   notes: string
   quoteFile?: string        // PDF filename / reference
+  contacts?: SubcontractorContact[]
   createdAt: string
   createdBy: string
+}
+
+export interface SubcontractorContact {
+  id: string
+  name: string
+  title?: string
+  email?: string
+  phone?: string
+  notes?: string
 }
 
 // ── Locked Subcontractor (on active contract) ────────────────────────
@@ -180,6 +190,7 @@ export interface ContractPoC {
 // listed on the solicitation remain visible for the entire contract life.
 export interface SamGovContact {
   id: string
+  kind?: 'POC' | 'CONTRACTING_OFFICE'
   type?: string         // e.g. "primary", "secondary"
   title?: string
   fullName?: string

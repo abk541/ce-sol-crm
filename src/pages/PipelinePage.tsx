@@ -13,7 +13,7 @@ import {
   Calendar, DollarSign,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
-import type { Opportunity, Priority, OppStatus, Comment, FileAttachment, SamGovContact } from '../types'
+import type { Opportunity, Priority, OppStatus, Comment, FileAttachment, SamGovContact, SubcontractorContact } from '../types'
 import { TIMEZONES } from '../data/mock'
 import { formatCurrency, useEscapeKey } from '../lib/utils'
 import { assignableEmployeesForUser, getAssignmentChain, isAssignedToAssociate, ROLE_DISPLAY_LABELS } from '../lib/team'
@@ -537,7 +537,7 @@ export function SamGovContactsPanel({ contacts, emptyHint }: { contacts?: SamGov
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <p className="text-sm font-semibold text-slate-700">Imported from SAM.gov</p>
-        <span className="text-[10px] uppercase tracking-widest text-slate-400">Read only · stays with the contract</span>
+        <span className="text-[10px] uppercase tracking-widest text-slate-400">Read only - stays with the contract</span>
       </div>
       {list.map(c => (
         <div
@@ -1110,6 +1110,9 @@ function parseSourcingComments(notes: string | undefined): Comment[] {
   if (!notes) return []
   try {
     const parsed = JSON.parse(notes)
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && Array.isArray(parsed.comments)) {
+      return parsed.comments.filter((c: Comment) => c?.text && c?.createdAt)
+    }
     if (Array.isArray(parsed)) return parsed.filter(c => c?.text && c?.createdAt)
   } catch {
     // Legacy notes were stored as one plain text field.
@@ -1161,12 +1164,117 @@ type SourcingDraft = {
   website: string
   quoteFile: string
   setAside: string
+  contacts: SubcontractorContact[]
   newComment: string
 }
 
 const EMPTY_DRAFT: SourcingDraft = {
   companyName: '', contactName: '', email: '', phone: '', website: '',
-  quoteFile: '', setAside: 'SB', newComment: '',
+  quoteFile: '', setAside: 'SB', contacts: [], newComment: '',
+}
+
+function normalizeSourcingContacts(contacts?: SubcontractorContact[]) {
+  return (contacts ?? [])
+    .map((contact, index) => ({
+      id: contact.id || crypto.randomUUID?.() || `contact-${index}`,
+      name: (contact.name ?? '').trim(),
+      title: contact.title?.trim() || undefined,
+      email: contact.email?.trim() || undefined,
+      phone: contact.phone?.trim() || undefined,
+      notes: contact.notes?.trim() || undefined,
+    }))
+    .filter(contact => contact.name || contact.email || contact.phone || contact.title || contact.notes)
+}
+
+function contactsFromSourcingDraft(draft: SourcingDraft) {
+  const contacts = normalizeSourcingContacts(draft.contacts)
+  const primary: SubcontractorContact | null = draft.contactName || draft.email || draft.phone
+    ? {
+        id: contacts[0]?.id || crypto.randomUUID(),
+        name: draft.contactName.trim(),
+        email: draft.email.trim() || undefined,
+        phone: draft.phone.trim() || undefined,
+      }
+    : null
+  if (!primary) return contacts
+  const [, ...rest] = contacts
+  return normalizeSourcingContacts([primary, ...rest])
+}
+
+function ensureDraftHasContactRow(draft: SourcingDraft) {
+  return draft.contacts.length
+    ? draft
+    : {
+        ...draft,
+        contacts: [{
+          id: crypto.randomUUID(),
+          name: draft.contactName,
+          email: draft.email || undefined,
+          phone: draft.phone || undefined,
+        }],
+      }
+}
+
+function SourcingContactsEditor({
+  contacts,
+  onUpdate,
+  onAdd,
+  onRemove,
+}: {
+  contacts: SubcontractorContact[]
+  onUpdate: (id: string, key: keyof Omit<SubcontractorContact, 'id'>, value: string) => void
+  onAdd: () => void
+  onRemove: (id: string) => void
+}) {
+  const rows = contacts.length ? contacts : [{ id: 'new-contact', name: '', email: '', phone: '' }]
+  return (
+    <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">POCs</p>
+        <button
+          type="button"
+          onClick={onAdd}
+          className="inline-flex items-center gap-1 rounded-lg border border-indigo-200 bg-white px-2 py-1 text-[10px] font-black uppercase tracking-wider text-indigo-600 transition-all hover:bg-indigo-50"
+        >
+          <Plus size={10} /> Add POC
+        </button>
+      </div>
+      <div className="space-y-2">
+        {rows.map((contact, index) => (
+          <div key={contact.id} className="grid grid-cols-1 gap-2 rounded-lg border border-slate-200 bg-white p-2 md:grid-cols-[1fr_1fr_1fr_auto]">
+            <input
+              value={contact.name ?? ''}
+              onChange={e => onUpdate(contact.id, 'name', e.target.value)}
+              className="input-field text-xs"
+              placeholder={index === 0 ? 'Primary contact name' : 'Contact name'}
+            />
+            <input
+              value={contact.email ?? ''}
+              onChange={e => onUpdate(contact.id, 'email', e.target.value)}
+              className="input-field text-xs"
+              placeholder="Email"
+            />
+            <input
+              value={contact.phone ?? ''}
+              onChange={e => onUpdate(contact.id, 'phone', e.target.value)}
+              className="input-field text-xs"
+              placeholder="Phone"
+            />
+            <button
+              type="button"
+              onClick={() => onRemove(contact.id)}
+              disabled={rows.length === 1}
+              className="inline-flex h-9 items-center justify-center rounded-lg border border-rose-200 px-2 text-rose-600 transition-all hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-30"
+              aria-label="Remove POC"
+            >
+              <Trash2 size={12} />
+            </button>
+          </div>
+        ))}
+      </div>
+      <p className="mt-2 text-[10px] text-slate-400">The first POC is used as the primary contact in lists.</p>
+    </div>
+  )
 }
 
 export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) {
@@ -1205,14 +1313,24 @@ export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () 
       return
     }
     if (selected) {
+      const contacts = normalizeSourcingContacts(selected.contacts?.length
+        ? selected.contacts
+        : [{
+            id: crypto.randomUUID(),
+            name: selected.contactName ?? '',
+            email: selected.email || undefined,
+            phone: selected.phone || undefined,
+          }]
+      )
       setDraft({
         companyName: selected.companyName ?? '',
-        contactName: selected.contactName ?? '',
-        email:       selected.email ?? '',
-        phone:       selected.phone ?? '',
+        contactName: contacts[0]?.name ?? selected.contactName ?? '',
+        email:       contacts[0]?.email ?? selected.email ?? '',
+        phone:       contacts[0]?.phone ?? selected.phone ?? '',
         website:     selected.website ?? '',
         quoteFile:   selected.quoteFile ?? '',
         setAside:    selected.setAside || 'SB',
+        contacts,
         newComment:  '',
       })
       setDirty(false)
@@ -1225,7 +1343,8 @@ export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () 
       if (filter === 'quote'   && !s.quoteFile) return false
       if (filter === 'comment' && parseSourcingComments(s.notes).length === 0) return false
       if (!needle) return true
-      return [s.companyName, s.contactName, s.email, s.phone].some(v =>
+      const contactValues = normalizeSourcingContacts(s.contacts).flatMap(c => [c.name, c.email, c.phone, c.title])
+      return [s.companyName, s.contactName, s.email, s.phone, ...contactValues].some(v =>
         (v || '').toLowerCase().includes(needle))
     })
   }, [oppSubs, search, filter])
@@ -1238,6 +1357,55 @@ export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () 
 
   const setD = <K extends keyof SourcingDraft>(k: K, v: SourcingDraft[K]) => {
     setDraft(p => ({ ...p, [k]: v }))
+    setDirty(true)
+  }
+
+  const updateDraftContact = (id: string, key: keyof Omit<SubcontractorContact, 'id'>, value: string) => {
+    setDraft(prev => {
+      const withRow = ensureDraftHasContactRow(prev)
+      const hasTarget = withRow.contacts.some(contact => contact.id === id)
+      const targetId = hasTarget ? id : withRow.contacts[0]?.id
+      const contacts = withRow.contacts.map(contact =>
+        contact.id === targetId ? { ...contact, [key]: value } : contact
+      )
+      const primary = contacts[0]
+      return {
+        ...withRow,
+        contacts,
+        contactName: primary?.name ?? '',
+        email: primary?.email ?? '',
+        phone: primary?.phone ?? '',
+      }
+    })
+    setDirty(true)
+  }
+
+  const addDraftContact = () => {
+    setDraft(prev => {
+      const withRow = ensureDraftHasContactRow(prev)
+      return {
+        ...withRow,
+        contacts: [
+          ...withRow.contacts,
+          { id: crypto.randomUUID(), name: '', email: '', phone: '' },
+        ],
+      }
+    })
+    setDirty(true)
+  }
+
+  const removeDraftContact = (id: string) => {
+    setDraft(prev => {
+      const contacts = ensureDraftHasContactRow(prev).contacts.filter(contact => contact.id !== id)
+      const primary = contacts[0]
+      return {
+        ...prev,
+        contacts,
+        contactName: primary?.name ?? '',
+        email: primary?.email ?? '',
+        phone: primary?.phone ?? '',
+      }
+    })
     setDirty(true)
   }
 
@@ -1267,6 +1435,7 @@ export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () 
       phone:       draft.phone.trim(),
       website:     draft.website.trim() || undefined,
       quoteFile:   draft.quoteFile,
+      contacts:    contactsFromSourcingDraft(draft),
       notes: draft.newComment.trim()
         ? serializeSourcingComments([{
             id: crypto.randomUUID(),
@@ -1315,6 +1484,7 @@ export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () 
       website:     draft.website.trim() || undefined,
       quoteFile:   draft.quoteFile,
       setAside:    draft.setAside,
+      contacts:    contactsFromSourcingDraft(draft),
       notes: serializeSourcingComments(nextComments),
     })
     toast.success('Saved')
@@ -1537,26 +1707,22 @@ export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () 
                       <input value={draft.companyName} onChange={e => setD('companyName', e.target.value)} className="input-field" />
                     </div>
                     <div>
-                      <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Contact name</label>
-                      <input value={draft.contactName} onChange={e => setD('contactName', e.target.value)} className="input-field" />
-                    </div>
-                    <div>
                       <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Set-aside</label>
                       <select value={draft.setAside} onChange={e => setD('setAside', e.target.value)} className="input-field">
                         {SET_ASIDE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                       </select>
                     </div>
-                    <div>
-                      <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Email</label>
-                      <input type="email" value={draft.email} onChange={e => setD('email', e.target.value)} className="input-field" placeholder="contact@vendor.com" />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Phone</label>
-                      <input value={draft.phone} onChange={e => setD('phone', e.target.value)} className="input-field" placeholder="+1 (555) 555-5555" />
-                    </div>
                     <div className="col-span-2">
                       <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Website</label>
                       <input value={draft.website} onChange={e => setD('website', e.target.value)} className="input-field" placeholder="example.com" />
+                    </div>
+                    <div className="col-span-2">
+                      <SourcingContactsEditor
+                        contacts={draft.contacts}
+                        onUpdate={updateDraftContact}
+                        onAdd={addDraftContact}
+                        onRemove={removeDraftContact}
+                      />
                     </div>
                   </div>
                 </div>
@@ -1684,26 +1850,22 @@ export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () 
                       />
                     </div>
                     <div>
-                      <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Contact name</label>
-                      <input value={draft.contactName} onChange={e => setD('contactName', e.target.value)} className="input-field" />
-                    </div>
-                    <div>
                       <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Set-aside</label>
                       <select value={draft.setAside} onChange={e => setD('setAside', e.target.value)} className="input-field">
                         {SET_ASIDE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                       </select>
                     </div>
-                    <div>
-                      <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Email</label>
-                      <input type="email" value={draft.email} onChange={e => setD('email', e.target.value)} className="input-field" placeholder="contact@vendor.com" />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Phone</label>
-                      <input value={draft.phone} onChange={e => setD('phone', e.target.value)} className="input-field" placeholder="+1 (555) 555-5555" />
-                    </div>
                     <div className="col-span-2">
                       <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Website</label>
                       <input value={draft.website} onChange={e => setD('website', e.target.value)} className="input-field" placeholder="example.com" />
+                    </div>
+                    <div className="col-span-2">
+                      <SourcingContactsEditor
+                        contacts={draft.contacts}
+                        onUpdate={updateDraftContact}
+                        onAdd={addDraftContact}
+                        onRemove={removeDraftContact}
+                      />
                     </div>
                   </div>
                 </div>
@@ -3229,6 +3391,12 @@ export default function PipelinePage() {
 
             </div>
 
+            {selectedOpp.samGovContacts && selectedOpp.samGovContacts.length > 0 && (
+              <DrawerSection title={`Contracting Information (${selectedOpp.samGovContacts.length})`} variant="premium">
+                <SamGovContactsPanel contacts={selectedOpp.samGovContacts} />
+              </DrawerSection>
+            )}
+
             {selectedOpp.mandatoryEvents && (
               <DrawerSection title="Mandatory Events" variant="premium">
                 <p className="py-3 text-sm leading-6 text-slate-200">{selectedOpp.mandatoryEvents}</p>
@@ -3252,31 +3420,53 @@ export default function PipelinePage() {
 
             {selectedOpp.subcontractors && selectedOpp.subcontractors.length > 0 && (
               <DrawerSection title={`Sourcing (${selectedOpp.subcontractors.length})`} variant="premium">
-                {selectedOpp.subcontractors.map(s => (
-                  <div key={s.id} className="border-b border-[#D7BE7A]/15 py-3 last:border-0">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="text-sm font-bold text-[#F8FBF7]">{s.companyName}</p>
-                        <p className="text-xs text-slate-400">{s.contactName || s.email || s.phone || '-'}</p>
-                        {s.quoteFile && (
-                          <p className="mt-1 flex items-center gap-1 text-[10px] font-semibold text-[#7DD3FC]">
-                            <FileText size={9} /> {s.quoteFile}
-                          </p>
+                {selectedOpp.subcontractors.map(s => {
+                  const contacts = normalizeSourcingContacts(s.contacts?.length ? s.contacts : [{
+                    id: 'primary',
+                    name: s.contactName,
+                    email: s.email || undefined,
+                    phone: s.phone || undefined,
+                  }])
+                  return (
+                    <div key={s.id} className="border-b border-[#D7BE7A]/15 py-3 last:border-0">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-bold text-[#F8FBF7]">{s.companyName}</p>
+                          {contacts.length > 0 ? (
+                            <div className="mt-2 grid gap-2 md:grid-cols-2">
+                              {contacts.map(contact => (
+                                <div key={contact.id} className="rounded-lg border border-[#D7BE7A]/15 bg-white/[0.04] px-3 py-2">
+                                  <p className="text-xs font-bold text-[#F8FBF7]">{contact.name || 'Unnamed POC'}</p>
+                                  <div className="mt-1 space-y-1 text-[11px] text-slate-400">
+                                    {contact.email && <p className="break-all">{contact.email}</p>}
+                                    {contact.phone && <p>{contact.phone}</p>}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-xs text-slate-400">No POCs on file</p>
+                          )}
+                          {s.quoteFile && (
+                            <p className="mt-2 flex items-center gap-1 text-[10px] font-semibold text-[#7DD3FC]">
+                              <FileText size={9} /> {s.quoteFile}
+                            </p>
+                          )}
+                        </div>
+                        {canWriteSourcing && (
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteSourcing(s.id, s.companyName)}
+                            className="inline-flex flex-shrink-0 items-center gap-1.5 rounded-lg border border-rose-400/30 bg-rose-500/10 px-2.5 py-1.5 text-[11px] font-bold text-rose-200 transition-all hover:border-rose-300/60 hover:bg-rose-500/20 hover:text-rose-100"
+                            title="Delete subcontractor"
+                          >
+                            <Trash2 size={11} /> Delete
+                          </button>
                         )}
                       </div>
-                      {canWriteSourcing && (
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteSourcing(s.id, s.companyName)}
-                          className="inline-flex flex-shrink-0 items-center gap-1.5 rounded-lg border border-rose-400/30 bg-rose-500/10 px-2.5 py-1.5 text-[11px] font-bold text-rose-200 transition-all hover:border-rose-300/60 hover:bg-rose-500/20 hover:text-rose-100"
-                          title="Delete subcontractor"
-                        >
-                          <Trash2 size={11} /> Delete
-                        </button>
-                      )}
                     </div>
-                  </div>
-                ))}
+                  )
+                })}
               </DrawerSection>
             )}
 
