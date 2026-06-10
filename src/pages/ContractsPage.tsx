@@ -32,6 +32,7 @@ import {
 import { normalizeContractDeliverables } from '../lib/contractDeliverables'
 import { SourcingModal, SamGovContactsPanel } from './PipelinePage'
 import HierarchyAssignPicker from '../components/shared/HierarchyAssignPicker'
+import SamGovListingButton from '../components/shared/SamGovListingButton'
 
 // ── Status config ───────────────────────────────────────────────────────
 const STATUS_META: Record<ContractStatus, { label: string; color: string; bg: string; border: string }> = {
@@ -1646,6 +1647,25 @@ function ContractDetailDrawer({
                     <span className="font-semibold text-slate-800">{row.value}</span>
                   </div>
                 ))}
+              </div>
+            </div>
+
+            <div
+              className="rounded-xl border p-3 lg:col-span-2"
+              style={{ background: 'rgba(8,24,37,0.72)', borderColor: 'rgba(125,211,252,0.24)' }}
+            >
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-wider text-[#BAE6FD]">SAM.gov Listing</p>
+                  <p className="mt-0.5 text-[11px] text-slate-400">
+                    Opens the linked source opportunity, or searches SAM.gov by solicitation ID.
+                  </p>
+                </div>
+                <SamGovListingButton
+                  opportunity={sourceOpportunity ?? { solicitationId: contract.contractId, solicitation: contract.title }}
+                  label="Open SAM.gov"
+                  variant="premium"
+                />
               </div>
             </div>
 

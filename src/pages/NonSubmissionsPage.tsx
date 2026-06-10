@@ -9,6 +9,8 @@ import {
 import { useStore } from '../store/useStore'
 import toast from 'react-hot-toast'
 import { hasPermission } from '../lib/permissions'
+import SamGovListingButton from '../components/shared/SamGovListingButton'
+import type { Opportunity } from '../types'
 
 const stagger = { animate: { transition: { staggerChildren: 0.05 } } }
 const fadeUp = {
@@ -123,10 +125,13 @@ function ReviewModal({ reportId, onClose }: { reportId: string; onClose: () => v
               {opp?.solicitation ?? report.opportunityId} · By {report.agentUsername}
             </p>
           </div>
-          <span className="flex-shrink-0 inline-flex items-center gap-1 text-[10px] font-black px-2 py-0.5 rounded-full border"
-            style={{ color: meta.color, background: meta.bg, borderColor: meta.border }}>
-            <StatusIcon size={10} /> {report.status}
-          </span>
+          <div className="flex flex-shrink-0 items-center gap-2">
+            <SamGovListingButton opportunity={opp} compact />
+            <span className="inline-flex items-center gap-1 text-[10px] font-black px-2 py-0.5 rounded-full border"
+              style={{ color: meta.color, background: meta.bg, borderColor: meta.border }}>
+              <StatusIcon size={10} /> {report.status}
+            </span>
+          </div>
         </div>
 
         <div className="p-6 space-y-4 overflow-y-auto">
@@ -176,12 +181,12 @@ function ReviewModal({ reportId, onClose }: { reportId: string; onClose: () => v
                   <p className="text-slate-700 mt-0.5 break-words">{opp.pop}</p>
                 </div>
               )}
-              {opp?.link && (
-                <div className="col-span-2">
-                  <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">SAM.gov Link</p>
-                  <a href={opp.link} target="_blank" rel="noreferrer" className="text-indigo-600 hover:text-indigo-700 hover:underline mt-0.5 break-all block">{opp.link}</a>
+              <div className="col-span-2">
+                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">SAM.gov Listing</p>
+                <div className="mt-1">
+                  <SamGovListingButton opportunity={opp} label="Open SAM.gov" />
                 </div>
-              )}
+              </div>
             </div>
           </div>
 
@@ -257,7 +262,7 @@ function ReportCard({
   onDecline,
 }: {
   r: { id: string; opportunityId: string; agentUsername: string; reason: string; status: 'PENDING' | 'APPROVED' | 'DECLINED'; submittedAt: string; reviewNote?: string; reviewedBy?: string }
-  opp: { solicitation?: string; solicitationId?: string } | undefined
+  opp: Opportunity | undefined
   isManager: boolean
   onReview: () => void
   onApprove: () => void
@@ -292,6 +297,17 @@ function ReportCard({
               transition={{ type: 'spring', stiffness: 400, damping: 28 }}
               className="absolute right-0 top-8 z-30 rounded-xl py-1 w-44"
               style={{ background: 'var(--bg-card)', border: '1px solid var(--border-default)', boxShadow: '0 8px 24px rgba(0,0,0,0.10)' }}>
+              {opp && (
+                <>
+                  <SamGovListingButton
+                    opportunity={opp}
+                    label="Open SAM.gov"
+                    variant="menu"
+                    onOpened={() => setMenuOpen(false)}
+                  />
+                  <div className="my-1 border-t" style={{ borderColor: 'var(--border-default)' }} />
+                </>
+              )}
               {isManager && r.status === 'PENDING' && (
                 <>
                   <button
@@ -409,6 +425,7 @@ function DroppedOpportunitiesTab({ targetId, onViewReport }: { targetId?: string
                   <th>Location</th>
                   <th>Manager</th>
                   <th>Team Lead</th>
+                  <th>SAM.gov</th>
                   <th>Non-Sub Report</th>
                 </tr>
               </thead>
@@ -454,6 +471,9 @@ function DroppedOpportunitiesTab({ targetId, onViewReport }: { targetId?: string
                       </td>
                       <td>
                         <span className="text-xs font-medium px-2 py-0.5 rounded-md bg-slate-100 text-slate-700">{o.bds || '—'}</span>
+                      </td>
+                      <td onClick={e => e.stopPropagation()}>
+                        <SamGovListingButton opportunity={o} compact />
                       </td>
                       <td>
                         {report ? (

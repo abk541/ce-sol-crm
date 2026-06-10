@@ -15,6 +15,7 @@ import toast from 'react-hot-toast'
 import FloatingActionMenu from '../components/shared/FloatingActionMenu'
 import HierarchyAssignPicker from '../components/shared/HierarchyAssignPicker'
 import { getAssignmentChain } from '../lib/team'
+import SamGovListingButton from '../components/shared/SamGovListingButton'
 
 const STATUS_META = {
   PENDING_ASSIGNMENT: { label: 'Pending Assignment', color: '#D97706', bg: '#FEF3C7', border: '#FDE68A' },
@@ -221,14 +222,17 @@ function AssignModal({ award, onClose, onMove }: AssignModalProps) {
             <h2 className="text-xl font-black tracking-tight text-[#F8FBF7]">Assign Fresh Award</h2>
             <p className="max-w-3xl truncate text-sm text-slate-300" title={award.solicitation}>{award.solicitation}</p>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-slate-300 transition-all hover:border-[#D7BE7A]/35 hover:bg-[#D7BE7A]/10 hover:text-white"
-            aria-label="Close assignment modal"
-          >
-            <X size={16} />
-          </button>
+          <div className="flex flex-shrink-0 items-center gap-2">
+            <SamGovListingButton opportunity={award} label="Open SAM.gov" variant="premium" />
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-slate-300 transition-all hover:border-[#D7BE7A]/35 hover:bg-[#D7BE7A]/10 hover:text-white"
+              aria-label="Close assignment modal"
+            >
+              <X size={16} />
+            </button>
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto px-6 py-5">
@@ -399,12 +403,20 @@ export default function FreshAwardPage() {
                       style={{ background: meta.bg, color: meta.color, border: `1px solid ${meta.border}` }}>
                       {meta.label}
                     </span>
+                    <SamGovListingButton opportunity={sourceOpp ?? fa} compact />
                     <FloatingActionMenu
                       open={menuOpen === fa.id}
                       onOpenChange={open => setMenuOpen(open ? fa.id : null)}
                       trigger={<MoreHorizontal size={13} />}
                       triggerClassName="w-6 h-6 rounded-md flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
                     >
+                              <SamGovListingButton
+                                opportunity={sourceOpp ?? fa}
+                                label="Open SAM.gov"
+                                variant="menu"
+                                onOpened={() => setMenuOpen(null)}
+                              />
+                              <div className="my-1 border-t border-slate-100" />
                               <button
                                 onClick={() => { setSelected(fa); setMenuOpen(null) }}
                                 className="block w-full text-left px-3 py-2 text-xs font-medium transition-colors"

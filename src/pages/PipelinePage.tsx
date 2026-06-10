@@ -23,6 +23,7 @@ import DetailDrawer, { DrawerSection, DrawerField } from '../components/shared/D
 import PeriodFilter, { type Period, filterByPeriod } from '../components/shared/PeriodFilter'
 import HierarchyAssignPicker from '../components/shared/HierarchyAssignPicker'
 import FloatingActionMenu from '../components/shared/FloatingActionMenu'
+import SamGovListingButton from '../components/shared/SamGovListingButton'
 import {
   formatTime12h,
   formatLocalDueTime as formatLocalDueTimeShared,
@@ -2498,6 +2499,12 @@ function RowMenu({
               onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = ''; (e.currentTarget as HTMLButtonElement).style.color = '#475569' }}>
               <ExternalLink size={12} /> View Details
             </button>
+            <SamGovListingButton
+              opportunity={o}
+              label="Open SAM.gov"
+              variant="menu"
+              onOpened={() => setMenuOpen(false)}
+            />
             {canEdit && (
               <button
                 onClick={e => { e.stopPropagation(); setMenuOpen(false); onEdit() }}
@@ -3108,20 +3115,23 @@ export default function PipelinePage() {
                       )
                     })()}
                     <td onClick={e => e.stopPropagation()}>
-                      <RowMenu
-                        o={o}
-                        canSubmit={canSubmit}
-                        onViewDetails={() => setSelectedOpp(o)}
-                        onEdit={() => setEditOpp(o)}
-                        onSourcing={() => setSourcingOpp(o)}
-                        onSubmit={() => setSubmitOpp(o)}
-                        onCancel={() => handleCancel(o)}
-                        onRequestDeletion={() => handleDelete(o)}
-                        canEdit={canOpenEditModal}
-                        canCancel={canCancelOpportunities}
-                        canRequestDeletion={canRequestDeletion}
-                        deletionPending={pendingDeletionIds.has(o.id)}
-                      />
+                      <div className="flex items-center justify-end gap-1.5">
+                        <SamGovListingButton opportunity={o} compact />
+                        <RowMenu
+                          o={o}
+                          canSubmit={canSubmit}
+                          onViewDetails={() => setSelectedOpp(o)}
+                          onEdit={() => setEditOpp(o)}
+                          onSourcing={() => setSourcingOpp(o)}
+                          onSubmit={() => setSubmitOpp(o)}
+                          onCancel={() => handleCancel(o)}
+                          onRequestDeletion={() => handleDelete(o)}
+                          canEdit={canOpenEditModal}
+                          canCancel={canCancelOpportunities}
+                          canRequestDeletion={canRequestDeletion}
+                          deletionPending={pendingDeletionIds.has(o.id)}
+                        />
+                      </div>
                     </td>
                   </motion.tr>
                 ))}
@@ -3271,6 +3281,7 @@ export default function PipelinePage() {
             )}
 
             <div className="sticky bottom-0 -mx-6 -mb-5 mt-4 flex flex-wrap gap-2 border-t border-[#D7BE7A]/15 bg-[#07131F]/95 px-6 py-4 backdrop-blur">
+              <SamGovListingButton opportunity={selectedOpp} label="Open SAM.gov" variant="premium" />
               {canOpenEditModal && (
                 <button className="btn-secondary text-xs gap-1.5" onClick={() => { setSelectedOpp(null); setEditOpp(selectedOpp) }}>
                   <Edit2 size={12} /> {canEditOpportunities ? 'Edit' : 'Comment'}

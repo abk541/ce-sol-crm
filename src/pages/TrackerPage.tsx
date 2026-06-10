@@ -16,6 +16,7 @@ import type { Opportunity } from '../types'
 import FloatingActionMenu from '../components/shared/FloatingActionMenu'
 import { hasPermission } from '../lib/permissions'
 import { EditModal as OpportunityEditModal } from './PipelinePage'
+import SamGovListingButton from '../components/shared/SamGovListingButton'
 
 const stagger = { animate: { transition: { staggerChildren: 0.05 } } }
 const fadeUp = {
@@ -302,12 +303,21 @@ export default function TrackerPage() {
                         <StatusDropdown oppId={o.id} current={o.status} canEdit={isManager} />
                       </td>
                       <td onClick={e => e.stopPropagation()}>
-                        <FloatingActionMenu
-                          open={menuOpen === o.id}
-                          onOpenChange={open => setMenuOpen(open ? o.id : null)}
-                          trigger={<MoreHorizontal size={14} />}
-                          width={160}
-                        >
+                        <div className="flex items-center justify-end gap-1.5">
+                          <SamGovListingButton opportunity={o} compact />
+                          <FloatingActionMenu
+                            open={menuOpen === o.id}
+                            onOpenChange={open => setMenuOpen(open ? o.id : null)}
+                            trigger={<MoreHorizontal size={14} />}
+                            width={180}
+                          >
+                                <SamGovListingButton
+                                  opportunity={o}
+                                  label="Open SAM.gov"
+                                  variant="menu"
+                                  onOpened={() => setMenuOpen(null)}
+                                />
+                                <div className="my-1 border-t border-slate-100" />
                                 <button
                                   onClick={() => { setSelected(o); setMenuOpen(null) }}
                                   className="block w-full text-left px-3 py-2 text-xs font-medium transition-colors"
@@ -342,7 +352,8 @@ export default function TrackerPage() {
                                   onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = ''; (e.currentTarget as HTMLButtonElement).style.color = '#475569' }}>
                                   Copy ID
                                 </button>
-                        </FloatingActionMenu>
+                          </FloatingActionMenu>
+                        </div>
                       </td>
                     </motion.tr>
                   ))}
@@ -393,14 +404,17 @@ export default function TrackerPage() {
                         </p>
                       )}
                     </div>
-                    <div className="flex-shrink-0 text-right">
+                    <div className="flex flex-shrink-0 items-start gap-3 text-right">
+                      <div onClick={e => e.stopPropagation()}>
+                        <SamGovListingButton opportunity={o} compact />
+                      </div>
                       {req && (
-                        <>
+                        <div>
                           <p className="text-[10px] text-slate-500">Deleted by {req.requestedBy}</p>
                           <p className="text-[10px] text-slate-400">
                             {new Date(req.requestedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                           </p>
-                        </>
+                        </div>
                       )}
                     </div>
                   </motion.div>
@@ -470,6 +484,7 @@ export default function TrackerPage() {
         {selected && (
           <>
             <DrawerSection title="Overview">
+              <DrawerField label="SAM.gov Listing" value={<SamGovListingButton opportunity={selected} label="Open SAM.gov" />} />
               <DrawerField label="Status"      value={<StatusBadge status={selected.status} />} />
               <DrawerField label="Client"      value={selected.client} />
               <DrawerField label="Type"        value={selected.type} />

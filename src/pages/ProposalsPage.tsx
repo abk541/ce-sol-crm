@@ -9,6 +9,7 @@ import toast from 'react-hot-toast'
 import HierarchyAssignPicker from '../components/shared/HierarchyAssignPicker'
 import { assignableEmployeesForUser, getAssignmentChain, isAssignedToAssociate } from '../lib/team'
 import { hasPermission } from '../lib/permissions'
+import SamGovListingButton from '../components/shared/SamGovListingButton'
 
 const ASSIGNABLE_STATUSES = ['ACTIVE', 'NEW_ASSIGNMENT', 'DISCUSSION'] as const
 
@@ -44,14 +45,17 @@ function AssignModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }
             <h2 className="text-xl font-black tracking-tight text-[#F8FBF7]">Assign Opportunity</h2>
             <p className="max-w-3xl truncate text-sm text-slate-300" title={opp.solicitation}>{opp.solicitation}</p>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-slate-300 transition-all hover:border-[#D7BE7A]/35 hover:bg-[#D7BE7A]/10 hover:text-white"
-            aria-label="Close assignment modal"
-          >
-            <X size={16} />
-          </button>
+          <div className="flex flex-shrink-0 items-center gap-2">
+            <SamGovListingButton opportunity={opp} label="Open SAM.gov" variant="premium" />
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-slate-300 transition-all hover:border-[#D7BE7A]/35 hover:bg-[#D7BE7A]/10 hover:text-white"
+              aria-label="Close assignment modal"
+            >
+              <X size={16} />
+            </button>
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto px-6 py-5">
@@ -197,17 +201,20 @@ export default function ProposalsPage() {
                       : <span className="text-slate-300">-</span>}
                   </td>
                   <td className="text-right">
-                    <button
-                      type="button"
-                      onClick={() => setAssignTarget(o)}
-                      disabled={assignable.length === 0}
-                      className="group inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-[#D7BE7A]/30 bg-gradient-to-r from-[#0F4F59]/80 via-[#1F7A78]/80 to-[#B8914E]/80 px-3.5 text-xs font-bold text-white shadow-[0_8px_22px_rgba(15,79,89,0.24)] transition-all hover:-translate-y-0.5 hover:border-[#D7BE7A]/60 hover:shadow-[0_14px_32px_rgba(184,145,78,0.22)] disabled:translate-y-0 disabled:cursor-not-allowed disabled:opacity-40"
-                    >
-                      <span className="flex h-5 w-5 items-center justify-center rounded-lg bg-white/10 transition-all group-hover:bg-white/20">
-                        <UserPlus size={12} />
-                      </span>
-                      Assign
-                    </button>
+                    <div className="flex items-center justify-end gap-2">
+                      <SamGovListingButton opportunity={o} compact />
+                      <button
+                        type="button"
+                        onClick={() => setAssignTarget(o)}
+                        disabled={assignable.length === 0}
+                        className="group inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-[#D7BE7A]/30 bg-gradient-to-r from-[#0F4F59]/80 via-[#1F7A78]/80 to-[#B8914E]/80 px-3.5 text-xs font-bold text-white shadow-[0_8px_22px_rgba(15,79,89,0.24)] transition-all hover:-translate-y-0.5 hover:border-[#D7BE7A]/60 hover:shadow-[0_14px_32px_rgba(184,145,78,0.22)] disabled:translate-y-0 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        <span className="flex h-5 w-5 items-center justify-center rounded-lg bg-white/10 transition-all group-hover:bg-white/20">
+                          <UserPlus size={12} />
+                        </span>
+                        Assign
+                      </button>
+                    </div>
                   </td>
                 </motion.tr>
               )})}

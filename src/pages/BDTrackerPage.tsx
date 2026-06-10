@@ -12,6 +12,7 @@ import { formatCurrency } from '../lib/utils'
 import FloatingActionMenu from '../components/shared/FloatingActionMenu'
 import { hasPermission } from '../lib/permissions'
 import DetailDrawer, { DrawerField, DrawerSection } from '../components/shared/DetailDrawer'
+import SamGovListingButton from '../components/shared/SamGovListingButton'
 import {
   formatOpportunityMoroccoDueDateTime,
   formatOpportunitySourceDueDateTime,
@@ -706,11 +707,23 @@ export default function BDTrackerPage() {
                       </td>
                       <td className="max-w-[140px] text-xs text-slate-400"><p className="truncate">{s.comment ?? '-'}</p></td>
                       <td onClick={e => e.stopPropagation()}>
-                        <FloatingActionMenu
-                          open={menuOpen === String(s.id)}
-                          onOpenChange={open => setMenuOpen(open ? String(s.id) : null)}
-                          trigger={<MoreHorizontal size={14} />}
-                        >
+                        <div className="flex items-center justify-end gap-1.5">
+                          <SamGovListingButton
+                            opportunity={opp ?? { solicitationId: s.solicitationId, solicitation: s.solicitation }}
+                            compact
+                          />
+                          <FloatingActionMenu
+                            open={menuOpen === String(s.id)}
+                            onOpenChange={open => setMenuOpen(open ? String(s.id) : null)}
+                            trigger={<MoreHorizontal size={14} />}
+                          >
+                                <SamGovListingButton
+                                  opportunity={opp ?? { solicitationId: s.solicitationId, solicitation: s.solicitation }}
+                                  label="Open SAM.gov"
+                                  variant="menu"
+                                  onOpened={() => setMenuOpen(null)}
+                                />
+                                <div className="my-1 border-t border-slate-100" />
                                 <p className="px-3 py-1 text-[9px] font-bold uppercase tracking-wider text-slate-400">Move to</p>
                                 {BD_TABS.filter(t => t.key !== s.status).map(t => {
                                   const itemMeta = STATUS_META[t.key]
@@ -726,7 +739,8 @@ export default function BDTrackerPage() {
                                     </button>
                                   )
                                 })}
-                        </FloatingActionMenu>
+                          </FloatingActionMenu>
+                        </div>
                       </td>
                     </motion.tr>
                   )
@@ -779,6 +793,11 @@ export default function BDTrackerPage() {
                       </span>
                       <span className="rounded-lg border border-[#7DD3FC]/30 bg-[#7DD3FC]/10 px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-[#BAE6FD]">{typeLabel(selectedRow.type)}</span>
                       <span className="rounded-lg border border-[#D7BE7A]/25 bg-[#D7BE7A]/10 px-2.5 py-1 font-mono text-[10px] font-bold text-[#F8FBF7]">{selectedRow.solicitationId}</span>
+                      <SamGovListingButton
+                        opportunity={selectedOpportunity ?? { solicitationId: selectedRow.solicitationId, solicitation: selectedRow.solicitation }}
+                        label="Open SAM.gov"
+                        variant="premium"
+                      />
                     </div>
                     <div className="mt-3 grid gap-3 text-xs text-slate-300 md:grid-cols-4">
                       <div className="min-w-0">
@@ -817,7 +836,11 @@ export default function BDTrackerPage() {
                       <DrawerField label="NAICS" value={selectedOpportunity?.naicsCode || '-'} variant="premium" />
                       <DrawerField label="Priority" value={selectedOpportunity?.priority || '-'} variant="premium" />
                       <DrawerField label="Captured On" value={selectedOpportunity?.capturedOn || '-'} variant="premium" />
-                      <DrawerField label="Source Link" value={selectedOpportunity?.link ? <a className="text-[#7DD3FC] hover:underline" href={selectedOpportunity.link} target="_blank" rel="noreferrer">Open source</a> : '-'} variant="premium" />
+                      <DrawerField
+                        label="SAM.gov Listing"
+                        value={<SamGovListingButton opportunity={selectedOpportunity ?? { solicitationId: selectedRow.solicitationId, solicitation: selectedRow.solicitation }} label="Open SAM.gov" variant="premium" />}
+                        variant="premium"
+                      />
                     </DrawerSection>
 
                     <DrawerSection title="Schedule" variant="premium">
