@@ -47,6 +47,7 @@ import {
 } from '../lib/db'
 import { getAssignmentChain, isAssignedToAssociate } from '../lib/team'
 import { hasPermission } from '../lib/permissions'
+import { nextInvoiceSequenceFromContracts } from '../lib/invoiceNumbers'
 
 interface AppState {
   // Auth
@@ -2022,6 +2023,10 @@ export const useStore = create<AppState>()(
               nonSubReports: data.nonSubReports.filter(r => !canceledIds.has(r.opportunityId)),
               deletionRequests: data.deletionRequests.filter(r => !canceledIds.has(r.opportunityId)),
               bdSubmissions,
+              nextInvoiceNumber: Math.max(
+                Math.max(1, Math.trunc(Number(get().nextInvoiceNumber) || 1)),
+                nextInvoiceSequenceFromContracts(data.contracts),
+              ),
               dbReady: true,
             })
           }

@@ -367,6 +367,9 @@ function contractToDb(c: Contract): Record<string, unknown> {
     assigned_to: c.assignedTo ?? null,
     proposal_attachments: normalizeStoredAttachments(c.proposalAttachments),
     service_date: c.serviceDate ?? null,
+    billing_period_start: c.billingPeriodStart ?? null,
+    billing_period_end: c.billingPeriodEnd ?? null,
+    current_pop_year: c.currentPopYear ?? null,
     gov_billing_status: c.governmentBillingStatus ?? null,
   }
 }
@@ -406,6 +409,9 @@ function dbToContract(row: Record<string, unknown>): Partial<Contract> {
     assignedTo: row.assigned_to as string | undefined,
     proposalAttachments: normalizeStoredAttachments(row.proposal_attachments),
     serviceDate: row.service_date as string | undefined,
+    billingPeriodStart: row.billing_period_start as string | undefined,
+    billingPeriodEnd: row.billing_period_end as string | undefined,
+    currentPopYear: row.current_pop_year as Contract['currentPopYear'],
     governmentBillingStatus: (row.gov_billing_status as Contract['governmentBillingStatus']) ?? undefined,
     // Initialize nested arrays — loaded separately if needed
     pocs: [],
@@ -451,11 +457,26 @@ function invoiceToDb(inv: ContractInvoice): Record<string, unknown> {
     amount: inv.amount,
     payment_method: inv.paymentMethod ?? null,
     status: inv.status,
+    service_from: inv.serviceFrom ?? null,
+    service_to: inv.serviceTo ?? null,
+    pop_year: inv.popYear ?? null,
+    line_item_ids: inv.lineItemIds ?? [],
     sub_quote: inv.subQuote ?? null,
     due_date: inv.dueDate ?? null,
     sub_status: inv.subStatus ?? null,
     notes: inv.notes ?? null,
     created_at: inv.createdAt ?? null,
+  }
+}
+
+function normalizeLineItemIds(value: unknown): string[] {
+  if (Array.isArray(value)) return value.filter((id): id is string => typeof id === 'string')
+  if (typeof value !== 'string') return []
+  try {
+    const parsed = JSON.parse(value) as unknown
+    return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : []
+  } catch {
+    return []
   }
 }
 
@@ -470,6 +491,10 @@ function dbToInvoice(row: Record<string, unknown>): ContractInvoice {
     amount: typeof amountRaw === 'number' ? amountRaw : Number(amountRaw ?? 0),
     paymentMethod: (row.payment_method as ContractInvoice['paymentMethod']) ?? undefined,
     status: ((row.status as ContractInvoice['status']) ?? 'SUBMITTED'),
+    serviceFrom: (row.service_from as string | null) ?? undefined,
+    serviceTo: (row.service_to as string | null) ?? undefined,
+    popYear: (row.pop_year as ContractInvoice['popYear']) ?? undefined,
+    lineItemIds: normalizeLineItemIds(row.line_item_ids),
     subQuote: subQuoteRaw == null ? undefined : Number(subQuoteRaw),
     dueDate: (row.due_date as string | null) ?? undefined,
     subStatus: (row.sub_status as ContractInvoice['subStatus']) ?? undefined,
@@ -1230,8 +1255,29 @@ export async function deleteContractPoC(id: string): Promise<void> {
 export async function upsertContractInvoice(invoice: ContractInvoice): Promise<void> {
   if (!isSupabaseConnected || !supabase) return
   try {
-    const { error } = await supabase.from('contract_invoices').upsert(invoiceToDb(invoice))
-    if (error) console.error('[db] upsertContractInvoice error', error)
+    let payload: Record<string, unknown> = invoiceToDb(invoice)
+    const stripped: string[] = []
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const { error } = await supabase.from('contract_invoices').upsert(payload)
+      if (!error) {
+        if (stripped.length) {
+          console.warn(`[db] contract invoice saved without missing column(s): ${stripped.join(', ')}. Run the matching SQL migration in Supabase to enable full invoice persistence.`)
+        }
+        return
+      }
+      const message = `${error.message ?? ''} ${error.details ?? ''}`
+      const missing = error.code === 'PGRST204' ? message.match(/'([a-z0-9_]+)'/i)?.[1] : null
+      if (missing && missing in payload) {
+        const { [missing]: _drop, ...rest } = payload
+        void _drop
+        payload = rest
+        stripped.push(missing)
+        continue
+      }
+      console.error('[db] upsertContractInvoice error', error)
+      return
+    }
+    console.error('[db] upsertContractInvoice aborted after stripping too many unknown columns', stripped)
   } catch (err) {
     console.error('[db] upsertContractInvoice failed', err)
   }

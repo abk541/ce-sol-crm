@@ -18,17 +18,17 @@ import type {
   ContractPoC, LockedSubcontractor,
   GovernmentWarning, GovWarningType, FileAttachment, Comment, ContractDeliverable,
   LockedSubkDocuments, Subcontractor, Opportunity,
-  ContractLineItem, ContractLineYear,
+  ContractInvoice, ContractLineItem, ContractLineYear,
 } from '../types'
 import { formatCurrency, useEscapeKey } from '../lib/utils'
 import FloatingActionMenu from '../components/shared/FloatingActionMenu'
 import {
   canGenerateContractInvoice,
   generateContractInvoicePdf,
+  INVOICE_FROM_LINES,
   invoiceAmountForContract,
-  subkMonthlyBillingRowsForContract,
-  subkQuoteSummaryForContract,
 } from '../lib/invoicePdf'
+import { formatInvoiceSequence } from '../lib/invoiceNumbers'
 import { normalizeContractDeliverables } from '../lib/contractDeliverables'
 import { SourcingModal, SamGovContactsPanel } from './PipelinePage'
 import HierarchyAssignPicker from '../components/shared/HierarchyAssignPicker'
@@ -63,9 +63,9 @@ const GOV_WARNING_META: Record<GovWarningType, { label: string; severity: 'RED' 
 }
 
 const SEV_COLORS = {
-  RED:    { color: '#DC2626', bg: '#FEE2E2' },
-  YELLOW: { color: '#D97706', bg: '#FEF3C7' },
-  INFO:   { color: '#0891B2', bg: '#ECFEFF' },
+  RED:    { color: '#FCA5A5', bg: 'rgba(127,29,29,0.20)', border: 'rgba(248,113,113,0.36)' },
+  YELLOW: { color: '#F8E8B8', bg: 'rgba(215,190,122,0.14)', border: 'rgba(215,190,122,0.34)' },
+  INFO:   { color: '#7DD3FC', bg: 'rgba(14,116,144,0.16)', border: 'rgba(125,211,252,0.30)' },
 }
 
 // ── Tab definitions ─────────────────────────────────────────────────────
@@ -115,26 +115,14 @@ function formatDate(value: string) {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
-function subkQuoteSummary(contract: Contract) {
-  return subkQuoteSummaryForContract(contract)
-}
-
-function subkMonthlyBillingRows(contract: Contract) {
-  return subkMonthlyBillingRowsForContract(contract)
-}
-
 function invoiceAmountFor(contract: Contract) {
   return invoiceAmountForContract(contract)
 }
 
-async function generateInvoiceFile(contract: Contract, invoiceNumber?: number) {
+async function generateInvoiceFile(contract: Contract, invoice: ContractInvoice) {
   try {
-    await generateContractInvoicePdf(contract, { invoiceNumber })
-    toast.success(
-      invoiceNumber
-        ? `Invoice INV-${String(invoiceNumber).padStart(4, '0')} generated`
-        : 'Invoice PDF generated'
-    )
+    await generateContractInvoicePdf(contract, { invoice })
+    toast.success(`Invoice ${invoice.invoiceNumber} generated`)
   } catch (err) {
     console.error(err)
     toast.error(contract.type === 'OTJ'
@@ -835,28 +823,43 @@ function ContractBillingTab({
   contract,
   nextInvoiceNumber,
   invoiceReady,
-  onSaveServiceDate,
+  invoiceLineItems,
+  onSaveBillingPeriod,
   onGenerateInvoice,
 }: {
   contract: Contract
   nextInvoiceNumber: number
   invoiceReady: boolean
-  onSaveServiceDate: (value: string) => Promise<void> | void
+  invoiceLineItems: ContractLineItem[]
+  onSaveBillingPeriod: (value: { start: string; end: string }) => Promise<void> | void
   onGenerateInvoice: () => void
 }) {
-  const [draft, setDraft] = useState(contract.serviceDate || '')
+  const [draft, setDraft] = useState({
+    start: contract.billingPeriodStart || contract.serviceDate || '',
+    end: contract.billingPeriodEnd || contract.serviceDate || '',
+  })
   const [saving, setSaving] = useState(false)
-  useEffect(() => { setDraft(contract.serviceDate || '') }, [contract.serviceDate])
+  useEffect(() => {
+    setDraft({
+      start: contract.billingPeriodStart || contract.serviceDate || '',
+      end: contract.billingPeriodEnd || contract.serviceDate || '',
+    })
+  }, [contract.billingPeriodStart, contract.billingPeriodEnd, contract.serviceDate])
 
-  const dirty = draft !== (contract.serviceDate || '')
-  const padded = String(Math.max(1, nextInvoiceNumber || 1)).padStart(4, '0')
+  const savedStart = contract.billingPeriodStart || contract.serviceDate || ''
+  const savedEnd = contract.billingPeriodEnd || contract.serviceDate || ''
+  const dirty = draft.start !== savedStart || draft.end !== savedEnd
+  const invoiceNumberPreview = formatInvoiceSequence(nextInvoiceNumber)
   const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
-  const savedDisplay = (() => {
-    if (!contract.serviceDate) return null
-    const d = new Date(`${contract.serviceDate}T00:00:00`)
-    if (!Number.isFinite(d.getTime())) return contract.serviceDate
-    return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
-  })()
+  const savedDisplay = savedStart && savedEnd
+    ? `${formatDate(savedStart)} - ${formatDate(savedEnd)}`
+    : savedStart
+      ? formatDate(savedStart)
+      : savedEnd
+        ? formatDate(savedEnd)
+        : null
+  const selectedYear = contract.currentPopYear || 'base'
+  const selectedClinTotal = invoiceLineItems.reduce((sum, line) => sum + (line.amount || 0), 0)
 
   return (
     <div className="space-y-5">
@@ -868,35 +871,43 @@ function ContractBillingTab({
         }}
       >
         <p className="text-[10px] font-black uppercase tracking-[0.16em] text-[#D7BE7A]">Billing period</p>
-        <h3 className="text-base font-bold text-slate-100 mt-1">Service date for the next invoice</h3>
+        <h3 className="text-base font-bold text-slate-100 mt-1">Service dates for the next invoice</h3>
         <p className="text-xs text-slate-400 mt-1 max-w-2xl">
-          The service date you enter here is printed on every invoice generated for this contract.
-          The invoice date is set to today and the invoice number is incremented automatically.
+          The service range, POP year, and selected CLINs are shared by Contract Admin, Finance Projections, and the generated invoice.
         </p>
 
-        <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
+        <div className="mt-5 grid grid-cols-1 gap-3 lg:grid-cols-[1fr_1fr_auto] lg:items-end">
           <div>
-            <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">Service date</label>
+            <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">Service from</label>
             <input
               type="date"
-              value={draft}
-              onChange={e => setDraft(e.target.value)}
+              value={draft.start}
+              onChange={e => setDraft(prev => ({ ...prev, start: e.target.value }))}
+              className="input-field w-full"
+            />
+          </div>
+          <div>
+            <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">Service to</label>
+            <input
+              type="date"
+              value={draft.end}
+              onChange={e => setDraft(prev => ({ ...prev, end: e.target.value }))}
               className="input-field w-full"
             />
             {savedDisplay && !dirty && (
-              <p className="text-[11px] text-slate-400 mt-1.5">Currently saved: <span className="text-slate-200 font-semibold">{savedDisplay}</span></p>
+              <p className="text-[11px] text-slate-400 mt-1.5">Saved: <span className="text-slate-200 font-semibold">{savedDisplay}</span></p>
             )}
           </div>
-          <div className="flex gap-2 sm:justify-end">
-            {contract.serviceDate && (
+          <div className="flex gap-2 lg:justify-end">
+            {(savedStart || savedEnd) && (
               <button
                 type="button"
                 disabled={saving}
                 onClick={async () => {
                   setSaving(true)
-                  await onSaveServiceDate('')
+                  await onSaveBillingPeriod({ start: '', end: '' })
                   setSaving(false)
-                  setDraft('')
+                  setDraft({ start: '', end: '' })
                 }}
                 className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold text-red-300 bg-red-900/30 border border-red-700/40 hover:bg-red-900/50 transition-colors disabled:opacity-45"
               >
@@ -907,13 +918,17 @@ function ContractBillingTab({
               type="button"
               disabled={!dirty || saving}
               onClick={async () => {
+                if (draft.start && draft.end && new Date(`${draft.start}T00:00:00`).getTime() > new Date(`${draft.end}T00:00:00`).getTime()) {
+                  toast.error('Service start must be before service end.')
+                  return
+                }
                 setSaving(true)
-                await onSaveServiceDate(draft)
+                await onSaveBillingPeriod(draft)
                 setSaving(false)
               }}
               className="btn-primary disabled:opacity-45 disabled:cursor-not-allowed"
             >
-              <Save size={12} /> {saving ? 'Saving…' : 'Save service date'}
+              <Save size={12} /> {saving ? 'Saving...' : 'Save billing period'}
             </button>
           </div>
         </div>
@@ -923,11 +938,22 @@ function ContractBillingTab({
         className="rounded-2xl border p-5"
         style={{ background: 'rgba(8,24,37,0.72)', borderColor: 'rgba(215,190,122,0.24)' }}
       >
+        <p className="text-[10px] font-black uppercase tracking-[0.16em] text-[#D7BE7A]">From</p>
+        <div className="mt-3 rounded-xl border p-3 text-sm font-semibold leading-6 text-slate-100"
+          style={{ background: 'rgba(255,255,255,0.04)', borderColor: 'rgba(215,190,122,0.22)' }}>
+          {INVOICE_FROM_LINES.map(line => <p key={line}>{line}</p>)}
+        </div>
+      </div>
+
+      <div
+        className="rounded-2xl border p-5"
+        style={{ background: 'rgba(8,24,37,0.72)', borderColor: 'rgba(215,190,122,0.24)' }}
+      >
         <p className="text-[10px] font-black uppercase tracking-[0.16em] text-[#D7BE7A]">Next invoice</p>
-        <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
           <div className="rounded-xl border p-3" style={{ background: 'rgba(255,255,255,0.04)', borderColor: 'rgba(215,190,122,0.22)' }}>
             <p className="text-[10px] uppercase tracking-wide text-slate-400">Invoice #</p>
-            <p className="text-lg font-bold text-[#F8E8B8] mt-1 font-mono">INV-{padded}</p>
+            <p className="text-lg font-bold text-[#F8E8B8] mt-1 font-mono">{invoiceNumberPreview}</p>
           </div>
           <div className="rounded-xl border p-3" style={{ background: 'rgba(255,255,255,0.04)', borderColor: 'rgba(215,190,122,0.22)' }}>
             <p className="text-[10px] uppercase tracking-wide text-slate-400">Invoice date</p>
@@ -935,8 +961,14 @@ function ContractBillingTab({
             <p className="text-[10px] text-slate-500 mt-0.5">Set automatically</p>
           </div>
           <div className="rounded-xl border p-3" style={{ background: 'rgba(255,255,255,0.04)', borderColor: 'rgba(215,190,122,0.22)' }}>
-            <p className="text-[10px] uppercase tracking-wide text-slate-400">Service date</p>
+            <p className="text-[10px] uppercase tracking-wide text-slate-400">Service period</p>
             <p className="text-sm font-bold text-slate-100 mt-1">{savedDisplay || 'Not set'}</p>
+          </div>
+          <div className="rounded-xl border p-3" style={{ background: 'rgba(255,255,255,0.04)', borderColor: 'rgba(215,190,122,0.22)' }}>
+            <p className="text-[10px] uppercase tracking-wide text-slate-400">CLINs</p>
+            <p className="text-sm font-bold text-slate-100 mt-1">
+              {invoiceLineItems.length ? `${invoiceLineItems.length} selected - ${formatCurrency(selectedClinTotal)}` : `${LINE_YEAR_LABELS[selectedYear]} - no CLINs`}
+            </p>
           </div>
         </div>
         <button
@@ -1069,7 +1101,7 @@ function ContractDetailDrawer({
   onClose: () => void
   onOpenSourcing?: (opp: Opportunity) => void
 }) {
-  const { updateContract, addContractPoC, updateContractPoC, removeContractPoC, addLockedSubcontractor, updateLockedSubcontractor, addGovernmentWarning, updateGovernmentWarning, removeGovernmentWarning, resolveGovernmentWarning, advanceContractStatus, terminateContract, currentUser, employees, opportunities, subcontractors, subkDatabase, nextInvoiceNumber, consumeInvoiceNumber, addContractLineItem, updateContractLineItem, removeContractLineItem } = useStore()
+  const { updateContract, addContractPoC, updateContractPoC, removeContractPoC, addContractInvoice, addLockedSubcontractor, updateLockedSubcontractor, addGovernmentWarning, updateGovernmentWarning, removeGovernmentWarning, resolveGovernmentWarning, advanceContractStatus, terminateContract, currentUser, employees, opportunities, subcontractors, subkDatabase, nextInvoiceNumber, consumeInvoiceNumber, addContractLineItem, updateContractLineItem, removeContractLineItem } = useStore()
   const [tab, setTab] = useState<ContractDrawerTab>(initialTab)
   const [deliverableForm, setDeliverableForm] = useState({
     title: '',
@@ -1081,6 +1113,7 @@ function ContractDetailDrawer({
   const [popForm, setPopForm] = useState({
     startDate: contract.popStart || '',
     endDate: contract.popEnd || '',
+    currentPopYear: contract.currentPopYear || 'base' as ContractLineYear,
   })
   const [contractNumberDraft, setContractNumberDraft] = useState(contract.contractNumber || '')
 
@@ -1336,16 +1369,39 @@ function ContractDetailDrawer({
   const selectedSubkMissingDocs = SUBK_DOCUMENT_SECTIONS.filter(section => !(subkDocumentDrafts[section.key] || []).length)
   const invoiceReady = canGenerateContractInvoice(contract)
   const deliverables = normalizeContractDeliverables(contract.deliverables)
-  const financeRows = contract.type === 'RECURRING'
-    ? [
-        { label: 'Total Contract Value (Gov)', value: formatCurrency(contract.value || 0) },
-        { label: 'Monthly Payment (Gov)', value: formatCurrency(contract.monthlyPayment || 0) },
-        ...subkMonthlyBillingRows(contract).map(row => ({ label: 'Monthly Billing (Subk)', value: row })),
-      ]
-    : [
-        { label: 'Total Contract Value (Gov)', value: formatCurrency(contract.value || 0) },
-        { label: "Quote (Subk's)", value: subkQuoteSummary(contract) },
-      ]
+  const invoicePopYear = contract.currentPopYear || 'base'
+  const invoiceLineItems = (contract.lineItems || []).filter(line => line.year === invoicePopYear)
+  const invoiceAmount = invoiceLineItems.length > 0
+    ? invoiceLineItems.reduce((sum, line) => sum + (line.amount || 0), 0)
+    : invoiceAmountFor(contract)
+  const invoiceServiceFrom = contract.billingPeriodStart || contract.serviceDate || contract.popStart || ''
+  const invoiceServiceTo = contract.billingPeriodEnd || contract.serviceDate || contract.popEnd || ''
+  const createTrackedInvoiceAndPdf = async () => {
+    if (!invoiceReady) {
+      toast.error(contract.type === 'OTJ'
+        ? 'OTJ invoices can only be generated in Pending Payment.'
+        : 'Could not generate invoice PDF.')
+      return
+    }
+    const sequence = consumeInvoiceNumber()
+    const invoiceDate = todayDateInput()
+    const trackedInvoice: ContractInvoice = {
+      id: `inv${Date.now()}${Math.floor(Math.random() * 1000)}`,
+      contractId: contract.id,
+      invoiceNumber: formatInvoiceSequence(sequence, invoiceDate),
+      invoiceDate,
+      amount: invoiceAmount,
+      paymentMethod: undefined,
+      status: 'SUBMITTED',
+      serviceFrom: invoiceServiceFrom || undefined,
+      serviceTo: invoiceServiceTo || undefined,
+      popYear: invoicePopYear,
+      lineItemIds: invoiceLineItems.map(line => line.id),
+      createdAt: new Date().toISOString(),
+    }
+    addContractInvoice(contract.id, trackedInvoice)
+    await generateInvoiceFile(contract, trackedInvoice)
+  }
 
   return (
     <div className="fixed inset-0 z-[51] flex items-center justify-center p-2 sm:p-4" style={{ pointerEvents: 'none' }}>
@@ -1492,6 +1548,9 @@ function ContractDetailDrawer({
                       <p className="mt-0.5 truncate text-sm font-bold text-slate-100">
                         {contract.popStart ? formatDate(contract.popStart) : 'TBD'} → {contract.popEnd ? formatDate(contract.popEnd) : 'TBD'}
                       </p>
+                      <p className="text-[10px] text-[#F8E8B8]">
+                        Invoice year: {LINE_YEAR_LABELS[contract.currentPopYear || 'base']}
+                      </p>
                       {(() => {
                         if (!contract.popEnd) return <p className="text-[10px] text-slate-400">Set the end date in POP tab</p>
                         const days = Math.ceil((new Date(`${contract.popEnd}T23:59:59`).getTime() - Date.now()) / 86_400_000)
@@ -1632,7 +1691,7 @@ function ContractDetailDrawer({
                 <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Finance Projection</p>
                 <button
                   type="button"
-                  onClick={() => generateInvoiceFile(contract, consumeInvoiceNumber())}
+                  onClick={createTrackedInvoiceAndPdf}
                   disabled={!invoiceReady}
                   title={!invoiceReady ? 'OTJ invoices are generated when the contract reaches Pending Payment.' : 'Generate invoice PDF'}
                   className="btn-secondary gap-1 px-2.5 py-1 text-xs disabled:cursor-not-allowed disabled:opacity-45"
@@ -1641,8 +1700,14 @@ function ContractDetailDrawer({
                 </button>
               </div>
               <div className="space-y-1.5">
-                {financeRows.map((row, index) => (
-                  <div key={`${row.label}-${index}`} className="grid gap-2 rounded-lg bg-slate-50 px-3 py-2 text-xs sm:grid-cols-[180px_1fr]">
+                {[
+                  { label: 'Next invoice #', value: formatInvoiceSequence(nextInvoiceNumber) },
+                  { label: 'From', value: INVOICE_FROM_LINES.join(' ') },
+                  { label: 'Service period', value: invoiceServiceFrom || invoiceServiceTo ? `${formatDate(invoiceServiceFrom)} - ${formatDate(invoiceServiceTo)}` : 'Not set' },
+                  { label: 'POP year', value: LINE_YEAR_LABELS[invoicePopYear] },
+                  { label: 'CLINs', value: invoiceLineItems.length ? invoiceLineItems.map(line => line.clin).join(', ') : 'No CLINs selected' },
+                ].map(row => (
+                  <div key={row.label} className="grid gap-2 rounded-lg bg-slate-50 px-3 py-2 text-xs sm:grid-cols-[180px_1fr]">
                     <span className="font-semibold text-slate-500">{row.label}</span>
                     <span className="font-semibold text-slate-800">{row.value}</span>
                   </div>
@@ -1895,7 +1960,7 @@ function ContractDetailDrawer({
               className="rounded-2xl border p-4"
               style={{ background: 'rgba(255,255,255,0.055)', borderColor: 'rgba(215,190,122,0.24)' }}
             >
-              <div className="grid gap-3 md:grid-cols-2">
+              <div className="grid gap-3 md:grid-cols-3">
                 <div>
                   <label className="mb-1.5 block text-[10px] font-bold uppercase tracking-wide text-slate-200">
                     Start Date *
@@ -1920,6 +1985,21 @@ function ContractDetailDrawer({
                     onChange={e => setPopForm(prev => ({ ...prev, endDate: e.target.value }))}
                   />
                 </div>
+                <div>
+                  <label className="mb-1.5 block text-[10px] font-bold uppercase tracking-wide text-slate-200">
+                    Invoice POP Year *
+                  </label>
+                  <select
+                    required
+                    className="input-field text-xs"
+                    value={popForm.currentPopYear}
+                    onChange={e => setPopForm(prev => ({ ...prev, currentPopYear: e.target.value as ContractLineYear }))}
+                  >
+                    {LINE_YEAR_ORDER.map(year => (
+                      <option key={year} value={year}>{LINE_YEAR_LABELS[year]}</option>
+                    ))}
+                  </select>
+                </div>
               </div>
 
               <div className="mt-4 grid gap-3 md:grid-cols-2">
@@ -1943,7 +2023,11 @@ function ContractDetailDrawer({
                 <button
                   type="button"
                   className="btn-secondary justify-center"
-                  onClick={() => setPopForm({ startDate: contract.popStart || '', endDate: contract.popEnd || '' })}
+                  onClick={() => setPopForm({
+                    startDate: contract.popStart || '',
+                    endDate: contract.popEnd || '',
+                    currentPopYear: contract.currentPopYear || 'base',
+                  })}
                 >
                   Reset
                 </button>
@@ -1963,6 +2047,7 @@ function ContractDetailDrawer({
                     const saved = await updateContract(contract.id, {
                       popStart: popForm.startDate,
                       popEnd: popForm.endDate,
+                      currentPopYear: popForm.currentPopYear,
                     })
                     if (saved) toast.success('Period of performance saved')
                   }}
@@ -2490,7 +2575,7 @@ function ContractDetailDrawer({
               const isConfirmingDelete = confirmDeleteWarningId === w.id
               return (
                 <div key={w.id} className="p-4 rounded-xl border"
-                  style={{ background: sev.bg, borderColor: sev.color + '40' }}>
+                  style={{ background: `linear-gradient(160deg, ${sev.bg}, rgba(8,24,37,0.90))`, borderColor: sev.border }}>
                   <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="text-xs font-bold" style={{ color: sev.color }}>
@@ -2504,7 +2589,7 @@ function ContractDetailDrawer({
                     <div className="flex flex-wrap items-center gap-1.5">
                       <button
                         type="button"
-                        className="flex items-center gap-1 rounded-lg border border-slate-300/70 bg-white/65 px-2 py-1 text-[10px] font-bold text-slate-600 transition-colors hover:bg-white"
+                        className="flex items-center gap-1 rounded-lg border border-[#D7BE7A]/25 bg-white/5 px-2 py-1 text-[10px] font-bold text-slate-200 transition-colors hover:bg-white/10"
                         onClick={() => {
                           setConfirmDeleteWarningId(null)
                           setEditingWarningId(w.id)
@@ -2520,7 +2605,7 @@ function ContractDetailDrawer({
                       </button>
                       <button
                         type="button"
-                        className="flex items-center gap-1 rounded-lg border border-red-300 bg-red-50 px-2 py-1 text-[10px] font-bold text-red-600 transition-colors hover:bg-red-100"
+                        className="flex items-center gap-1 rounded-lg border border-red-400/35 bg-red-950/35 px-2 py-1 text-[10px] font-bold text-red-200 transition-colors hover:bg-red-900/45"
                         onClick={() => {
                           setEditingWarningId(null)
                           setConfirmDeleteWarningId(w.id)
@@ -2532,10 +2617,10 @@ function ContractDetailDrawer({
                   </div>
 
                   {isEditingWarning ? (
-                    <div className="mb-3 space-y-2 rounded-lg bg-white/65 p-3">
+                    <div className="mb-3 space-y-2 rounded-xl border border-[#D7BE7A]/20 bg-[#07131F]/75 p-3">
                       <div className="grid gap-2 lg:grid-cols-3">
                         <div>
-                          <label className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-500">Type</label>
+                          <label className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-300">Type</label>
                           <select
                             value={warningEditForm.type}
                             onChange={e => setWarningEditForm(prev => ({ ...prev, type: e.target.value as GovWarningType }))}
@@ -2547,7 +2632,7 @@ function ContractDetailDrawer({
                           </select>
                         </div>
                         <div>
-                          <label className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-500">Issuance Date</label>
+                          <label className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-300">Issuance Date</label>
                           <input
                             type="date"
                             value={warningEditForm.issuedDate}
@@ -2556,7 +2641,7 @@ function ContractDetailDrawer({
                           />
                         </div>
                         <div>
-                          <label className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-500">Deadline</label>
+                          <label className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-300">Deadline</label>
                           <input
                             type="date"
                             value={warningEditForm.deadline}
@@ -2566,7 +2651,7 @@ function ContractDetailDrawer({
                         </div>
                       </div>
                       <div>
-                        <label className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-500">Description</label>
+                        <label className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-300">Description</label>
                         <textarea
                           rows={2}
                           value={warningEditForm.description}
@@ -2605,24 +2690,24 @@ function ContractDetailDrawer({
                     </div>
                   ) : (
                     <>
-                      <p className="text-xs text-slate-700 mb-1">{w.description}</p>
+                      <p className="text-xs text-slate-200 mb-1">{w.description}</p>
                       <div className="mt-2 grid gap-2 text-[10px] sm:grid-cols-2">
-                        <div className="rounded-lg border border-white/65 bg-white/55 px-2 py-1.5">
-                          <span className="block font-bold uppercase tracking-wide text-slate-500">Issuance Date</span>
-                          <span className="font-semibold text-slate-700">{formatDate(w.issuedDate)}</span>
+                        <div className="rounded-lg border border-white/10 bg-white/5 px-2 py-1.5">
+                          <span className="block font-bold uppercase tracking-wide text-slate-400">Issuance Date</span>
+                          <span className="font-semibold text-slate-100">{formatDate(w.issuedDate)}</span>
                         </div>
-                        <div className="rounded-lg border border-white/65 bg-white/55 px-2 py-1.5">
-                          <span className="block font-bold uppercase tracking-wide text-slate-500">Deadline</span>
-                          <span className="font-semibold text-slate-700">{formatDate(w.deadline || '')}</span>
+                        <div className="rounded-lg border border-white/10 bg-white/5 px-2 py-1.5">
+                          <span className="block font-bold uppercase tracking-wide text-slate-400">Deadline</span>
+                          <span className="font-semibold text-slate-100">{formatDate(w.deadline || '')}</span>
                         </div>
                       </div>
                     </>
                   )}
 
                   {isConfirmingDelete && (
-                    <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2">
+                    <div className="mb-3 rounded-lg border border-red-400/35 bg-red-950/35 px-3 py-2">
                       <div className="flex flex-wrap items-center justify-between gap-2">
-                        <p className="text-xs font-semibold text-red-700">Delete this warning permanently?</p>
+                        <p className="text-xs font-semibold text-red-100">Delete this warning permanently?</p>
                         <div className="flex items-center gap-2">
                           <button
                             type="button"
@@ -2649,10 +2734,10 @@ function ContractDetailDrawer({
                   )}
 
                   {(w.attachments || []).length > 0 && (
-                    <div className="mt-3 space-y-1.5 rounded-lg bg-white/60 p-2">
-                      <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Attachments</p>
+                    <div className="mt-3 space-y-1.5 rounded-lg border border-white/10 bg-white/5 p-2">
+                      <p className="text-[10px] font-bold uppercase tracking-wide text-slate-300">Attachments</p>
                       {(w.attachments || []).map(att => (
-                        <div key={att.id} className="flex items-center justify-between gap-2 text-[11px] text-slate-600">
+                        <div key={att.id} className="flex items-center justify-between gap-2 text-[11px] text-slate-300">
                           <span className="flex min-w-0 items-center gap-1 truncate font-semibold"><FileText size={10} /> {att.name}</span>
                           <span className="whitespace-nowrap text-slate-400">{formatDateTime(att.attachedAt)}</span>
                         </div>
@@ -2663,12 +2748,12 @@ function ContractDetailDrawer({
                     <div className="mt-3 space-y-2">
                       <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Comments</p>
                       {(w.comments || []).map(comment => (
-                        <div key={comment.id} className="rounded-lg bg-white/65 p-2">
+                        <div key={comment.id} className="rounded-lg border border-white/10 bg-[#07131F]/70 p-2">
                           <div className="mb-1 flex items-center justify-between gap-2">
-                            <span className="text-[11px] font-semibold text-slate-700">{comment.author}</span>
+                            <span className="text-[11px] font-semibold text-slate-200">{comment.author}</span>
                             <span className="text-[10px] text-slate-400">{formatDateTime(comment.createdAt)}</span>
                           </div>
-                          <p className="text-xs text-slate-700">{comment.text}</p>
+                          <p className="text-xs text-slate-200">{comment.text}</p>
                           {(comment.attachments || []).map(att => (
                             <p key={att.id} className="mt-1 flex items-center gap-1 text-[10px] font-semibold text-indigo-600">
                               <FileText size={9} /> {att.name} - {formatDateTime(att.attachedAt)}
@@ -2678,8 +2763,8 @@ function ContractDetailDrawer({
                       ))}
                     </div>
                   )}
-                  <div className="mt-3 rounded-lg bg-white/55 p-2">
-                    <label className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-500">Add comment</label>
+                  <div className="mt-3 rounded-lg border border-white/10 bg-white/5 p-2">
+                    <label className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-300">Add comment</label>
                     <div className="flex gap-2">
                       <input
                         value={commentDraft}
@@ -3037,11 +3122,16 @@ function ContractDetailDrawer({
             contract={contract}
             nextInvoiceNumber={nextInvoiceNumber}
             invoiceReady={invoiceReady}
-            onSaveServiceDate={async (value) => {
-              const saved = await updateContract(contract.id, { serviceDate: value || undefined })
-              if (saved) toast.success(value ? 'Service date saved' : 'Service date cleared')
+            invoiceLineItems={invoiceLineItems}
+            onSaveBillingPeriod={async ({ start, end }) => {
+              const saved = await updateContract(contract.id, {
+                billingPeriodStart: start || undefined,
+                billingPeriodEnd: end || undefined,
+                serviceDate: start && start === end ? start : undefined,
+              })
+              if (saved) toast.success(start || end ? 'Billing period saved' : 'Billing period cleared')
             }}
-            onGenerateInvoice={() => generateInvoiceFile(contract, consumeInvoiceNumber())}
+            onGenerateInvoice={createTrackedInvoiceAndPdf}
           />
         )}
 

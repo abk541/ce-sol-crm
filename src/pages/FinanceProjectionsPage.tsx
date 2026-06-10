@@ -5,7 +5,6 @@ import {
   Calendar,
   CalendarDays,
   Check,
-  CheckCircle2,
   ChevronDown,
   CreditCard,
   DollarSign,
@@ -22,35 +21,21 @@ import { useStore } from '../store/useStore'
 import type {
   Contract,
   ContractInvoice,
-  GovBillingStatus,
+  ContractLineItem,
+  ContractLineYear,
   InvoicePaymentMethod,
   SubInvoiceStatus,
 } from '../types'
 import { formatCurrency } from '../lib/utils'
-import { generateContractInvoicePdf } from '../lib/invoicePdf'
+import { generateContractInvoicePdf, INVOICE_FROM_LINES, invoiceAmountForContract } from '../lib/invoicePdf'
 import { subkSpendForContract } from '../lib/financeProjections'
+import { formatInvoiceSequence } from '../lib/invoiceNumbers'
 
 // ── Constants ─────────────────────────────────────────────────────────
 const MONTHS_LONG = [
   'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December',
 ] as const
-
-const STATUS_OPTIONS: { value: GovBillingStatus; label: string }[] = [
-  { value: 'SUBMITTED',         label: 'Submitted' },
-  { value: 'BILLED',            label: 'Billed' },
-  { value: 'SENT_FOR_APPROVAL', label: 'Sent for approval' },
-  { value: 'REJECTED',          label: 'Rejected' },
-  { value: 'PAID',              label: 'Paid' },
-]
-
-const STATUS_BADGE: Record<GovBillingStatus, string> = {
-  SUBMITTED:         'bg-sky-100 text-sky-700',
-  BILLED:            'bg-indigo-100 text-indigo-700',
-  SENT_FOR_APPROVAL: 'bg-amber-100 text-amber-700',
-  REJECTED:          'bg-rose-100 text-rose-700',
-  PAID:              'bg-emerald-100 text-emerald-700',
-}
 
 const PAYMENT_METHOD_OPTIONS: { value: InvoicePaymentMethod; label: string }[] = [
   { value: 'TUNGSTEN', label: 'Tungsten' },
@@ -72,6 +57,16 @@ const SUB_STATUS_BADGE: Record<SubInvoiceStatus, string> = {
   PARTIAL:  'bg-amber-100 text-amber-700',
   PAID:     'bg-emerald-100 text-emerald-700',
 }
+
+const LINE_YEAR_LABELS: Record<ContractLineYear, string> = {
+  base: 'Base Year',
+  option1: 'Option year 1',
+  option2: 'Option year 2',
+  option3: 'Option year 3',
+  option4: 'Option year 4',
+}
+
+const LINE_YEAR_ORDER: ContractLineYear[] = ['base', 'option1', 'option2', 'option3', 'option4']
 
 // ── Helpers ───────────────────────────────────────────────────────────
 function fmtDateMDY(iso?: string) {
@@ -125,18 +120,51 @@ function effectiveSubStatus(invoice: ContractInvoice, contract: Contract | undef
   return invoice.subStatus ?? defaultSubStatus(contract)
 }
 
-function nextInvoiceNumber(contracts: Contract[]): string {
-  let max = 0
-  for (const c of contracts) {
-    for (const inv of (c.invoices || [])) {
-      const m = inv.invoiceNumber.match(/(\d+)\s*$/)
-      if (m) {
-        const n = Number(m[1])
-        if (Number.isFinite(n) && n > max) max = n
-      }
-    }
-  }
-  return `INV-CES-${String(max + 1).padStart(3, '0')}`
+function lineItemsForInvoice(invoice: ContractInvoice, contract: Contract | undefined): ContractLineItem[] {
+  const all = contract?.lineItems || []
+  const selected = new Set(invoice.lineItemIds || [])
+  if (selected.size > 0) return all.filter(line => selected.has(line.id))
+  const year = invoice.popYear || contract?.currentPopYear || 'base'
+  return all.filter(line => line.year === year)
+}
+
+function lineItemTotal(items: ContractLineItem[]) {
+  return items.reduce((sum, line) => sum + (line.amount || 0), 0)
+}
+
+function lineItemLabel(line: ContractLineItem) {
+  const name = line.description ? ` - ${line.description}` : ''
+  const amount = line.amount ? ` (${formatCurrency(line.amount)})` : ''
+  return `${line.clin}${name}${amount}`
+}
+
+function servicePeriodLabel(start?: string, end?: string) {
+  if (start && end) return `${fmtDateMDY(start)} to ${fmtDateMDY(end)}`
+  if (start) return fmtDateMDY(start)
+  if (end) return fmtDateMDY(end)
+  return '—'
+}
+
+function defaultPopYear(contract: Contract | undefined): ContractLineYear {
+  return contract?.currentPopYear || 'base'
+}
+
+function defaultServiceFrom(contract: Contract | undefined) {
+  return contract?.billingPeriodStart || contract?.serviceDate || contract?.popStart || ''
+}
+
+function defaultServiceTo(contract: Contract | undefined) {
+  return contract?.billingPeriodEnd || contract?.serviceDate || contract?.popEnd || ''
+}
+
+function defaultLineItems(contract: Contract | undefined, year: ContractLineYear) {
+  return (contract?.lineItems || []).filter(line => line.year === year)
+}
+
+function defaultInvoiceAmount(contract: Contract | undefined, items: ContractLineItem[]) {
+  const fromLines = lineItemTotal(items)
+  if (fromLines > 0) return fromLines
+  return contract ? invoiceAmountForContract(contract) : 0
 }
 
 // ── Modal shell (portal + AnimatePresence per project rules) ─────────
@@ -207,15 +235,14 @@ type InvoiceFormState = {
   contractId: string
   invoiceNumber: string
   invoiceDate: string
+  serviceFrom: string
+  serviceTo: string
+  popYear: ContractLineYear | ''
+  lineItemIds: string[]
   amount: string
   paymentMethod: InvoicePaymentMethod | ''
-  status: GovBillingStatus
-  subQuote: string
-  subQuoteOverride: boolean
   dueDate: string
-  dueDateOverride: boolean
   subStatus: SubInvoiceStatus | ''
-  subStatusOverride: boolean
   notes: string
 }
 
@@ -233,32 +260,83 @@ function InvoiceForm({
   onDelete?: () => void
 }) {
   const [state, setState] = useState<InvoiceFormState>(initial)
+  const mounted = useRef(false)
   const set = <K extends keyof InvoiceFormState>(k: K, v: InvoiceFormState[K]) =>
     setState(prev => ({ ...prev, [k]: v }))
 
   const selectedContract = contracts.find(c => c.id === state.contractId)
+  const selectedYear = (state.popYear || defaultPopYear(selectedContract)) as ContractLineYear
+  const availableLineItems = defaultLineItems(selectedContract, selectedYear)
+  const selectedLineItems = availableLineItems.filter(line => state.lineItemIds.includes(line.id))
+  const selectedAmount = defaultInvoiceAmount(selectedContract, selectedLineItems)
   const autoSubQuote = defaultSubQuote(selectedContract)
   const autoDueDate = state.invoiceDate ? addDaysIso(state.invoiceDate, 30) : ''
   const autoSubStatus = defaultSubStatus(selectedContract)
 
-  // When the user has not overridden auto fields, keep them in sync with derived values.
+  const syncFromContract = (contract: Contract | undefined) => {
+    const year = defaultPopYear(contract)
+    const lines = defaultLineItems(contract, year)
+    setState(prev => ({
+      ...prev,
+      serviceFrom: defaultServiceFrom(contract),
+      serviceTo: defaultServiceTo(contract),
+      popYear: year,
+      lineItemIds: lines.map(line => line.id),
+      amount: String(defaultInvoiceAmount(contract, lines)),
+    }))
+  }
+
   useEffect(() => {
-    if (!state.subQuoteOverride) set('subQuote', autoSubQuote ? String(autoSubQuote) : '')
+    if (!mounted.current) {
+      mounted.current = true
+      return
+    }
+    syncFromContract(selectedContract)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.contractId])
   useEffect(() => {
-    if (!state.dueDateOverride) set('dueDate', autoDueDate)
+    set('dueDate', autoDueDate)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.invoiceDate])
   useEffect(() => {
-    if (!state.subStatusOverride) set('subStatus', autoSubStatus)
+    set('subStatus', autoSubStatus)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.contractId])
+
+  useEffect(() => {
+    const next = String(selectedAmount)
+    if (state.amount !== next) set('amount', next)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.contractId, state.popYear, state.lineItemIds.join('|')])
+
+  const changePopYear = (year: ContractLineYear) => {
+    const lines = defaultLineItems(selectedContract, year)
+    setState(prev => ({
+      ...prev,
+      popYear: year,
+      lineItemIds: lines.map(line => line.id),
+      amount: String(defaultInvoiceAmount(selectedContract, lines)),
+    }))
+  }
+
+  const toggleLineItem = (id: string) => {
+    setState(prev => {
+      const exists = prev.lineItemIds.includes(id)
+      const nextIds = exists ? prev.lineItemIds.filter(itemId => itemId !== id) : [...prev.lineItemIds, id]
+      const nextItems = availableLineItems.filter(line => nextIds.includes(line.id))
+      return {
+        ...prev,
+        lineItemIds: nextIds,
+        amount: String(defaultInvoiceAmount(selectedContract, nextItems)),
+      }
+    })
+  }
 
   const submit = () => {
     if (!state.contractId) { toast.error('Pick a contract'); return }
     if (!state.invoiceNumber.trim()) { toast.error('Invoice number is required'); return }
     if (!state.invoiceDate) { toast.error('Invoice date is required'); return }
+    if (!state.serviceFrom || !state.serviceTo) { toast.error('Service from and service to are required'); return }
     const amt = Number(state.amount)
     if (!Number.isFinite(amt) || amt < 0) { toast.error('Amount must be a non-negative number'); return }
     onSubmit(state)
@@ -282,6 +360,13 @@ function InvoiceForm({
         </select>
       </div>
 
+      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+        <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">From</p>
+        <div className="mt-2 space-y-0.5 text-xs font-semibold text-slate-700">
+          {INVOICE_FROM_LINES.map(line => <p key={line}>{line}</p>)}
+        </div>
+      </div>
+
       <div className="grid gap-3 sm:grid-cols-2">
         <div>
           <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500">Invoice number</label>
@@ -289,7 +374,7 @@ function InvoiceForm({
             className="input-field mt-1 w-full"
             value={state.invoiceNumber}
             onChange={e => set('invoiceNumber', e.target.value)}
-            placeholder="INV-CES-001"
+            placeholder="INV-CES-26-0001"
           />
         </div>
         <div>
@@ -302,6 +387,36 @@ function InvoiceForm({
           />
         </div>
         <div>
+          <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500">Service from</label>
+          <input
+            type="date"
+            className="input-field mt-1 w-full"
+            value={state.serviceFrom}
+            onChange={e => set('serviceFrom', e.target.value)}
+          />
+        </div>
+        <div>
+          <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500">Service to</label>
+          <input
+            type="date"
+            className="input-field mt-1 w-full"
+            value={state.serviceTo}
+            onChange={e => set('serviceTo', e.target.value)}
+          />
+        </div>
+        <div>
+          <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500">POP year</label>
+          <select
+            className="input-field mt-1 w-full"
+            value={selectedYear}
+            onChange={e => changePopYear(e.target.value as ContractLineYear)}
+          >
+            {LINE_YEAR_ORDER.map(year => (
+              <option key={year} value={year}>{LINE_YEAR_LABELS[year]}</option>
+            ))}
+          </select>
+        </div>
+        <div>
           <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500">Amount</label>
           <input
             type="number"
@@ -311,6 +426,9 @@ function InvoiceForm({
             value={state.amount}
             onChange={e => set('amount', e.target.value)}
           />
+          <p className="mt-1 text-[10px] text-slate-400">
+            {selectedLineItems.length ? `Auto from ${selectedLineItems.length} CLIN${selectedLineItems.length === 1 ? '' : 's'}` : 'Fallback from contract invoice amount'}
+          </p>
         </div>
         <div>
           <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500">Payment method</label>
@@ -326,18 +444,6 @@ function InvoiceForm({
           </select>
         </div>
         <div>
-          <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500">Status</label>
-          <select
-            className="input-field mt-1 w-full"
-            value={state.status}
-            onChange={e => set('status', e.target.value as GovBillingStatus)}
-          >
-            {STATUS_OPTIONS.map(o => (
-              <option key={o.value} value={o.value}>{o.label}</option>
-            ))}
-          </select>
-        </div>
-        <div>
           <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500">Notes</label>
           <input
             className="input-field mt-1 w-full"
@@ -348,84 +454,61 @@ function InvoiceForm({
         </div>
       </div>
 
+      <div className="rounded-xl border border-slate-200 bg-white p-3">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">CLINs</p>
+          <p className="text-[10px] font-semibold text-slate-400">
+            {selectedLineItems.length ? `${selectedLineItems.length} selected - ${formatCurrency(lineItemTotal(selectedLineItems))}` : 'No CLIN selected'}
+          </p>
+        </div>
+        {availableLineItems.length === 0 ? (
+          <p className="mt-3 rounded-lg border border-dashed border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500">
+            No CLINs have been added for {LINE_YEAR_LABELS[selectedYear]} in Contract Admin.
+          </p>
+        ) : (
+          <div className="mt-3 max-h-48 space-y-2 overflow-y-auto rounded-lg border border-slate-200 bg-slate-50 p-2">
+            {availableLineItems.map(line => (
+              <label
+                key={line.id}
+                className="flex cursor-pointer items-start gap-2 rounded-lg bg-white px-3 py-2 text-xs text-slate-700 shadow-sm transition-colors hover:bg-emerald-50"
+              >
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={state.lineItemIds.includes(line.id)}
+                  onChange={() => toggleLineItem(line.id)}
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="font-black text-slate-900">{line.clin}</span>
+                  <span className="ml-2 text-slate-600">{line.description || 'No description'}</span>
+                  <span className="ml-2 whitespace-nowrap font-bold text-emerald-700">{formatCurrency(line.amount || 0)}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+        )}
+      </div>
+
       <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-3">
         <div className="flex items-center justify-between gap-2">
           <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Subcontractor payout</p>
-          <p className="text-[10px] text-slate-400">Auto-seeded from locked subks · editable</p>
+          <p className="text-[10px] text-slate-400">Automatic from locked subks</p>
         </div>
 
         <div className="grid gap-3 sm:grid-cols-3">
-          <div>
-            <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500">Sub quote</label>
-            <div className="flex items-center gap-1">
-              <input
-                type="number"
-                min={0}
-                step="0.01"
-                className="input-field mt-1 w-full"
-                value={state.subQuote}
-                onChange={e => set('subQuote', e.target.value)}
-                disabled={!state.subQuoteOverride && !state.contractId}
-              />
-            </div>
-            <label className="mt-1 flex items-center gap-1 text-[10px] text-slate-500">
-              <input
-                type="checkbox"
-                checked={state.subQuoteOverride}
-                onChange={e => {
-                  const next = e.target.checked
-                  set('subQuoteOverride', next)
-                  if (!next) set('subQuote', autoSubQuote ? String(autoSubQuote) : '')
-                }}
-              />
-              Override (auto: {formatCurrency(autoSubQuote)})
-            </label>
+          <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Sub quote</p>
+            <p className="mt-1 text-sm font-black text-slate-900">{formatCurrency(autoSubQuote)}</p>
           </div>
-          <div>
-            <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500">Due date</label>
-            <input
-              type="date"
-              className="input-field mt-1 w-full"
-              value={state.dueDate}
-              onChange={e => set('dueDate', e.target.value)}
-            />
-            <label className="mt-1 flex items-center gap-1 text-[10px] text-slate-500">
-              <input
-                type="checkbox"
-                checked={state.dueDateOverride}
-                onChange={e => {
-                  const next = e.target.checked
-                  set('dueDateOverride', next)
-                  if (!next) set('dueDate', autoDueDate)
-                }}
-              />
-              Override (auto: invoice date + 30d)
-            </label>
+          <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Due date</p>
+            <p className="mt-1 text-sm font-black text-slate-900">{fmtDateMDY(state.dueDate)}</p>
           </div>
-          <div>
-            <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500">Sub status</label>
-            <select
-              className="input-field mt-1 w-full"
-              value={state.subStatus}
-              onChange={e => set('subStatus', e.target.value as SubInvoiceStatus | '')}
-            >
-              <option value="">— Auto —</option>
-              {SUB_STATUS_OPTIONS.map(o => (
-                <option key={o.value} value={o.value}>{o.label}</option>
-              ))}
-            </select>
-            <label className="mt-1 flex items-center gap-1 text-[10px] text-slate-500">
-              <input
-                type="checkbox"
-                checked={state.subStatusOverride}
-                onChange={e => {
-                  const next = e.target.checked
-                  set('subStatusOverride', next)
-                  if (!next) set('subStatus', autoSubStatus)
-                }}
-              />
-              Override (auto: {SUB_STATUS_OPTIONS.find(o => o.value === autoSubStatus)?.label})
-            </label>
+          <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Sub status</p>
+            <p className="mt-1 text-sm font-black text-slate-900">
+              {SUB_STATUS_OPTIONS.find(o => o.value === state.subStatus)?.label || SUB_STATUS_OPTIONS.find(o => o.value === autoSubStatus)?.label}
+            </p>
           </div>
         </div>
       </div>
@@ -451,6 +534,7 @@ function InvoiceForm({
 type Row = {
   invoice: ContractInvoice
   contract: Contract | undefined
+  lineItems: ContractLineItem[]
   subQuote: number
   dueDate: string
   subStatus: SubInvoiceStatus
@@ -611,7 +695,7 @@ function FilterSelect({
 }
 
 export default function FinanceProjectionsPage() {
-  const { contracts, addContractInvoice, updateContractInvoice, removeContractInvoice } = useStore()
+  const { contracts, addContractInvoice, updateContractInvoice, removeContractInvoice, nextInvoiceNumber, consumeInvoiceNumber } = useStore()
 
   // Flatten all invoices + denormalize.
   const allRows = useMemo<Row[]>(() => {
@@ -621,6 +705,7 @@ export default function FinanceProjectionsPage() {
         rows.push({
           invoice: inv,
           contract: c,
+          lineItems: lineItemsForInvoice(inv, c),
           subQuote: effectiveSubQuote(inv, c),
           dueDate: effectiveDueDate(inv),
           subStatus: effectiveSubStatus(inv, c),
@@ -643,7 +728,6 @@ export default function FinanceProjectionsPage() {
   const defaultYear = yearOptions[0] ?? String(new Date().getFullYear())
   const [yearFilter, setYearFilter] = useState<string>('ALL')
   const [monthFilter, setMonthFilter] = useState<string>('ALL')
-  const [statusFilter, setStatusFilter] = useState<GovBillingStatus | 'ALL'>('ALL')
   const [methodFilter, setMethodFilter] = useState<InvoicePaymentMethod | 'ALL'>('ALL')
   const [searchTerm, setSearchTerm] = useState<string>('')
 
@@ -659,7 +743,6 @@ export default function FinanceProjectionsPage() {
       const m = r.invoice.invoiceDate?.slice(5, 7) || ''
       if (yearFilter !== 'ALL' && y !== yearFilter) return false
       if (monthFilter !== 'ALL' && m !== monthFilter) return false
-      if (statusFilter !== 'ALL' && r.invoice.status !== statusFilter) return false
       if (methodFilter !== 'ALL' && r.invoice.paymentMethod !== methodFilter) return false
       if (term) {
         const haystack = [
@@ -672,7 +755,7 @@ export default function FinanceProjectionsPage() {
       }
       return true
     })
-  }, [allRows, yearFilter, monthFilter, statusFilter, methodFilter, searchTerm])
+  }, [allRows, yearFilter, monthFilter, methodFilter, searchTerm])
 
   // Sort by invoice date ascending so monthly groups appear chronologically.
   const sortedRows = useMemo(
@@ -714,19 +797,21 @@ export default function FinanceProjectionsPage() {
   const closeEdit = () => setEditingInvoiceId(null)
 
   const today = new Date().toISOString().slice(0, 10)
+  const firstContract = contracts[0]
+  const firstPopYear = defaultPopYear(firstContract)
+  const firstLineItems = defaultLineItems(firstContract, firstPopYear)
   const seedCreate: InvoiceFormState = {
-    contractId: contracts[0]?.id ?? '',
-    invoiceNumber: nextInvoiceNumber(contracts),
+    contractId: firstContract?.id ?? '',
+    invoiceNumber: formatInvoiceSequence(nextInvoiceNumber, today),
     invoiceDate: today,
-    amount: '',
+    serviceFrom: defaultServiceFrom(firstContract),
+    serviceTo: defaultServiceTo(firstContract),
+    popYear: firstPopYear,
+    lineItemIds: firstLineItems.map(line => line.id),
+    amount: String(defaultInvoiceAmount(firstContract, firstLineItems)),
     paymentMethod: '',
-    status: 'SUBMITTED',
-    subQuote: defaultSubQuote(contracts[0]) ? String(defaultSubQuote(contracts[0])) : '',
-    subQuoteOverride: false,
     dueDate: addDaysIso(today, 30),
-    dueDateOverride: false,
-    subStatus: defaultSubStatus(contracts[0]),
-    subStatusOverride: false,
+    subStatus: defaultSubStatus(firstContract),
     notes: '',
   }
 
@@ -734,28 +819,32 @@ export default function FinanceProjectionsPage() {
     contractId: row.invoice.contractId,
     invoiceNumber: row.invoice.invoiceNumber,
     invoiceDate: row.invoice.invoiceDate,
+    serviceFrom: row.invoice.serviceFrom || defaultServiceFrom(row.contract),
+    serviceTo: row.invoice.serviceTo || defaultServiceTo(row.contract),
+    popYear: row.invoice.popYear || defaultPopYear(row.contract),
+    lineItemIds: row.lineItems.map(line => line.id),
     amount: String(row.invoice.amount ?? 0),
     paymentMethod: row.invoice.paymentMethod ?? '',
-    status: row.invoice.status,
-    subQuote: typeof row.invoice.subQuote === 'number' ? String(row.invoice.subQuote) : '',
-    subQuoteOverride: row.invoice.subQuote != null,
-    dueDate: row.invoice.dueDate ?? '',
-    dueDateOverride: !!row.invoice.dueDate,
-    subStatus: row.invoice.subStatus ?? '',
-    subStatusOverride: row.invoice.subStatus != null,
+    dueDate: row.invoice.dueDate ?? addDaysIso(row.invoice.invoiceDate, 30),
+    subStatus: row.invoice.subStatus ?? defaultSubStatus(row.contract),
     notes: row.invoice.notes ?? '',
   })
 
   const handleCreate = (state: InvoiceFormState) => {
+    const generatedNumber = formatInvoiceSequence(consumeInvoiceNumber(), state.invoiceDate)
     addContractInvoice(state.contractId, {
-      invoiceNumber: state.invoiceNumber.trim(),
+      invoiceNumber: state.invoiceNumber.trim() || generatedNumber,
       invoiceDate: state.invoiceDate,
       amount: Number(state.amount) || 0,
       paymentMethod: state.paymentMethod || undefined,
-      status: state.status,
-      subQuote: state.subQuoteOverride ? (Number(state.subQuote) || 0) : undefined,
-      dueDate: state.dueDateOverride ? state.dueDate : undefined,
-      subStatus: state.subStatusOverride && state.subStatus ? state.subStatus : undefined,
+      status: 'SUBMITTED',
+      serviceFrom: state.serviceFrom,
+      serviceTo: state.serviceTo,
+      popYear: state.popYear || undefined,
+      lineItemIds: state.lineItemIds,
+      subQuote: undefined,
+      dueDate: undefined,
+      subStatus: undefined,
       notes: state.notes.trim() || undefined,
     })
     toast.success('Invoice added')
@@ -769,10 +858,14 @@ export default function FinanceProjectionsPage() {
       invoiceDate: state.invoiceDate,
       amount: Number(state.amount) || 0,
       paymentMethod: state.paymentMethod || undefined,
-      status: state.status,
-      subQuote: state.subQuoteOverride ? (Number(state.subQuote) || 0) : undefined,
-      dueDate: state.dueDateOverride ? state.dueDate : undefined,
-      subStatus: state.subStatusOverride && state.subStatus ? state.subStatus : undefined,
+      status: 'SUBMITTED',
+      serviceFrom: state.serviceFrom,
+      serviceTo: state.serviceTo,
+      popYear: state.popYear || undefined,
+      lineItemIds: state.lineItemIds,
+      subQuote: undefined,
+      dueDate: undefined,
+      subStatus: undefined,
       notes: state.notes.trim() || undefined,
     })
     toast.success('Invoice updated')
@@ -787,9 +880,6 @@ export default function FinanceProjectionsPage() {
     closeEdit()
   }
 
-  const handleQuickStatus = (row: Row, next: GovBillingStatus) => {
-    updateContractInvoice(row.invoice.contractId, row.invoice.id, { status: next })
-  }
   const handleQuickSubStatus = (row: Row, next: SubInvoiceStatus | '') => {
     updateContractInvoice(row.invoice.contractId, row.invoice.id, {
       subStatus: next || undefined,
@@ -807,7 +897,7 @@ export default function FinanceProjectionsPage() {
       return
     }
     try {
-      await generateContractInvoicePdf(row.contract)
+      await generateContractInvoicePdf(row.contract, { invoice: row.invoice, lineItems: row.lineItems })
       toast.success(`PDF generated for ${row.invoice.invoiceNumber}`)
     } catch (err) {
       console.error(err)
@@ -818,7 +908,6 @@ export default function FinanceProjectionsPage() {
   const resetFilters = () => {
     setYearFilter(defaultYear)
     setMonthFilter('ALL')
-    setStatusFilter('ALL')
     setMethodFilter('ALL')
     setSearchTerm('')
   }
@@ -826,7 +915,6 @@ export default function FinanceProjectionsPage() {
   const activeFilterCount =
     (yearFilter !== defaultYear ? 1 : 0) +
     (monthFilter !== 'ALL' ? 1 : 0) +
-    (statusFilter !== 'ALL' ? 1 : 0) +
     (methodFilter !== 'ALL' ? 1 : 0) +
     (searchTerm.trim() ? 1 : 0)
 
@@ -958,18 +1046,6 @@ export default function FinanceProjectionsPage() {
           />
 
           <FilterSelect
-            icon={<CheckCircle2 size={12} />}
-            label="Status"
-            value={statusFilter}
-            onChange={v => setStatusFilter(v as GovBillingStatus | 'ALL')}
-            active={statusFilter !== 'ALL'}
-            options={[
-              { value: 'ALL', label: 'All statuses' },
-              ...STATUS_OPTIONS.map(o => ({ value: o.value, label: o.label })),
-            ]}
-          />
-
-          <FilterSelect
             icon={<CreditCard size={12} />}
             label="Method"
             value={methodFilter}
@@ -989,14 +1065,15 @@ export default function FinanceProjectionsPage() {
           <table className="w-full text-xs">
             <thead className="bg-slate-50 text-[10px] font-bold uppercase tracking-wider text-slate-500">
               <tr>
-                <th className="px-3 py-2 text-left">Period</th>
                 <th className="px-3 py-2 text-left">Contract Name</th>
                 <th className="px-3 py-2 text-left">Contract Number</th>
                 <th className="px-3 py-2 text-left">Invoice Nr</th>
                 <th className="px-3 py-2 text-left">Invoice Date</th>
+                <th className="px-3 py-2 text-left">Service Period</th>
+                <th className="px-3 py-2 text-left">POP Year</th>
+                <th className="px-3 py-2 text-left">CLINs</th>
                 <th className="px-3 py-2 text-right">Amount</th>
                 <th className="px-3 py-2 text-left">Payment Method</th>
-                <th className="px-3 py-2 text-left">Status</th>
                 <th className="px-3 py-2 text-right">Sub Quote</th>
                 <th className="px-3 py-2 text-left">Due Date</th>
                 <th className="px-3 py-2 text-left">Sub Status</th>
@@ -1006,7 +1083,7 @@ export default function FinanceProjectionsPage() {
             <tbody className="divide-y divide-slate-100">
               {groups.length === 0 && (
                 <tr>
-                  <td colSpan={12} className="py-12 text-center text-sm text-slate-400">
+                  <td colSpan={13} className="py-12 text-center text-sm text-slate-400">
                     No invoices match the current filters. Click <span className="font-bold">Add invoice</span> to record one.
                   </td>
                 </tr>
@@ -1017,26 +1094,16 @@ export default function FinanceProjectionsPage() {
                 const monthProfit = monthAmount - monthSubQuote
                 return (
                   <Fragment key={monthKey || 'unscheduled'}>
+                    <tr className="bg-amber-50/70">
+                      <td colSpan={13} className="px-3 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-amber-700">
+                        {monthLabel(monthKey)}
+                      </td>
+                    </tr>
                     {rows.map((row, ri) => {
-                      const status = row.invoice.status
                       const subStatus = row.subStatus
                       const method = row.invoice.paymentMethod
                       return (
                         <tr key={row.invoice.id} className="hover:bg-slate-50">
-                          {ri === 0 && (
-                            <td
-                              rowSpan={rows.length + 1 /* +1 to also span the subtotal row */}
-                              className="border-r border-slate-100 bg-amber-50 align-middle px-2 py-2 text-center"
-                              style={{ width: 60 }}
-                            >
-                              <p
-                                className="text-[10px] font-black uppercase tracking-[0.2em] text-amber-700"
-                                style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}
-                              >
-                                {monthLabel(monthKey)}
-                              </p>
-                            </td>
-                          )}
                           <td className="px-3 py-2 max-w-[260px]">
                             <p className="truncate font-bold text-slate-800" title={row.contract?.title || ''}>
                               {row.contract?.title || '— missing contract —'}
@@ -1051,6 +1118,17 @@ export default function FinanceProjectionsPage() {
                           <td className="whitespace-nowrap px-3 py-2 text-slate-700">
                             {fmtDateMDY(row.invoice.invoiceDate)}
                           </td>
+                          <td className="whitespace-nowrap px-3 py-2 text-slate-700">
+                            {servicePeriodLabel(row.invoice.serviceFrom, row.invoice.serviceTo)}
+                          </td>
+                          <td className="whitespace-nowrap px-3 py-2 text-slate-700">
+                            {LINE_YEAR_LABELS[(row.invoice.popYear || row.contract?.currentPopYear || 'base') as ContractLineYear]}
+                          </td>
+                          <td className="max-w-[220px] px-3 py-2 text-slate-600">
+                            <p className="truncate" title={row.lineItems.map(lineItemLabel).join(', ')}>
+                              {row.lineItems.length ? row.lineItems.map(line => line.clin).join(', ') : 'No CLINs'}
+                            </p>
+                          </td>
                           <td className="whitespace-nowrap px-3 py-2 text-right font-bold text-slate-900">
                             {formatCurrency(row.invoice.amount)}
                           </td>
@@ -1062,17 +1140,6 @@ export default function FinanceProjectionsPage() {
                             >
                               <option value="">—</option>
                               {PAYMENT_METHOD_OPTIONS.map(o => (
-                                <option key={o.value} value={o.value}>{o.label}</option>
-                              ))}
-                            </select>
-                          </td>
-                          <td className="px-3 py-2">
-                            <select
-                              value={status}
-                              onChange={e => handleQuickStatus(row, e.target.value as GovBillingStatus)}
-                              className={`rounded-md border border-slate-200 px-1.5 py-0.5 text-[11px] font-bold focus:border-indigo-400 focus:outline-none ${STATUS_BADGE[status]}`}
-                            >
-                              {STATUS_OPTIONS.map(o => (
                                 <option key={o.value} value={o.value}>{o.label}</option>
                               ))}
                             </select>
@@ -1121,13 +1188,13 @@ export default function FinanceProjectionsPage() {
                     })}
                     {/* Group subtotal */}
                     <tr key={`${monthKey}-subtotal`} className="bg-emerald-50/70 font-bold text-slate-800">
-                      <td colSpan={4} className="px-3 py-1.5 text-right text-[10px] uppercase tracking-wider text-slate-500">
+                      <td colSpan={7} className="px-3 py-1.5 text-right text-[10px] uppercase tracking-wider text-slate-500">
                         {monthLabel(monthKey)} subtotal
                       </td>
                       <td className="whitespace-nowrap px-3 py-1.5 text-right text-emerald-800">
                         {formatCurrency(monthAmount)}
                       </td>
-                      <td colSpan={2} className="px-3 py-1.5" />
+                      <td className="px-3 py-1.5" />
                       <td className="whitespace-nowrap px-3 py-1.5 text-right text-rose-700">
                         {formatCurrency(monthSubQuote)}
                       </td>
@@ -1140,7 +1207,7 @@ export default function FinanceProjectionsPage() {
                     {/* Spacer between groups */}
                     {gi < groups.length - 1 && (
                       <tr key={`${monthKey}-spacer`} className="h-1.5">
-                        <td colSpan={12} />
+                        <td colSpan={13} />
                       </tr>
                     )}
                   </Fragment>
@@ -1150,11 +1217,11 @@ export default function FinanceProjectionsPage() {
             {groups.length > 0 && (
               <tfoot>
                 <tr className="bg-slate-900 font-black text-white">
-                  <td colSpan={5} className="px-3 py-2 text-right text-[10px] uppercase tracking-[0.2em] text-slate-300">
+                  <td colSpan={7} className="px-3 py-2 text-right text-[10px] uppercase tracking-[0.2em] text-slate-300">
                     Grand total
                   </td>
                   <td className="whitespace-nowrap px-3 py-2 text-right">{formatCurrency(totals.totalAmount)}</td>
-                  <td colSpan={2} className="px-3 py-2" />
+                  <td className="px-3 py-2" />
                   <td className="whitespace-nowrap px-3 py-2 text-right">{formatCurrency(totals.totalSubQuote)}</td>
                   <td className="px-3 py-2" />
                   <td className="px-3 py-2 text-[10px] uppercase tracking-wider text-slate-300">

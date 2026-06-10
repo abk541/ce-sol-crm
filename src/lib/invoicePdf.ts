@@ -1,5 +1,6 @@
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
-import type { Contract, FileAttachment } from '../types'
+import type { Contract, ContractInvoice, ContractLineItem, FileAttachment } from '../types'
+import { formatInvoiceSequence } from './invoiceNumbers'
 
 function fmtMoney(value?: number) {
   if (value == null) return '$0'
@@ -82,19 +83,40 @@ export function subkMonthlyBillingRowsForContract(contract: Contract) {
 }
 
 export interface InvoiceGenerationOptions {
-  invoiceNumber?: number   // sequential id; printed as INV-{0000}. Falls back to a timestamped placeholder if omitted.
+  invoiceNumber?: number | string
+  invoice?: ContractInvoice
+  lineItems?: ContractLineItem[]
 }
 
-function formatInvoiceNumber(n?: number) {
-  if (n == null || !Number.isFinite(n) || n <= 0) return 'DRAFT'
-  return `INV-${String(Math.trunc(n)).padStart(4, '0')}`
-}
+export const INVOICE_FROM_LINES = [
+  'CE Solution Plus Corp.',
+  '3007 43rd Ste 1, Astoria, NY 11103',
+  'SAM UEI: ZVQVJUMF9K6 | www.cesolutionplus.com',
+]
 
-function formatServiceDate(value?: string) {
+function formatPdfDate(value?: string) {
   if (!value) return '-'
   const d = new Date(`${value}T00:00:00`)
   if (!Number.isFinite(d.getTime())) return value
-  return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+  return d.toLocaleDateString('en-US')
+}
+
+function lineItemsForInvoice(contract: Contract, invoice?: ContractInvoice, explicit?: ContractLineItem[]) {
+  if (explicit) return explicit
+  const all = contract.lineItems || []
+  const selectedIds = new Set(invoice?.lineItemIds || [])
+  if (selectedIds.size > 0) return all.filter(line => selectedIds.has(line.id))
+  const year = invoice?.popYear || contract.currentPopYear || 'base'
+  return all.filter(line => line.year === year)
+}
+
+function invoiceServiceRange(contract: Contract, invoice?: ContractInvoice) {
+  const start = invoice?.serviceFrom || contract.billingPeriodStart || contract.serviceDate || contract.popStart
+  const end = invoice?.serviceTo || contract.billingPeriodEnd || contract.serviceDate || contract.popEnd
+  if (start && end) return `${formatPdfDate(start)} To ${formatPdfDate(end)}`
+  if (start) return formatPdfDate(start)
+  if (end) return formatPdfDate(end)
+  return '-'
 }
 
 export async function generateContractInvoicePdf(contract: Contract, options: InvoiceGenerationOptions = {}) {
@@ -110,13 +132,13 @@ export async function generateContractInvoicePdf(contract: Contract, options: In
   const STRIPE_TOP = 8
   const STRIPE_BOTTOM = 8
   const FOOTER_H = 36
-  const ORANGE = rgb(0.9, 0.4, 0.0)
+  const ORANGE = rgb(0.72, 0.34, 0.08)
   const HEADER_BG = rgb(0.04, 0.04, 0.06)
   const FOOTER_BG = rgb(0.07, 0.10, 0.14)
   const INK = rgb(0.08, 0.12, 0.2)
   const MUTED = rgb(0.32, 0.36, 0.44)
   const BORDER = rgb(0.78, 0.80, 0.84)
-  const ACCENT = rgb(0.02, 0.46, 0.39)
+  const ACCENT = rgb(0.05, 0.32, 0.30)
 
   const sanitize = (s: string) => (s || '')
     .replace(/[\u2018\u2019\u201A\u201B\u2032]/g, "'")
@@ -162,6 +184,30 @@ export async function generateContractInvoicePdf(contract: Contract, options: In
     page.drawText(safe, opts)
   }
 
+  const invoice = options.invoice
+  const invoiceDate = invoice?.invoiceDate || new Date().toISOString().slice(0, 10)
+  const invoiceNumber = invoice?.invoiceNumber || formatInvoiceSequence(options.invoiceNumber, invoiceDate)
+  const selectedLineItems = lineItemsForInvoice(contract, invoice, options.lineItems)
+  const fallbackAmount = invoice?.amount ?? invoiceAmountForContract(contract)
+  const invoiceRows = selectedLineItems.length > 0
+    ? selectedLineItems.map(line => ({
+        clin: line.clin,
+        description: line.description || contract.title,
+        quantity: line.quantity || 0,
+        unit: line.unit || '-',
+        rate: line.rate || 0,
+        amount: line.amount || 0,
+      }))
+    : [{
+        clin: '0001',
+        description: contract.title,
+        quantity: 1,
+        unit: contract.type === 'RECURRING' ? 'Month' : 'Job',
+        rate: fallbackAmount,
+        amount: fallbackAmount,
+      }]
+  const totalAmount = invoice?.amount ?? invoiceRows.reduce((sum, row) => sum + row.amount, 0)
+
   // Top orange stripe + dark header
   page.drawRectangle({ x: 0, y: PAGE_H - STRIPE_TOP, width: PAGE_W, height: STRIPE_TOP, color: ORANGE })
   const headerTop = PAGE_H - STRIPE_TOP
@@ -196,138 +242,90 @@ export async function generateContractInvoicePdf(contract: Contract, options: In
 
   // Invoice title bar
   const titleY = headerTop - HEADER_H - 28
-  drawSafe('INVOICE', { x: MARGIN, y: titleY, size: 22, font: bold, color: ACCENT })
-  drawSafe(invoiceCadenceForContract(contract), { x: MARGIN, y: titleY - 14, size: 9, font, color: MUTED })
-
-  const amount = invoiceAmountForContract(contract)
-  const amountText = fmtMoney(amount)
-  const amountSize = 22
-  const amountW = bold.widthOfTextAtSize(amountText, amountSize)
-  drawSafe(amountText, {
-    x: PAGE_W - MARGIN - amountW,
-    y: titleY,
-    size: amountSize,
-    font: bold,
-    color: ACCENT,
+  const titleLines = wrapW(contract.title || 'Contract invoice', PAGE_W - MARGIN * 2, 13, false).slice(0, 2)
+  drawSafe('Invoice', { x: MARGIN, y: titleY, size: 22, font: bold, color: ACCENT })
+  titleLines.forEach((line, index) => {
+    drawSafe(line, { x: MARGIN, y: titleY - 26 - index * 14, size: 13, font, color: INK })
   })
-  const subLabel = contract.type === 'RECURRING' ? 'MONTHLY RETURN' : 'TOTAL RETURN'
-  const subLabelW = bold.widthOfTextAtSize(subLabel, 8)
-  drawSafe(subLabel, {
-    x: PAGE_W - MARGIN - subLabelW,
-    y: titleY - 14,
-    size: 8,
-    font: bold,
-    color: MUTED,
-  })
+  page.drawLine({ start: { x: MARGIN, y: titleY - 44 }, end: { x: PAGE_W - MARGIN, y: titleY - 44 }, color: INK, thickness: 0.8 })
 
-  // Field table
-  const invoicePeriod = contract.type === 'RECURRING'
-    ? new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(new Date())
-    : 'One-time job total'
-
-  type Field = { label: string; value: string }
-  const rowFields: Field[][] = [
-    [
-      { label: 'INVOICE #', value: formatInvoiceNumber(options.invoiceNumber) },
-      { label: 'INVOICE DATE', value: new Date().toLocaleDateString('en-US') },
-      { label: 'SERVICE DATE', value: formatServiceDate(contract.serviceDate) },
-    ],
-    [
-      { label: 'CONTRACT', value: contract.title },
-      { label: 'CONTRACT ID', value: contract.contractId || contract.id },
-      { label: 'CLIENT / AGENCY', value: contract.client || '-' },
-      { label: 'LOCATION', value: contract.location || '-' },
-    ],
-    [
-      { label: 'TYPE', value: contract.type === 'S&D' || contract.type === 'SUPPLY' ? 'S&D' : contract.type },
-      { label: 'STATUS', value: contract.status },
-      { label: 'INVOICE PERIOD', value: invoicePeriod },
-      { label: 'TOTAL CONTRACT VALUE', value: fmtMoney(contract.value || 0) },
-    ],
-    [
-      contract.type === 'RECURRING'
-        ? { label: 'MONTHLY PAYMENT (GOV)', value: fmtMoney(contract.monthlyPayment || 0) }
-        : { label: "QUOTE (SUBK'S)", value: subkQuoteSummaryForContract(contract) },
-    ],
-  ]
-
-  let cursorY = titleY - 38
-  const rowH = 44
+  let cursorY = titleY - 88
   const innerLeft = MARGIN
   const innerRight = PAGE_W - MARGIN
   const innerW = innerRight - innerLeft
+  const midX = innerLeft + innerW * 0.62
 
-  for (const row of rowFields) {
-    const cellW = innerW / row.length
-    page.drawRectangle({
-      x: innerLeft,
-      y: cursorY - rowH,
-      width: innerW,
-      height: rowH,
-      borderColor: BORDER,
-      borderWidth: 0.8,
-      color: rgb(1, 1, 1),
-    })
-    row.forEach((field, i) => {
-      const x = innerLeft + i * cellW
-      if (i > 0) {
-        page.drawLine({
-          start: { x, y: cursorY - rowH + 2 },
-          end: { x, y: cursorY - 2 },
-          color: BORDER,
-          thickness: 0.6,
-        })
-      }
-      drawSafe(field.label, { x: x + 8, y: cursorY - 13, size: 8, font: bold, color: MUTED })
-      const valueLines = wrapW(field.value || '-', cellW - 16, 10).slice(0, 2)
-      valueLines.forEach((line, j) => {
-        drawSafe(line, { x: x + 8, y: cursorY - 26 - j * 12, size: 10, font, color: INK })
-      })
-    })
-    cursorY -= rowH + 6
-  }
-
-  // Subk billing rows section
-  const sectionLabel = contract.type === 'RECURRING' ? 'MONTHLY BILLING (SUBK)' : 'SUBK QUOTE REFERENCE'
-  drawSafe(sectionLabel, { x: innerLeft, y: cursorY - 4, size: 9, font: bold, color: MUTED })
-  cursorY -= 18
-
-  const subkRows = contract.type === 'RECURRING'
-    ? subkMonthlyBillingRowsForContract(contract)
-    : [`Quote (Subk's): ${subkQuoteSummaryForContract(contract)}`]
-
-  const listMaxLines = Math.max(8, Math.floor((cursorY - (FOOTER_H + STRIPE_BOTTOM + 24)) / 14))
-  const listBoxTop = cursorY
-  const listBoxBottom = FOOTER_H + STRIPE_BOTTOM + 16
-  const listBoxH = listBoxTop - listBoxBottom
-  page.drawRectangle({
-    x: innerLeft,
-    y: listBoxBottom,
-    width: innerW,
-    height: listBoxH,
-    borderColor: BORDER,
-    borderWidth: 0.8,
-    color: rgb(1, 1, 1),
+  drawSafe('From:', { x: innerLeft, y: cursorY, size: 12, font: bold, color: INK })
+  INVOICE_FROM_LINES.forEach((line, index) => {
+    drawSafe(line, { x: innerLeft, y: cursorY - 16 - index * 13, size: 12, font, color: INK })
   })
 
-  let listY = listBoxTop - 14
-  let drawn = 0
-  outer: for (const row of subkRows) {
-    const lines = wrapW(row, innerW - 24, 9.5)
-    for (let i = 0; i < lines.length; i++) {
-      if (drawn >= listMaxLines) break outer
-      drawSafe(`${i === 0 ? '-' : '  '} ${lines[i]}`, {
-        x: innerLeft + 10,
-        y: listY,
-        size: 9.5,
-        font,
-        color: INK,
-      })
-      listY -= 13
-      drawn++
+  drawSafe('To:', { x: midX, y: cursorY, size: 12, font: bold, color: INK })
+  const toLines = [contract.client || '-', contract.location || '-'].filter(Boolean)
+  toLines.forEach((line, index) => {
+    drawSafe(line, { x: midX, y: cursorY - 16 - index * 13, size: 12, font: index === 0 ? bold : font, color: INK })
+  })
+
+  cursorY -= 84
+  page.drawLine({ start: { x: innerLeft, y: cursorY + 10 }, end: { x: innerRight, y: cursorY + 10 }, color: ORANGE, thickness: 0.7 })
+
+  const infoRows = [
+    { label: 'Service Date:', value: invoiceServiceRange(contract, invoice) },
+    { label: 'Invoice Date:', value: formatPdfDate(invoiceDate) },
+    { label: 'Invoice Number:', value: invoiceNumber },
+  ]
+  infoRows.forEach((row, index) => {
+    const y = cursorY - index * 18
+    drawSafe(row.label, { x: innerLeft, y, size: 12, font: bold, color: INK })
+    drawSafe(row.value, { x: innerLeft + 120, y, size: 12, font, color: INK })
+  })
+
+  cursorY -= 74
+  const tableTop = cursorY
+  const columns = [
+    { label: 'CLIN', x: innerLeft, w: 70, align: 'left' as const },
+    { label: 'DESCRIPTION', x: innerLeft + 70, w: 230, align: 'left' as const },
+    { label: 'QTY', x: innerLeft + 300, w: 55, align: 'right' as const },
+    { label: 'UNIT', x: innerLeft + 355, w: 65, align: 'left' as const },
+    { label: 'RATE', x: innerLeft + 420, w: 70, align: 'right' as const },
+    { label: 'AMOUNT', x: innerLeft + 490, w: innerW - 490, align: 'right' as const },
+  ]
+  page.drawRectangle({ x: innerLeft, y: tableTop - 24, width: innerW, height: 24, color: HEADER_BG })
+  columns.forEach(column => {
+    drawSafe(column.label, {
+      x: column.align === 'right' ? column.x + column.w - bold.widthOfTextAtSize(column.label, 10) - 8 : column.x + 8,
+      y: tableTop - 16,
+      size: 10,
+      font: bold,
+      color: rgb(1, 1, 1),
+    })
+  })
+
+  let rowY = tableTop - 48
+  invoiceRows.slice(0, 14).forEach((row, index) => {
+    if (index % 2 === 0) {
+      page.drawRectangle({ x: innerLeft, y: rowY - 8, width: innerW, height: 28, color: rgb(0.97, 0.98, 0.98) })
     }
-    listY -= 3
-  }
+    const descLines = wrapW(row.description, 215, 10).slice(0, 2)
+    drawSafe(row.clin, { x: columns[0].x + 8, y: rowY, size: 10, font, color: INK })
+    descLines.forEach((line, lineIndex) => {
+      drawSafe(line, { x: columns[1].x + 8, y: rowY - lineIndex * 11, size: 10, font, color: INK })
+    })
+    const qty = String(row.quantity)
+    const rate = fmtMoneyExact(row.rate)
+    const amount = fmtMoneyExact(row.amount)
+    drawSafe(qty, { x: columns[2].x + columns[2].w - font.widthOfTextAtSize(qty, 10) - 8, y: rowY, size: 10, font, color: INK })
+    drawSafe(row.unit, { x: columns[3].x + 8, y: rowY, size: 10, font, color: INK })
+    drawSafe(rate, { x: columns[4].x + columns[4].w - font.widthOfTextAtSize(rate, 10) - 8, y: rowY, size: 10, font, color: INK })
+    drawSafe(amount, { x: columns[5].x + columns[5].w - font.widthOfTextAtSize(amount, 10) - 8, y: rowY, size: 10, font, color: INK })
+    rowY -= descLines.length > 1 ? 36 : 28
+  })
+
+  page.drawLine({ start: { x: innerLeft, y: rowY + 6 }, end: { x: innerRight, y: rowY + 6 }, color: BORDER, thickness: 0.8 })
+  const totalLabel = 'TOTAL'
+  const totalText = fmtMoneyExact(totalAmount)
+  drawSafe(totalLabel, { x: innerLeft + 390, y: rowY - 12, size: 11, font: bold, color: INK })
+  drawSafe(totalText, { x: innerRight - bold.widthOfTextAtSize(totalText, 12), y: rowY - 12, size: 12, font: bold, color: ACCENT })
 
   // Bottom orange stripe + dark footer
   page.drawRectangle({ x: 0, y: FOOTER_H, width: PAGE_W, height: STRIPE_BOTTOM, color: ORANGE })
@@ -345,8 +343,6 @@ export async function generateContractInvoicePdf(contract: Contract, options: In
 
   const bytes = await pdf.save()
   const safeId = (contract.contractId || contract.id).replace(/[^a-z0-9_-]+/gi, '-')
-  const numberSuffix = options.invoiceNumber && options.invoiceNumber > 0
-    ? `-${String(Math.trunc(options.invoiceNumber)).padStart(4, '0')}`
-    : ''
-  download(bytes, `invoice-${safeId}${numberSuffix}.pdf`)
+  const safeInvoice = invoiceNumber.replace(/[^a-z0-9_-]+/gi, '-')
+  download(bytes, `invoice-${safeId}-${safeInvoice}.pdf`)
 }

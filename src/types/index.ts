@@ -326,6 +326,9 @@ export interface Contract {
   proposalAttachments?: FileAttachment[]
   samGovContacts?: SamGovContact[]   // copied from originating opportunity at award time
   serviceDate?: string              // YYYY-MM-DD, entered in the Billing Period tab; printed on the invoice
+  billingPeriodStart?: string       // YYYY-MM-DD, invoice service period start
+  billingPeriodEnd?: string         // YYYY-MM-DD, invoice service period end
+  currentPopYear?: ContractLineYear // base/option year selected for current billing
   lineItems?: ContractLineItem[]    // CLIN-numbered scope of work entries (base + up to 4 option years)
   governmentBillingStatus?: GovBillingStatus  // gov-invoice payment status shown in Finance Projections
   invoices?: ContractInvoice[]      // tracked invoices feeding the Finance Projections grid
@@ -351,6 +354,10 @@ export interface ContractInvoice {
   amount: number                         // government bill amount
   paymentMethod?: InvoicePaymentMethod
   status: GovBillingStatus
+  serviceFrom?: string                   // YYYY-MM-DD, invoice service period start
+  serviceTo?: string                     // YYYY-MM-DD, invoice service period end
+  popYear?: ContractLineYear
+  lineItemIds?: string[]
   subQuote?: number                      // override; default = sum of locked subk pay rates
   dueDate?: string                       // YYYY-MM-DD; default = invoiceDate + 30d
   subStatus?: SubInvoiceStatus           // default derived from locked subk paid flags
