@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { Edit2, Eye, Filter, MoreHorizontal, Paperclip, Search, TrendingUp } from 'lucide-react'
+import { Edit2, Filter, MoreHorizontal, Paperclip, Search, Trash2, TrendingUp, UploadCloud } from 'lucide-react'
 import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import type { BDSubmission, ContractType, FileAttachment, Opportunity, SetAside } from '../types'
 import { useStore } from '../store/useStore'
@@ -79,6 +79,25 @@ function downloadProposalAttachment(att: FileAttachment) {
   link.remove()
 }
 
+function fileToProposalAttachment(file: File, uploadedBy: string): Promise<FileAttachment> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      resolve({
+        id: crypto.randomUUID(),
+        name: file.name,
+        attachedAt: new Date().toISOString(),
+        uploadedBy,
+        dataUrl: typeof reader.result === 'string' ? reader.result : undefined,
+        mimeType: file.type || undefined,
+        size: file.size,
+      })
+    }
+    reader.onerror = () => reject(new Error('File could not be read.'))
+    reader.readAsDataURL(file)
+  })
+}
+
 function ProposalCell({ attachments }: { attachments: FileAttachment[] }) {
   const [open, setOpen] = useState(false)
   if (!attachments.length) return <span className="text-xs text-slate-300">—</span>
@@ -145,25 +164,47 @@ function trackerEditInitial(row: BDSubmission, opp?: Opportunity | null) {
     value: String(row.value ?? 0),
     comment: row.comment ?? '',
     mandatoryEvents: opp?.mandatoryEvents ?? '',
+    proposalAttachments: opp?.proposalAttachments ?? [],
   }
 }
 
 type TrackerEditForm = ReturnType<typeof trackerEditInitial>
+type TrackerStringField = Exclude<keyof TrackerEditForm, 'proposalAttachments'>
 
 function BDTrackerEditModal({
   row,
   opportunity,
+  uploadedBy,
   onClose,
   onSave,
 }: {
   row: BDSubmission
   opportunity?: Opportunity | null
+  uploadedBy: string
   onClose: () => void
   onSave: (form: TrackerEditForm) => Promise<boolean>
 }) {
   const [form, setForm] = useState(() => trackerEditInitial(row, opportunity))
   const [saving, setSaving] = useState(false)
-  const update = (key: keyof TrackerEditForm, value: string) => setForm(prev => ({ ...prev, [key]: value }))
+  const update = (key: TrackerStringField, value: string) => setForm(prev => ({ ...prev, [key]: value }))
+
+  const addProposalFiles = async (files: FileList | null) => {
+    if (!files?.length) return
+    try {
+      const attachments = await Promise.all(Array.from(files).map(file => fileToProposalAttachment(file, uploadedBy)))
+      setForm(prev => ({ ...prev, proposalAttachments: [...prev.proposalAttachments, ...attachments] }))
+      toast.success(files.length === 1 ? 'Proposal file added.' : `${files.length} proposal files added.`)
+    } catch {
+      toast.error('Proposal file could not be uploaded.')
+    }
+  }
+
+  const removeProposalFile = (id: string) => {
+    setForm(prev => ({
+      ...prev,
+      proposalAttachments: prev.proposalAttachments.filter(att => att.id !== id),
+    }))
+  }
 
   const save = async () => {
     if (!form.solicitation.trim()) {
@@ -251,6 +292,59 @@ function BDTrackerEditModal({
             </label>
           )}
         </div>
+
+        {opportunity && (
+          <div className="rounded-2xl border border-[#D7BE7A]/20 bg-[#06131F]/90 p-4">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#D7BE7A]">Proposal Files</p>
+                <p className="mt-1 text-xs text-slate-400">Upload replacements or remove files before saving.</p>
+              </div>
+              <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-[#D7BE7A]/25 bg-[#D7BE7A]/10 px-3 py-2 text-xs font-black text-[#F8FBF7] transition-colors hover:bg-[#D7BE7A]/20">
+                <UploadCloud size={14} />
+                Add file
+                <input
+                  type="file"
+                  multiple
+                  className="hidden"
+                  onChange={event => {
+                    void addProposalFiles(event.target.files)
+                    event.target.value = ''
+                  }}
+                />
+              </label>
+            </div>
+
+            {form.proposalAttachments.length > 0 ? (
+              <div className="space-y-2">
+                {form.proposalAttachments.map(att => (
+                  <div key={att.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#D7BE7A]/15 bg-white/5 px-3 py-2">
+                    <button
+                      type="button"
+                      onClick={() => downloadProposalAttachment(att)}
+                      className="min-w-0 flex-1 text-left text-xs font-semibold text-slate-200 hover:text-[#F8FBF7]"
+                      title={att.name}
+                    >
+                      <Paperclip size={12} className="mr-2 inline text-[#D7BE7A]" />
+                      <span className="align-middle">{att.name}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => removeProposalFile(att.id)}
+                      className="inline-flex items-center gap-1 rounded-lg border border-rose-400/30 bg-rose-500/10 px-2 py-1 text-[10px] font-black text-rose-200 transition-colors hover:bg-rose-500/20"
+                    >
+                      <Trash2 size={11} /> Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="rounded-xl border border-dashed border-[#D7BE7A]/20 bg-white/5 px-3 py-4 text-center text-xs font-semibold text-slate-400">
+                No proposal files attached.
+              </p>
+            )}
+          </div>
+        )}
 
         <div className="sticky bottom-0 -mx-6 -mb-5 flex justify-end gap-3 border-t border-[#D7BE7A]/15 bg-[#07131F]/95 px-6 py-4 backdrop-blur">
           <button className="btn-secondary" onClick={onClose}>Cancel</button>
@@ -423,6 +517,8 @@ export default function BDTrackerPage() {
         contractAmount: value,
         value,
         mandatoryEvents: form.mandatoryEvents,
+        proposalAttachments: form.proposalAttachments,
+        proposals: form.proposalAttachments.map(att => att.name).filter(Boolean),
       })
       if (!saved) return false
     }
@@ -615,22 +711,6 @@ export default function BDTrackerPage() {
                           onOpenChange={open => setMenuOpen(open ? String(s.id) : null)}
                           trigger={<MoreHorizontal size={14} />}
                         >
-                                <button
-                                  onClick={() => { setSelectedRowId(s.id); setMenuOpen(null) }}
-                                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50 hover:text-slate-900">
-                                  <Eye size={12} /> View Details
-                                </button>
-                                {canEditOpportunities && (
-                                  <>
-                                    <button
-                                      onClick={() => { openEditForRow(s); setMenuOpen(null) }}
-                                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50 hover:text-slate-900">
-                                      <Edit2 size={12} />
-                                      Edit Details
-                                    </button>
-                                    <div className="my-1 border-t border-slate-100" />
-                                  </>
-                                )}
                                 <p className="px-3 py-1 text-[9px] font-bold uppercase tracking-wider text-slate-400">Move to</p>
                                 {BD_TABS.filter(t => t.key !== s.status).map(t => {
                                   const itemMeta = STATUS_META[t.key]
@@ -795,7 +875,7 @@ export default function BDTrackerPage() {
                   {canEditOpportunities && (
                     <div className="sticky bottom-0 -mx-6 -mb-5 mt-4 flex justify-end gap-2 border-t border-[#D7BE7A]/15 bg-[#07131F]/95 px-6 py-4 backdrop-blur">
                       <button className="btn-primary gap-2 text-xs" onClick={() => openEditForRow(selectedRow)}>
-                        <Edit2 size={13} /> Edit Details
+                        <Edit2 size={13} /> Edit Record
                       </button>
                     </div>
                   )}
@@ -810,6 +890,7 @@ export default function BDTrackerPage() {
         <BDTrackerEditModal
           row={editingRow}
           opportunity={editingOpportunity}
+          uploadedBy={currentUser?.username ?? currentUser?.name ?? 'unknown'}
           onClose={() => setEditingRowId(null)}
           onSave={form => saveTrackerDetails(editingRow, editingOpportunity, form)}
         />
