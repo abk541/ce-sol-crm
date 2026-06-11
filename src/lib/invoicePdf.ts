@@ -1,11 +1,11 @@
-import { PDFDocument, StandardFonts } from 'pdf-lib'
+import { PDFDocument } from 'pdf-lib'
 import type { Contract, ContractInvoice, ContractLineItem, FileAttachment } from '../types'
 import { formatInvoiceSequence } from './invoiceNumbers'
 import {
   PDF_THEME,
   drawBrandedFooter,
   drawBrandedHeader,
-  embedCompanyLogo,
+  loadBrandFonts,
   toWinAnsi,
 } from './pdfBranding'
 
@@ -131,15 +131,15 @@ export async function generateContractInvoicePdf(contract: Contract, options: In
     throw new Error('OTJ invoices can only be generated when the contract is pending payment.')
   }
 
-  const { PAGE_W, PAGE_H, MARGIN, HEADER_H, FOOTER_H, NAVY, GOLD, INK, INK_SOFT, MUTED, OFF_WHITE, BORDER, BORDER_STRONG, ACCENT_TEAL, WHITE } = PDF_THEME
+  const { PAGE_W, PAGE_H, MARGIN, HEADER_H, FOOTER_H, NAVY, GOLD, GOLD_SOFT, INK, INK_SOFT, MUTED, OFF_WHITE, BORDER, BORDER_STRONG, ACCENT_TEAL, WHITE } = PDF_THEME
 
   const sanitize = toWinAnsi
 
   const pdf = await PDFDocument.create()
   let page = pdf.addPage([PAGE_W, PAGE_H])
-  const font = await pdf.embedFont(StandardFonts.Helvetica)
-  const bold = await pdf.embedFont(StandardFonts.HelveticaBold)
-  const logo = await embedCompanyLogo(pdf, { invert: true })
+  const brand = await loadBrandFonts(pdf)
+  const font = brand.sans
+  const bold = brand.sansBold
 
   const rightText = (text: string, rightX: number, y: number, size: number, useBold = false, color = INK) => {
     const safe = sanitize(text)
@@ -176,8 +176,14 @@ export async function generateContractInvoicePdf(contract: Contract, options: In
     page.drawText(safe, opts)
   }
 
-  const drawCard = (x: number, y: number, width: number, height: number, fill = WHITE) => {
-    page.drawRectangle({ x, y, width, height, color: fill, borderColor: BORDER, borderWidth: 0.6 })
+  const sectionLabel = (text: string, x: number, y: number) => {
+    drawSafe(text, { x, y, size: 6.5, font: bold, color: MUTED })
+    page.drawLine({
+      start: { x, y: y - 4 },
+      end: { x: PAGE_W - MARGIN, y: y - 4 },
+      color: BORDER,
+      thickness: 0.4,
+    })
   }
 
   const drawLabelValue = (
@@ -185,14 +191,15 @@ export async function generateContractInvoicePdf(contract: Contract, options: In
     value: string,
     x: number,
     y: number,
-    labelWidth = 96,
     valueWidth = 170,
   ) => {
-    drawSafe(label.toUpperCase(), { x, y, size: 7, font: bold, color: MUTED })
-    const lines = wrapW(value || '-', valueWidth, 9.5, true).slice(0, 2)
-    lines.forEach((line, index) => {
-      drawSafe(line, { x: x + labelWidth, y: y - index * 11, size: 9.5, font: index === 0 ? bold : font, color: INK })
-    })
+    drawSafe(label.toUpperCase(), { x, y, size: 6.5, font: bold, color: MUTED })
+    const lines = wrapW(value || '-', valueWidth, 9, true).slice(0, 1)
+    if (lines.length) {
+      drawSafe(lines[0], { x, y: y - 12, size: 9, font: bold, color: INK })
+    } else {
+      drawSafe('-', { x, y: y - 12, size: 9, font, color: INK_SOFT })
+    }
   }
 
   const popYearLabel = (value?: string) => {
@@ -237,121 +244,104 @@ export async function generateContractInvoicePdf(contract: Contract, options: In
   // ── Branded header ────────────────────────────────────────────────
   drawBrandedHeader({
     page,
-    font,
-    bold,
-    logo,
+    brand,
     docType: 'INVOICE',
-    docMeta: invoiceNumber,
-    subtitle: 'You have a need, we have a solution.',
+    docMeta: `No. ${invoiceNumber}`,
+    subtitle: invoiceCadenceForContract(contract),
   })
 
-  // ── Contract title block ───────────────────────────────────────────
-  const titleTop = PAGE_H - HEADER_H - 28
-  const titleLines = wrapW(contract.title || 'Contract invoice', PAGE_W - MARGIN * 2, 14, true).slice(0, 2)
+  // ── Document title block (compact) ────────────────────────────────
+  const titleTop = PAGE_H - HEADER_H - 32
+  const titleLines = wrapW(contract.title || 'Contract invoice', PAGE_W - MARGIN * 2 - 200, 12, true).slice(0, 2)
   titleLines.forEach((line, index) => {
-    drawSafe(line, { x: MARGIN, y: titleTop - index * 17, size: 14, font: bold, color: INK })
+    drawSafe(line, { x: MARGIN, y: titleTop - index * 14, size: 12, font: bold, color: INK })
   })
   drawSafe(contract.contractId || contract.id, {
     x: MARGIN,
-    y: titleTop - titleLines.length * 17 - 2,
-    size: 9.5,
+    y: titleTop - titleLines.length * 14 - 4,
+    size: 8,
     font,
     color: MUTED,
   })
 
-  // ── Summary strip (4 KPIs) ─────────────────────────────────────────
-  const summaryY = titleTop - titleLines.length * 17 - 50
-  const summaryH = 56
-  drawCard(MARGIN, summaryY, PAGE_W - MARGIN * 2, summaryH, OFF_WHITE)
-  // Subtle gold accent bar on the left edge
-  page.drawRectangle({ x: MARGIN, y: summaryY, width: 3, height: summaryH, color: GOLD })
-
-  const summaryCols = [
-    { label: 'Invoice Date', value: formatPdfDate(invoiceDate), x: MARGIN + 18 },
-    { label: 'Service Period', value: invoiceServiceRange(contract, invoice), x: MARGIN + 154 },
-    { label: 'POP Year', value: popYear, x: MARGIN + 332 },
-    { label: 'Amount Due', value: fmtMoneyExact(totalAmount), x: MARGIN + 432 },
+  // Invoice metadata stack (right side, aligned with title)
+  const metaRight = PAGE_W - MARGIN
+  const metaItems = [
+    { label: 'INVOICE DATE', value: formatPdfDate(invoiceDate) },
+    { label: 'DUE DATE', value: billingDue ? formatPdfDate(billingDue) : '-' },
+    { label: 'POP YEAR', value: popYear },
   ]
-  summaryCols.forEach(col => {
-    drawSafe(col.label.toUpperCase(), { x: col.x, y: summaryY + 36, size: 7, font: bold, color: MUTED })
-    const isAmount = col.label === 'Amount Due'
-    drawSafe(col.value, {
-      x: col.x,
-      y: summaryY + 16,
-      size: isAmount ? 13 : 10.5,
-      font: bold,
-      color: isAmount ? ACCENT_TEAL : INK,
-    })
+  metaItems.forEach((item, index) => {
+    const colX = metaRight - 280 + index * 95
+    drawSafe(item.label, { x: colX, y: titleTop, size: 6.5, font: bold, color: MUTED })
+    drawSafe(item.value, { x: colX, y: titleTop - 12, size: 9, font: bold, color: INK })
   })
 
-  // ── From / Bill To cards ───────────────────────────────────────────
-  const cardY = summaryY - 110
-  const cardW = (PAGE_W - MARGIN * 2 - 16) / 2
-  const cardH = 96
-  drawCard(MARGIN, cardY, cardW, cardH)
-  drawCard(MARGIN + cardW + 16, cardY, cardW, cardH)
-  drawSafe('FROM', { x: MARGIN + 14, y: cardY + cardH - 18, size: 8, font: bold, color: GOLD })
+  // ── From / Bill To ────────────────────────────────────────────────
+  const partyTop = titleTop - titleLines.length * 14 - 38
+  const colW = (PAGE_W - MARGIN * 2 - 24) / 2
+  sectionLabel('FROM', MARGIN, partyTop)
+  sectionLabel('BILL TO', MARGIN + colW + 24, partyTop)
+
+  const partyBodyTop = partyTop - 14
   INVOICE_FROM_LINES.forEach((line, index) => {
     drawSafe(line, {
-      x: MARGIN + 14,
-      y: cardY + cardH - 36 - index * 14,
-      size: index === 0 ? 10.5 : 9.5,
+      x: MARGIN,
+      y: partyBodyTop - index * 12,
+      size: index === 0 ? 10 : 8.5,
       font: index === 0 ? bold : font,
       color: index === 0 ? INK : INK_SOFT,
     })
   })
-  const billX = MARGIN + cardW + 30
-  drawSafe('BILL TO', { x: billX, y: cardY + cardH - 18, size: 8, font: bold, color: GOLD })
   const billLines = [contract.client || '-', contract.location || '-']
   billLines.forEach((line, index) => {
-    const lines = wrapW(line, cardW - 28, index === 0 ? 10.5 : 9.5, index === 0).slice(0, 2)
-    lines.forEach((wrapped, wrapIndex) => {
-      drawSafe(wrapped, {
-        x: billX,
-        y: cardY + cardH - 36 - index * 28 - wrapIndex * 11,
-        size: index === 0 ? 10.5 : 9.5,
+    const wrapped = wrapW(line, colW, index === 0 ? 10 : 8.5, index === 0).slice(0, 2)
+    wrapped.forEach((w, wi) => {
+      drawSafe(w, {
+        x: MARGIN + colW + 24,
+        y: partyBodyTop - index * 26 - wi * 11,
+        size: index === 0 ? 10 : 8.5,
         font: index === 0 ? bold : font,
         color: index === 0 ? INK : INK_SOFT,
       })
     })
   })
 
-  // ── Contract details strip ─────────────────────────────────────────
-  const detailsY = cardY - 78
-  drawSafe('CONTRACT DETAILS', { x: MARGIN, y: detailsY + 50, size: 8, font: bold, color: GOLD })
-  drawCard(MARGIN, detailsY, PAGE_W - MARGIN * 2, 60, OFF_WHITE)
-  drawLabelValue('Contract ID', contract.contractId || contract.id, MARGIN + 14, detailsY + 44, 70, 110)
-  drawLabelValue('Contract No.', contract.contractNumber || '-', MARGIN + 188, detailsY + 44, 76, 116)
-  drawLabelValue('Type', contract.type || '-', MARGIN + 372, detailsY + 44, 42, 80)
-  drawLabelValue('Set Aside', contract.setAside || '-', MARGIN + 470, detailsY + 44, 60, 70)
-  drawLabelValue('NAICS', contract.naicsCode || '-', MARGIN + 14, detailsY + 18, 70, 110)
-  drawLabelValue('Invoice Type', invoiceType, MARGIN + 188, detailsY + 18, 76, 150)
-  drawLabelValue('Due Date', billingDue ? formatPdfDate(billingDue) : '-', MARGIN + 372, detailsY + 18, 60, 120)
+  // ── Contract details strip ────────────────────────────────────────
+  const detailsTop = partyTop - 78
+  sectionLabel('CONTRACT DETAILS', MARGIN, detailsTop)
+  const detailsRowY = detailsTop - 16
+  drawLabelValue('Contract ID', contract.contractId || contract.id, MARGIN, detailsRowY, 110)
+  drawLabelValue('Contract No.', contract.contractNumber || '-', MARGIN + 130, detailsRowY, 110)
+  drawLabelValue('Service Period', invoiceServiceRange(contract, invoice), MARGIN + 260, detailsRowY, 170)
+  drawLabelValue('Type', contract.type || '-', MARGIN + 440, detailsRowY, 80)
 
-  // ── Line items table ───────────────────────────────────────────────
-  const tableTop = detailsY - 32
+  // ── Line items table ──────────────────────────────────────────────
+  const tableTop = detailsTop - 58
   const innerLeft = MARGIN
   const innerRight = PAGE_W - MARGIN
   const innerW = innerRight - innerLeft
   const columns = [
-    { label: 'CLIN', x: innerLeft, w: 70, align: 'left' as const },
-    { label: 'DESCRIPTION', x: innerLeft + 70, w: 245, align: 'left' as const },
-    { label: 'QTY', x: innerLeft + 315, w: 50, align: 'right' as const },
-    { label: 'UNIT', x: innerLeft + 365, w: 58, align: 'left' as const },
-    { label: 'RATE', x: innerLeft + 423, w: 62, align: 'right' as const },
-    { label: 'AMOUNT', x: innerLeft + 485, w: innerW - 485, align: 'right' as const },
+    { label: 'CLIN', x: innerLeft, w: 56, align: 'left' as const },
+    { label: 'DESCRIPTION', x: innerLeft + 56, w: 244, align: 'left' as const },
+    { label: 'QTY', x: innerLeft + 300, w: 42, align: 'right' as const },
+    { label: 'UNIT', x: innerLeft + 342, w: 52, align: 'left' as const },
+    { label: 'RATE', x: innerLeft + 394, w: 60, align: 'right' as const },
+    { label: 'AMOUNT', x: innerLeft + 454, w: innerW - 454, align: 'right' as const },
   ]
 
   const drawTableHeader = (top: number, title = 'LINE ITEMS') => {
-    drawSafe(title, { x: innerLeft, y: top + 14, size: 8, font: bold, color: GOLD })
-    page.drawRectangle({ x: innerLeft, y: top - 22, width: innerW, height: 22, color: NAVY })
+    sectionLabel(title, innerLeft, top + 14)
+    page.drawRectangle({ x: innerLeft, y: top - 18, width: innerW, height: 18, color: NAVY })
     columns.forEach(column => {
       drawSafe(column.label, {
-        x: column.align === 'right' ? column.x + column.w - bold.widthOfTextAtSize(column.label, 9) - 8 : column.x + 8,
-        y: top - 14,
-        size: 9,
+        x: column.align === 'right'
+          ? column.x + column.w - bold.widthOfTextAtSize(column.label, 7.5) - 8
+          : column.x + 8,
+        y: top - 12,
+        size: 7.5,
         font: bold,
-        color: WHITE,
+        color: GOLD_SOFT,
       })
     })
   }
@@ -361,29 +351,28 @@ export async function generateContractInvoicePdf(contract: Contract, options: In
     let index = startIndex
     while (index < invoiceRows.length && index < startIndex + maxRows) {
       const row = invoiceRows[index]
-      const descLines = wrapW(row.description, 232, 9.5).slice(0, 2)
-      const rowH = descLines.length > 1 ? 34 : 26
+      const descLines = wrapW(row.description, columns[1].w - 16, 9).slice(0, 2)
+      const rowH = descLines.length > 1 ? 26 : 20
       if ((index - startIndex) % 2 === 0) {
-        page.drawRectangle({ x: innerLeft, y: y - rowH + 16, width: innerW, height: rowH, color: OFF_WHITE })
+        page.drawRectangle({ x: innerLeft, y: y - rowH + 12, width: innerW, height: rowH, color: OFF_WHITE })
       }
-      // Hairline divider under every row
       page.drawLine({
-        start: { x: innerLeft, y: y - rowH + 16 },
-        end: { x: innerRight, y: y - rowH + 16 },
+        start: { x: innerLeft, y: y - rowH + 12 },
+        end: { x: innerRight, y: y - rowH + 12 },
         color: BORDER,
-        thickness: 0.4,
+        thickness: 0.3,
       })
-      drawSafe(row.clin, { x: columns[0].x + 8, y, size: 10, font, color: INK })
+      drawSafe(row.clin, { x: columns[0].x + 8, y, size: 9, font, color: INK })
       descLines.forEach((line, lineIndex) => {
-        drawSafe(line, { x: columns[1].x + 8, y: y - lineIndex * 11, size: 9.5, font, color: INK })
+        drawSafe(line, { x: columns[1].x + 8, y: y - lineIndex * 10, size: 9, font, color: INK })
       })
       const qty = String(row.quantity)
       const rate = fmtMoneyExact(row.rate)
       const amount = fmtMoneyExact(row.amount)
-      drawSafe(qty, { x: columns[2].x + columns[2].w - font.widthOfTextAtSize(qty, 10) - 8, y, size: 10, font, color: INK })
-      drawSafe(row.unit, { x: columns[3].x + 8, y, size: 10, font, color: INK })
-      drawSafe(rate, { x: columns[4].x + columns[4].w - font.widthOfTextAtSize(rate, 10) - 8, y, size: 10, font, color: INK })
-      drawSafe(amount, { x: columns[5].x + columns[5].w - bold.widthOfTextAtSize(amount, 10) - 8, y, size: 10, font: bold, color: INK })
+      drawSafe(qty, { x: columns[2].x + columns[2].w - font.widthOfTextAtSize(qty, 9) - 8, y, size: 9, font, color: INK })
+      drawSafe(row.unit, { x: columns[3].x + 8, y, size: 9, font, color: INK })
+      drawSafe(rate, { x: columns[4].x + columns[4].w - font.widthOfTextAtSize(rate, 9) - 8, y, size: 9, font, color: INK })
+      drawSafe(amount, { x: columns[5].x + columns[5].w - bold.widthOfTextAtSize(amount, 9) - 8, y, size: 9, font: bold, color: INK })
       y -= rowH
       index += 1
     }
@@ -391,76 +380,75 @@ export async function generateContractInvoicePdf(contract: Contract, options: In
   }
 
   drawTableHeader(tableTop)
-  let drawn = drawInvoiceRows(0, 5, tableTop - 42)
+  let drawn = drawInvoiceRows(0, 6, tableTop - 32)
   let rowY = drawn.rowY
   let nextRow = drawn.nextIndex
 
   while (nextRow < invoiceRows.length) {
-    drawSafe('Line items continue on the next page.', { x: innerLeft + 8, y: rowY, size: 8, font, color: MUTED })
-    drawBrandedFooter({ page, font, rightText: `Invoice ${invoiceNumber}` })
+    drawSafe('Line items continue on the next page.', { x: innerLeft + 8, y: rowY, size: 7.5, font, color: MUTED })
+    drawBrandedFooter({ page, brand, rightText: `Invoice ${invoiceNumber}` })
     page = pdf.addPage([PAGE_W, PAGE_H])
     drawBrandedHeader({
       page,
-      font,
-      bold,
-      logo,
+      brand,
       docType: 'INVOICE',
-      docMeta: invoiceNumber,
+      docMeta: `No. ${invoiceNumber}`,
       subtitle: 'continued',
     })
-    const continuationTop = PAGE_H - HEADER_H - 60
+    const continuationTop = PAGE_H - HEADER_H - 50
     drawTableHeader(continuationTop, 'LINE ITEMS CONTINUED')
-    drawn = drawInvoiceRows(nextRow, 16, continuationTop - 42)
+    drawn = drawInvoiceRows(nextRow, 18, continuationTop - 32)
     rowY = drawn.rowY
     nextRow = drawn.nextIndex
   }
 
-  // ── Totals block ───────────────────────────────────────────────────
+  // ── Totals row ────────────────────────────────────────────────────
   const totalsTop = rowY + 4
   page.drawLine({
     start: { x: innerLeft, y: totalsTop },
     end: { x: innerRight, y: totalsTop },
     color: BORDER_STRONG,
-    thickness: 0.8,
+    thickness: 0.6,
   })
-  // Right-aligned total card
-  const totalsBoxX = innerRight - 240
-  const totalsBoxY = totalsTop - 56
-  page.drawRectangle({
-    x: totalsBoxX,
-    y: totalsBoxY,
-    width: 240,
-    height: 48,
-    color: NAVY,
-  })
-  page.drawRectangle({ x: totalsBoxX, y: totalsBoxY, width: 3, height: 48, color: GOLD })
-  drawSafe('TOTAL AMOUNT DUE', {
-    x: totalsBoxX + 14,
-    y: totalsBoxY + 30,
-    size: 8,
-    font: bold,
-    color: PDF_THEME.GOLD_SOFT,
-  })
-  rightText(fmtMoneyExact(totalAmount), totalsBoxX + 240 - 14, totalsBoxY + 14, 16, true, WHITE)
+  // Slim subtotal line above the highlight
+  drawSafe('Subtotal', { x: innerRight - 200, y: totalsTop - 16, size: 9, font, color: INK_SOFT })
+  rightText(fmtMoneyExact(totalAmount), innerRight, totalsTop - 16, 9, false, INK_SOFT)
 
-  // ── Payment notes ──────────────────────────────────────────────────
-  const notesTop = FOOTER_H + 78
-  drawSafe('PAYMENT NOTES', { x: MARGIN, y: notesTop, size: 8, font: bold, color: GOLD })
-  page.drawLine({
-    start: { x: MARGIN, y: notesTop - 4 },
-    end: { x: PAGE_W - MARGIN, y: notesTop - 4 },
-    color: BORDER,
-    thickness: 0.5,
+  // Amount-due highlight bar
+  const totalsBoxY = totalsTop - 50
+  const totalsBoxX = innerRight - 230
+  page.drawRectangle({ x: totalsBoxX, y: totalsBoxY, width: 230, height: 28, color: NAVY })
+  page.drawRectangle({ x: totalsBoxX, y: totalsBoxY, width: 2.5, height: 28, color: GOLD })
+  drawSafe('AMOUNT DUE', {
+    x: totalsBoxX + 14,
+    y: totalsBoxY + 10,
+    size: 7,
+    font: bold,
+    color: GOLD_SOFT,
   })
+  rightText(fmtMoneyExact(totalAmount), totalsBoxX + 230 - 14, totalsBoxY + 9, 13, true, WHITE)
+
+  // ── Payment notes ─────────────────────────────────────────────────
+  const notesTop = FOOTER_H + 64
+  sectionLabel('PAYMENT NOTES', MARGIN, notesTop)
   const noteText = invoice?.notes?.trim()
     ? invoice.notes
     : 'Please reference the invoice number on all remittances and correspondence.'
-  wrapW(noteText, PAGE_W - MARGIN * 2, 9).slice(0, 3).forEach((line, index) => {
-    drawSafe(line, { x: MARGIN, y: notesTop - 18 - index * 12, size: 9, font, color: INK_SOFT })
+  wrapW(noteText, PAGE_W - MARGIN * 2, 8.5).slice(0, 3).forEach((line, index) => {
+    drawSafe(line, { x: MARGIN, y: notesTop - 16 - index * 11, size: 8.5, font, color: INK_SOFT })
   })
 
-  // ── Branded footer ─────────────────────────────────────────────────
-  drawBrandedFooter({ page, font, rightText: `Invoice ${invoiceNumber}` })
+  // ── Branded footer ────────────────────────────────────────────────
+  drawBrandedFooter({
+    page,
+    brand,
+    leftText: `Contract ${contract.contractId || contract.id}`,
+    rightText: `Invoice ${invoiceNumber}`,
+  })
+
+  // Suppress unused warnings — these are intentionally part of the public theme
+  void invoiceType
+  void ACCENT_TEAL
 
   const bytes = await pdf.save()
   const safeId = (contract.contractId || contract.id).replace(/[^a-z0-9_-]+/gi, '-')

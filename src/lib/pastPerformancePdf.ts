@@ -1,11 +1,12 @@
-import { PDFDocument, PDFFont, PDFPage, StandardFonts } from 'pdf-lib'
+import { PDFDocument, PDFPage } from 'pdf-lib'
 import type { Contract, Opportunity } from '../types'
 import {
   PDF_THEME,
   drawBrandedFooter,
   drawBrandedHeader,
-  embedCompanyLogo,
+  loadBrandFonts,
   toWinAnsi,
+  type BrandFonts,
 } from './pdfBranding'
 
 export interface PastPerformancePocOverride {
@@ -45,12 +46,12 @@ function download(bytes: Uint8Array, filename: string) {
   URL.revokeObjectURL(url)
 }
 
-type DrawCtx = { page: PDFPage; font: PDFFont; bold: PDFFont }
+type DrawCtx = { page: PDFPage; brand: BrandFonts }
 
 function wrap(ctx: DrawCtx, text: string, maxWidth: number, size: number, useBold = false): string[] {
   if (!text) return []
   const safe = toWinAnsi(text)
-  const f = useBold ? ctx.bold : ctx.font
+  const f = useBold ? ctx.brand.sansBold : ctx.brand.sans
   const out: string[] = []
   for (const paragraph of safe.split(/\r?\n/)) {
     const words = paragraph.split(/\s+/).filter(Boolean)
@@ -99,15 +100,15 @@ function drawCellBox(page: PDFPage, x: number, yTop: number, w: number, h: numbe
 }
 
 function drawCellLabel(ctx: DrawCtx, label: string, x: number, yTop: number, maxWidth: number) {
-  const labelSize = 8.5
+  const labelSize = 7.5
   const lines = wrap(ctx, label, maxWidth - 12, labelSize, true).slice(0, 2)
   lines.forEach((line, i) => {
     ctx.page.drawText(line, {
       x: x + 8,
-      y: yTop - 12 - i * (labelSize + 2),
+      y: yTop - 11 - i * (labelSize + 2),
       size: labelSize,
-      font: ctx.bold,
-      color: INK,
+      font: ctx.brand.sansBold,
+      color: MUTED,
     })
   })
   return lines.length
@@ -121,17 +122,17 @@ function drawCellValue(
   width: number,
   labelLines: number,
   maxLines = 2,
-  size = 11,
+  size = 10,
 ) {
   if (!value) return
-  const valueY = yTop - 22 - labelLines * 11
+  const valueY = yTop - 20 - labelLines * 10
   const lines = wrap(ctx, value, width - 16, size).slice(0, maxLines)
   lines.forEach((line, i) => {
     ctx.page.drawText(line, {
       x: x + 8,
       y: valueY - i * (size + 2),
       size,
-      font: ctx.font,
+      font: ctx.brand.sans,
       color: INK,
     })
   })
@@ -145,30 +146,30 @@ function drawPocBlock(
   width: number,
   labelLines: number,
 ) {
-  const lineSize = 9.5
-  const labelSize = 8.5
+  const lineSize = 9
+  const labelSize = 7.5
   const rows: Array<{ label: string; value: string }> = [
     { label: 'POC', value: poc?.name ?? '' },
     { label: 'EMAIL', value: poc?.email ?? '' },
     { label: 'PHONE', value: poc?.phone ?? '' },
   ]
-  let y = yTop - 24 - labelLines * 11
+  let y = yTop - 22 - labelLines * 10
   for (const row of rows) {
     ctx.page.drawText(row.label, {
       x: x + 10,
       y,
       size: labelSize,
-      font: ctx.bold,
+      font: ctx.brand.sansBold,
       color: MUTED,
     })
-    const labelW = ctx.bold.widthOfTextAtSize(row.label, labelSize)
+    const labelW = ctx.brand.sansBold.widthOfTextAtSize(row.label, labelSize)
     const valLines = wrap(ctx, row.value, width - 20 - labelW - 6, lineSize).slice(0, 1)
     if (valLines.length) {
       ctx.page.drawText(valLines[0], {
         x: x + 10 + labelW + 6,
         y,
         size: lineSize,
-        font: ctx.font,
+        font: ctx.brand.sans,
         color: poc && (poc.name || poc.email || poc.phone) ? INK : MUTED,
       })
     }
@@ -178,7 +179,7 @@ function drawPocBlock(
       color: BORDER,
       thickness: 0.3,
     })
-    y -= 22
+    y -= 20
   }
 }
 
@@ -197,18 +198,14 @@ export async function generatePastPerformancePdf({
 }) {
   const pdf = await PDFDocument.create()
   const page = pdf.addPage([PAGE_W, PAGE_H])
-  const font = await pdf.embedFont(StandardFonts.Helvetica)
-  const bold = await pdf.embedFont(StandardFonts.HelveticaBold)
-  const ctx: DrawCtx = { page, font, bold }
-  const logo = await embedCompanyLogo(pdf, { invert: true })
+  const brand = await loadBrandFonts(pdf)
+  const ctx: DrawCtx = { page, brand }
 
   drawBrandedHeader({
     page,
-    font,
-    bold,
-    logo,
-    docType: 'Relevant Past Performance',
-    subtitle: 'SDVOSB   |   CAGE: 9KV33',
+    brand,
+    docType: 'PAST PERFORMANCE',
+    subtitle: 'SDVOSB   ·   CAGE: 9KV33',
   })
 
   // Data extraction (no fabrication: blank when missing)
@@ -241,18 +238,18 @@ export async function generatePastPerformancePdf({
 
   // Section caption above the form
   const captionY = PAGE_H - HEADER_H - HEADER_ACCENT_H - 22
-  page.drawText(toWinAnsi('FORM CE-PP-1   /   PAST PERFORMANCE REFERENCE'), {
+  page.drawText(toWinAnsi('FORM CE-PP-1   ·   PAST PERFORMANCE REFERENCE'), {
     x: MARGIN,
     y: captionY,
-    size: 8,
-    font: bold,
-    color: GOLD,
+    size: 7,
+    font: brand.sansBold,
+    color: MUTED,
   })
   page.drawLine({
     start: { x: MARGIN, y: captionY - 6 },
     end: { x: PAGE_W - MARGIN, y: captionY - 6 },
     color: BORDER,
-    thickness: 0.5,
+    thickness: 0.4,
   })
 
   let y = captionY - 16
@@ -334,16 +331,16 @@ export async function generatePastPerformancePdf({
     if (h > 60) {
       drawCellBox(page, tableX, y, tableW, h)
       const ll = drawCellLabel(ctx, '11.  Description of contract work', tableX, y, tableW)
-      const descSize = 10.5
+      const descSize = 10
       const lineGap = descSize + 3
-      const usable = Math.max(0, Math.floor((h - 24 - ll * 11 - 8) / lineGap))
+      const usable = Math.max(0, Math.floor((h - 22 - ll * 10 - 8) / lineGap))
       const lines = wrap(ctx, description, tableW - 18, descSize).slice(0, usable)
       lines.forEach((line, i) => {
         page.drawText(line, {
           x: tableX + 9,
-          y: y - 24 - ll * 11 - i * lineGap,
+          y: y - 22 - ll * 10 - i * lineGap,
           size: descSize,
-          font,
+          font: brand.sans,
           color: INK,
         })
       })
@@ -352,8 +349,8 @@ export async function generatePastPerformancePdf({
 
   drawBrandedFooter({
     page,
-    font,
-    leftText: contractRef ? `Reference: ${contractRef}` : undefined,
+    brand,
+    leftText: contractRef ? `Ref: ${contractRef}` : undefined,
     rightText: 'Past Performance Reference',
   })
 
