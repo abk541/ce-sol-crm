@@ -9,6 +9,7 @@ import type {
   ContractInvoice,
   ContractPoC,
   ContractLineItem,
+  ContractVehicleOrder,
   FreshAward,
   FileAttachment,
   GovernmentWarning,
@@ -748,6 +749,40 @@ function dbToLineItem(row: Record<string, unknown>): ContractLineItem {
 
 // ── FreshAward mappers ───────────────────────────────────────────────────────
 
+function vehicleOrderToDb(order: ContractVehicleOrder): Record<string, unknown> {
+  return {
+    id: order.id,
+    contract_id: order.contractId,
+    type: order.type,
+    order_number: order.number,
+    total_value: order.totalValue,
+    pop_start: order.popStart,
+    pop_end: order.popEnd,
+    document: order.document ?? null,
+    created_at: order.createdAt ?? new Date().toISOString(),
+    created_by: order.createdBy ?? null,
+  }
+}
+
+function dbToVehicleOrder(row: Record<string, unknown>): ContractVehicleOrder {
+  const docValue = row.document
+  const documents = normalizeStoredAttachments(
+    Array.isArray(docValue) ? docValue : docValue ? [docValue] : [],
+  )
+  return {
+    id: row.id as string,
+    contractId: row.contract_id as string,
+    type: row.type as ContractVehicleOrder['type'],
+    number: (row.order_number as string) ?? '',
+    totalValue: Number(row.total_value ?? 0),
+    popStart: (row.pop_start as string) ?? '',
+    popEnd: (row.pop_end as string) ?? '',
+    document: documents[0],
+    createdAt: row.created_at as string | undefined,
+    createdBy: row.created_by as string | undefined,
+  }
+}
+
 function freshAwardToDb(fa: FreshAward): Record<string, unknown> {
   return {
     id: fa.id,
@@ -1025,6 +1060,7 @@ export async function loadAllData(): Promise<{
       lockedSubRes,
       warningRes,
       lineItemRes,
+      vehicleOrderRes,
       faRes,
       ppRes,
       nonSubRes,
@@ -1041,6 +1077,7 @@ export async function loadAllData(): Promise<{
       supabase.from('locked_subcontractors').select('*'),
       supabase.from('government_warnings').select('*'),
       supabase.from('contract_line_items').select('*'),
+      supabase.from('contract_vehicle_orders').select('*'),
       supabase.from('fresh_awards').select('*'),
       supabase.from('past_performances').select('*'),
       supabase.from('non_submission_reports').select('*'),
@@ -1058,6 +1095,7 @@ export async function loadAllData(): Promise<{
     if (lockedSubRes.error) console.error('[db] locked_subcontractors load error', lockedSubRes.error)
     if (warningRes.error) console.error('[db] government_warnings load error', warningRes.error)
     if (lineItemRes.error) console.error('[db] contract_line_items load error', lineItemRes.error)
+    if (vehicleOrderRes.error) console.error('[db] contract_vehicle_orders load error', vehicleOrderRes.error)
     if (faRes.error) console.error('[db] fresh_awards load error', faRes.error)
     if (ppRes.error) console.error('[db] past_performances load error', ppRes.error)
     if (nonSubRes.error) console.error('[db] non_submission_reports load error', nonSubRes.error)
@@ -1085,6 +1123,7 @@ export async function loadAllData(): Promise<{
     const lockedSubs: LockedSubcontractor[] = (lockedSubRes.data ?? []).map(r => dbToLockedSub(r as Record<string, unknown>))
     const warnings: GovernmentWarning[] = (warningRes.data ?? []).map(r => dbToWarning(r as Record<string, unknown>))
     const lineItems: ContractLineItem[] = (lineItemRes.data ?? []).map(r => dbToLineItem(r as Record<string, unknown>))
+    const vehicleOrders: ContractVehicleOrder[] = (vehicleOrderRes.data ?? []).map(r => dbToVehicleOrder(r as Record<string, unknown>))
     const contracts: Contract[] = (conRes.data ?? []).map(r => {
       const contract = dbToContract(r as Record<string, unknown>) as Contract
       contract.pocs = pocs.filter(p => p.contractId === contract.id)
@@ -1092,6 +1131,7 @@ export async function loadAllData(): Promise<{
       contract.lockedSubcontractors = lockedSubs.filter(s => s.contractId === contract.id)
       contract.governmentWarnings = warnings.filter(w => w.contractId === contract.id)
       contract.lineItems = lineItems.filter(l => l.contractId === contract.id)
+      contract.vehicleOrders = vehicleOrders.filter(o => o.contractId === contract.id)
       return contract
     })
     const freshAwards: FreshAward[] = (faRes.data ?? []).map(r => dbToFreshAward(r as Record<string, unknown>) as FreshAward)
@@ -1340,6 +1380,26 @@ export async function deleteContractLineItemRecord(id: string): Promise<void> {
     if (error) console.error('[db] deleteContractLineItem error', error)
   } catch (err) {
     console.error('[db] deleteContractLineItem failed', err)
+  }
+}
+
+export async function upsertContractVehicleOrder(order: ContractVehicleOrder): Promise<void> {
+  if (!isSupabaseConnected || !supabase) return
+  try {
+    const { error } = await supabase.from('contract_vehicle_orders').upsert(vehicleOrderToDb(order))
+    if (error) console.error('[db] upsertContractVehicleOrder error', error)
+  } catch (err) {
+    console.error('[db] upsertContractVehicleOrder failed', err)
+  }
+}
+
+export async function deleteContractVehicleOrderRecord(id: string): Promise<void> {
+  if (!isSupabaseConnected || !supabase) return
+  try {
+    const { error } = await supabase.from('contract_vehicle_orders').delete().eq('id', id)
+    if (error) console.error('[db] deleteContractVehicleOrder error', error)
+  } catch (err) {
+    console.error('[db] deleteContractVehicleOrder failed', err)
   }
 }
 

@@ -18,7 +18,7 @@ import type {
   ContractPoC, LockedSubcontractor,
   GovernmentWarning, GovWarningType, FileAttachment, Comment, ContractDeliverable,
   LockedSubkDocuments, Subcontractor, Opportunity,
-  ContractInvoice, ContractLineItem, ContractLineYear,
+  ContractInvoice, ContractLineItem, ContractLineYear, ContractVehicleOrder,
 } from '../types'
 import { formatCurrency, useEscapeKey } from '../lib/utils'
 import FloatingActionMenu from '../components/shared/FloatingActionMenu'
@@ -429,7 +429,7 @@ function uniqueSourcingEntries(entries: Subcontractor[]) {
   return Array.from(byId.values())
 }
 
-type ContractDrawerTab = 'overview' | 'pop' | 'poc' | 'subk' | 'lockSubk' | 'warnings' | 'deliverables' | 'lineItems' | 'billing' | 'assignment'
+type ContractDrawerTab = 'overview' | 'pop' | 'poc' | 'subk' | 'lockSubk' | 'warnings' | 'deliverables' | 'lineItems' | 'vehicleOrders' | 'billing' | 'assignment'
 
 const LINE_YEAR_LABELS: Record<ContractLineYear, string> = {
   base: 'Base year',
@@ -911,6 +911,325 @@ function LineItemRow({
   )
 }
 
+function vehicleOrderConfig(contractType: ContractType): { type: ContractVehicleOrder['type']; singular: string; plural: string; addLabel: string; numberLabel: string } | null {
+  if (contractType === 'IDIQ') {
+    return { type: 'TASK_ORDER', singular: 'Task Order', plural: 'Task Orders', addLabel: 'Add Task Order', numberLabel: 'Task Order Number' }
+  }
+  if (contractType === 'BPA') {
+    return { type: 'CALL', singular: 'Call', plural: 'Calls', addLabel: 'Add Call', numberLabel: 'Call Number' }
+  }
+  return null
+}
+
+function ContractVehicleOrdersTab({
+  contract,
+  actorName,
+  onAdd,
+  onUpdate,
+  onRemove,
+}: {
+  contract: Contract
+  actorName: string
+  onAdd: (order: Omit<ContractVehicleOrder, 'id' | 'contractId' | 'createdAt'>) => string | null
+  onUpdate: (orderId: string, data: Partial<Omit<ContractVehicleOrder, 'id' | 'contractId'>>) => void
+  onRemove: (orderId: string) => void
+}) {
+  const config = vehicleOrderConfig(contract.type)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [formOpen, setFormOpen] = useState(false)
+  const [draft, setDraft] = useState({
+    number: '',
+    totalValue: '',
+    popStart: '',
+    popEnd: '',
+    attachments: [] as FileAttachment[],
+  })
+
+  if (!config) {
+    return (
+      <div className="rounded-2xl border p-8 text-center" style={{ background: 'rgba(8,24,37,0.55)', borderColor: 'rgba(215,190,122,0.18)' }}>
+        <FileText size={28} className="mx-auto text-slate-500" />
+        <p className="mt-2 text-sm font-semibold text-slate-300">Task Orders and Calls apply only to IDIQ and BPA contracts.</p>
+      </div>
+    )
+  }
+
+  const orders = [...(contract.vehicleOrders || [])]
+    .filter(order => order.type === config.type)
+    .sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''))
+
+  const resetForm = () => {
+    setEditingId(null)
+    setFormOpen(false)
+    setDraft({ number: '', totalValue: '', popStart: '', popEnd: '', attachments: [] })
+  }
+
+  const openAddForm = () => {
+    setEditingId(null)
+    setDraft({ number: '', totalValue: '', popStart: contract.popStart || '', popEnd: contract.popEnd || '', attachments: [] })
+    setFormOpen(true)
+  }
+
+  const openEditForm = (order: ContractVehicleOrder) => {
+    setEditingId(order.id)
+    setDraft({
+      number: order.number,
+      totalValue: String(order.totalValue ?? 0),
+      popStart: order.popStart || '',
+      popEnd: order.popEnd || '',
+      attachments: order.document ? [order.document] : [],
+    })
+    setFormOpen(true)
+  }
+
+  const save = () => {
+    const number = draft.number.trim()
+    const totalValue = Number(draft.totalValue)
+    if (!number) {
+      toast.error(`${config.numberLabel} is required`)
+      return
+    }
+    if (!Number.isFinite(totalValue) || totalValue < 0) {
+      toast.error(`${config.singular} total value must be a non-negative number`)
+      return
+    }
+    if (!draft.popStart || !draft.popEnd) {
+      toast.error(`${config.singular} POP start and end are required`)
+      return
+    }
+    if (draft.popStart > draft.popEnd) {
+      toast.error('POP start date must be before the end date')
+      return
+    }
+    const duplicate = orders.some(order =>
+      order.id !== editingId && order.number.trim().toLowerCase() === number.toLowerCase()
+    )
+    if (duplicate) {
+      toast.error(`${config.singular} number already exists on this contract`)
+      return
+    }
+
+    const payload = {
+      type: config.type,
+      number,
+      totalValue,
+      popStart: draft.popStart,
+      popEnd: draft.popEnd,
+      document: draft.attachments[0],
+      createdBy: actorName,
+    }
+
+    if (editingId) {
+      onUpdate(editingId, payload)
+      toast.success(`${config.singular} updated`)
+    } else {
+      const id = onAdd(payload)
+      if (!id) return
+      toast.success(`${config.singular} added`)
+    }
+    resetForm()
+  }
+
+  const totalValue = orders.reduce((sum, order) => sum + (order.totalValue || 0), 0)
+
+  return (
+    <div className="space-y-5">
+      <div
+        className="rounded-2xl border p-5"
+        style={{
+          background: 'linear-gradient(135deg, rgba(15,46,54,0.94), rgba(10,29,43,0.96))',
+          borderColor: 'rgba(215,190,122,0.24)',
+        }}
+      >
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-[0.16em] text-[#D7BE7A]">{contract.type} vehicle</p>
+            <h3 className="mt-1 text-base font-bold text-slate-100">{config.plural}</h3>
+            <p className="mt-1 max-w-2xl text-xs text-slate-400">
+              Manage child records under this parent contract. Each {config.singular.toLowerCase()} keeps its own value, POP dates, and source document.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="rounded-xl border px-3 py-2 text-right" style={{ background: 'rgba(255,255,255,0.05)', borderColor: 'rgba(215,190,122,0.20)' }}>
+              <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Total</p>
+              <p className="text-sm font-black text-[#F8E8B8]">{formatCurrency(totalValue)}</p>
+            </div>
+            <button type="button" onClick={openAddForm} className="btn-primary">
+              <Plus size={12} /> {config.addLabel}
+            </button>
+          </div>
+        </div>
+
+        {formOpen && (
+          <div className="mt-5 rounded-2xl border p-4" style={{ background: 'rgba(8,24,37,0.78)', borderColor: 'rgba(215,190,122,0.26)' }}>
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.16em] text-[#D7BE7A]">
+                  {editingId ? `Edit ${config.singular}` : config.addLabel}
+                </p>
+                <p className="mt-1 text-xs text-slate-400">Fill the child contract details and attach the supporting document.</p>
+              </div>
+              <button type="button" onClick={resetForm} className="h-8 w-8 rounded-lg text-slate-400 transition-colors hover:bg-white/5 hover:text-slate-100">
+                <X size={14} className="mx-auto" />
+              </button>
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-2">
+              <label className="block">
+                <span className="mb-1.5 block text-[10px] font-bold uppercase tracking-wide text-slate-400">{config.numberLabel} *</span>
+                <input
+                  value={draft.number}
+                  onChange={e => setDraft(d => ({ ...d, number: e.target.value }))}
+                  className="input-field w-full"
+                  placeholder={contract.type === 'IDIQ' ? 'e.g. TO-0001' : 'e.g. CALL-0001'}
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1.5 block text-[10px] font-bold uppercase tracking-wide text-slate-400">Total Value *</span>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={draft.totalValue}
+                  onChange={e => setDraft(d => ({ ...d, totalValue: e.target.value }))}
+                  className="input-field w-full no-spin"
+                  placeholder="0.00"
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1.5 block text-[10px] font-bold uppercase tracking-wide text-slate-400">POP Start *</span>
+                <input
+                  type="date"
+                  value={draft.popStart}
+                  onChange={e => setDraft(d => ({ ...d, popStart: e.target.value }))}
+                  className="input-field w-full"
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1.5 block text-[10px] font-bold uppercase tracking-wide text-slate-400">POP End *</span>
+                <input
+                  type="date"
+                  value={draft.popEnd}
+                  onChange={e => setDraft(d => ({ ...d, popEnd: e.target.value }))}
+                  className="input-field w-full"
+                />
+              </label>
+            </div>
+
+            <div className="mt-4">
+              <AttachmentPicker
+                label={`${config.singular} Document`}
+                attachments={draft.attachments}
+                uploadedBy={actorName}
+                onChange={attachments => setDraft(d => ({ ...d, attachments: attachments.slice(-1) }))}
+              />
+            </div>
+
+            <div className="mt-4 flex flex-wrap justify-end gap-2">
+              <button type="button" onClick={resetForm} className="btn-secondary">Cancel</button>
+              <button type="button" onClick={save} className="btn-primary">
+                <Save size={12} /> {editingId ? 'Save Changes' : `Save ${config.singular}`}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {orders.length === 0 ? (
+        <div className="rounded-2xl border p-8 text-center" style={{ background: 'rgba(8,24,37,0.55)', borderColor: 'rgba(215,190,122,0.18)' }}>
+          <FileCheck2 size={28} className="mx-auto text-slate-500" />
+          <p className="mt-2 text-sm font-semibold text-slate-300">No {config.plural.toLowerCase()} yet</p>
+          <p className="mt-1 text-xs text-slate-500">Use {config.addLabel} to create the first child record.</p>
+        </div>
+      ) : (
+        <div className="grid gap-3">
+          {orders.map(order => (
+            <div
+              key={order.id}
+              className="rounded-2xl border p-4"
+              style={{ background: 'rgba(8,24,37,0.72)', borderColor: 'rgba(215,190,122,0.22)' }}
+            >
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex h-9 w-9 items-center justify-center rounded-xl border" style={{ background: 'rgba(215,190,122,0.12)', borderColor: 'rgba(215,190,122,0.28)', color: '#F8E8B8' }}>
+                      <FileText size={15} />
+                    </div>
+                    <div>
+                      <p className="text-sm font-black text-slate-100">{config.singular} {order.number}</p>
+                      <p className="text-[11px] font-medium text-slate-400">
+                        Added {order.createdAt ? formatDateTime(order.createdAt) : '-'}{order.createdBy ? ` by ${order.createdBy}` : ''}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => openEditForm(order)}
+                    className="flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11px] font-black text-slate-200 transition-colors hover:bg-white/10"
+                    style={{ borderColor: 'rgba(215,190,122,0.24)' }}
+                  >
+                    <Pencil size={12} /> Edit
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!window.confirm(`Delete ${config.singular} ${order.number}?`)) return
+                      onRemove(order.id)
+                      toast.success(`${config.singular} deleted`)
+                    }}
+                    className="flex items-center gap-1.5 rounded-lg border border-red-300/35 bg-red-500/10 px-2.5 py-1.5 text-[11px] font-black text-red-200 transition-colors hover:bg-red-500/20"
+                  >
+                    <Trash2 size={12} /> Delete
+                  </button>
+                </div>
+              </div>
+
+              <div className="mt-4 grid gap-3 md:grid-cols-3">
+                <div className="rounded-xl border px-3 py-2.5" style={{ background: 'rgba(255,255,255,0.04)', borderColor: 'rgba(255,255,255,0.10)' }}>
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Total Value</p>
+                  <p className="mt-1 text-sm font-black text-[#F8E8B8]">{formatCurrency(order.totalValue)}</p>
+                </div>
+                <div className="rounded-xl border px-3 py-2.5" style={{ background: 'rgba(255,255,255,0.04)', borderColor: 'rgba(255,255,255,0.10)' }}>
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Period of Performance</p>
+                  <p className="mt-1 text-sm font-bold text-slate-100">{formatDate(order.popStart)} - {formatDate(order.popEnd)}</p>
+                </div>
+                <div className="rounded-xl border px-3 py-2.5" style={{ background: 'rgba(255,255,255,0.04)', borderColor: 'rgba(255,255,255,0.10)' }}>
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Document</p>
+                  {order.document ? (
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <span className="min-w-0 flex-1 truncate text-xs font-bold text-slate-100">{order.document.name}</span>
+                      <button
+                        type="button"
+                        onClick={() => viewAttachment(order.document!)}
+                        disabled={!order.document.dataUrl}
+                        className="rounded-lg bg-white px-2.5 py-1 text-[11px] font-black text-slate-900 transition-colors hover:bg-[#F8E8B8] disabled:cursor-not-allowed disabled:opacity-45"
+                      >
+                        View
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => downloadAttachment(order.document!)}
+                        disabled={!order.document.dataUrl}
+                        className="rounded-lg border border-[#D7BE7A]/35 bg-[#D7BE7A]/15 px-2.5 py-1 text-[11px] font-black text-[#F8E8B8] transition-colors hover:bg-[#D7BE7A]/25 disabled:cursor-not-allowed disabled:opacity-45"
+                      >
+                        Download
+                      </button>
+                    </div>
+                  ) : (
+                    <p className="mt-1 text-xs font-semibold text-slate-500">No document attached</p>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function ContractBillingTab({
   contract,
   nextInvoiceNumber,
@@ -1297,7 +1616,7 @@ function ContractDetailDrawer({
   onClose: () => void
   onOpenSourcing?: (opp: Opportunity) => void
 }) {
-  const { updateContract, addContractPoC, updateContractPoC, removeContractPoC, addContractInvoice, addLockedSubcontractor, updateLockedSubcontractor, addGovernmentWarning, updateGovernmentWarning, removeGovernmentWarning, resolveGovernmentWarning, advanceContractStatus, terminateContract, currentUser, employees, opportunities, subcontractors, subkDatabase, nextInvoiceNumber, consumeInvoiceNumber, addContractLineItem, updateContractLineItem, removeContractLineItem } = useStore()
+  const { updateContract, addContractPoC, updateContractPoC, removeContractPoC, addContractInvoice, addLockedSubcontractor, updateLockedSubcontractor, addGovernmentWarning, updateGovernmentWarning, removeGovernmentWarning, resolveGovernmentWarning, advanceContractStatus, terminateContract, currentUser, employees, opportunities, subcontractors, subkDatabase, nextInvoiceNumber, consumeInvoiceNumber, addContractLineItem, updateContractLineItem, removeContractLineItem, addContractVehicleOrder, updateContractVehicleOrder, removeContractVehicleOrder } = useStore()
   const [tab, setTab] = useState<ContractDrawerTab>(initialTab)
   const [deliverableForm, setDeliverableForm] = useState({
     title: '',
@@ -1598,6 +1917,13 @@ function ContractDetailDrawer({
     : invoiceHasSelectableLines && !invoiceHasSelectedLines
       ? 'Select at least one CLIN in Billing Period before generating this invoice.'
       : 'Generate invoice PDF'
+  const vehicleSettings = useMemo(() => vehicleOrderConfig(contract.type), [contract.type])
+  const vehicleOrders = vehicleSettings
+    ? (contract.vehicleOrders || []).filter(order => order.type === vehicleSettings.type)
+    : []
+  useEffect(() => {
+    if (tab === 'vehicleOrders' && !vehicleSettings) setTab('overview')
+  }, [tab, vehicleSettings])
   const createTrackedInvoiceAndPdf = async () => {
     if (!invoiceReady) {
       toast.error(contract.type === 'OTJ'
@@ -1675,6 +2001,7 @@ function ContractDetailDrawer({
           { key: 'warnings', label: `Warnings (${(contract.governmentWarnings || []).filter(w => !w.resolvedAt).length})`, icon: AlertTriangle },
           { key: 'deliverables', label: `Deliverables`, icon: ListChecks },
           { key: 'lineItems', label: `Line Items (${(contract.lineItems || []).length})`, icon: Layers },
+          ...(vehicleSettings ? [{ key: 'vehicleOrders', label: `${vehicleSettings.plural} (${vehicleOrders.length})`, icon: FileText }] : []),
           { key: 'billing', label: 'Billing Period', icon: Receipt },
           { key: 'assignment', label: 'Assignment', icon: UserCog },
         ].map(t => (
@@ -3349,6 +3676,17 @@ function ContractDetailDrawer({
             }}
             onSelectAllInvoiceLines={() => setSelectedInvoiceLineItemIds(availableInvoiceLineItems.map(line => line.id))}
             onClearInvoiceLines={() => setSelectedInvoiceLineItemIds([])}
+          />
+        )}
+
+        {/* IDIQ/BPA VEHICLE ORDERS — child Task Orders or Calls under the parent contract */}
+        {tab === 'vehicleOrders' && vehicleSettings && (
+          <ContractVehicleOrdersTab
+            contract={contract}
+            actorName={currentUser?.username ?? currentUser?.name ?? 'unknown'}
+            onAdd={(order) => addContractVehicleOrder(contract.id, order)}
+            onUpdate={(orderId, data) => updateContractVehicleOrder(contract.id, orderId, data)}
+            onRemove={(orderId) => removeContractVehicleOrder(contract.id, orderId)}
           />
         )}
 

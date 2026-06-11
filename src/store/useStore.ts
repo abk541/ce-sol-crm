@@ -8,7 +8,7 @@ import type {
   ContractPoC, LockedSubcontractor, GovernmentWarning, Employee,
   BDSubmission, FileAttachment, CompanyCertification, EmployeeRequest,
   CompanyCertificationStatus, EmployeeRequestStatus,
-  ContractLineItem, ContractInvoice, UserPreferences, EmployeeTeam,
+  ContractLineItem, ContractInvoice, ContractVehicleOrder, UserPreferences, EmployeeTeam,
 } from '../types'
 import {
   MOCK_USERS, MOCK_OPPORTUNITIES, MOCK_NOTIFICATIONS,
@@ -38,6 +38,8 @@ import {
   deleteGovernmentWarningRecord,
   upsertContractLineItem,
   deleteContractLineItemRecord,
+  upsertContractVehicleOrder,
+  deleteContractVehicleOrderRecord,
   upsertFreshAward,
   deleteFreshAwardRecord,
   upsertPastPerformance,
@@ -131,6 +133,9 @@ interface AppState {
   addContractLineItem: (contractId: string, line: Omit<ContractLineItem, 'id' | 'contractId' | 'clin' | 'amount' | 'createdAt'> & { amount?: number }) => string | null
   updateContractLineItem: (contractId: string, lineId: string, data: Partial<Omit<ContractLineItem, 'id' | 'contractId' | 'clin'>>) => void
   removeContractLineItem: (contractId: string, lineId: string) => void
+  addContractVehicleOrder: (contractId: string, order: Omit<ContractVehicleOrder, 'id' | 'contractId' | 'createdAt'>) => string | null
+  updateContractVehicleOrder: (contractId: string, orderId: string, data: Partial<Omit<ContractVehicleOrder, 'id' | 'contractId'>>) => void
+  removeContractVehicleOrder: (contractId: string, orderId: string) => void
 
   // ── Subcontractor management ───────────────────────────────────────
   addSubcontractor: (data: Omit<Subcontractor, 'id' | 'createdAt'>) => void
@@ -1400,6 +1405,54 @@ export const useStore = create<AppState>()(
           )
         }))
         deleteContractLineItemRecord(lineId)
+      },
+
+      addContractVehicleOrder: (contractId, order) => {
+        const contract = get().contracts.find(c => c.id === contractId)
+        if (!contract) return null
+        const newOrder: ContractVehicleOrder = {
+          ...order,
+          id: `cvo-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          contractId,
+          createdAt: new Date().toISOString(),
+        }
+        set(s => ({
+          contracts: s.contracts.map(c =>
+            c.id === contractId
+              ? { ...c, vehicleOrders: [...(c.vehicleOrders || []), newOrder] }
+              : c
+          )
+        }))
+        upsertContractVehicleOrder(newOrder)
+        return newOrder.id
+      },
+
+      updateContractVehicleOrder: (contractId, orderId, data) => {
+        set(s => ({
+          contracts: s.contracts.map(c =>
+            c.id === contractId
+              ? {
+                  ...c,
+                  vehicleOrders: (c.vehicleOrders || []).map(order =>
+                    order.id === orderId ? { ...order, ...data } : order
+                  )
+                }
+              : c
+          )
+        }))
+        const updated = get().contracts.find(c => c.id === contractId)?.vehicleOrders?.find(order => order.id === orderId)
+        if (updated) upsertContractVehicleOrder(updated)
+      },
+
+      removeContractVehicleOrder: (contractId, orderId) => {
+        set(s => ({
+          contracts: s.contracts.map(c =>
+            c.id === contractId
+              ? { ...c, vehicleOrders: (c.vehicleOrders || []).filter(order => order.id !== orderId) }
+              : c
+          )
+        }))
+        deleteContractVehicleOrderRecord(orderId)
       },
 
       advanceContractStatus: (id) => {

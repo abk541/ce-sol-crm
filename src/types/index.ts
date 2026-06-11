@@ -330,6 +330,7 @@ export interface Contract {
   billingPeriodEnd?: string         // YYYY-MM-DD, invoice service period end
   currentPopYear?: ContractLineYear // base/option year selected for current billing
   lineItems?: ContractLineItem[]    // CLIN-numbered scope of work entries (base + up to 4 option years)
+  vehicleOrders?: ContractVehicleOrder[] // IDIQ task orders / BPA calls under this parent contract
   governmentBillingStatus?: GovBillingStatus  // gov-invoice payment status shown in Finance Projections
   invoices?: ContractInvoice[]      // tracked invoices feeding the Finance Projections grid
 }
@@ -385,6 +386,22 @@ export interface ContractLineItem {
   rate: number                       // per-unit price
   amount: number                     // = quantity × rate (stored for invoice rendering)
   createdAt?: string
+}
+
+// Contract vehicle child records for IDIQ Task Orders and BPA Calls
+export type ContractVehicleOrderType = 'TASK_ORDER' | 'CALL'
+
+export interface ContractVehicleOrder {
+  id: string
+  contractId: string
+  type: ContractVehicleOrderType
+  number: string
+  totalValue: number
+  popStart: string
+  popEnd: string
+  document?: FileAttachment
+  createdAt?: string
+  createdBy?: string
 }
 
 // ── BD Submission (BD Tracker) ────────────────────────────────────────

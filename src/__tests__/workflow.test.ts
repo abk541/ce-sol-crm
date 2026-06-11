@@ -34,6 +34,8 @@ vi.mock('../lib/db', () => ({
   upsertLockedSubcontractor: vi.fn().mockResolvedValue(null),
   upsertGovernmentWarning: vi.fn().mockResolvedValue(null),
   deleteGovernmentWarningRecord: vi.fn().mockResolvedValue(null),
+  upsertContractVehicleOrder: vi.fn().mockResolvedValue(null),
+  deleteContractVehicleOrderRecord: vi.fn().mockResolvedValue(null),
   upsertFreshAward: vi.fn().mockResolvedValue(null),
   deleteFreshAwardRecord: vi.fn().mockResolvedValue(null),
   upsertPastPerformance: vi.fn().mockResolvedValue(null),
@@ -48,7 +50,12 @@ vi.mock('../lib/supabase', () => ({
 }))
 
 import { useStore } from '../store/useStore'
-import { findActiveOpportunityDuplicate, upsertOpportunity } from '../lib/db'
+import {
+  deleteContractVehicleOrderRecord,
+  findActiveOpportunityDuplicate,
+  upsertContractVehicleOrder,
+  upsertOpportunity,
+} from '../lib/db'
 import type { Opportunity, Contract, OppStatus, ContractStatus, Employee, FileAttachment } from '../types'
 
 // ── Pipeline view filter (mirrors PipelinePage) ───────────────────────
@@ -1007,5 +1014,60 @@ describe('11 - Government warning management', () => {
     const warning = useStore.getState().contracts[0].governmentWarnings?.[0]
     expect(warning?.issuedDate).toBe('2026-06-01')
     expect(warning?.deadline).toBe('2026-06-10')
+  })
+})
+
+describe('12 - IDIQ/BPA child contract records', () => {
+  it('adds, updates, and removes a BPA call under its parent contract', () => {
+    const c = makeContract({ id: 'c-bpa', type: 'BPA', vehicleOrders: [] })
+    const document: FileAttachment = {
+      id: 'doc-call-1',
+      name: 'call-0001.pdf',
+      mimeType: 'application/pdf',
+      size: 1200,
+      attachedAt: '2026-06-11T10:00:00.000Z',
+      uploadedBy: 'Capture Manager',
+      dataUrl: 'data:application/pdf;base64,JVBERi0=',
+    }
+    useStore.setState({ contracts: [c] })
+
+    const orderId = useStore.getState().addContractVehicleOrder('c-bpa', {
+      type: 'CALL',
+      number: 'CALL-0001',
+      totalValue: 25000,
+      popStart: '2026-07-01',
+      popEnd: '2026-07-31',
+      document,
+      createdBy: 'Capture Manager',
+    })
+
+    expect(orderId).toBeTruthy()
+    let orders = useStore.getState().contracts[0].vehicleOrders
+    expect(orders).toHaveLength(1)
+    expect(orders?.[0]).toMatchObject({
+      contractId: 'c-bpa',
+      type: 'CALL',
+      number: 'CALL-0001',
+      totalValue: 25000,
+      popStart: '2026-07-01',
+      popEnd: '2026-07-31',
+    })
+    expect(orders?.[0].document?.name).toBe('call-0001.pdf')
+    expect(upsertContractVehicleOrder).toHaveBeenCalledOnce()
+
+    useStore.getState().updateContractVehicleOrder('c-bpa', orderId!, {
+      number: 'CALL-0001-REV',
+      totalValue: 30000,
+    })
+
+    orders = useStore.getState().contracts[0].vehicleOrders
+    expect(orders?.[0].number).toBe('CALL-0001-REV')
+    expect(orders?.[0].totalValue).toBe(30000)
+    expect(upsertContractVehicleOrder).toHaveBeenCalledTimes(2)
+
+    useStore.getState().removeContractVehicleOrder('c-bpa', orderId!)
+
+    expect(useStore.getState().contracts[0].vehicleOrders).toEqual([])
+    expect(deleteContractVehicleOrderRecord).toHaveBeenCalledWith(orderId)
   })
 })
