@@ -35,6 +35,7 @@ import { ROUTE_LABELS } from '../../config/navigation'
 import { buildGlobalSearchResults, type GlobalSearchResult } from '../../lib/globalSearch'
 import { ROLE_LABELS } from '../../lib/permissions'
 import { playNotificationDing } from '../../lib/sound'
+import AppearanceMenu from './AppearanceMenu'
 import PreferencesMenu from './PreferencesMenu'
 
 const TYPE_CONFIG: Record<NotifType, { icon: typeof Bell; color: string; label: string }> = {
@@ -214,8 +215,8 @@ export default function TopBar() {
       animate={{ y: 0, opacity: 1 }}
       className="sticky top-0 z-30 flex items-center gap-4 px-6 h-16 flex-shrink-0"
       style={{
-        background: 'linear-gradient(90deg, rgba(7,19,31,0.96) 0%, rgba(10,29,43,0.94) 52%, rgba(16,40,32,0.96) 100%)',
-        borderBottom: '1px solid rgba(215,190,122,0.18)',
+        background: 'var(--topbar-bg)',
+        borderBottom: '1px solid var(--border-default)',
         backdropFilter: 'blur(18px) saturate(140%)',
         WebkitBackdropFilter: 'blur(18px) saturate(140%)',
         boxShadow: '0 10px 28px rgba(0,0,0,0.22)',
@@ -223,10 +224,10 @@ export default function TopBar() {
     >
       <div className="flex items-center gap-2 text-sm select-none">
         <span className="flex items-center gap-1.5 text-slate-400 font-medium">
-          <span className="text-[10px] font-black tracking-widest uppercase" style={{ color: '#B8914E' }}>CES</span>
+          <span className="text-[10px] font-black tracking-widest uppercase" style={{ color: 'var(--accent)' }}>CES</span>
         </span>
         <ChevronRight size={12} className="text-stone-500" />
-        <span className="font-semibold" style={{ color: '#F8FBF7' }}>{label}</span>
+        <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>{label}</span>
       </div>
 
       <div className="flex-1 max-w-sm ml-4">
@@ -315,6 +316,7 @@ export default function TopBar() {
       </div>
 
       <div className="ml-auto flex items-center gap-2">
+        <AppearanceMenu />
         <PreferencesMenu />
 
         <div className="relative">
@@ -441,13 +443,13 @@ export default function TopBar() {
           </AnimatePresence>
         </div>
 
-        <div className="w-px h-6 mx-1" style={{ background: 'rgba(215,190,122,0.18)' }} />
+        <div className="w-px h-6 mx-1" style={{ background: 'var(--border-default)' }} />
 
         {currentUser && (
           <div className="flex items-center gap-2.5 cursor-pointer group">
             <div className="text-right hidden sm:block">
-              <p className="text-xs font-semibold text-stone-100 leading-none group-hover:text-[#D7BE7A] transition-colors">{currentUser.name}</p>
-              <p className="text-[10px] text-stone-400 mt-0.5 font-medium">{ROLE_LABELS[currentUser.role]}</p>
+              <p className="text-xs font-semibold leading-none transition-colors" style={{ color: 'var(--text-primary)' }}>{currentUser.name}</p>
+              <p className="text-[10px] mt-0.5 font-medium" style={{ color: 'var(--text-tertiary)' }}>{ROLE_LABELS[currentUser.role]}</p>
             </div>
             <div className={`w-8 h-8 rounded-xl flex items-center justify-center text-xs font-bold text-white bg-gradient-to-br ${avatarColor(currentUser.avatar)} ring-2 ring-white shadow-sm`}>
               {currentUser.avatar.slice(0, 2)}

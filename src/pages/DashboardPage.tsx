@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
@@ -11,7 +11,7 @@ import {
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
   CartesianGrid, PieChart, Pie, Cell, BarChart, Bar, Legend,
-  RadialBarChart, RadialBar, LineChart, Line,
+  RadialBarChart, RadialBar, LineChart, Line, ComposedChart,
 } from 'recharts'
 import { useStore } from '../store/useStore'
 import AnimatedNumber from '../components/shared/AnimatedNumber'
@@ -20,6 +20,8 @@ import { formatCurrency, avatarColor } from '../lib/utils'
 import { useNavigate } from 'react-router-dom'
 import { getAssignmentChain } from '../lib/team'
 import { hasAnyPermission, hasPermission, ROLE_LABELS } from '../lib/permissions'
+import { chartColorsForTheme, useAppearance } from '../lib/appearance'
+import type { BDSubmission, Contract, Employee, Opportunity } from '../types'
 
 const stagger = { animate: { transition: { staggerChildren: 0.05 } } }
 const fadeUp = {
@@ -657,6 +659,680 @@ function AgentDashboard() {
   )
 }
 
+type ExecutiveDashboardTab = 'bd' | 'team' | 'ops'
+
+const EXECUTIVE_TABS: Array<{ id: ExecutiveDashboardTab; label: string; icon: any; subtitle: string }> = [
+  { id: 'bd', label: 'Business Development', icon: Target, subtitle: 'Pipeline, submissions, capture and agency return' },
+  { id: 'team', label: 'Team Performance', icon: Users, subtitle: 'Associate output, conversion, activity and active users' },
+  { id: 'ops', label: 'Operations', icon: FileCheck2, subtitle: 'Awarded value, archive value and gross profit' },
+]
+
+const THEME_LABELS = {
+  aurora: 'Aurora Command',
+  prism: 'Prism Intelligence',
+  noir: 'Noir Ledger',
+  daylight: 'Daylight Atlas',
+} as const
+
+const EXEC_PANEL_STYLE = {
+  background: 'var(--exec-panel)',
+  borderColor: 'var(--exec-border)',
+  boxShadow: 'var(--exec-shadow)',
+}
+
+function numberValue(...values: Array<number | string | undefined | null>) {
+  for (const value of values) {
+    const next = Number(value)
+    if (Number.isFinite(next) && next !== 0) return next
+  }
+  return 0
+}
+
+function pct(value: number, total: number) {
+  if (!total) return 0
+  return Math.round((value / total) * 100)
+}
+
+function monthKey(value?: string) {
+  return (value || '').slice(0, 7)
+}
+
+function monthLabelFromKey(key: string) {
+  const [year, month] = key.split('-').map(Number)
+  if (!year || !month) return key || 'Unscheduled'
+  return new Date(year, month - 1, 1).toLocaleDateString('en-US', { month: 'short' })
+}
+
+function lastMonths(count = 6) {
+  return Array.from({ length: count }, (_, offset) => {
+    const d = new Date()
+    d.setMonth(d.getMonth() - (count - 1 - offset))
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+    return { key, month: monthLabelFromKey(key) }
+  })
+}
+
+function opportunityValue(opp?: Opportunity) {
+  if (!opp) return 0
+  return numberValue(opp.contractAmount, opp.value, opp.baseAmount, opp.monthlyPayment)
+}
+
+function submissionOpportunity(submission: BDSubmission, opportunities: Opportunity[]) {
+  return opportunities.find(opp =>
+    opp.solicitationId === submission.solicitationId ||
+    opp.solicitation === submission.solicitation,
+  )
+}
+
+function submissionValue(submission: BDSubmission, opportunities: Opportunity[]) {
+  return numberValue(submission.value, opportunityValue(submissionOpportunity(submission, opportunities)))
+}
+
+function groupRows<T>(
+  rows: T[],
+  keyFor: (row: T) => string,
+  valueFor: (row: T) => number = () => 1,
+) {
+  const map = new Map<string, { name: string; value: number; count: number }>()
+  rows.forEach(row => {
+    const name = keyFor(row) || 'Unspecified'
+    const current = map.get(name) || { name, value: 0, count: 0 }
+    current.value += valueFor(row)
+    current.count += 1
+    map.set(name, current)
+  })
+  return Array.from(map.values()).sort((a, b) => b.value - a.value || b.count - a.count)
+}
+
+function lockedSubkSpend(contract: Contract) {
+  return (contract.lockedSubcontractors || []).reduce((sum, sub) => sum + numberValue(sub.paymentRate), 0)
+}
+
+function baseYearTotal(contract: Contract) {
+  const lineTotal = (contract.lineItems || [])
+    .filter(line => line.year === 'base')
+    .reduce((sum, line) => sum + numberValue(line.amount, line.quantity * line.rate), 0)
+  return lineTotal || numberValue(contract.baseAmount)
+}
+
+function grossProfitForContract(contract: Contract) {
+  const contractTotal = numberValue(contract.value, contract.baseAmount, contract.monthlyPayment)
+  const subkQuote = lockedSubkSpend(contract)
+  if (contract.type === 'RECURRING') return contractTotal - baseYearTotal(contract) - subkQuote
+  return contractTotal - subkQuote
+}
+
+function isActiveContract(contract: Contract) {
+  return !['ARCHIVED', 'TERMINATED', 'CANCELED'].includes(contract.status)
+}
+
+function matchesEmployee(employee: Employee, submission: BDSubmission, opportunities: Opportunity[], employees: Employee[]) {
+  const opp = submissionOpportunity(submission, opportunities)
+  const chain = getAssignmentChain(employees, opp?.assignedTo)
+  const lowerName = employee.name.toLowerCase()
+  return chain.manager?.id === employee.id ||
+    chain.teamLead?.id === employee.id ||
+    chain.associate?.id === employee.id ||
+    [submission.bdm, submission.bds, submission.supportAgent].some(name => (name || '').toLowerCase() === lowerName)
+}
+
+function DashboardStat({
+  icon: Icon,
+  label,
+  value,
+  detail,
+  accent,
+}: {
+  icon: any
+  label: string
+  value: string | number
+  detail: string
+  accent: string
+}) {
+  return (
+    <motion.div variants={fadeUp} className="exec-stat rounded-2xl border p-4" style={EXEC_PANEL_STYLE}>
+      <div className="mb-4 flex items-start justify-between gap-3">
+        <div className="flex h-10 w-10 items-center justify-center rounded-xl border" style={{ color: accent, background: `${accent}1A`, borderColor: `${accent}55` }}>
+          <Icon size={18} />
+        </div>
+        <span className="rounded-full px-2 py-1 text-[10px] font-bold uppercase tracking-wide" style={{ color: accent, background: `${accent}18` }}>
+          Live
+        </span>
+      </div>
+      <div className="text-2xl font-black" style={{ color: 'var(--text-primary)' }}>{typeof value === 'number' ? <AnimatedNumber value={value} /> : value}</div>
+      <p className="mt-1 text-sm font-bold" style={{ color: 'var(--text-secondary)' }}>{label}</p>
+      <p className="mt-1 text-xs" style={{ color: 'var(--text-tertiary)' }}>{detail}</p>
+    </motion.div>
+  )
+}
+
+function DashboardPanel({
+  title,
+  subtitle,
+  children,
+  action,
+}: {
+  title: string
+  subtitle?: string
+  children: ReactNode
+  action?: ReactNode
+}) {
+  return (
+    <motion.div variants={fadeUp} className="exec-panel rounded-2xl border" style={EXEC_PANEL_STYLE}>
+      <div className="flex items-start justify-between gap-3 border-b px-5 py-4" style={{ borderColor: 'var(--border-default)' }}>
+        <div>
+          <h3 className="text-sm font-black" style={{ color: 'var(--text-primary)' }}>{title}</h3>
+          {subtitle && <p className="mt-1 text-xs" style={{ color: 'var(--text-tertiary)' }}>{subtitle}</p>}
+        </div>
+        {action}
+      </div>
+      <div className="p-5">{children}</div>
+    </motion.div>
+  )
+}
+
+function EmptyDashboardState({ label }: { label: string }) {
+  return (
+    <div className="flex h-full min-h-[140px] items-center justify-center rounded-xl border border-dashed px-4 text-center text-sm font-semibold" style={{ borderColor: 'var(--exec-border)', background: 'var(--exec-panel-soft)', color: 'var(--text-tertiary)' }}>
+      {label}
+    </div>
+  )
+}
+
+function ExecutiveTooltip({ active, payload, label }: any) {
+  if (!active || !payload?.length) return null
+  return (
+    <div className="pointer-events-none rounded-xl border px-3 py-2 text-xs shadow-xl" style={{ borderColor: 'var(--exec-border-strong)', background: 'var(--bg-card)', color: 'var(--text-primary)' }}>
+      <p className="mb-1.5 font-bold">{label}</p>
+      {payload.map((p: any) => (
+        <div key={p.dataKey || p.name} className="flex items-center gap-2">
+          <span className="h-2 w-2 rounded-full" style={{ background: p.fill || p.stroke || p.color }} />
+          <span style={{ color: 'var(--text-tertiary)' }}>{p.name || p.dataKey}</span>
+          <span className="font-black" style={{ color: 'var(--text-primary)' }}>
+            {String(p.dataKey || '').toLowerCase().includes('value') || String(p.name || '').toLowerCase().includes('value')
+              ? formatCurrency(Number(p.value || 0))
+              : p.value}
+          </span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function ExecutiveDashboard() {
+  const { opportunities, nonSubReports, activityLogs, currentUser, bdSubmissions, contracts, employees, users } = useStore()
+  const { prefs } = useAppearance()
+  const [period, setPeriod] = useState<Period | null>(null)
+  const [tab, setTab] = useState<ExecutiveDashboardTab>('bd')
+  const chartColors = chartColorsForTheme(prefs.theme)
+  const accent = chartColors[0]
+  const secondaryAccent = chartColors[1]
+  const tertiaryAccent = chartColors[2]
+
+  const visibleOpps = useMemo(() => opportunities.filter(opp => !opp.isDeleted), [opportunities])
+  const periodOpps = useMemo(
+    () => visibleOpps.filter(opp => filterByPeriod(opp.submittedAt || opp.capturedOn || opp.dueDate, period)),
+    [visibleOpps, period],
+  )
+  const periodSubmissions = useMemo(
+    () => bdSubmissions.filter(submission => filterByPeriod(submission.submittedOn || submission.dueDate, period)),
+    [bdSubmissions, period],
+  )
+  const periodContracts = useMemo(
+    () => contracts.filter(contract => filterByPeriod(contract.popStart || contract.popEnd, period)),
+    [contracts, period],
+  )
+
+  const activeOpportunities = periodOpps.filter(opp => ['ACTIVE', 'DISCUSSION'].includes(opp.status))
+  const capturedContracts = periodOpps.filter(opp => !!opp.capturedOn || ['ACTIVE', 'DISCUSSION', 'SUBMITTED', 'WON'].includes(opp.status))
+  const awardedSubmissions = periodSubmissions.filter(submission => submission.status === 'AWARDED')
+  const submittedValue = periodSubmissions.reduce((sum, submission) => sum + submissionValue(submission, visibleOpps), 0)
+  const captureRate = pct(capturedContracts.length, periodSubmissions.length)
+  const winRate = pct(awardedSubmissions.length, periodSubmissions.length)
+
+  const submittedByNaics = groupRows(
+    periodSubmissions,
+    submission => submissionOpportunity(submission, visibleOpps)?.naicsCode || 'Unspecified',
+  ).slice(0, 8)
+  const submittedByType = groupRows(periodSubmissions, submission => submission.type || 'Unspecified').slice(0, 6)
+  const agencyPerformance = groupRows(
+    periodSubmissions,
+    submission => submissionOpportunity(submission, visibleOpps)?.client || 'Unspecified agency',
+    submission => submission.status === 'AWARDED' ? submissionValue(submission, visibleOpps) : 0,
+  ).slice(0, 8)
+
+  const months = lastMonths(6)
+  const submissionTrend = months.map(month => ({
+    month: month.month,
+    submitted: periodSubmissions.filter(submission => monthKey(submission.submittedOn) === month.key).length,
+    awarded: periodSubmissions.filter(submission => monthKey(submission.submittedOn) === month.key && submission.status === 'AWARDED').length,
+    value: periodSubmissions
+      .filter(submission => monthKey(submission.submittedOn) === month.key)
+      .reduce((sum, submission) => sum + submissionValue(submission, visibleOpps), 0),
+  }))
+
+  const bdAssociates = employees.filter(employee => (employee.team ?? 'BD') === 'BD' && employee.role === 'ASSOCIATE')
+  const teamRows = bdAssociates.map(employee => {
+    const submissions = periodSubmissions.filter(submission => matchesEmployee(employee, submission, visibleOpps, employees))
+    const assignedOpps = visibleOpps.filter(opp => getAssignmentChain(employees, opp.assignedTo).associate?.id === employee.id)
+    const approvedNonSubs = nonSubReports.filter(report => {
+      const opp = visibleOpps.find(item => item.id === report.opportunityId)
+      return report.status === 'APPROVED' &&
+        filterByPeriod(report.reviewedAt || report.submittedAt, period) &&
+        getAssignmentChain(employees, opp?.assignedTo).associate?.id === employee.id
+    })
+    const droppedReports = nonSubReports.filter(report => {
+      const opp = visibleOpps.find(item => item.id === report.opportunityId)
+      return report.status === 'DECLINED' &&
+        filterByPeriod(report.reviewedAt || report.submittedAt, period) &&
+        getAssignmentChain(employees, opp?.assignedTo).associate?.id === employee.id
+    })
+    const droppedSubmissions = submissions.filter(submission => submission.status === 'DROPPED')
+    const awards = submissions.filter(submission => submission.status === 'AWARDED').length
+    return {
+      id: employee.id,
+      name: employee.name,
+      avatar: employee.avatar,
+      assigned: assignedOpps.length,
+      submitted: submissions.length,
+      notSubmitted: approvedNonSubs.length,
+      dropped: droppedReports.length + droppedSubmissions.length,
+      awarded: awards,
+      conversion: pct(awards, submissions.length),
+      value: submissions.reduce((sum, submission) => sum + submissionValue(submission, visibleOpps), 0),
+    }
+  }).sort((a, b) => b.submitted - a.submitted || b.value - a.value)
+
+  const teamChartRows = teamRows.slice(0, 8).map(row => ({
+    name: row.name.split(' ')[0],
+    submitted: row.submitted,
+    notSubmitted: row.notSubmitted,
+    dropped: row.dropped,
+    conversion: row.conversion,
+  }))
+
+  const recentActivity = [...activityLogs]
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .slice(0, 16)
+
+  const activeUsers = users.filter(user => user.status === 'active')
+  const activeContracts = periodContracts.filter(isActiveContract)
+  const archivedContracts = periodContracts.filter(contract => contract.status === 'ARCHIVED')
+  const awardedValue = activeContracts.reduce((sum, contract) => sum + numberValue(contract.value, contract.baseAmount), 0)
+  const archivedValue = archivedContracts.reduce((sum, contract) => sum + numberValue(contract.value, contract.baseAmount), 0)
+  const currentYear = new Date().getFullYear().toString()
+  const ytdContracts = contracts.filter(contract => {
+    const date = contract.popStart || contract.popEnd || ''
+    return !date || date.startsWith(currentYear)
+  })
+  const grossProfitYtd = ytdContracts.reduce((sum, contract) => sum + grossProfitForContract(contract), 0)
+
+  const contractStatusRows = groupRows(activeContracts, contract => contract.status).slice(0, 7)
+  const contractTypeProfitRows = groupRows(
+    ytdContracts,
+    contract => contract.type || 'Unspecified',
+    contract => grossProfitForContract(contract),
+  ).slice(0, 7)
+
+  const bdStats = [
+    { icon: Target, label: 'Active Opportunities', value: activeOpportunities.length, detail: 'Currently in Contract Opportunities', accent: tertiaryAccent },
+    { icon: FileCheck2, label: 'Total Captured Contracts', value: capturedContracts.length, detail: 'Captured opportunity records', accent },
+    { icon: Send, label: 'Submitted Opportunities', value: periodSubmissions.length, detail: 'Submitted from Contract Opportunities', accent: secondaryAccent },
+    { icon: DollarSign, label: 'Submitted Value', value: formatCurrency(submittedValue), detail: 'Dollar value submitted', accent: chartColors[3] },
+    { icon: Percent, label: 'Capture Rate', value: `${captureRate}%`, detail: 'Captured opportunities / submitted', accent: chartColors[4] },
+    { icon: Trophy, label: 'Win Rate', value: `${winRate}%`, detail: 'Awarded from submitted opportunities', accent },
+  ]
+
+  const opsStats = [
+    { icon: DollarSign, label: 'Awarded Value', value: formatCurrency(awardedValue), detail: 'Active Contract Admin value', accent },
+    { icon: FileCheck2, label: 'Awarded Contracts', value: activeContracts.length, detail: 'Active contracts in Contract Admin', accent: secondaryAccent },
+    { icon: Clock, label: 'Archived Value', value: formatCurrency(archivedValue), detail: `${archivedContracts.length} archived contracts`, accent: chartColors[3] },
+    { icon: TrendingUp, label: 'Gross Profit YTD', value: formatCurrency(grossProfitYtd), detail: 'Contract value minus base/subk costs', accent: grossProfitYtd >= 0 ? accent : chartColors[5] },
+  ]
+
+  return (
+    <div className={`exec-dashboard exec-dashboard--${prefs.theme} page-enter space-y-5 p-6`}>
+      <motion.div variants={fadeUp} initial="initial" animate="animate" className="exec-hero rounded-[1.75rem] px-6 py-6">
+        <div className="flex flex-wrap items-end justify-between gap-5">
+          <div className="max-w-3xl">
+            <p className="mb-2 text-[10px] font-black uppercase tracking-[0.30em]" style={{ color: 'var(--accent)' }}>CES - Executive Dashboard</p>
+            <h1 className="text-4xl font-black leading-tight md:text-5xl" style={{ color: 'var(--text-primary)' }}>Company Command Center</h1>
+            <p className="mt-3 max-w-2xl text-sm leading-6" style={{ color: 'var(--text-secondary)' }}>
+              A polished executive cockpit for {currentUser ? ROLE_LABELS[currentUser.role] : 'managers'} across Business Development, team output and Operations performance.
+            </p>
+          </div>
+          <div className="grid min-w-[280px] gap-3 sm:grid-cols-2">
+            <div className="rounded-2xl border p-4" style={{ borderColor: 'var(--exec-border)', background: 'var(--exec-panel-soft)' }}>
+              <p className="text-[10px] font-black uppercase tracking-[0.18em]" style={{ color: 'var(--text-tertiary)' }}>Workspace</p>
+              <p className="mt-1 text-lg font-black" style={{ color: 'var(--text-primary)' }}>{THEME_LABELS[prefs.theme]}</p>
+            </div>
+            <div className="rounded-2xl border p-4" style={{ borderColor: 'var(--exec-border)', background: 'var(--exec-panel-soft)' }}>
+              <p className="text-[10px] font-black uppercase tracking-[0.18em]" style={{ color: 'var(--text-tertiary)' }}>Period</p>
+              <div className="mt-2">
+                <PeriodFilter value={period} onChange={setPeriod} />
+              </div>
+            </div>
+          </div>
+        </div>
+      </motion.div>
+
+      <motion.div variants={stagger} initial="initial" animate="animate" className="grid grid-cols-1 gap-3 xl:grid-cols-3">
+        {EXECUTIVE_TABS.map(item => {
+          const Icon = item.icon
+          const active = tab === item.id
+          return (
+            <motion.button
+              key={item.id}
+              variants={fadeUp}
+              type="button"
+              onClick={() => setTab(item.id)}
+              className={`exec-tab-card rounded-2xl border p-4 text-left transition-all ${active ? 'is-active' : ''}`}
+            >
+              <div className="flex items-start gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl" style={{ background: 'color-mix(in srgb, var(--accent) 13%, transparent)', color: 'var(--accent)' }}>
+                  <Icon size={18} />
+                </div>
+                <div>
+                  <p className="text-sm font-black" style={{ color: 'var(--text-primary)' }}>{item.label}</p>
+                  <p className="mt-1 text-xs" style={{ color: 'var(--text-tertiary)' }}>{item.subtitle}</p>
+                </div>
+              </div>
+            </motion.button>
+          )
+        })}
+      </motion.div>
+
+      {tab === 'bd' && (
+        <motion.div variants={stagger} initial="initial" animate="animate" className="space-y-5">
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">
+            {bdStats.map(stat => <DashboardStat key={stat.label} {...stat} />)}
+          </div>
+
+          <div className="exec-section-grid">
+            <DashboardPanel title="Submission Trend" subtitle="Submissions, awards and dollar value by month">
+              <ResponsiveContainer width="100%" height={260}>
+                <ComposedChart data={submissionTrend}>
+                  <defs>
+                    <linearGradient id="submittedValue" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={secondaryAccent} stopOpacity={0.34} />
+                      <stop offset="100%" stopColor={secondaryAccent} stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--exec-grid)" vertical={false} />
+                  <XAxis dataKey="month" tick={{ fill: '#9FB2AD', fontSize: 11 }} axisLine={false} tickLine={false} />
+                  <YAxis yAxisId="count" tick={{ fill: '#9FB2AD', fontSize: 10 }} axisLine={false} tickLine={false} />
+                  <YAxis yAxisId="value" orientation="right" tick={{ fill: '#9FB2AD', fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={v => `$${Math.round(v / 1000)}K`} />
+                  <Tooltip content={<ExecutiveTooltip />} />
+                  <Area yAxisId="value" type="monotone" dataKey="value" name="Submitted Value" stroke={secondaryAccent} strokeWidth={2.5} fill="url(#submittedValue)" />
+                  <Bar yAxisId="count" dataKey="submitted" name="Submitted" fill={tertiaryAccent} radius={[5, 5, 0, 0]} />
+                  <Bar yAxisId="count" dataKey="awarded" name="Awarded" fill={accent} radius={[5, 5, 0, 0]} />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </DashboardPanel>
+
+            <DashboardPanel title="Submitted by NAICS" subtitle="Submitted opportunities per NAICS code">
+              {submittedByNaics.length === 0 ? (
+                <EmptyDashboardState label="No submitted NAICS data yet." />
+              ) : (
+                <ResponsiveContainer width="100%" height={260}>
+                  <BarChart data={submittedByNaics} layout="vertical" margin={{ left: 16, right: 12 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--exec-grid)" horizontal={false} />
+                    <XAxis type="number" tick={{ fill: '#9FB2AD', fontSize: 10 }} axisLine={false} tickLine={false} />
+                    <YAxis dataKey="name" type="category" width={86} tick={{ fill: '#C7D7D3', fontSize: 11 }} axisLine={false} tickLine={false} />
+                    <Tooltip content={<ExecutiveTooltip />} />
+                    <Bar dataKey="count" name="Submissions" fill={tertiaryAccent} radius={[0, 6, 6, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </DashboardPanel>
+
+            <DashboardPanel title="Submitted by Type" subtitle="OTJ, recurring and other contract vehicles">
+              {submittedByType.length === 0 ? (
+                <EmptyDashboardState label="No submitted type data yet." />
+              ) : (
+                <div className="flex h-[260px] items-center gap-4">
+                  <ResponsiveContainer width="46%" height="100%">
+                    <PieChart>
+                      <Pie data={submittedByType} dataKey="count" nameKey="name" innerRadius={50} outerRadius={78} paddingAngle={3} stroke="transparent" strokeWidth={0}>
+                        {submittedByType.map((_, index) => (
+                          <Cell key={index} fill={chartColors[index % chartColors.length]} stroke="transparent" strokeWidth={0} />
+                        ))}
+                      </Pie>
+                      <Tooltip content={<ExecutiveTooltip />} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                  <div className="flex-1 space-y-3">
+                    {submittedByType.map((row, index) => (
+                      <div key={row.name}>
+                        <div className="mb-1 flex items-center justify-between gap-2 text-xs">
+                          <span className="font-bold" style={{ color: 'var(--text-secondary)' }}>{row.name}</span>
+                          <span className="font-black" style={{ color: 'var(--text-primary)' }}>{row.count}</span>
+                        </div>
+                        <div className="h-2 overflow-hidden rounded-full bg-white/10">
+                          <motion.div
+                            className="h-full rounded-full"
+                            style={{ background: chartColors[index % chartColors.length] }}
+                            initial={{ width: 0 }}
+                            animate={{ width: `${pct(row.count, Math.max(1, periodSubmissions.length))}%` }}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </DashboardPanel>
+          </div>
+
+          <DashboardPanel title="Agency Performance" subtitle="Agencies ranked by awarded value from submitted opportunities">
+            {agencyPerformance.length === 0 ? (
+              <EmptyDashboardState label="No agency performance yet." />
+            ) : (
+              <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                {agencyPerformance.map((agency, index) => (
+                  <div key={agency.name} className="rounded-xl border p-4" style={{ borderColor: 'var(--exec-border)', background: 'var(--exec-panel-soft)' }}>
+                    <div className="mb-2 flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-black" style={{ color: 'var(--text-primary)' }}>{agency.name}</p>
+                        <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>{agency.count} submitted/captured records</p>
+                      </div>
+                      <span className="rounded-full px-2 py-1 text-xs font-black" style={{ color: 'var(--accent)', background: 'color-mix(in srgb, var(--accent) 12%, transparent)' }}>{formatCurrency(agency.value)}</span>
+                    </div>
+                    <div className="h-2 overflow-hidden rounded-full bg-white/10">
+                      <motion.div
+                        className="h-full rounded-full"
+                        style={{ background: chartColors[index % chartColors.length] }}
+                        initial={{ width: 0 }}
+                        animate={{ width: `${pct(agency.value, Math.max(1, agencyPerformance[0]?.value || 1))}%` }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </DashboardPanel>
+        </motion.div>
+      )}
+
+      {tab === 'team' && (
+        <motion.div variants={stagger} initial="initial" animate="animate" className="space-y-5">
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-4">
+            <DashboardStat icon={Users} label="Associates" value={bdAssociates.length} detail="BD associates in the current hierarchy" accent={tertiaryAccent} />
+            <DashboardStat icon={Send} label="Team Submissions" value={teamRows.reduce((sum, row) => sum + row.submitted, 0)} detail="Submitted opportunities by associates" accent={secondaryAccent} />
+            <DashboardStat icon={AlertTriangle} label="Non-Sub Approved" value={teamRows.reduce((sum, row) => sum + row.notSubmitted, 0)} detail="Approved non-submission reports" accent={chartColors[3]} />
+            <DashboardStat icon={Zap} label="Active Users" value={activeUsers.length} detail="Active company user accounts" accent={accent} />
+          </div>
+
+          <div className="exec-section-grid">
+            <DashboardPanel title="Associates Leaderboard" subtitle="Ranked by submitted opportunities and awarded value">
+              {teamRows.length === 0 ? (
+                <EmptyDashboardState label="No associate performance yet." />
+              ) : (
+                <div className="space-y-3">
+                  {teamRows.slice(0, 8).map((row, index) => (
+                    <div key={row.id} className="flex items-center gap-3 rounded-xl border p-3" style={{ borderColor: 'var(--exec-border)', background: 'var(--exec-panel-soft)' }}>
+                      <div className="w-6 text-center text-xs font-black" style={{ color: 'var(--accent)' }}>#{index + 1}</div>
+                      <div className={`flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br ${avatarColor(row.avatar)} text-xs font-black text-white`}>
+                        {row.avatar.slice(0, 2)}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-black" style={{ color: 'var(--text-primary)' }}>{row.name}</p>
+                        <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>{row.submitted} submitted | {row.conversion}% conversion</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-sm font-black" style={{ color: 'var(--accent)' }}>{formatCurrency(row.value)}</p>
+                        <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{row.awarded} awards</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </DashboardPanel>
+
+            <DashboardPanel title="Associate Output" subtitle="Submitted, non-submitted, dropped and conversion rate">
+              {teamChartRows.length === 0 ? (
+                <EmptyDashboardState label="No associate chart data yet." />
+              ) : (
+                <ResponsiveContainer width="100%" height={320}>
+                  <BarChart data={teamChartRows}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--exec-grid)" vertical={false} />
+                    <XAxis dataKey="name" tick={{ fill: '#9FB2AD', fontSize: 11 }} axisLine={false} tickLine={false} />
+                    <YAxis tick={{ fill: '#9FB2AD', fontSize: 10 }} axisLine={false} tickLine={false} />
+                    <Tooltip content={<ExecutiveTooltip />} />
+                    <Legend wrapperStyle={{ fontSize: 11, color: 'var(--text-secondary)' }} />
+                    <Bar dataKey="submitted" name="Submitted" fill={secondaryAccent} radius={[5, 5, 0, 0]} />
+                    <Bar dataKey="notSubmitted" name="Not Submitted" fill={chartColors[3]} radius={[5, 5, 0, 0]} />
+                    <Bar dataKey="dropped" name="Dropped" fill={chartColors[5]} radius={[5, 5, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </DashboardPanel>
+
+            <DashboardPanel title="Active Users" subtitle="Live view from active company accounts">
+              <div className="space-y-3">
+                {activeUsers.length === 0 && <EmptyDashboardState label="No active users found." />}
+                {activeUsers.slice(0, 9).map(user => (
+                  <div key={user.id} className="flex items-center gap-3 rounded-xl border p-3" style={{ borderColor: 'var(--exec-border)', background: 'var(--exec-panel-soft)' }}>
+                    <div className={`flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br ${avatarColor(user.avatar)} text-xs font-black text-white`}>
+                      {user.avatar.slice(0, 2)}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-black" style={{ color: 'var(--text-primary)' }}>{user.name}</p>
+                      <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>{ROLE_LABELS[user.role]}</p>
+                    </div>
+                    <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_14px_rgba(34,197,94,0.75)]" />
+                  </div>
+                ))}
+              </div>
+            </DashboardPanel>
+          </div>
+
+          {hasPermission(currentUser, 'admin:manageUsers') && (
+            <DashboardPanel
+              title="Activity Log"
+              subtitle="Latest app activity, shown directly from the live store"
+              action={<span className="rounded-full bg-emerald-400/10 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-emerald-300">Live</span>}
+            >
+              {recentActivity.length === 0 ? (
+                <EmptyDashboardState label="No activity recorded yet." />
+              ) : (
+                <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                  {recentActivity.map(log => (
+                    <div key={log.id} className="rounded-xl border p-3" style={{ borderColor: 'var(--exec-border)', background: 'var(--exec-panel-soft)' }}>
+                      <div className="mb-2 flex items-start gap-3">
+                        <div className="flex h-8 w-8 items-center justify-center rounded-xl text-xs font-black" style={{ background: `${secondaryAccent}24`, color: secondaryAccent }}>
+                          {log.user.split(' ').map(part => part[0]).join('').slice(0, 2)}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-semibold leading-snug" style={{ color: 'var(--text-primary)' }}>{log.action}</p>
+                          <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                            {log.user} | {new Date(log.createdAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </DashboardPanel>
+          )}
+        </motion.div>
+      )}
+
+      {tab === 'ops' && (
+        <motion.div variants={stagger} initial="initial" animate="animate" className="space-y-5">
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-4">
+            {opsStats.map(stat => <DashboardStat key={stat.label} {...stat} />)}
+          </div>
+
+          <div className="exec-section-grid">
+            <DashboardPanel title="Contract Status" subtitle="Active Contract Admin records by status">
+              {contractStatusRows.length === 0 ? (
+                <EmptyDashboardState label="No active contract status data yet." />
+              ) : (
+                <ResponsiveContainer width="100%" height={280}>
+                  <PieChart>
+                    <Pie data={contractStatusRows} dataKey="count" nameKey="name" innerRadius={62} outerRadius={92} paddingAngle={3} stroke="transparent" strokeWidth={0}>
+                      {contractStatusRows.map((_, index) => (
+                        <Cell key={index} fill={chartColors[index % chartColors.length]} stroke="transparent" strokeWidth={0} />
+                      ))}
+                    </Pie>
+                    <Tooltip content={<ExecutiveTooltip />} />
+                    <Legend wrapperStyle={{ fontSize: 11, color: '#C7D7D3' }} />
+                  </PieChart>
+                </ResponsiveContainer>
+              )}
+            </DashboardPanel>
+
+            <DashboardPanel title="Gross Profit by Type" subtitle="YTD contract value minus base/subk costs">
+              {contractTypeProfitRows.length === 0 ? (
+                <EmptyDashboardState label="No gross profit data yet." />
+              ) : (
+                <ResponsiveContainer width="100%" height={280}>
+                  <BarChart data={contractTypeProfitRows}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--exec-grid)" vertical={false} />
+                    <XAxis dataKey="name" tick={{ fill: '#9FB2AD', fontSize: 11 }} axisLine={false} tickLine={false} />
+                    <YAxis tick={{ fill: '#9FB2AD', fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={v => `$${Math.round(v / 1000)}K`} />
+                    <Tooltip content={<ExecutiveTooltip />} />
+                    <Bar dataKey="value" name="Gross Profit Value" fill={accent} radius={[6, 6, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </DashboardPanel>
+
+            <DashboardPanel title="Operations Portfolio" subtitle="Top active contracts by awarded value">
+              {activeContracts.length === 0 ? (
+                <EmptyDashboardState label="No active contracts yet." />
+              ) : (
+                <div className="space-y-3">
+                  {activeContracts
+                    .sort((a, b) => numberValue(b.value) - numberValue(a.value))
+                    .slice(0, 8)
+                    .map(contract => (
+                      <div key={contract.id} className="rounded-xl border p-3" style={{ borderColor: 'var(--exec-border)', background: 'var(--exec-panel-soft)' }}>
+                        <div className="mb-2 flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-black" style={{ color: 'var(--text-primary)' }}>{contract.title}</p>
+                            <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>{contract.contractId} | {contract.status}</p>
+                          </div>
+                          <span className="rounded-full bg-emerald-400/10 px-2 py-1 text-xs font-black text-emerald-300">{formatCurrency(numberValue(contract.value))}</span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 text-xs" style={{ color: 'var(--text-tertiary)' }}>
+                          <span>Subk: <b style={{ color: 'var(--text-secondary)' }}>{formatCurrency(lockedSubkSpend(contract))}</b></span>
+                          <span>Profit: <b style={{ color: 'var(--text-secondary)' }}>{formatCurrency(grossProfitForContract(contract))}</b></span>
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              )}
+            </DashboardPanel>
+          </div>
+        </motion.div>
+      )}
+    </div>
+  )
+}
+
 // Admin / Manager Dashboard
 function AdminDashboard() {
   const { opportunities, nonSubReports, deletionRequests, activityLogs, currentUser, bdSubmissions, contracts, employees } = useStore()
@@ -1228,5 +1904,5 @@ function AdminDashboard() {
 export default function DashboardPage() {
   const { currentUser } = useStore()
   const seesCompanyDashboard = hasAnyPermission(currentUser, ['admin:manageUsers', 'opportunity:assign', 'operations:manage'])
-  return seesCompanyDashboard ? <AdminDashboard /> : <AgentDashboard />
+  return seesCompanyDashboard ? <ExecutiveDashboard /> : <AgentDashboard />
 }

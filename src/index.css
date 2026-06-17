@@ -52,7 +52,169 @@
   /* ── Easing ──────────────────────────────────────────────────────── */
   --ease-spring: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
+
+  --app-font: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-scale: 1;
+  --body-bg:
+    radial-gradient(circle at 18% -10%, rgba(184,145,78,0.16) 0%, transparent 28%),
+    radial-gradient(circle at 88% 0%, rgba(31,122,120,0.18) 0%, transparent 34%),
+    linear-gradient(180deg, #07131F 0%, #0A1D2B 48%, #102820 100%);
+  --shell-bg:
+    radial-gradient(circle at 20% -10%, rgba(184,145,78,0.14) 0%, transparent 30%),
+    radial-gradient(circle at 86% 4%, rgba(31,122,120,0.16) 0%, transparent 32%),
+    linear-gradient(180deg, #07131F 0%, #0A1D2B 50%, #102820 100%);
+  --topbar-bg: linear-gradient(90deg, rgba(7,19,31,0.96) 0%, rgba(10,29,43,0.94) 52%, rgba(16,40,32,0.96) 100%);
+  --exec-page-bg:
+    radial-gradient(circle at 12% 4%, rgba(215,190,122,0.14), transparent 28%),
+    radial-gradient(circle at 88% 8%, rgba(31,122,120,0.22), transparent 34%),
+    linear-gradient(145deg, rgba(7,19,31,0.84), rgba(7,38,34,0.92));
+  --exec-panel: linear-gradient(150deg, rgba(10,29,43,0.96), rgba(9,49,43,0.88));
+  --exec-panel-soft: rgba(255,255,255,0.045);
+  --exec-panel-strong: linear-gradient(140deg, rgba(15,79,89,0.86), rgba(184,145,78,0.28));
+  --exec-border: rgba(215,190,122,0.20);
+  --exec-border-strong: rgba(215,190,122,0.55);
+  --exec-grid: rgba(215,190,122,0.13);
+  --exec-shadow: 0 18px 56px rgba(0,0,0,0.22);
 }
+
+html[data-theme="prism"] {
+  --bg-app: #070820;
+  --bg-card: #0E1238;
+  --bg-raised: #111B42;
+  --bg-sidebar: #070820;
+  --bg-modal: #0E1238;
+  --bg-input: rgba(255,255,255,0.075);
+  --border-subtle: rgba(0,212,255,0.10);
+  --border-default: rgba(123,92,255,0.22);
+  --border-strong: rgba(0,212,255,0.34);
+  --border-input: rgba(0,212,255,0.28);
+  --border-focus: #00D4FF;
+  --text-primary: #F7F9FF;
+  --text-secondary: #C8D2FF;
+  --text-tertiary: #96A6D8;
+  --text-muted: #65729D;
+  --indigo-700: #3523A8;
+  --indigo-600: #5B6CFF;
+  --indigo-500: #00D4FF;
+  --indigo-400: #F45BFF;
+  --accent: #00D4FF;
+  --accent-2: #8B5CF6;
+  --accent-glow: rgba(0,212,255,0.30);
+  --body-bg:
+    radial-gradient(circle at 8% 0%, rgba(244,91,255,0.18), transparent 32%),
+    radial-gradient(circle at 84% 8%, rgba(0,212,255,0.22), transparent 34%),
+    linear-gradient(180deg, #070820 0%, #0C1237 48%, #061F2D 100%);
+  --shell-bg:
+    linear-gradient(120deg, rgba(9,10,42,0.96), rgba(7,34,50,0.95)),
+    radial-gradient(circle at 72% 8%, rgba(0,212,255,0.20), transparent 34%);
+  --topbar-bg: linear-gradient(90deg, rgba(7,8,32,0.96), rgba(12,18,55,0.96), rgba(6,31,45,0.96));
+  --exec-page-bg:
+    radial-gradient(circle at 8% 8%, rgba(244,91,255,0.20), transparent 30%),
+    radial-gradient(circle at 92% 6%, rgba(0,212,255,0.28), transparent 34%),
+    linear-gradient(145deg, rgba(7,8,32,0.88), rgba(8,31,50,0.94));
+  --exec-panel: linear-gradient(150deg, rgba(14,18,56,0.96), rgba(8,35,64,0.88));
+  --exec-panel-soft: rgba(91,108,255,0.085);
+  --exec-panel-strong: linear-gradient(135deg, rgba(91,108,255,0.52), rgba(0,212,255,0.22), rgba(244,91,255,0.20));
+  --exec-border: rgba(0,212,255,0.22);
+  --exec-border-strong: rgba(244,91,255,0.45);
+  --exec-grid: rgba(0,212,255,0.14);
+  --exec-shadow: 0 18px 60px rgba(0, 212, 255, 0.10), 0 22px 80px rgba(0,0,0,0.30);
+}
+
+html[data-theme="noir"] {
+  --bg-app: #050507;
+  --bg-card: #101015;
+  --bg-raised: #191920;
+  --bg-sidebar: #050507;
+  --bg-modal: #101015;
+  --bg-input: rgba(255,255,255,0.07);
+  --border-subtle: rgba(198,181,138,0.10);
+  --border-default: rgba(198,181,138,0.18);
+  --border-strong: rgba(242,239,231,0.28);
+  --border-input: rgba(198,181,138,0.26);
+  --border-focus: #C6B58A;
+  --text-primary: #F7F3EA;
+  --text-secondary: #D1CCC1;
+  --text-tertiary: #9D9789;
+  --text-muted: #6F6A60;
+  --indigo-700: #1C1B22;
+  --indigo-600: #2C2A34;
+  --indigo-500: #C6B58A;
+  --indigo-400: #F0D38A;
+  --accent: #C6B58A;
+  --accent-2: #8F8A7A;
+  --accent-glow: rgba(198,181,138,0.24);
+  --body-bg:
+    radial-gradient(circle at 20% -8%, rgba(198,181,138,0.14), transparent 32%),
+    linear-gradient(180deg, #050507 0%, #101015 52%, #15131A 100%);
+  --shell-bg:
+    radial-gradient(circle at 88% 0%, rgba(242,239,231,0.08), transparent 28%),
+    linear-gradient(180deg, #050507 0%, #101015 54%, #15131A 100%);
+  --topbar-bg: linear-gradient(90deg, rgba(5,5,7,0.98), rgba(16,16,21,0.96), rgba(28,27,34,0.96));
+  --exec-page-bg:
+    radial-gradient(circle at 18% 0%, rgba(198,181,138,0.18), transparent 34%),
+    linear-gradient(135deg, rgba(5,5,7,0.94), rgba(20,19,26,0.96));
+  --exec-panel: linear-gradient(150deg, rgba(16,16,21,0.98), rgba(28,27,34,0.92));
+  --exec-panel-soft: rgba(242,239,231,0.045);
+  --exec-panel-strong: linear-gradient(135deg, rgba(198,181,138,0.24), rgba(242,239,231,0.08));
+  --exec-border: rgba(198,181,138,0.22);
+  --exec-border-strong: rgba(242,239,231,0.40);
+  --exec-grid: rgba(198,181,138,0.14);
+  --exec-shadow: 0 22px 70px rgba(0,0,0,0.42);
+}
+
+html[data-theme="daylight"] {
+  --bg-app: #F7F4EA;
+  --bg-card: #FFFFFF;
+  --bg-raised: #EEF7F6;
+  --bg-sidebar: #102A43;
+  --bg-modal: #FFFFFF;
+  --bg-input: rgba(16,42,67,0.055);
+  --border-subtle: rgba(16,42,67,0.10);
+  --border-default: rgba(16,42,67,0.16);
+  --border-strong: rgba(14,116,144,0.28);
+  --border-input: rgba(16,42,67,0.22);
+  --border-focus: #0E7490;
+  --text-primary: #102033;
+  --text-secondary: #30485C;
+  --text-tertiary: #64798A;
+  --text-muted: #8A9AA7;
+  --indigo-700: #102A43;
+  --indigo-600: #0E7490;
+  --indigo-500: #C08B2C;
+  --indigo-400: #E6C36B;
+  --accent: #0E7490;
+  --accent-2: #C08B2C;
+  --accent-glow: rgba(14,116,144,0.20);
+  --body-bg:
+    radial-gradient(circle at 16% -10%, rgba(192,139,44,0.17), transparent 32%),
+    radial-gradient(circle at 86% 0%, rgba(14,116,144,0.14), transparent 34%),
+    linear-gradient(180deg, #F7F4EA 0%, #EEF7F6 48%, #E6EFF3 100%);
+  --shell-bg:
+    radial-gradient(circle at 88% -4%, rgba(14,116,144,0.14), transparent 28%),
+    linear-gradient(180deg, #F7F4EA 0%, #EEF7F6 54%, #E6EFF3 100%);
+  --topbar-bg: linear-gradient(90deg, rgba(255,255,255,0.92), rgba(238,247,246,0.92), rgba(231,241,236,0.92));
+  --exec-page-bg:
+    radial-gradient(circle at 10% 0%, rgba(192,139,44,0.14), transparent 34%),
+    radial-gradient(circle at 92% 6%, rgba(14,116,144,0.16), transparent 30%),
+    linear-gradient(145deg, rgba(247,244,234,0.94), rgba(238,247,246,0.98));
+  --exec-panel: linear-gradient(150deg, rgba(255,255,255,0.92), rgba(238,247,246,0.88));
+  --exec-panel-soft: rgba(16,42,67,0.04);
+  --exec-panel-strong: linear-gradient(135deg, rgba(14,116,144,0.12), rgba(192,139,44,0.15));
+  --exec-border: rgba(16,42,67,0.14);
+  --exec-border-strong: rgba(14,116,144,0.35);
+  --exec-grid: rgba(16,42,67,0.12);
+  --exec-shadow: 0 18px 44px rgba(16,42,67,0.12);
+}
+
+html[data-font="inter"] { --app-font: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+html[data-font="humanist"] { --app-font: "Segoe UI", "Aptos", "Trebuchet MS", ui-sans-serif, system-ui, sans-serif; }
+html[data-font="editorial"] { --app-font: Georgia, "Times New Roman", ui-serif, serif; }
+html[data-font="mono"] { --app-font: "Cascadia Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
+
+html[data-size="compact"] { --font-scale: 0.94; }
+html[data-size="standard"] { --font-scale: 1; }
+html[data-size="large"] { --font-scale: 1.08; }
 
 /* Dark premium compatibility layer for legacy page utilities. */
 .bg-white,
@@ -171,11 +333,10 @@ path.recharts-sector,
 
   body {
     @apply font-sans antialiased;
-    background:
-      radial-gradient(circle at 18% -10%, rgba(184,145,78,0.16) 0%, transparent 28%),
-      radial-gradient(circle at 88% 0%, rgba(31,122,120,0.18) 0%, transparent 34%),
-      linear-gradient(180deg, #07131F 0%, #0A1D2B 48%, #102820 100%);
+    background: var(--body-bg);
     color: var(--text-primary);
+    font-family: var(--app-font);
+    font-size: calc(16px * var(--font-scale));
     overflow-x: hidden;
     margin: 0;
     -webkit-font-smoothing: antialiased;
@@ -198,12 +359,217 @@ path.recharts-sector,
 
 /* ═══ App Shell ══════════════════════════════════════════════════════════════ */
 .app-shell {
-  background:
-    radial-gradient(circle at 20% -10%, rgba(184,145,78,0.14) 0%, transparent 30%),
-    radial-gradient(circle at 86% 4%, rgba(31,122,120,0.16) 0%, transparent 32%),
-    linear-gradient(180deg, #07131F 0%, #0A1D2B 50%, #102820 100%);
+  background: var(--shell-bg);
   min-height: 100vh;
   color: var(--text-primary);
+}
+
+.appearance-trigger {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.appearance-trigger:hover {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.appearance-popover {
+  background: var(--exec-panel);
+  border-color: var(--exec-border-strong);
+  box-shadow: var(--shadow-modal);
+  color: var(--text-primary);
+}
+
+.appearance-popover__header {
+  border-bottom: 1px solid var(--border-default);
+  background:
+    radial-gradient(circle at 0% 0%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 40%),
+    color-mix(in srgb, var(--bg-card) 76%, transparent);
+}
+
+.appearance-popover__icon,
+.appearance-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 13%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.appearance-popover__icon {
+  width: 2.35rem;
+  height: 2.35rem;
+  border-radius: 0.85rem;
+}
+
+.appearance-check {
+  width: 1.45rem;
+  height: 1.45rem;
+  border-radius: 999px;
+}
+
+.appearance-theme-choice,
+.appearance-segment {
+  border: 1px solid var(--border-default);
+  background:
+    linear-gradient(150deg, color-mix(in srgb, var(--bg-card) 88%, transparent), color-mix(in srgb, var(--bg-raised) 72%, transparent));
+  border-radius: 1rem;
+  padding: 0.85rem;
+  transition: transform 160ms var(--ease-smooth), border-color 160ms var(--ease-smooth), background 160ms var(--ease-smooth), box-shadow 160ms var(--ease-smooth);
+}
+
+.appearance-theme-choice:hover,
+.appearance-segment:hover,
+.appearance-theme-choice.is-active,
+.appearance-segment.is-active {
+  border-color: var(--exec-border-strong);
+  background: var(--exec-panel-strong);
+  box-shadow: 0 14px 34px color-mix(in srgb, var(--accent) 14%, transparent);
+  transform: translateY(-1px);
+}
+
+.exec-dashboard {
+  min-height: calc(100vh - 4rem);
+  background: var(--exec-page-bg);
+}
+
+.exec-hero {
+  overflow: hidden;
+  border: 1px solid var(--exec-border);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--bg-card) 88%, transparent), color-mix(in srgb, var(--bg-raised) 72%, transparent)),
+    radial-gradient(circle at 86% 8%, color-mix(in srgb, var(--accent) 16%, transparent), transparent 32%);
+  box-shadow: var(--exec-shadow);
+  position: relative;
+}
+
+.exec-hero::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  background:
+    radial-gradient(circle at 12% 0%, color-mix(in srgb, var(--accent) 24%, transparent), transparent 28%),
+    linear-gradient(110deg, transparent 0%, color-mix(in srgb, var(--accent-2) 9%, transparent) 48%, transparent 100%);
+  pointer-events: none;
+}
+
+.exec-hero > * {
+  position: relative;
+  z-index: 1;
+}
+
+.exec-panel,
+.exec-stat,
+.exec-tab-card {
+  border: 1px solid var(--exec-border);
+  background: var(--exec-panel);
+  box-shadow: var(--exec-shadow);
+}
+
+.exec-stat,
+.exec-tab-card {
+  transition: transform 180ms var(--ease-smooth), border-color 180ms var(--ease-smooth), box-shadow 180ms var(--ease-smooth);
+}
+
+.exec-stat:hover,
+.exec-tab-card:hover {
+  border-color: var(--exec-border-strong);
+  transform: translateY(-2px);
+}
+
+.exec-tab-card.is-active {
+  border-color: var(--exec-border-strong);
+  background: var(--exec-panel-strong);
+}
+
+.exec-section-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(1, minmax(0, 1fr));
+}
+
+@media (min-width: 1280px) {
+  .exec-section-grid {
+    grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr);
+  }
+
+  .exec-section-grid > .exec-panel:nth-child(3) {
+    grid-column: 1 / -1;
+  }
+
+  html[data-theme="prism"] .exec-section-grid,
+  html[data-theme="noir"] .exec-section-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr);
+  }
+
+  html[data-theme="prism"] .exec-section-grid > .exec-panel:first-child {
+    grid-column: 1 / -1;
+  }
+
+  html[data-theme="prism"] .exec-section-grid > .exec-panel:nth-child(3) {
+    grid-column: auto;
+  }
+
+  html[data-theme="noir"] .exec-section-grid > .exec-panel:first-child {
+    grid-row: span 2;
+  }
+
+  html[data-theme="noir"] .exec-section-grid > .exec-panel:nth-child(3) {
+    grid-column: 2;
+  }
+
+  html[data-theme="daylight"] .exec-section-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  html[data-theme="daylight"] .exec-section-grid > .exec-panel:nth-child(3) {
+    grid-column: auto;
+  }
+}
+
+html[data-theme="prism"] .exec-dashboard {
+  background:
+    linear-gradient(110deg, rgba(9,10,42,0.90), rgba(8,31,50,0.92)),
+    radial-gradient(circle at 50% 0%, rgba(244,91,255,0.22), transparent 36%);
+}
+
+html[data-theme="prism"] .exec-hero,
+html[data-theme="prism"] .exec-panel,
+html[data-theme="prism"] .exec-stat,
+html[data-theme="prism"] .exec-tab-card {
+  border-radius: 1.6rem;
+}
+
+html[data-theme="noir"] .exec-dashboard {
+  background:
+    linear-gradient(90deg, rgba(5,5,7,0.96), rgba(20,19,26,0.92)),
+    radial-gradient(circle at 8% 20%, rgba(198,181,138,0.14), transparent 34%);
+}
+
+html[data-theme="noir"] .exec-hero,
+html[data-theme="noir"] .exec-panel,
+html[data-theme="noir"] .exec-stat,
+html[data-theme="noir"] .exec-tab-card {
+  border-radius: 0.55rem;
+}
+
+html[data-theme="daylight"] .exec-dashboard {
+  color: var(--text-primary);
+}
+
+html[data-theme="daylight"] .exec-hero,
+html[data-theme="daylight"] .exec-panel,
+html[data-theme="daylight"] .exec-stat,
+html[data-theme="daylight"] .exec-tab-card {
+  border-radius: 1.25rem;
+}
+
+html[data-theme="daylight"] .bg-white,
+html[data-theme="daylight"] .bg-slate-50,
+html[data-theme="daylight"] .bg-slate-100 {
+  background-color: rgba(255,255,255,0.88) !important;
 }
 
 /* ═══ Components ═════════════════════════════════════════════════════════════ */
