@@ -371,8 +371,29 @@ function TimezoneInput({
     () => new Date(referenceMs ?? Date.now()),
     [referenceMs],
   )
-  const selectedCode = timezoneCodeForDisplay(value, referenceDate)
-  const selectedTime = selectedCode ? formatTimezoneCodeTime(selectedCode, referenceDate) : ''
+
+  const [draft, setDraft] = useState(() => {
+    const raw = (value ?? '').trim()
+    if (!raw) return ''
+    const normalized = timezoneCodeForDisplay(raw, new Date())
+    return normalized || raw
+  })
+
+  useEffect(() => {
+    setDraft(prev => {
+      const raw = (value ?? '').trim()
+      if (prev === raw) return prev
+      const normalized = raw ? timezoneCodeForDisplay(raw, referenceDate) : ''
+      if (prev === normalized) return prev
+      return normalized || raw
+    })
+  }, [value, referenceDate])
+
+  const trimmedDraft = draft.trim()
+  const resolvedCode = trimmedDraft ? timezoneCodeForDisplay(trimmedDraft, referenceDate) : ''
+  const previewTime = resolvedCode ? formatTimezoneCodeTime(resolvedCode, referenceDate) : ''
+
+  const datalistId = `${id}-datalist`
   const options = useMemo(() => TIMEZONE_CODE_OPTIONS.map(code => {
     const codeTime = formatTimezoneCodeTime(code, referenceDate)
     return {
@@ -381,24 +402,39 @@ function TimezoneInput({
     }
   }), [referenceDate])
 
+  const handleChange = (next: string) => {
+    setDraft(next)
+    onChange(next)
+  }
+
+  let hint: string
+  if (!trimmedDraft) {
+    hint = 'Pick a code from the list or type one (e.g. EDT, GMT+1, Asia/Tokyo).'
+  } else if (resolvedCode && previewTime) {
+    hint = `${resolvedCode}: ${previewTime}${referenceMs === null ? ' now.' : ' for this deadline.'}`
+  } else {
+    hint = `Saved as "${trimmedDraft}". Time preview unavailable for this timezone.`
+  }
+
   return (
     <div className="space-y-1">
-      <select
+      <input
         id={id}
-        value={selectedCode}
-        onChange={e => onChange(e.target.value)}
-        className="select-field"
-      >
-        <option value="">Select code...</option>
+        type="text"
+        value={draft}
+        list={datalistId}
+        onChange={e => handleChange(e.target.value)}
+        className="input-field"
+        placeholder="EDT, GMT+1, Asia/Tokyo..."
+        autoComplete="off"
+        spellCheck={false}
+      />
+      <datalist id={datalistId}>
         {options.map(option => (
           <option key={option.code} value={option.code}>{option.label}</option>
         ))}
-      </select>
-      <p className="text-[10px] font-medium text-slate-400">
-        {selectedCode && selectedTime
-          ? `${selectedCode}: ${selectedTime}${referenceMs === null ? ' now.' : ' for this deadline.'}`
-          : 'Choose the source timezone code shown on SAM.gov.'}
-      </p>
+      </datalist>
+      <p className="text-[10px] font-medium text-slate-400">{hint}</p>
     </div>
   )
 }
