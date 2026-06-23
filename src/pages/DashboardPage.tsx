@@ -669,13 +669,6 @@ const EXECUTIVE_TABS: Array<{ id: ExecutiveDashboardTab; label: string; icon: an
   { id: 'activity', label: 'Live Activity', icon: Activity, subtitle: 'Only the latest live activities' },
 ]
 
-const THEME_LABELS = {
-  aurora: 'Aurora Command',
-  prism: 'Prism Intelligence',
-  noir: 'Noir Ledger',
-  daylight: 'Daylight Atlas',
-} as const
-
 const EXEC_PANEL_STYLE = {
   background: 'var(--exec-panel)',
   borderColor: 'var(--exec-border)',
@@ -872,7 +865,7 @@ function ExecutiveTooltip({ active, payload, label }: any) {
 
 function ExecutiveDashboard() {
   const { opportunities, nonSubReports, activityLogs, currentUser, bdSubmissions, contracts, employees, users } = useStore()
-  const { prefs } = useAppearance()
+  const { prefs, theme } = useAppearance()
   const [period, setPeriod] = useState<Period | null>(null)
   const [tab, setTab] = useState<ExecutiveDashboardTab>('bd')
   const chartColors = chartColorsForTheme(prefs.theme)
@@ -1015,7 +1008,7 @@ function ExecutiveDashboard() {
           <div className="grid min-w-[280px] gap-3 sm:grid-cols-2">
             <div className="rounded-2xl border p-4" style={{ borderColor: 'var(--exec-border)', background: 'var(--exec-panel-soft)' }}>
               <p className="text-[10px] font-black uppercase tracking-[0.18em]" style={{ color: 'var(--text-tertiary)' }}>Workspace</p>
-              <p className="mt-1 text-lg font-black" style={{ color: 'var(--text-primary)' }}>{THEME_LABELS[prefs.theme]}</p>
+              <p className="mt-1 text-lg font-black" style={{ color: 'var(--text-primary)' }}>{theme.name}</p>
             </div>
             <div className="rounded-2xl border p-4" style={{ borderColor: 'var(--exec-border)', background: 'var(--exec-panel-soft)' }}>
               <p className="text-[10px] font-black uppercase tracking-[0.18em]" style={{ color: 'var(--text-tertiary)' }}>Period</p>
