@@ -456,6 +456,182 @@ function TimezoneInput({
   )
 }
 
+const MONTH_ABBRS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+function parseDueDate(value: string | undefined) {
+  const m = (value ?? '').trim().match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (!m) return { y: '', mIdx: -1, d: '' }
+  return { y: m[1], mIdx: Number(m[2]) - 1, d: m[3] }
+}
+
+function parseLocalTime(value: string | undefined) {
+  const raw = (value ?? '').trim()
+  let h24 = NaN
+  let mm = NaN
+  const twelve = raw.match(/^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)$/i)
+  if (twelve) {
+    h24 = Number(twelve[1]) % 12
+    if (twelve[3].toUpperCase() === 'PM') h24 += 12
+    mm = Number(twelve[2] ?? 0)
+  } else {
+    const tw = raw.match(/^(\d{1,2}):(\d{2})$/)
+    if (tw) { h24 = Number(tw[1]); mm = Number(tw[2]) }
+  }
+  if (!Number.isFinite(h24) || !Number.isFinite(mm)) return { h: '', m: '', p: 'PM' as 'AM' | 'PM' }
+  const period: 'AM' | 'PM' = h24 >= 12 ? 'PM' : 'AM'
+  let h12 = h24 % 12
+  if (h12 === 0) h12 = 12
+  return { h: String(h12), m: String(mm).padStart(2, '0'), p: period }
+}
+
+function DateTimePicker({
+  dueDate,
+  localTime,
+  onChangeDate,
+  onChangeTime,
+}: {
+  dueDate?: string
+  localTime?: string
+  onChangeDate: (value: string) => void
+  onChangeTime: (value: string) => void
+}) {
+  const initialDate = parseDueDate(dueDate)
+  const initialTime = parseLocalTime(localTime)
+  const [monthIdx, setMonthIdx] = useState<number>(initialDate.mIdx)
+  const [day, setDay] = useState<string>(initialDate.d)
+  const [year, setYear] = useState<string>(initialDate.y)
+  const [hour, setHour] = useState<string>(initialTime.h)
+  const [minute, setMinute] = useState<string>(initialTime.m)
+  const [period, setPeriod] = useState<'AM' | 'PM'>(initialTime.p)
+
+  useEffect(() => {
+    const p = parseDueDate(dueDate)
+    setMonthIdx(p.mIdx); setDay(p.d); setYear(p.y)
+  }, [dueDate])
+  useEffect(() => {
+    const p = parseLocalTime(localTime)
+    setHour(p.h); setMinute(p.m); setPeriod(p.p)
+  }, [localTime])
+
+  const emitDate = (mi: number, d: string, y: string) => {
+    if (mi < 0 || mi > 11) return
+    const dn = Number(d), yn = Number(y)
+    if (!dn || dn < 1 || dn > 31) return
+    if (!yn || yn < 1900 || yn > 9999) return
+    onChangeDate(`${String(yn).padStart(4, '0')}-${String(mi + 1).padStart(2, '0')}-${String(dn).padStart(2, '0')}`)
+  }
+  const emitTime = (h: string, m: string, p: 'AM' | 'PM') => {
+    const hn = Number(h)
+    const mn = m === '' ? NaN : Number(m)
+    if (!hn || hn < 1 || hn > 12) return
+    if (!Number.isFinite(mn) || mn < 0 || mn > 59) return
+    let h24 = hn % 12
+    if (p === 'PM') h24 += 12
+    onChangeTime(`${String(h24).padStart(2, '0')}:${String(mn).padStart(2, '0')}`)
+  }
+
+  const segCls = 'bg-transparent border-0 outline-none text-[13px] font-medium text-slate-900 placeholder:text-slate-300 focus:ring-0 px-0.5'
+
+  return (
+    <div className="input-field flex flex-wrap items-center gap-0.5" style={{ paddingLeft: '0.6rem', paddingRight: '0.6rem' }}>
+      <select
+        value={monthIdx >= 0 ? String(monthIdx) : ''}
+        onChange={e => { const v = Number(e.target.value); setMonthIdx(v); emitDate(v, day, year) }}
+        className={`${segCls} pr-1`}
+        aria-label="Month"
+      >
+        <option value="" disabled>Mon</option>
+        {MONTH_ABBRS.map((m, i) => <option key={m} value={i}>{m}</option>)}
+      </select>
+      <input
+        type="text" inputMode="numeric" maxLength={2}
+        value={day}
+        onChange={e => { const v = e.target.value.replace(/\D/g, '').slice(0, 2); setDay(v); emitDate(monthIdx, v, year) }}
+        placeholder="DD"
+        className={`${segCls} w-7 text-center`}
+        aria-label="Day"
+      />
+      <span className="text-slate-400">,</span>
+      <input
+        type="text" inputMode="numeric" maxLength={4}
+        value={year}
+        onChange={e => { const v = e.target.value.replace(/\D/g, '').slice(0, 4); setYear(v); emitDate(monthIdx, day, v) }}
+        placeholder="YYYY"
+        className={`${segCls} w-12`}
+        aria-label="Year"
+      />
+      <span className="mx-1 text-slate-300">|</span>
+      <input
+        type="text" inputMode="numeric" maxLength={2}
+        value={hour}
+        onChange={e => { const v = e.target.value.replace(/\D/g, '').slice(0, 2); setHour(v); emitTime(v, minute, period) }}
+        placeholder="HH"
+        className={`${segCls} w-6 text-right`}
+        aria-label="Hour"
+      />
+      <span>:</span>
+      <input
+        type="text" inputMode="numeric" maxLength={2}
+        value={minute}
+        onChange={e => {
+          const v = e.target.value.replace(/\D/g, '').slice(0, 2)
+          setMinute(v)
+          emitTime(hour, v, period)
+        }}
+        onBlur={() => { if (minute && minute.length === 1) { const padded = minute.padStart(2, '0'); setMinute(padded); emitTime(hour, padded, period) } }}
+        placeholder="MM"
+        className={`${segCls} w-7`}
+        aria-label="Minute"
+      />
+      <select
+        value={period}
+        onChange={e => { const v = e.target.value as 'AM' | 'PM'; setPeriod(v); emitTime(hour, minute, v) }}
+        className={`${segCls} ml-1 lowercase`}
+        aria-label="AM or PM"
+      >
+        <option value="AM">am</option>
+        <option value="PM">pm</option>
+      </select>
+    </div>
+  )
+}
+
+const US_TIMEZONE_OPTIONS: { value: string; label: string }[] = [
+  { value: 'EST',  label: 'EST - Eastern Standard (UTC-5)' },
+  { value: 'EDT',  label: 'EDT - Eastern Daylight (UTC-4)' },
+  { value: 'CST',  label: 'CST - Central Standard (UTC-6)' },
+  { value: 'CDT',  label: 'CDT - Central Daylight (UTC-5)' },
+  { value: 'MST',  label: 'MST - Mountain Standard (UTC-7)' },
+  { value: 'MDT',  label: 'MDT - Mountain Daylight (UTC-6)' },
+  { value: 'PST',  label: 'PST - Pacific Standard (UTC-8)' },
+  { value: 'PDT',  label: 'PDT - Pacific Daylight (UTC-7)' },
+  { value: 'AKST', label: 'AKST - Alaska Standard (UTC-9)' },
+  { value: 'AKDT', label: 'AKDT - Alaska Daylight (UTC-8)' },
+  { value: 'HST',  label: 'HST - Hawaii-Aleutian Standard (UTC-10)' },
+  { value: 'HADT', label: 'HADT - Hawaii-Aleutian Daylight (UTC-9)' },
+  { value: 'UTC',  label: 'UTC - Coordinated Universal Time (UTC+0)' },
+  { value: 'GMT',  label: 'GMT - Greenwich Mean Time (UTC+0)' },
+  { value: 'BST',  label: 'BST - British Summer Time (UTC+1)' },
+]
+
+function UsTimezoneSelect({ value, onChange }: { value?: string; onChange: (value: string) => void }) {
+  const current = (value ?? '').trim()
+  const inList = US_TIMEZONE_OPTIONS.some(o => o.value === current)
+  return (
+    <select
+      value={current}
+      onChange={e => onChange(e.target.value)}
+      className="input-field"
+    >
+      <option value="" disabled>Select timezone</option>
+      {current && !inList && <option value={current}>{current} (current)</option>}
+      {US_TIMEZONE_OPTIONS.map(opt => (
+        <option key={opt.value} value={opt.value}>{opt.label}</option>
+      ))}
+    </select>
+  )
+}
+
 function NaicsInput({ value, onChange }: { value?: string; onChange: (value: string) => void }) {
   const [query, setQuery] = useState('')
   const suggestions = useMemo(() => {
@@ -1179,31 +1355,20 @@ export function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => v
       {/* ── Schedule tab ── */}
       {tab === 'schedule' && (
         <div className="space-y-5">
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className={lbl}>Due Date *</label>
-              <input
-                type="date"
-                value={form.dueDate ?? ''}
-                onChange={e => setForm(prev => applyScheduleFieldChange(prev, 'dueDate', e.target.value))}
-                className="input-field"
-              />
-            </div>
-            <div>
-              <label className={lbl}>Due Time</label>
-              <input
-                type="time"
-                value={toTimeInputValue(form.localTime)}
-                onChange={e => setForm(prev => applyScheduleFieldChange(prev, 'localTime', e.target.value))}
-                className="input-field"
+              <label className={lbl}>Due Date &amp; Time *</label>
+              <DateTimePicker
+                dueDate={form.dueDate}
+                localTime={form.localTime}
+                onChangeDate={value => setForm(prev => applyScheduleFieldChange(prev, 'dueDate', value))}
+                onChangeTime={value => setForm(prev => applyScheduleFieldChange(prev, 'localTime', value))}
               />
             </div>
             <div>
               <label className={lbl}>Timezone</label>
-              <TimezoneInput
-                id="edit-opportunity-timezone-options"
-                value={form.timezone ?? 'Africa/Casablanca'}
-                reference={form}
+              <UsTimezoneSelect
+                value={form.timezone}
                 onChange={value => setForm(prev => applyScheduleFieldChange(prev, 'timezone', value))}
               />
             </div>
@@ -2862,31 +3027,20 @@ function CreateModal({ onClose }: { onClose: () => void }) {
       {/* ── Schedule tab ── */}
       {tab === 'schedule' && (
         <div className="space-y-5">
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className={lbl}>Due Date *</label>
-              <input
-                type="date"
-                value={form.dueDate ?? ''}
-                onChange={e => setForm(prev => applyScheduleFieldChange(prev, 'dueDate', e.target.value))}
-                className="input-field"
-              />
-            </div>
-            <div>
-              <label className={lbl}>Due Time</label>
-              <input
-                type="time"
-                value={toTimeInputValue(form.localTime)}
-                onChange={e => setForm(prev => applyScheduleFieldChange(prev, 'localTime', e.target.value))}
-                className="input-field"
+              <label className={lbl}>Due Date &amp; Time *</label>
+              <DateTimePicker
+                dueDate={form.dueDate}
+                localTime={form.localTime}
+                onChangeDate={value => setForm(prev => applyScheduleFieldChange(prev, 'dueDate', value))}
+                onChangeTime={value => setForm(prev => applyScheduleFieldChange(prev, 'localTime', value))}
               />
             </div>
             <div>
               <label className={lbl}>Timezone</label>
-              <TimezoneInput
-                id="create-opportunity-timezone-options"
-                value={form.timezone ?? 'Africa/Casablanca'}
-                reference={form}
+              <UsTimezoneSelect
+                value={form.timezone}
                 onChange={value => setForm(prev => applyScheduleFieldChange(prev, 'timezone', value))}
               />
             </div>

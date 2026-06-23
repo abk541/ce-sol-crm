@@ -98,7 +98,7 @@ export const TIMEZONES: Record<string, string> = {
   // be labelled with the same abbreviation the SAM.gov UI shows.
   'EDT': 'America/New_York',   'CDT': 'America/Chicago',
   'MDT': 'America/Denver',     'PDT': 'America/Los_Angeles',
-  'AKDT': 'America/Anchorage',
+  'AKDT': 'America/Anchorage', 'HADT': 'America/Adak',
   // International
   'KSA': 'Asia/Riyadh',        'AST': 'Asia/Riyadh',
   'GST': 'Asia/Dubai',
