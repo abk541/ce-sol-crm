@@ -24,6 +24,9 @@ import {
   loadAllData,
   seedIfEmpty,
   seedEmployeesIfEmpty,
+  seedUsersIfEmpty,
+  upsertUser,
+  deleteUserRecord,
   findActiveOpportunityDuplicate,
   upsertOpportunity,
   deleteOpportunityRecord,
@@ -196,6 +199,7 @@ interface AppState {
   dbReady: boolean
   needsPurge: boolean
   initializeStore: () => Promise<void>
+  syncUsersFromDb: () => Promise<void>
 }
 
 // Contract status advancement order
@@ -503,6 +507,7 @@ export const useStore = create<AppState>()(
           needsFirstLogin: false,
           needsMFASetup: !u.mfaEnabled,
         }))
+        void upsertUser(updated)
       },
 
       completeMFASetup: () => {
@@ -515,6 +520,7 @@ export const useStore = create<AppState>()(
           needsMFASetup: false,
           isAuthenticated: true,
         }))
+        void upsertUser(updated)
       },
 
       // ── User management ─────────────────────────────────────────────
@@ -533,6 +539,11 @@ export const useStore = create<AppState>()(
           users: [...s.users, user],
           employees: syncEmployeesWithUsers([...s.users, user], s.employees),
         }))
+        void upsertUser(user).then(ok => {
+          if (!ok && isSupabaseConnected) {
+            toast.error('Saved locally but failed to sync user to the database.')
+          }
+        })
         get().logActivity({
           action: `Created user: ${user.name} (${user.email}) as ${user.role}`,
           user: actor?.name || 'System',
@@ -552,9 +563,19 @@ export const useStore = create<AppState>()(
         const before = get().users.find(u => u.id === id)
         set(s => {
           const nextUsers = s.users.map(u => u.id === id ? { ...u, ...data } : u)
-          return { users: nextUsers, employees: syncEmployeesWithUsers(nextUsers, s.employees) }
+          const currentUser = s.currentUser && s.currentUser.id === id
+            ? { ...s.currentUser, ...data }
+            : s.currentUser
+          return { users: nextUsers, employees: syncEmployeesWithUsers(nextUsers, s.employees), currentUser }
         })
         const after = get().users.find(u => u.id === id)
+        if (after) {
+          void upsertUser(after).then(ok => {
+            if (!ok && isSupabaseConnected) {
+              toast.error('Saved locally but failed to sync user changes to the database.')
+            }
+          })
+        }
         if (before && after) {
           const changes: string[] = []
           if (data.role && data.role !== before.role) changes.push(`role: ${before.role} → ${after.role}`)
@@ -589,6 +610,11 @@ export const useStore = create<AppState>()(
           return { users: nextUsers, employees: syncEmployeesWithUsers(nextUsers, s.employees) }
         })
         if (target) {
+          void deleteUserRecord(id).then(ok => {
+            if (!ok && isSupabaseConnected) {
+              toast.error('Removed locally but failed to delete user from the database.')
+            }
+          })
           get().logActivity({
             action: `Removed user: ${target.name} (${target.email})`,
             user: actor?.name || 'System',
@@ -2180,11 +2206,61 @@ export const useStore = create<AppState>()(
       },
 
       // ── DB ──────────────────────────────────────────────────────────
+      syncUsersFromDb: async () => {
+        if (!isSupabaseConnected) return
+        try {
+          // Push the local seed users (and any locally-created users that the
+          // DB hasn't seen yet) so the DB is the source of truth across browsers.
+          await seedUsersIfEmpty(get().users)
+
+          const data = await loadAllData()
+          if (!data) return
+          if (data.users.length === 0) return
+
+          set(s => {
+            const dbUsers = data.users
+            const dbIds = new Set(dbUsers.map(u => u.id))
+            const dbEmails = new Set(dbUsers.map(u => u.email.toLowerCase()))
+            // Keep any locally-known users that aren't yet in the DB (e.g.
+            // user just created in another browser session before Supabase
+            // round-trip). The DB version wins on conflict.
+            const localOnly = s.users.filter(u =>
+              !dbIds.has(u.id) && !dbEmails.has(u.email.toLowerCase())
+            )
+            const merged = [...dbUsers, ...localOnly]
+            const refreshedCurrent = s.currentUser
+              ? merged.find(u =>
+                  u.id === s.currentUser!.id ||
+                  u.email.toLowerCase() === s.currentUser!.email.toLowerCase()
+                ) ?? s.currentUser
+              : null
+            return {
+              users: merged,
+              employees: syncEmployeesWithUsers(merged, s.employees),
+              currentUser: refreshedCurrent,
+            }
+          })
+
+          // Re-evaluate gated routes for the active session in case the DB
+          // already recorded a completed first-login or MFA setup elsewhere.
+          const refreshed = get().currentUser
+          if (refreshed) {
+            set({
+              needsFirstLogin: refreshed.firstLogin === true,
+              needsMFASetup: refreshed.firstLogin === false && refreshed.mfaEnabled === false,
+            })
+          }
+        } catch (err) {
+          console.error('[Store] syncUsersFromDb failed', err)
+        }
+      },
+
       initializeStore: async () => {
         if (!isSupabaseConnected) return
         if (get().dbReady) return
 
         try {
+          await seedUsersIfEmpty(get().users)
           await seedEmployeesIfEmpty(syncEmployeesWithUsers(get().users, []))
 
           // seedIfEmpty is now a no-op (all mock arrays are empty)
@@ -2214,9 +2290,28 @@ export const useStore = create<AppState>()(
               deleteOpportunityRecord(opp.id)
             })
 
+            // Merge DB users with any local-only users that haven't synced yet.
+            const localUsers = get().users
+            const dbUserIds = new Set(data.users.map(u => u.id))
+            const dbUserEmails = new Set(data.users.map(u => u.email.toLowerCase()))
+            const localOnlyUsers = localUsers.filter(u =>
+              !dbUserIds.has(u.id) && !dbUserEmails.has(u.email.toLowerCase())
+            )
+            const mergedUsers = data.users.length > 0
+              ? [...data.users, ...localOnlyUsers]
+              : localUsers
+            const refreshedCurrent = get().currentUser
+              ? mergedUsers.find(u =>
+                  u.id === get().currentUser!.id ||
+                  u.email.toLowerCase() === get().currentUser!.email.toLowerCase()
+                ) ?? get().currentUser
+              : null
+
             set({
+              users: mergedUsers,
+              currentUser: refreshedCurrent,
               employees: syncEmployeesWithUsers(
-                get().users,
+                mergedUsers,
                 data.employees.length > 0 ? data.employees : get().employees,
               ),
               opportunities: data.opportunities.filter(o => o.status !== 'CANCELED'),

@@ -20,6 +20,7 @@ import type {
   SamGovContact,
   Subcontractor,
   SubcontractorContact,
+  User,
 } from '../types'
 import {
   normalizeContractDeliverables,
@@ -939,6 +940,59 @@ function employeeRowsForSync(employees: Employee[]): Record<string, unknown>[] {
     .map(empToDb)
 }
 
+// ── User mapper ──────────────────────────────────────────────────────────────
+
+function userToDb(u: User): Record<string, unknown> {
+  return {
+    id: u.id,
+    name: u.name,
+    email: u.email,
+    username: u.username,
+    role: u.role,
+    avatar: u.avatar ?? '',
+    status: u.status,
+    first_login: u.firstLogin,
+    mfa_enabled: u.mfaEnabled,
+    password: u.password ?? null,
+    team: u.team ?? null,
+    manager_id: u.managerId ?? null,
+    created_at: u.createdAt ?? new Date().toISOString().split('T')[0],
+  }
+}
+
+function dbToUser(row: Record<string, unknown>): User {
+  const createdAtRaw = row.created_at as string | null | undefined
+  const createdAt = (createdAtRaw ?? '').split('T')[0] || new Date().toISOString().split('T')[0]
+  return {
+    id: row.id as string,
+    name: row.name as string,
+    email: row.email as string,
+    username: row.username as string,
+    role: row.role as User['role'],
+    avatar: ((row.avatar as string | null) ?? '') as string,
+    status: ((row.status as string) ?? 'active') as User['status'],
+    firstLogin: Boolean(row.first_login),
+    mfaEnabled: Boolean(row.mfa_enabled),
+    createdAt,
+    password: ((row.password as string | null) ?? undefined) as string | undefined,
+    team: ((row.team as string | null | undefined) ?? undefined) as User['team'],
+    managerId: ((row.manager_id as string | null | undefined) ?? null) as User['managerId'],
+  }
+}
+
+function userSyncRank(user: User): number {
+  // Insert top-level managers (no manager) first so self-FK resolves.
+  if (!user.managerId) return 0
+  if (user.role === 'TEAM_LEAD') return 1
+  return 2
+}
+
+function userRowsForSync(users: User[]): Record<string, unknown>[] {
+  return [...users]
+    .sort((a, b) => userSyncRank(a) - userSyncRank(b))
+    .map(userToDb)
+}
+
 // ── Load all data ────────────────────────────────────────────────────────────
 
 function nonSubReportToDb(report: NonSubmissionReport): Record<string, unknown> {
@@ -1036,6 +1090,7 @@ function dbToBDSubmission(row: Record<string, unknown>): BDSubmission {
 }
 
 export async function loadAllData(): Promise<{
+  users: User[]
   employees: Employee[]
   opportunities: Opportunity[]
   contracts: Contract[]
@@ -1050,6 +1105,7 @@ export async function loadAllData(): Promise<{
 
   try {
     const [
+      userRes,
       empRes,
       oppRes,
       commentRes,
@@ -1067,6 +1123,7 @@ export async function loadAllData(): Promise<{
       deletionRes,
       bdRes,
     ] = await Promise.all([
+      supabase.from('users').select('*'),
       supabase.from('employees').select('*'),
       supabase.from('opportunities').select('*'),
       supabase.from('comments').select('*'),
@@ -1085,6 +1142,7 @@ export async function loadAllData(): Promise<{
       supabase.from('bd_submissions').select('*'),
     ])
 
+    if (userRes.error) console.error('[db] users load error', userRes.error)
     if (empRes.error) console.error('[db] employees load error', empRes.error)
     if (oppRes.error) console.error('[db] opportunities load error', oppRes.error)
     if (commentRes.error) console.error('[db] comments load error', commentRes.error)
@@ -1103,6 +1161,7 @@ export async function loadAllData(): Promise<{
     if (bdRes.error) console.error('[db] bd_submissions load error', bdRes.error)
 
     const employees: Employee[] = (empRes.data ?? []).map(r => dbToEmp(r as Record<string, unknown>))
+    const users: User[] = (userRes.data ?? []).map(r => dbToUser(r as Record<string, unknown>))
     const commentsByOpp = new Map<string, Comment[]>()
     ;(commentRes.data ?? []).forEach(r => {
       const row = r as Record<string, unknown>
@@ -1141,6 +1200,7 @@ export async function loadAllData(): Promise<{
     const bdSubmissions: BDSubmission[] = (bdRes.data ?? []).map(r => dbToBDSubmission(r as Record<string, unknown>))
 
     return {
+      users,
       employees,
       opportunities,
       contracts,
@@ -1520,6 +1580,56 @@ export async function seedEmployeesIfEmpty(employees: Employee[]): Promise<boole
     return synced
   } catch (err) {
     console.error('[db] seedEmployeesIfEmpty failed', err)
+    return false
+  }
+}
+
+export async function upsertUser(user: User): Promise<boolean> {
+  if (!isSupabaseConnected || !supabase) return false
+  try {
+    const { error } = await supabase.from('users').upsert(userToDb(user), { onConflict: 'id' })
+    if (error) {
+      console.error('[db] upsertUser error', error)
+      return false
+    }
+    return true
+  } catch (err) {
+    console.error('[db] upsertUser threw', err)
+    return false
+  }
+}
+
+export async function deleteUserRecord(id: string): Promise<boolean> {
+  if (!isSupabaseConnected || !supabase) return false
+  try {
+    const { error } = await supabase.from('users').delete().eq('id', id)
+    if (error) {
+      console.error('[db] deleteUser error', error)
+      return false
+    }
+    return true
+  } catch (err) {
+    console.error('[db] deleteUser threw', err)
+    return false
+  }
+}
+
+export async function seedUsersIfEmpty(users: User[]): Promise<boolean> {
+  if (!isSupabaseConnected || !supabase || users.length === 0) return true
+  try {
+    const { count, error } = await supabase
+      .from('users')
+      .select('*', { count: 'exact', head: true })
+    if (error) {
+      console.error('[db] seedUsersIfEmpty count error', error)
+      return false
+    }
+    if ((count ?? 0) > 0) return true
+    const synced = await upsertBatched('users', userRowsForSync(users))
+    if (synced) console.log('[db] Seeded users in Supabase.')
+    return synced
+  } catch (err) {
+    console.error('[db] seedUsersIfEmpty failed', err)
     return false
   }
 }

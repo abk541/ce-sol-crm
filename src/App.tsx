@@ -61,6 +61,16 @@ function PermissionGuard({
 export default function App() {
   const { isAuthenticated, accessNoticeAccepted, needsFirstLogin, needsMFASetup, currentUser } = useStore()
   const initializeStore = useStore(s => s.initializeStore)
+  const syncUsersFromDb = useStore(s => s.syncUsersFromDb)
+
+  // Sync the user roster from Supabase as soon as the app boots — before any
+  // login — so credentials, firstLogin and mfaEnabled flags are correct across
+  // browsers. Without this the local Zustand persist (which is browser-scoped)
+  // is the only source of truth and admins on different browsers see different
+  // user lists.
+  useEffect(() => {
+    void syncUsersFromDb()
+  }, [syncUsersFromDb])
 
   // Re-run every time the user logs in so Supabase data always wins over stale localStorage
   useEffect(() => {
