@@ -5,6 +5,7 @@ import {
   drawBrandedFooter,
   drawBrandedHeader,
   loadBrandFonts,
+  loadBrandLogo,
   toWinAnsi,
   type BrandFonts,
 } from './pdfBranding'
@@ -199,11 +200,13 @@ export async function generatePastPerformancePdf({
   const pdf = await PDFDocument.create()
   const page = pdf.addPage([PAGE_W, PAGE_H])
   const brand = await loadBrandFonts(pdf)
+  const logo = await loadBrandLogo(pdf)
   const ctx: DrawCtx = { page, brand }
 
   drawBrandedHeader({
     page,
     brand,
+    logo,
     docType: 'PAST PERFORMANCE',
     subtitle: 'SDVOSB   ·   CAGE: 9KV33',
   })

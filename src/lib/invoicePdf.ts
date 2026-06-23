@@ -6,6 +6,7 @@ import {
   drawBrandedFooter,
   drawBrandedHeader,
   loadBrandFonts,
+  loadBrandLogo,
   toWinAnsi,
 } from './pdfBranding'
 
@@ -188,6 +189,7 @@ export async function generateContractInvoicePdf(contract: Contract, options: In
   const pdf = await PDFDocument.create()
   let page = pdf.addPage([PAGE_W, PAGE_H])
   const brand = await loadBrandFonts(pdf)
+  const logo = await loadBrandLogo(pdf)
   const font = brand.sans
   const bold = brand.sansBold
 
@@ -294,8 +296,7 @@ export async function generateContractInvoicePdf(contract: Contract, options: In
   // ── Branded header ────────────────────────────────────────────────
   drawBrandedHeader({
     page,
-    brand,
-    docType: 'INVOICE',
+    brand,    logo,    docType: 'INVOICE',
     docMeta: `No. ${invoiceNumber}`,
     subtitle: invoiceCadenceForContract(contract),
   })
@@ -459,6 +460,7 @@ export async function generateContractInvoicePdf(contract: Contract, options: In
     drawBrandedHeader({
       page,
       brand,
+      logo,
       docType: 'INVOICE',
       docMeta: `No. ${invoiceNumber}`,
       subtitle: 'continued',

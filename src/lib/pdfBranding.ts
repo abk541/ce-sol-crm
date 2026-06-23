@@ -1,4 +1,4 @@
-import { PDFDocument, PDFFont, PDFPage, StandardFonts, rgb } from 'pdf-lib'
+import { PDFDocument, PDFFont, PDFImage, PDFPage, StandardFonts, rgb } from 'pdf-lib'
 
 // Shared visual identity for every PDF the app exports.
 // Cosmetic only — never touches data, layout structure, or generation mechanics.
@@ -72,6 +72,100 @@ export async function loadBrandFonts(pdf: PDFDocument): Promise<BrandFonts> {
     pdf.embedFont(StandardFonts.TimesRomanBoldItalic),
   ])
   return { sans, sansBold, serif, serifBold, serifItalic }
+}
+
+// ── Brand logo loader ─────────────────────────────────────────────
+// Fetches /logo.avif (the same asset the app's CompanyLogo component
+// uses), rasterizes it via a 2D canvas, and re-colors every opaque pixel
+// to clean white-on-transparent so it sits naturally on the dark navy
+// header band. Cached after the first successful load.
+let cachedLogoPngBytes: Uint8Array | null | undefined
+
+async function loadBrandLogoBytes(): Promise<Uint8Array | null> {
+  if (cachedLogoPngBytes !== undefined) return cachedLogoPngBytes
+  if (typeof window === 'undefined' || typeof document === 'undefined') {
+    cachedLogoPngBytes = null
+    return null
+  }
+  try {
+    const base = (import.meta as { env?: { BASE_URL?: string } }).env?.BASE_URL ?? '/'
+    const res = await fetch(`${base}logo.avif`)
+    if (!res.ok) {
+      cachedLogoPngBytes = null
+      return null
+    }
+    const blob = await res.blob()
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image()
+      el.crossOrigin = 'anonymous'
+      el.onload = () => resolve(el)
+      el.onerror = () => reject(new Error('logo decode failed'))
+      el.src = URL.createObjectURL(blob)
+    })
+    const scale = 3
+    const w = Math.max(1, Math.round(img.naturalWidth * scale))
+    const h = Math.max(1, Math.round(img.naturalHeight * scale))
+    const canvas = document.createElement('canvas')
+    canvas.width = w
+    canvas.height = h
+    const ctx = canvas.getContext('2d')
+    URL.revokeObjectURL(img.src)
+    if (!ctx) {
+      cachedLogoPngBytes = null
+      return null
+    }
+    ctx.imageSmoothingEnabled = true
+    ctx.imageSmoothingQuality = 'high'
+    ctx.drawImage(img, 0, 0, w, h)
+    const pixels = ctx.getImageData(0, 0, w, h)
+    const data = pixels.data
+    // Convert every visible pixel to solid white. White / near-white pixels
+    // become fully transparent so the navy header reads through cleanly —
+    // this mirrors the `filter: brightness(0) invert(1)` treatment used by
+    // the in-app <CompanyLogo /> component.
+    for (let i = 0; i < data.length; i += 4) {
+      const r = data[i]
+      const g = data[i + 1]
+      const b = data[i + 2]
+      const a = data[i + 3]
+      if (a < 8 || (r > 232 && g > 232 && b > 232)) {
+        data[i] = 0
+        data[i + 1] = 0
+        data[i + 2] = 0
+        data[i + 3] = 0
+      } else {
+        data[i] = 255
+        data[i + 1] = 255
+        data[i + 2] = 255
+        // Preserve original alpha for smooth edges
+      }
+    }
+    ctx.putImageData(pixels, 0, 0)
+    const dataUrl = canvas.toDataURL('image/png')
+    const base64 = dataUrl.split(',')[1] ?? ''
+    if (!base64) {
+      cachedLogoPngBytes = null
+      return null
+    }
+    const binary = atob(base64)
+    const out = new Uint8Array(binary.length)
+    for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i)
+    cachedLogoPngBytes = out
+    return out
+  } catch {
+    cachedLogoPngBytes = null
+    return null
+  }
+}
+
+export async function loadBrandLogo(pdf: PDFDocument): Promise<PDFImage | null> {
+  const bytes = await loadBrandLogoBytes()
+  if (!bytes) return null
+  try {
+    return await pdf.embedPng(bytes)
+  } catch {
+    return null
+  }
 }
 
 interface DrawWordmarkOptions {
@@ -171,9 +265,11 @@ export interface BrandedHeaderOptions {
   docMeta?: string
   /** Optional subtitle line above the doc type. */
   subtitle?: string
+  /** Embedded company logo image. When omitted, the procedural wordmark is drawn instead. */
+  logo?: PDFImage | null
 }
 
-export function drawBrandedHeader({ page, brand, docType, docMeta, subtitle }: BrandedHeaderOptions) {
+export function drawBrandedHeader({ page, brand, docType, docMeta, subtitle, logo }: BrandedHeaderOptions) {
   const { PAGE_W, PAGE_H, MARGIN, HEADER_H, HEADER_ACCENT_H, NAVY, NAVY_DEEP, GOLD, WHITE, GOLD_SOFT } = PDF_THEME
 
   // Solid navy band with a subtle deeper-navy bottom strip for depth
@@ -194,16 +290,30 @@ export function drawBrandedHeader({ page, brand, docType, docMeta, subtitle }: B
     color: GOLD,
   })
 
-  // Wordmark on the left, vertically centered in the band
   const bandCenterY = PAGE_H - HEADER_H / 2
-  drawWordmark({
-    page,
-    brand,
-    x: MARGIN,
-    centerY: bandCenterY,
-    color: WHITE,
-    monogramColor: GOLD_SOFT,
-  })
+
+  if (logo) {
+    // Embedded brand logo — preferred path, matches the in-app CompanyLogo.
+    const targetH = HEADER_H * 0.62
+    const ratio = logo.width / logo.height
+    const targetW = targetH * ratio
+    page.drawImage(logo, {
+      x: MARGIN,
+      y: bandCenterY - targetH / 2,
+      width: targetW,
+      height: targetH,
+    })
+  } else {
+    // Fallback: procedural wordmark.
+    drawWordmark({
+      page,
+      brand,
+      x: MARGIN,
+      centerY: bandCenterY,
+      color: WHITE,
+      monogramColor: GOLD_SOFT,
+    })
+  }
 
   // Right side — slim subtitle above the doc type, then doc meta below
   const rightX = PAGE_W - MARGIN
