@@ -417,7 +417,7 @@ html[data-bg-pattern]:not([data-bg-pattern="none"]) body::before {
   background-repeat: repeat;
   background-attachment: fixed;
 }
-html[data-bg-pattern] body > * { position: relative; z-index: 1; }
+html[data-bg-pattern]:not([data-bg-pattern="none"]) #root { position: relative; z-index: 1; }
 
 html[data-bg-pattern="grid"] body::before {
   opacity: 0.30;
