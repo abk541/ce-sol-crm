@@ -30,8 +30,8 @@ export default function FirstLoginPage() {
     const ok = await completeFirstLogin(password)
     setLoading(false)
     if (!ok) return
-    toast.success('Password set! Setting up your MFA…')
-    navigate('/mfa-setup')
+    toast.success('Password set! Welcome aboard.')
+    navigate('/dashboard')
   }
 
   return (

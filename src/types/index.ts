@@ -31,7 +31,6 @@ export interface User {
   avatar: string
   status: 'active' | 'inactive'
   firstLogin: boolean
-  mfaEnabled: boolean
   createdAt: string
   password?: string
   // BD vs OPS placement on the org chart. Only meaningful for TEAM_LEAD and

@@ -183,7 +183,6 @@ function UserModal({ user, defaultRole, defaultTeam, defaultManagerId, onClose }
         status: form.status,
         avatar: form.name.split(' ').map(p => p[0]).join('').slice(0, 3).toUpperCase(),
         firstLogin: form.forceFirstLogin,
-        mfaEnabled: false,
         team: team ?? undefined,
         managerId,
         password: form.password.trim() || undefined,
@@ -642,7 +641,7 @@ export default function AdminPage() {
           <thead>
             <tr>
               <th>User</th><th>Username</th><th>Email</th><th>Role</th><th>Team</th>
-              <th>Status</th><th>MFA</th><th>First Login</th><th>Created</th><th>Actions</th>
+              <th>Status</th><th>First Login</th><th>Created</th><th>Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -679,11 +678,6 @@ export default function AdminPage() {
                   <td>
                     <span className={`badge text-[10px] ${u.status === 'active' ? 'badge-active' : 'badge-canceled'}`}>
                       {u.status}
-                    </span>
-                  </td>
-                  <td>
-                    <span className={`badge text-[10px] ${u.mfaEnabled ? 'badge-active' : 'badge-lost'}`}>
-                      {u.mfaEnabled ? '✓ Enabled' : '✗ Off'}
                     </span>
                   </td>
                   <td>

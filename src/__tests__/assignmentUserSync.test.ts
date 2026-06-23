@@ -49,7 +49,6 @@ const captureManager: User = {
   avatar: 'CM',
   status: 'active',
   firstLogin: false,
-  mfaEnabled: true,
   createdAt: '2026-01-01',
 }
 
@@ -62,7 +61,6 @@ const bdManager: User = {
   avatar: 'BM',
   status: 'active',
   firstLogin: false,
-  mfaEnabled: true,
   createdAt: '2026-01-01',
   team: 'BD',
   managerId: null,
@@ -77,7 +75,6 @@ const opsManager: User = {
   avatar: 'OM',
   status: 'active',
   firstLogin: false,
-  mfaEnabled: true,
   createdAt: '2026-01-01',
   team: 'OPS',
   managerId: null,
@@ -170,7 +167,6 @@ describe('assignment users and department scope', () => {
       avatar: 'NB',
       status: 'active',
       firstLogin: false,
-      mfaEnabled: true,
       team: 'BD',
       managerId: 'u-bd-manager',
     })

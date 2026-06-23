@@ -41,7 +41,6 @@ const CAPTURE_MANAGER: User = {
   avatar: 'CM',
   status: 'active',
   firstLogin: false,
-  mfaEnabled: true,
   createdAt: '2026-01-01',
 }
 
@@ -54,7 +53,6 @@ const ASSOCIATE: User = {
   avatar: 'AU',
   status: 'active',
   firstLogin: false,
-  mfaEnabled: true,
   createdAt: '2026-01-01',
 }
 

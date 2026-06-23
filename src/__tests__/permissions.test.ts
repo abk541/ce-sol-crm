@@ -13,7 +13,6 @@ function user(role: Role): User {
     avatar: role.slice(0, 2),
     status: 'active',
     firstLogin: false,
-    mfaEnabled: true,
     createdAt: '2026-01-01',
   }
 }

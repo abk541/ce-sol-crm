@@ -111,7 +111,7 @@ function makeContract(overrides: Partial<Contract> = {}): Contract {
 const CAPTURE_MANAGER_USER = {
   id: 'u-capture-manager', name: 'Capture Manager', email: 'capture@ces.com',
   username: 'capture', role: 'CAPTURE_MANAGER' as const, avatar: 'CM',
-  status: 'active' as const, firstLogin: false, mfaEnabled: true,
+  status: 'active' as const, firstLogin: false,
   createdAt: '2026-01-01',
 }
 

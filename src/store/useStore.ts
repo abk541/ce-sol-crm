@@ -61,7 +61,6 @@ interface AppState {
   currentUser: User | null
   isAuthenticated: boolean
   needsFirstLogin: boolean
-  needsMFASetup: boolean
   loginTimestamp: number | null
   accessNoticeAccepted: boolean
 
@@ -90,14 +89,13 @@ interface AppState {
   prefs: UserPreferences
 
   // ── Auth actions ───────────────────────────────────────────────────
-  login: (email: string, password: string) => { ok: boolean; error?: string; needsFirst?: boolean; needsMFA?: boolean }
+  login: (email: string, password: string) => { ok: boolean; error?: string; needsFirst?: boolean }
   logout: () => void
   acceptAccessNotice: () => void
-  // These return false when the Supabase write fails so callers can stay on
+  // Returns false when the Supabase write fails so callers can stay on
   // the page and let the user retry instead of advancing with unsaved auth
   // progress. Local-only / offline mode resolves true immediately.
   completeFirstLogin: (password: string) => Promise<boolean>
-  completeMFASetup: () => Promise<boolean>
 
   // ── User management ────────────────────────────────────────────────
   createUser: (u: Omit<User, 'id' | 'createdAt'>) => void
@@ -451,7 +449,6 @@ export const useStore = create<AppState>()(
       currentUser: null,
       isAuthenticated: false,
       needsFirstLogin: false,
-      needsMFASetup: false,
       loginTimestamp: null,
       accessNoticeAccepted: false,
       users: MOCK_USERS,
@@ -488,15 +485,11 @@ export const useStore = create<AppState>()(
           set({ currentUser: user, needsFirstLogin: true, accessNoticeAccepted: false })
           return { ok: true, needsFirst: true }
         }
-        if (!user.mfaEnabled) {
-          set({ currentUser: user, needsMFASetup: true, accessNoticeAccepted: false })
-          return { ok: true, needsMFA: true }
-        }
         set({ currentUser: user, isAuthenticated: true, loginTimestamp: Date.now(), accessNoticeAccepted: false })
         return { ok: true }
       },
 
-      logout: () => set({ currentUser: null, isAuthenticated: false, needsFirstLogin: false, needsMFASetup: false, loginTimestamp: null, dbReady: false, accessNoticeAccepted: false }),
+      logout: () => set({ currentUser: null, isAuthenticated: false, needsFirstLogin: false, loginTimestamp: null, dbReady: false, accessNoticeAccepted: false }),
 
       acceptAccessNotice: () => set({ accessNoticeAccepted: true }),
 
@@ -504,9 +497,9 @@ export const useStore = create<AppState>()(
         const u = get().currentUser
         if (!u) return false
         const updated = { ...u, firstLogin: false, password: password || u.password }
-        // Persist to Supabase BEFORE flipping local state so a tab close or a
-        // race with completeMFASetup's upsert can't leave the DB stuck at the
-        // pre-completion state and bounce the user back on next sync.
+        // Persist to Supabase BEFORE flipping local state so a tab close can't
+        // leave the DB stuck at the pre-completion state and bounce the user
+        // back on next sync.
         if (isSupabaseConnected) {
           const ok = await upsertUser(updated)
           if (!ok) {
@@ -518,27 +511,8 @@ export const useStore = create<AppState>()(
           users: s.users.map(x => x.id === u.id ? updated : x),
           currentUser: updated,
           needsFirstLogin: false,
-          needsMFASetup: !u.mfaEnabled,
-        }))
-        return true
-      },
-
-      completeMFASetup: async () => {
-        const u = get().currentUser
-        if (!u) return false
-        const updated = { ...u, mfaEnabled: true }
-        if (isSupabaseConnected) {
-          const ok = await upsertUser(updated)
-          if (!ok) {
-            toast.error('Could not enable MFA. Please try again.')
-            return false
-          }
-        }
-        set(s => ({
-          users: s.users.map(x => x.id === u.id ? updated : x),
-          currentUser: updated,
-          needsMFASetup: false,
           isAuthenticated: true,
+          loginTimestamp: Date.now(),
         }))
         return true
       },
@@ -2249,8 +2223,8 @@ export const useStore = create<AppState>()(
             )
             const merged = [...dbUsers, ...localOnly]
             // Auth flags on the active user are monotonic forward (firstLogin:
-            // true → false, mfaEnabled: false → true). If a stale DB read
-            // disagrees with the local just-completed state, don't regress.
+            // true → false). If a stale DB read disagrees with the local
+            // just-completed state, don't regress.
             const refreshedCurrent = s.currentUser
               ? (() => {
                   const dbMatch = merged.find(u =>
@@ -2261,7 +2235,6 @@ export const useStore = create<AppState>()(
                   return {
                     ...dbMatch,
                     firstLogin: dbMatch.firstLogin && s.currentUser!.firstLogin,
-                    mfaEnabled: dbMatch.mfaEnabled || s.currentUser!.mfaEnabled,
                     password: s.currentUser!.password ?? dbMatch.password,
                   }
                 })()
@@ -2279,12 +2252,11 @@ export const useStore = create<AppState>()(
           })
 
           // Re-evaluate gated routes for the active session in case the DB
-          // already recorded a completed first-login or MFA setup elsewhere.
+          // already recorded a completed first-login elsewhere.
           const refreshed = get().currentUser
           if (refreshed) {
             set({
               needsFirstLogin: refreshed.firstLogin === true,
-              needsMFASetup: refreshed.firstLogin === false && refreshed.mfaEnabled === false,
             })
           }
         } catch (err) {
@@ -2340,7 +2312,7 @@ export const useStore = create<AppState>()(
               : localUsers
             // See syncUsersFromDb: never regress monotonic auth flags for the
             // active user when the DB read is stale relative to a just-completed
-            // first-login / MFA setup that is still propagating.
+            // first-login that is still propagating.
             const refreshedCurrent = localCurrentUser
               ? (() => {
                   const dbMatch = mergedUsers.find(u =>
@@ -2351,7 +2323,6 @@ export const useStore = create<AppState>()(
                   return {
                     ...dbMatch,
                     firstLogin: dbMatch.firstLogin && localCurrentUser.firstLogin,
-                    mfaEnabled: dbMatch.mfaEnabled || localCurrentUser.mfaEnabled,
                     password: localCurrentUser.password ?? dbMatch.password,
                   }
                 })()
@@ -2364,9 +2335,6 @@ export const useStore = create<AppState>()(
               users: finalUsers,
               currentUser: refreshedCurrent,
               needsFirstLogin: refreshedCurrent ? refreshedCurrent.firstLogin === true : get().needsFirstLogin,
-              needsMFASetup: refreshedCurrent
-                ? refreshedCurrent.firstLogin === false && refreshedCurrent.mfaEnabled === false
-                : get().needsMFASetup,
               employees: syncEmployeesWithUsers(
                 finalUsers,
                 data.employees.length > 0 ? data.employees : get().employees,
@@ -2407,20 +2375,21 @@ export const useStore = create<AppState>()(
     }),
     {
       name: 'ces-crm-store',
+      // v16: removed MFA from the auth flow; needsMFASetup is no longer in state.
       // v15: refresh seeded department users to the Moroccan BD/OPS hierarchy.
       // v14: first forced refresh of seeded department users.
       // v13: assignment employees are derived strictly from active users so
       // deleted/inactive users disappear from assignment pickers.
-      version: 15,
+      version: 16,
       migrate: (persistedState: unknown, fromVersion: number) => {
         const s = persistedState as Record<string, unknown>
+        delete s.needsMFASetup
         if (fromVersion < 4) {
           return {
             ...s,
             currentUser:     null,
             isAuthenticated: false,
             needsFirstLogin: false,
-            needsMFASetup:   false,
             loginTimestamp:  null,
             accessNoticeAccepted: false,
             users:           MOCK_USERS,
@@ -2478,7 +2447,6 @@ export const useStore = create<AppState>()(
         currentUser:       s.currentUser,
         isAuthenticated:  s.isAuthenticated,
         needsFirstLogin:  s.needsFirstLogin,
-        needsMFASetup:    s.needsMFASetup,
         loginTimestamp:   s.loginTimestamp,
         accessNoticeAccepted: s.accessNoticeAccepted,
         sidebarCollapsed:  s.sidebarCollapsed,

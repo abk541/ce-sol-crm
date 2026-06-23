@@ -6,7 +6,6 @@ import Layout from './components/layout/Layout'
 import AccessNoticePage from './pages/auth/AccessNoticePage'
 import LoginPage from './pages/auth/LoginPage'
 import FirstLoginPage from './pages/auth/FirstLoginPage'
-import MFASetupPage from './pages/auth/MFASetupPage'
 import DashboardPage from './pages/DashboardPage'
 import PipelinePage from './pages/PipelinePage'
 import ProposalsPage from './pages/ProposalsPage'
@@ -26,16 +25,15 @@ import PlaceholderPage from './pages/PlaceholderPage'
 import { hasAnyPermission, hasPermission, type Permission } from './lib/permissions'
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, needsFirstLogin, needsMFASetup } = useStore()
+  const { isAuthenticated, needsFirstLogin } = useStore()
   if (needsFirstLogin) return <Navigate to="/first-login" replace />
-  if (needsMFASetup) return <Navigate to="/mfa-setup" replace />
   if (!isAuthenticated) return <Navigate to="/login" replace />
   return <>{children}</>
 }
 
 function AccessNoticeGuard({ children }: { children: React.ReactNode }) {
-  const { accessNoticeAccepted, isAuthenticated, needsFirstLogin, needsMFASetup, currentUser } = useStore()
-  const hasValidatedCredentials = isAuthenticated || needsFirstLogin || needsMFASetup || !!currentUser
+  const { accessNoticeAccepted, isAuthenticated, needsFirstLogin, currentUser } = useStore()
+  const hasValidatedCredentials = isAuthenticated || needsFirstLogin || !!currentUser
   if (!hasValidatedCredentials) return <Navigate to="/login" replace />
   if (!accessNoticeAccepted) return <Navigate to="/access-notice" replace />
   return <>{children}</>
@@ -59,15 +57,15 @@ function PermissionGuard({
 }
 
 export default function App() {
-  const { isAuthenticated, accessNoticeAccepted, needsFirstLogin, needsMFASetup, currentUser } = useStore()
+  const { isAuthenticated, accessNoticeAccepted, needsFirstLogin, currentUser } = useStore()
   const initializeStore = useStore(s => s.initializeStore)
   const syncUsersFromDb = useStore(s => s.syncUsersFromDb)
 
   // Sync the user roster from Supabase as soon as the app boots — before any
-  // login — so credentials, firstLogin and mfaEnabled flags are correct across
-  // browsers. Without this the local Zustand persist (which is browser-scoped)
-  // is the only source of truth and admins on different browsers see different
-  // user lists.
+  // login — so credentials and firstLogin flags are correct across browsers.
+  // Without this the local Zustand persist (which is browser-scoped) is the
+  // only source of truth and admins on different browsers see different user
+  // lists.
   useEffect(() => {
     void syncUsersFromDb()
   }, [syncUsersFromDb])
@@ -100,16 +98,15 @@ export default function App() {
         <Route
           path="/access-notice"
           element={
-            !isAuthenticated && !needsFirstLogin && !needsMFASetup && !currentUser
+            !isAuthenticated && !needsFirstLogin && !currentUser
               ? <Navigate to="/login" replace />
               : accessNoticeAccepted
-                ? <Navigate to={needsFirstLogin ? "/first-login" : needsMFASetup ? "/mfa-setup" : isAuthenticated ? "/dashboard" : "/login"} replace />
+                ? <Navigate to={needsFirstLogin ? "/first-login" : isAuthenticated ? "/dashboard" : "/login"} replace />
                 : <AccessNoticePage />
           }
         />
         <Route path="/login"       element={isAuthenticated ? <Navigate to={accessNoticeAccepted ? "/dashboard" : "/access-notice"} replace /> : <LoginPage />} />
         <Route path="/first-login" element={<AccessNoticeGuard><FirstLoginPage /></AccessNoticeGuard>} />
-        <Route path="/mfa-setup"   element={<AccessNoticeGuard><MFASetupPage /></AccessNoticeGuard>} />
 
         <Route path="/" element={<AccessNoticeGuard><AuthGuard><Layout /></AuthGuard></AccessNoticeGuard>}>
           <Route index element={<Navigate to="/dashboard" replace />} />

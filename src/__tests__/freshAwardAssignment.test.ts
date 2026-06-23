@@ -46,7 +46,6 @@ const captureManager: User = {
   avatar: 'CM',
   status: 'active',
   firstLogin: false,
-  mfaEnabled: true,
   createdAt: '2026-01-01',
 }
 
