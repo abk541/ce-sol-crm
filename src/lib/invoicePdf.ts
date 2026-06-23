@@ -108,6 +108,56 @@ function formatPdfDate(value?: string) {
   return d.toLocaleDateString('en-US')
 }
 
+// SAM.gov often supplies agency names in reverse-comma form
+// ("VETERANS AFFAIRS, DEPARTMENT OF"). Normalize them so the printed
+// invoice reads naturally ("DEPARTMENT OF VETERANS AFFAIRS").
+function formatAgencyName(value?: string): string {
+  if (!value) return ''
+  const trimmed = value.trim()
+  if (!trimmed) return ''
+  const match = trimmed.match(/^(.+?),\s*(DEPARTMENT OF|DEPT OF|OFFICE OF|BUREAU OF|AGENCY OF)\s*$/i)
+  if (match) return `${match[2].trim().toUpperCase()} ${match[1].trim().toUpperCase()}`
+  return trimmed
+}
+
+interface BillToLine {
+  text: string
+  bold?: boolean
+  size?: number
+  color?: 'ink' | 'soft'
+}
+
+function buildBillToLines(contract: Contract): BillToLine[] {
+  const lines: BillToLine[] = []
+  const agency = formatAgencyName(contract.client)
+  if (agency) lines.push({ text: agency, bold: true, size: 10, color: 'ink' })
+
+  const ko = contract.pocs?.find(p => p.role === 'KO' && p.name?.trim())
+  const cor = contract.pocs?.find(p => p.role === 'COR' && p.name?.trim())
+  const fallbackPoc = contract.samGovContacts?.find(c => (c.fullName || '').trim())
+
+  if (ko?.name) {
+    lines.push({ text: `Attn: ${ko.name.trim()} (Contracting Officer)`, size: 8.5, color: 'ink' })
+    if (ko.email) lines.push({ text: ko.email.trim(), size: 8.5, color: 'soft' })
+    if (ko.phone) lines.push({ text: ko.phone.trim(), size: 8.5, color: 'soft' })
+  } else if (cor?.name) {
+    lines.push({ text: `Attn: ${cor.name.trim()} (COR)`, size: 8.5, color: 'ink' })
+    if (cor.email) lines.push({ text: cor.email.trim(), size: 8.5, color: 'soft' })
+    if (cor.phone) lines.push({ text: cor.phone.trim(), size: 8.5, color: 'soft' })
+  } else if (fallbackPoc?.fullName) {
+    const title = fallbackPoc.title?.trim()
+    lines.push({ text: title ? `Attn: ${fallbackPoc.fullName.trim()} (${title})` : `Attn: ${fallbackPoc.fullName.trim()}`, size: 8.5, color: 'ink' })
+    if (fallbackPoc.email) lines.push({ text: fallbackPoc.email.trim(), size: 8.5, color: 'soft' })
+    if (fallbackPoc.phone) lines.push({ text: fallbackPoc.phone.trim(), size: 8.5, color: 'soft' })
+  }
+
+  const location = contract.location?.trim()
+  if (location) lines.push({ text: location, size: 8.5, color: 'soft' })
+
+  if (lines.length === 0) lines.push({ text: '-', size: 10, color: 'soft' })
+  return lines
+}
+
 function lineItemsForInvoice(contract: Contract, invoice?: ContractInvoice, explicit?: ContractLineItem[]) {
   if (explicit) return explicit
   const all = contract.lineItems || []
@@ -305,18 +355,24 @@ export async function generateContractInvoicePdf(contract: Contract, options: In
       color: index === 0 ? INK : INK_SOFT,
     })
   })
-  const billLines = [contract.client || '-', contract.location || '-']
-  billLines.forEach((line, index) => {
-    const wrapped = wrapW(line, colW, index === 0 ? 10 : 8.5, index === 0).slice(0, 2)
-    wrapped.forEach((w, wi) => {
+  const billLines = buildBillToLines(contract)
+  let billY = partyBodyTop
+  billLines.forEach(entry => {
+    const size = entry.size ?? 9
+    const useBold = !!entry.bold
+    const wrapped = wrapW(entry.text, colW, size, useBold).slice(0, 2)
+    const color = entry.color === 'soft' ? INK_SOFT : INK
+    wrapped.forEach(w => {
       drawSafe(w, {
         x: MARGIN + colW + 24,
-        y: partyBodyTop - index * 26 - wi * 11,
-        size: index === 0 ? 10 : 8.5,
-        font: index === 0 ? bold : font,
-        color: index === 0 ? INK : INK_SOFT,
+        y: billY,
+        size,
+        font: useBold ? bold : font,
+        color,
       })
+      billY -= size + 3
     })
+    if (useBold && wrapped.length) billY -= 2
   })
 
   // ── Contract details strip ────────────────────────────────────────
