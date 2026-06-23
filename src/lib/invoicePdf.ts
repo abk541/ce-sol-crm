@@ -252,33 +252,44 @@ export async function generateContractInvoicePdf(contract: Contract, options: In
 
   // ── Document title block (compact) ────────────────────────────────
   const titleTop = PAGE_H - HEADER_H - 32
-  const titleLines = wrapW(contract.title || 'Contract invoice', PAGE_W - MARGIN * 2 - 200, 12, true).slice(0, 2)
-  titleLines.forEach((line, index) => {
-    drawSafe(line, { x: MARGIN, y: titleTop - index * 14, size: 12, font: bold, color: INK })
-  })
-  drawSafe(contract.contractId || contract.id, {
-    x: MARGIN,
-    y: titleTop - titleLines.length * 14 - 4,
-    size: 8,
-    font,
-    color: MUTED,
-  })
 
-  // Invoice metadata stack (right side, aligned with title)
-  const metaRight = PAGE_W - MARGIN
+  // Right-side metadata stack — vertical so it never collides with the title
   const metaItems = [
     { label: 'INVOICE DATE', value: formatPdfDate(invoiceDate) },
     { label: 'DUE DATE', value: billingDue ? formatPdfDate(billingDue) : '-' },
     { label: 'POP YEAR', value: popYear },
   ]
+  const metaRight = PAGE_W - MARGIN
+  const metaLabelSize = 6.5
+  const metaValueSize = 9
+  const metaRowH = 22
+  const metaBlockW = 130
+  const metaLeftEdge = metaRight - metaBlockW
   metaItems.forEach((item, index) => {
-    const colX = metaRight - 280 + index * 95
-    drawSafe(item.label, { x: colX, y: titleTop, size: 6.5, font: bold, color: MUTED })
-    drawSafe(item.value, { x: colX, y: titleTop - 12, size: 9, font: bold, color: INK })
+    const baseY = titleTop - index * metaRowH
+    rightText(item.label, metaRight, baseY, metaLabelSize, true, MUTED)
+    rightText(item.value || '-', metaRight, baseY - 11, metaValueSize, true, INK)
+  })
+  const metaBottom = titleTop - metaItems.length * metaRowH + (metaRowH - 11)
+
+  // Title (left) — reserves clear space for the metadata block on the right
+  const titleMaxW = metaLeftEdge - MARGIN - 16
+  const titleLines = wrapW(contract.title || 'Contract invoice', titleMaxW, 12, true).slice(0, 3)
+  titleLines.forEach((line, index) => {
+    drawSafe(line, { x: MARGIN, y: titleTop - index * 14, size: 12, font: bold, color: INK })
+  })
+  const titleBottom = titleTop - titleLines.length * 14 - 4
+  drawSafe(contract.contractId || contract.id, {
+    x: MARGIN,
+    y: titleBottom,
+    size: 8,
+    font,
+    color: MUTED,
   })
 
   // ── From / Bill To ────────────────────────────────────────────────
-  const partyTop = titleTop - titleLines.length * 14 - 38
+  const blockBottom = Math.min(titleBottom - 10, metaBottom - 10)
+  const partyTop = blockBottom - 22
   const colW = (PAGE_W - MARGIN * 2 - 24) / 2
   sectionLabel('FROM', MARGIN, partyTop)
   sectionLabel('BILL TO', MARGIN + colW + 24, partyTop)
