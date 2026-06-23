@@ -93,8 +93,11 @@ interface AppState {
   login: (email: string, password: string) => { ok: boolean; error?: string; needsFirst?: boolean; needsMFA?: boolean }
   logout: () => void
   acceptAccessNotice: () => void
-  completeFirstLogin: (password: string) => void
-  completeMFASetup: () => void
+  // These return false when the Supabase write fails so callers can stay on
+  // the page and let the user retry instead of advancing with unsaved auth
+  // progress. Local-only / offline mode resolves true immediately.
+  completeFirstLogin: (password: string) => Promise<boolean>
+  completeMFASetup: () => Promise<boolean>
 
   // ── User management ────────────────────────────────────────────────
   createUser: (u: Omit<User, 'id' | 'createdAt'>) => void
@@ -497,30 +500,47 @@ export const useStore = create<AppState>()(
 
       acceptAccessNotice: () => set({ accessNoticeAccepted: true }),
 
-      completeFirstLogin: (password) => {
+      completeFirstLogin: async (password) => {
         const u = get().currentUser
-        if (!u) return
+        if (!u) return false
         const updated = { ...u, firstLogin: false, password: password || u.password }
+        // Persist to Supabase BEFORE flipping local state so a tab close or a
+        // race with completeMFASetup's upsert can't leave the DB stuck at the
+        // pre-completion state and bounce the user back on next sync.
+        if (isSupabaseConnected) {
+          const ok = await upsertUser(updated)
+          if (!ok) {
+            toast.error('Could not save your new password. Please try again.')
+            return false
+          }
+        }
         set(s => ({
           users: s.users.map(x => x.id === u.id ? updated : x),
           currentUser: updated,
           needsFirstLogin: false,
           needsMFASetup: !u.mfaEnabled,
         }))
-        void upsertUser(updated)
+        return true
       },
 
-      completeMFASetup: () => {
+      completeMFASetup: async () => {
         const u = get().currentUser
-        if (!u) return
+        if (!u) return false
         const updated = { ...u, mfaEnabled: true }
+        if (isSupabaseConnected) {
+          const ok = await upsertUser(updated)
+          if (!ok) {
+            toast.error('Could not enable MFA. Please try again.')
+            return false
+          }
+        }
         set(s => ({
           users: s.users.map(x => x.id === u.id ? updated : x),
           currentUser: updated,
           needsMFASetup: false,
           isAuthenticated: true,
         }))
-        void upsertUser(updated)
+        return true
       },
 
       // ── User management ─────────────────────────────────────────────
@@ -2228,15 +2248,32 @@ export const useStore = create<AppState>()(
               !dbIds.has(u.id) && !dbEmails.has(u.email.toLowerCase())
             )
             const merged = [...dbUsers, ...localOnly]
+            // Auth flags on the active user are monotonic forward (firstLogin:
+            // true → false, mfaEnabled: false → true). If a stale DB read
+            // disagrees with the local just-completed state, don't regress.
             const refreshedCurrent = s.currentUser
-              ? merged.find(u =>
-                  u.id === s.currentUser!.id ||
-                  u.email.toLowerCase() === s.currentUser!.email.toLowerCase()
-                ) ?? s.currentUser
+              ? (() => {
+                  const dbMatch = merged.find(u =>
+                    u.id === s.currentUser!.id ||
+                    u.email.toLowerCase() === s.currentUser!.email.toLowerCase()
+                  )
+                  if (!dbMatch) return s.currentUser
+                  return {
+                    ...dbMatch,
+                    firstLogin: dbMatch.firstLogin && s.currentUser!.firstLogin,
+                    mfaEnabled: dbMatch.mfaEnabled || s.currentUser!.mfaEnabled,
+                    password: s.currentUser!.password ?? dbMatch.password,
+                  }
+                })()
               : null
+            // Reflect the monotonic merge in the users list too so Admin
+            // doesn't render stale flags for the active user.
+            const finalUsers = refreshedCurrent
+              ? merged.map(u => (u.id === refreshedCurrent.id ? refreshedCurrent : u))
+              : merged
             return {
-              users: merged,
-              employees: syncEmployeesWithUsers(merged, s.employees),
+              users: finalUsers,
+              employees: syncEmployeesWithUsers(finalUsers, s.employees),
               currentUser: refreshedCurrent,
             }
           })
@@ -2292,6 +2329,7 @@ export const useStore = create<AppState>()(
 
             // Merge DB users with any local-only users that haven't synced yet.
             const localUsers = get().users
+            const localCurrentUser = get().currentUser
             const dbUserIds = new Set(data.users.map(u => u.id))
             const dbUserEmails = new Set(data.users.map(u => u.email.toLowerCase()))
             const localOnlyUsers = localUsers.filter(u =>
@@ -2300,18 +2338,37 @@ export const useStore = create<AppState>()(
             const mergedUsers = data.users.length > 0
               ? [...data.users, ...localOnlyUsers]
               : localUsers
-            const refreshedCurrent = get().currentUser
-              ? mergedUsers.find(u =>
-                  u.id === get().currentUser!.id ||
-                  u.email.toLowerCase() === get().currentUser!.email.toLowerCase()
-                ) ?? get().currentUser
+            // See syncUsersFromDb: never regress monotonic auth flags for the
+            // active user when the DB read is stale relative to a just-completed
+            // first-login / MFA setup that is still propagating.
+            const refreshedCurrent = localCurrentUser
+              ? (() => {
+                  const dbMatch = mergedUsers.find(u =>
+                    u.id === localCurrentUser.id ||
+                    u.email.toLowerCase() === localCurrentUser.email.toLowerCase()
+                  )
+                  if (!dbMatch) return localCurrentUser
+                  return {
+                    ...dbMatch,
+                    firstLogin: dbMatch.firstLogin && localCurrentUser.firstLogin,
+                    mfaEnabled: dbMatch.mfaEnabled || localCurrentUser.mfaEnabled,
+                    password: localCurrentUser.password ?? dbMatch.password,
+                  }
+                })()
               : null
+            const finalUsers = refreshedCurrent
+              ? mergedUsers.map(u => (u.id === refreshedCurrent.id ? refreshedCurrent : u))
+              : mergedUsers
 
             set({
-              users: mergedUsers,
+              users: finalUsers,
               currentUser: refreshedCurrent,
+              needsFirstLogin: refreshedCurrent ? refreshedCurrent.firstLogin === true : get().needsFirstLogin,
+              needsMFASetup: refreshedCurrent
+                ? refreshedCurrent.firstLogin === false && refreshedCurrent.mfaEnabled === false
+                : get().needsMFASetup,
               employees: syncEmployeesWithUsers(
-                mergedUsers,
+                finalUsers,
                 data.employees.length > 0 ? data.employees : get().employees,
               ),
               opportunities: data.opportunities.filter(o => o.status !== 'CANCELED'),

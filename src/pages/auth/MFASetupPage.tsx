@@ -36,9 +36,9 @@ export default function MFASetupPage() {
     e.preventDefault()
     if (code.length !== 6) { setError('Enter the 6-digit code from your app.'); return }
     setLoading(true)
-    await new Promise(r => setTimeout(r, 700))
+    const ok = await completeMFASetup()
     setLoading(false)
-    completeMFASetup()
+    if (!ok) return
     toast.success('MFA enabled! You\'re all set.')
     navigate('/dashboard')
   }

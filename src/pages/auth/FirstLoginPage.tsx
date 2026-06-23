@@ -27,8 +27,9 @@ export default function FirstLoginPage() {
     e.preventDefault()
     if (!allPassed || !matches) return
     setLoading(true)
-    await new Promise(r => setTimeout(r, 700))
-    completeFirstLogin(password)
+    const ok = await completeFirstLogin(password)
+    setLoading(false)
+    if (!ok) return
     toast.success('Password set! Setting up your MFA…')
     navigate('/mfa-setup')
   }
