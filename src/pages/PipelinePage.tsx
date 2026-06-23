@@ -614,17 +614,37 @@ const US_TIMEZONE_OPTIONS: { value: string; label: string }[] = [
   { value: 'BST',  label: 'BST - British Summer Time (UTC+1)' },
 ]
 
-function UsTimezoneSelect({ value, onChange }: { value?: string; onChange: (value: string) => void }) {
-  const current = (value ?? '').trim()
-  const inList = US_TIMEZONE_OPTIONS.some(o => o.value === current)
+function UsTimezoneSelect({ value, onChange, dueDate }: { value?: string; onChange: (value: string) => void; dueDate?: string }) {
+  const raw = (value ?? '').trim()
+  const referenceDate = useMemo(() => {
+    if (dueDate) {
+      const d = new Date(`${dueDate}T12:00:00Z`)
+      if (!Number.isNaN(d.getTime())) return d
+    }
+    return new Date()
+  }, [dueDate])
+
+  const inListDirect = US_TIMEZONE_OPTIONS.some(o => o.value === raw)
+  const resolved = !raw || inListDirect ? '' : timezoneCodeForDisplay(raw, referenceDate)
+  const resolvedInList = !!resolved && US_TIMEZONE_OPTIONS.some(o => o.value === resolved)
+
+  useEffect(() => {
+    if (resolvedInList && !inListDirect && raw && resolved !== raw) {
+      onChange(resolved)
+    }
+  }, [raw, inListDirect, resolved, resolvedInList, onChange])
+
+  const selectedValue = inListDirect ? raw : (resolvedInList ? resolved : raw)
+  const showUnknown = !inListDirect && !resolvedInList && !!raw
+
   return (
     <select
-      value={current}
+      value={selectedValue}
       onChange={e => onChange(e.target.value)}
       className="input-field"
     >
       <option value="" disabled>Select timezone</option>
-      {current && !inList && <option value={current}>{current} (current)</option>}
+      {showUnknown && <option value={raw}>{raw} (current)</option>}
       {US_TIMEZONE_OPTIONS.map(opt => (
         <option key={opt.value} value={opt.value}>{opt.label}</option>
       ))}
@@ -1369,6 +1389,7 @@ export function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => v
               <label className={lbl}>Timezone</label>
               <UsTimezoneSelect
                 value={form.timezone}
+                dueDate={form.dueDate}
                 onChange={value => setForm(prev => applyScheduleFieldChange(prev, 'timezone', value))}
               />
             </div>
@@ -3041,6 +3062,7 @@ function CreateModal({ onClose }: { onClose: () => void }) {
               <label className={lbl}>Timezone</label>
               <UsTimezoneSelect
                 value={form.timezone}
+                dueDate={form.dueDate}
                 onChange={value => setForm(prev => applyScheduleFieldChange(prev, 'timezone', value))}
               />
             </div>
