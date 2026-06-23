@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo } from 'react'
+import { createPortal } from 'react-dom'
 import { useSearchParams } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
@@ -176,20 +177,32 @@ function ExportModal({ pp, onClose }: { pp: PastPerformance; onClose: () => void
 
   useEscapeKey(onClose)
 
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(8px)' }}
-      onClick={onClose}
-    >
+  return createPortal(
+    <AnimatePresence>
       <motion.div
-        initial={{ opacity: 0, scale: 0.96 }}
-        animate={{ opacity: 1, scale: 1 }}
-        exit={{ opacity: 0, scale: 0.96 }}
-        onClick={e => e.stopPropagation()}
-        className="flex w-full max-w-lg max-h-[calc(100vh-2rem)] flex-col overflow-hidden rounded-2xl"
-        style={{ background: 'var(--bg-card)', border: '1px solid var(--border-default)' }}
+        key="pp-export-backdrop"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        transition={{ duration: 0.16 }}
+        className="fixed inset-0 z-[60]"
+        style={{ background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(8px)' }}
+        onClick={onClose}
+      />
+      <div
+        key="pp-export-wrap"
+        className="fixed inset-0 z-[61] flex items-center justify-center p-2 sm:p-4"
+        style={{ pointerEvents: 'none' }}
       >
+        <motion.div
+          initial={{ opacity: 0, scale: 0.96, y: 12 }}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          exit={{ opacity: 0, scale: 0.96, y: 12 }}
+          transition={{ type: 'spring', stiffness: 320, damping: 28 }}
+          onClick={e => e.stopPropagation()}
+          className="flex w-full max-w-lg max-h-[min(92vh,860px)] flex-col overflow-hidden rounded-2xl"
+          style={{ background: 'var(--bg-card)', border: '1px solid var(--border-default)', boxShadow: 'var(--shadow-modal)', pointerEvents: 'all' }}
+        >
         <div className="border-b p-5 flex items-center gap-3 flex-shrink-0" style={{ borderColor: 'var(--border-default)' }}>
           <div className="w-9 h-9 rounded-xl bg-indigo-50 flex items-center justify-center">
             <Download size={16} className="text-indigo-600" />
@@ -247,8 +260,10 @@ function ExportModal({ pp, onClose }: { pp: PastPerformance; onClose: () => void
             <Download size={12} /> Export PDF
           </button>
         </div>
-      </motion.div>
-    </div>
+        </motion.div>
+      </div>
+    </AnimatePresence>,
+    document.body,
   )
 }
 
@@ -344,20 +359,32 @@ function EditPPModal({ pp, onClose }: { pp: PastPerformance; onClose: () => void
 
   useEscapeKey(onClose)
 
-  return (
-    <div
-      className="fixed inset-0 z-[55] flex items-center justify-center p-4"
-      style={{ background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(8px)' }}
-      onClick={onClose}
-    >
+  return createPortal(
+    <AnimatePresence>
       <motion.div
-        initial={{ opacity: 0, scale: 0.96 }}
-        animate={{ opacity: 1, scale: 1 }}
-        exit={{ opacity: 0, scale: 0.96 }}
-        onClick={e => e.stopPropagation()}
-        className="flex w-full max-w-2xl max-h-[calc(100vh-2rem)] flex-col overflow-hidden rounded-2xl"
-        style={{ background: 'var(--bg-card)', border: '1px solid var(--border-default)' }}
+        key="pp-edit-backdrop"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        transition={{ duration: 0.16 }}
+        className="fixed inset-0 z-[60]"
+        style={{ background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(8px)' }}
+        onClick={onClose}
+      />
+      <div
+        key="pp-edit-wrap"
+        className="fixed inset-0 z-[61] flex items-center justify-center p-2 sm:p-4"
+        style={{ pointerEvents: 'none' }}
       >
+        <motion.div
+          initial={{ opacity: 0, scale: 0.96, y: 12 }}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          exit={{ opacity: 0, scale: 0.96, y: 12 }}
+          transition={{ type: 'spring', stiffness: 320, damping: 28 }}
+          onClick={e => e.stopPropagation()}
+          className="flex w-full max-w-2xl max-h-[min(92vh,860px)] flex-col overflow-hidden rounded-2xl"
+          style={{ background: 'var(--bg-card)', border: '1px solid var(--border-default)', boxShadow: 'var(--shadow-modal)', pointerEvents: 'all' }}
+        >
         <div className="border-b p-5 flex items-center gap-3 flex-shrink-0" style={{ borderColor: 'var(--border-default)' }}>
           <div className="w-9 h-9 rounded-xl bg-amber-50 flex items-center justify-center">
             <Pencil size={16} className="text-amber-600" />
@@ -478,8 +505,10 @@ function EditPPModal({ pp, onClose }: { pp: PastPerformance; onClose: () => void
             <Save size={12} /> Save Changes
           </button>
         </div>
-      </motion.div>
-    </div>
+        </motion.div>
+      </div>
+    </AnimatePresence>,
+    document.body,
   )
 }
 
@@ -492,14 +521,26 @@ function DetailDrawerPP({ pp, onClose, onExport, onEdit }: { pp: PastPerformance
   )
   const contractingPoc = findContractingPoc(linkedContract?.pocs)
   const technicalPoc = findTechnicalPoc(linkedContract?.pocs)
-  return (
-    <motion.div
-      initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }}
-      transition={{ type: 'spring', stiffness: 280, damping: 30 }}
-      className="fixed right-0 top-0 h-screen w-full max-w-lg z-50 overflow-y-auto"
-      style={{ background: 'var(--bg-card)', borderLeft: '1px solid var(--border-default)', boxShadow: '0 0 80px rgba(0,0,0,0.15)' }}
-    >
-      <div className="sticky top-0 border-b p-5 flex items-center gap-3 z-10" style={{ background: 'var(--bg-raised)', borderColor: 'var(--border-default)' }}>
+  return createPortal(
+    <AnimatePresence>
+      <motion.div
+        key="pp-drawer-backdrop"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        transition={{ duration: 0.16 }}
+        className="fixed inset-0 z-[50]"
+        style={{ background: 'rgba(15,23,42,0.35)', backdropFilter: 'blur(3px)' }}
+        onClick={onClose}
+      />
+      <motion.div
+        key="pp-drawer-panel"
+        initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }}
+        transition={{ type: 'spring', stiffness: 280, damping: 30 }}
+        className="fixed right-0 top-0 h-screen w-full max-w-lg z-[55] flex flex-col"
+        style={{ background: 'var(--bg-card)', borderLeft: '1px solid var(--border-default)', boxShadow: '0 0 80px rgba(0,0,0,0.15)' }}
+      >
+      <div className="border-b p-5 flex items-center gap-3 flex-shrink-0" style={{ background: 'var(--bg-raised)', borderColor: 'var(--border-default)' }}>
         <div className="w-9 h-9 rounded-xl bg-indigo-50 flex items-center justify-center">
           <History size={16} className="text-indigo-600" />
         </div>
@@ -515,7 +556,7 @@ function DetailDrawerPP({ pp, onClose, onExport, onEdit }: { pp: PastPerformance
         <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X size={16} /></button>
       </div>
 
-      <div className="p-5 space-y-5">
+      <div className="flex-1 overflow-y-auto p-5 space-y-5">
         {/* Key info */}
         <div className="grid grid-cols-2 gap-3">
           {[
@@ -615,7 +656,9 @@ function DetailDrawerPP({ pp, onClose, onExport, onEdit }: { pp: PastPerformance
           <Download size={14} /> Export to PDF Template
         </button>
       </div>
-    </motion.div>
+      </motion.div>
+    </AnimatePresence>,
+    document.body,
   )
 }
 
@@ -821,34 +864,24 @@ export default function PastPerformancesPage() {
       </div>
 
       {/* Detail drawer */}
-      <AnimatePresence>
-        {selected && (
-          <>
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              className="fixed inset-0 z-40 bg-black/20" onClick={() => setSelected(null)} />
-            <DetailDrawerPP
-              pp={selected}
-              onClose={() => setSelected(null)}
-              onExport={(pp) => { setSelected(null); setExportTarget(pp) }}
-              onEdit={(pp) => { setSelected(null); setEditTarget(pp) }}
-            />
-          </>
-        )}
-      </AnimatePresence>
+      {selected && (
+        <DetailDrawerPP
+          pp={selected}
+          onClose={() => setSelected(null)}
+          onExport={(pp) => { setSelected(null); setExportTarget(pp) }}
+          onEdit={(pp) => { setSelected(null); setEditTarget(pp) }}
+        />
+      )}
 
       {/* Export modal */}
-      <AnimatePresence>
-        {exportTarget && (
-          <ExportModal pp={exportTarget} onClose={() => setExportTarget(null)} />
-        )}
-      </AnimatePresence>
+      {exportTarget && (
+        <ExportModal pp={exportTarget} onClose={() => setExportTarget(null)} />
+      )}
 
       {/* Edit modal */}
-      <AnimatePresence>
-        {editTarget && (
-          <EditPPModal pp={editTarget} onClose={() => setEditTarget(null)} />
-        )}
-      </AnimatePresence>
+      {editTarget && (
+        <EditPPModal pp={editTarget} onClose={() => setEditTarget(null)} />
+      )}
     </div>
   )
 }

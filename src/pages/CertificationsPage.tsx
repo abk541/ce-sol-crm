@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
+import { createPortal } from 'react-dom'
 import { Award, Clock3, Download, Paperclip, Pencil, Plus, Search, ShieldCheck, Trash2, UploadCloud, X } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useStore } from '../store/useStore'
@@ -170,8 +171,9 @@ function CertificationModal({
 
   useEscapeKey(onClose)
 
-  return (
-    <motion.div className="fixed inset-0 z-50 flex items-center justify-center p-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+  return createPortal(
+    <AnimatePresence>
+      <motion.div key="cert-modal" className="fixed inset-0 z-[60] flex items-center justify-center p-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
       <button className="absolute inset-0 cursor-default bg-black/65 backdrop-blur-sm" onClick={onClose} aria-label="Close certification form" />
       <motion.form
         onSubmit={handleSubmit}
@@ -259,6 +261,8 @@ function CertificationModal({
         </div>
       </motion.form>
     </motion.div>
+    </AnimatePresence>,
+    document.body,
   )
 }
 
@@ -404,9 +408,7 @@ export default function CertificationsPage() {
         </div>
       </div>
 
-      <AnimatePresence>
-        {certModal && <CertificationModal cert={certModal.cert} onClose={() => setCertModal(null)} />}
-      </AnimatePresence>
+      {certModal && <CertificationModal cert={certModal.cert} onClose={() => setCertModal(null)} />}
     </div>
   )
 }

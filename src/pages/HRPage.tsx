@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
+import { createPortal } from 'react-dom'
 import {
   Award,
   CheckCircle2,
@@ -114,8 +115,9 @@ function RequestModal({ onClose }: { onClose: () => void }) {
 
   useEscapeKey(onClose)
 
-  return (
-    <motion.div className="fixed inset-0 z-50 flex items-center justify-center p-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+  return createPortal(
+    <AnimatePresence>
+      <motion.div key="hr-request-modal" className="fixed inset-0 z-[60] flex items-center justify-center p-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
       <button className="absolute inset-0 cursor-default bg-black/65 backdrop-blur-sm" onClick={onClose} aria-label="Close request form" />
       <motion.form
         onSubmit={handleSubmit}
@@ -165,6 +167,8 @@ function RequestModal({ onClose }: { onClose: () => void }) {
         </div>
       </motion.form>
     </motion.div>
+    </AnimatePresence>,
+    document.body,
   )
 }
 
@@ -188,8 +192,9 @@ function ReviewModal({
 
   useEscapeKey(onClose)
 
-  return (
-    <motion.div className="fixed inset-0 z-50 flex items-center justify-center p-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+  return createPortal(
+    <AnimatePresence>
+      <motion.div key="hr-review-modal" className="fixed inset-0 z-[60] flex items-center justify-center p-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
       <button className="absolute inset-0 cursor-default bg-black/65 backdrop-blur-sm" onClick={onClose} aria-label="Close review form" />
       <motion.form
         onSubmit={handleSubmit}
@@ -232,6 +237,8 @@ function ReviewModal({
         </div>
       </motion.form>
     </motion.div>
+    </AnimatePresence>,
+    document.body,
   )
 }
 
@@ -268,8 +275,9 @@ function EditRequestModal({
 
   useEscapeKey(onClose)
 
-  return (
-    <motion.div className="fixed inset-0 z-50 flex items-center justify-center p-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+  return createPortal(
+    <AnimatePresence>
+      <motion.div key="hr-edit-modal" className="fixed inset-0 z-[60] flex items-center justify-center p-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
       <button className="absolute inset-0 cursor-default bg-black/65 backdrop-blur-sm" onClick={onClose} aria-label="Close edit form" />
       <motion.form
         onSubmit={handleSubmit}
@@ -322,6 +330,8 @@ function EditRequestModal({
         </div>
       </motion.form>
     </motion.div>
+    </AnimatePresence>,
+    document.body,
   )
 }
 
@@ -472,11 +482,9 @@ export default function HRPage() {
         </div>
       </div>
 
-      <AnimatePresence>
-        {requestModalOpen && <RequestModal onClose={() => setRequestModalOpen(false)} />}
-        {reviewRequest && <ReviewModal request={reviewRequest} onClose={() => setReviewRequest(null)} />}
-        {editRequest && <EditRequestModal request={editRequest} onClose={() => setEditRequest(null)} />}
-      </AnimatePresence>
+      {requestModalOpen && <RequestModal onClose={() => setRequestModalOpen(false)} />}
+      {reviewRequest && <ReviewModal request={reviewRequest} onClose={() => setReviewRequest(null)} />}
+      {editRequest && <EditRequestModal request={editRequest} onClose={() => setEditRequest(null)} />}
     </div>
   )
 }
