@@ -9,6 +9,7 @@ import type {
   BDSubmission, FileAttachment, CompanyCertification, EmployeeRequest,
   CompanyCertificationStatus, EmployeeRequestStatus,
   ContractLineItem, ContractInvoice, ContractVehicleOrder, UserPreferences, EmployeeTeam,
+  ContractStatus,
 } from '../types'
 import {
   MOCK_USERS, MOCK_OPPORTUNITIES, MOCK_NOTIFICATIONS,
@@ -129,6 +130,7 @@ interface AppState {
   removeGovernmentWarning: (contractId: string, warningId: string) => void
   resolveGovernmentWarning: (contractId: string, warningId: string, note: string) => void
   advanceContractStatus: (id: string) => void
+  setContractStatus: (id: string, nextStatus: ContractStatus) => void
 
   // ── Contract line items (CLINs) ────────────────────────────────────
   addContractLineItem: (contractId: string, line: Omit<ContractLineItem, 'id' | 'contractId' | 'clin' | 'amount' | 'createdAt'> & { amount?: number }) => string | null
@@ -1519,6 +1521,77 @@ export const useStore = create<AppState>()(
             read: false,
             relatedId: contract.id,
           })
+        }
+      },
+
+      setContractStatus: (id, nextStatus) => {
+        const actor = get().currentUser
+        const contract = get().contracts.find(c => c.id === id)
+        if (!contract) return
+        if (contract.status === nextStatus) return
+        const prevStatus = contract.status
+        const wasTerminated = prevStatus === 'TERMINATED' || prevStatus === 'CANCELED'
+        const movingToTerminal = nextStatus === 'TERMINATED' || nextStatus === 'CANCELED'
+
+        set(s => ({
+          contracts: s.contracts.map(c => {
+            if (c.id !== id) return c
+            const patch: Partial<Contract> = { status: nextStatus }
+            if (wasTerminated && !movingToTerminal) {
+              patch.terminationType = undefined
+              patch.terminationReason = undefined
+              patch.terminationDate = undefined
+            }
+            return { ...c, ...patch } as Contract
+          })
+        }))
+        const updatedContract = get().contracts.find(c => c.id === id)
+        if (updatedContract) upsertContract(updatedContract)
+
+        get().logActivity({
+          action: `Moved contract ${contract.title}: ${prevStatus} → ${nextStatus}`,
+          user: actor?.name || 'System',
+          userRole: actor?.role || 'CAPTURE_MANAGER',
+          entityType: 'contract',
+          entityId: contract.id,
+          entityName: contract.title,
+        })
+        get().addNotification({
+          type: 'STATUS_CHANGE',
+          title: 'Contract status changed',
+          message: `${contract.title}: ${prevStatus} → ${nextStatus}`,
+          read: false,
+          relatedId: contract.id,
+        })
+
+        if (nextStatus === 'ARCHIVED') {
+          const existingPP = get().pastPerformances.find(p => p.contractId === contract.id)
+          if (!existingPP) {
+            const pp: PastPerformance = {
+              id: `pp${Date.now()}`,
+              contractId: contract.id,
+              opportunityId: contract.opportunityId,
+              contractNumber: contract.contractId,
+              title: contract.title,
+              client: contract.client || '',
+              type: contract.type,
+              financeType: contract.financeType,
+              naicsCode: contract.naicsCode,
+              setAside: contract.setAside || 'UNRES',
+              value: contract.value,
+              popStart: contract.popStart,
+              popEnd: contract.popEnd || new Date().toISOString().split('T')[0],
+              location: contract.location,
+              description: `Contract completed successfully.`,
+              relevance: '',
+              bdm: contract.bdm || '',
+              bds: contract.bds || '',
+              createdAt: new Date().toISOString(),
+              createdBy: actor?.name || 'System',
+            }
+            set(s => ({ pastPerformances: [pp, ...s.pastPerformances] }))
+            upsertPastPerformance(pp)
+          }
         }
       },
 

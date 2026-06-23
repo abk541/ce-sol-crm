@@ -1616,7 +1616,7 @@ function ContractDetailDrawer({
   onClose: () => void
   onOpenSourcing?: (opp: Opportunity) => void
 }) {
-  const { updateContract, addContractPoC, updateContractPoC, removeContractPoC, addContractInvoice, addLockedSubcontractor, updateLockedSubcontractor, addGovernmentWarning, updateGovernmentWarning, removeGovernmentWarning, resolveGovernmentWarning, advanceContractStatus, terminateContract, currentUser, employees, opportunities, subcontractors, subkDatabase, nextInvoiceNumber, consumeInvoiceNumber, addContractLineItem, updateContractLineItem, removeContractLineItem, addContractVehicleOrder, updateContractVehicleOrder, removeContractVehicleOrder } = useStore()
+  const { updateContract, addContractPoC, updateContractPoC, removeContractPoC, addContractInvoice, addLockedSubcontractor, updateLockedSubcontractor, addGovernmentWarning, updateGovernmentWarning, removeGovernmentWarning, resolveGovernmentWarning, advanceContractStatus, setContractStatus, terminateContract, currentUser, employees, opportunities, subcontractors, subkDatabase, nextInvoiceNumber, consumeInvoiceNumber, addContractLineItem, updateContractLineItem, removeContractLineItem, addContractVehicleOrder, updateContractVehicleOrder, removeContractVehicleOrder } = useStore()
   const [tab, setTab] = useState<ContractDrawerTab>(initialTab)
   const [deliverableForm, setDeliverableForm] = useState({
     title: '',
@@ -2462,17 +2462,84 @@ function ContractDetailDrawer({
               </div>
             )}
 
-            {/* Status advance */}
-            {nextStatus && (
+            {/* Status advance + manual change */}
+            <div className="space-y-2">
+              {nextStatus && (
+                <button
+                  onClick={() => advanceContractStatus(contract.id)}
+                  className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-semibold transition-colors"
+                  style={{ background: STATUS_META[nextStatus].bg, color: STATUS_META[nextStatus].color, border: `1px solid ${STATUS_META[nextStatus].border}` }}
+                >
+                  <ArrowRight size={12} />
+                  Advance to {STATUS_META[nextStatus].label}
+                </button>
+              )}
+
               <button
-                onClick={() => advanceContractStatus(contract.id)}
-                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-semibold transition-colors"
-                style={{ background: STATUS_META[nextStatus].bg, color: STATUS_META[nextStatus].color, border: `1px solid ${STATUS_META[nextStatus].border}` }}
+                onClick={() => setEditingStatus(v => !v)}
+                className="w-full flex items-center justify-center gap-2 py-2 rounded-xl text-[11px] font-semibold text-slate-600 bg-white border border-slate-200 hover:bg-slate-50 transition-colors"
+                aria-expanded={editingStatus}
               >
-                <ArrowRight size={12} />
-                Advance to {STATUS_META[nextStatus].label}
+                <Layers size={11} />
+                {editingStatus ? 'Hide status picker' : 'Change status manually'}
+                {editingStatus ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
               </button>
-            )}
+
+              {editingStatus && (
+                <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-2 space-y-1.5">
+                  <p className="px-1 pt-1 pb-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                    Move this contract to…
+                  </p>
+                  <p className="px-1 pb-1 text-[10px] text-slate-400 leading-relaxed">
+                    Use this only to correct a mis-step. Activity is logged.
+                  </p>
+                  <div className="grid grid-cols-1 gap-1">
+                    {(['KICK_OFF','LOCKING_SUB','ACTIVE','ON_GOING','PERFORMING','PENDING_PAYMENT','ARCHIVED','TERMINATED','CANCELED'] as ContractStatus[]).map(s => {
+                      const m = STATUS_META[s]
+                      const isCurrent = contract.status === s
+                      const requiresReason = s === 'TERMINATED' || s === 'CANCELED'
+                      return (
+                        <button
+                          key={s}
+                          disabled={isCurrent}
+                          onClick={() => {
+                            if (isCurrent) return
+                            if (requiresReason) {
+                              setTerminateType(s === 'CANCELED' ? 'CANCELED' : 'T4C')
+                              setEditingStatus(false)
+                              setShowTerminate(true)
+                              return
+                            }
+                            setContractStatus(contract.id, s)
+                            setEditingStatus(false)
+                            toast.success(`Moved to ${m.label}`)
+                          }}
+                          className={`flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold transition-colors text-left ${
+                            isCurrent ? 'cursor-not-allowed opacity-50' : 'hover:brightness-95'
+                          }`}
+                          style={{
+                            background: isCurrent ? '#F8FAFC' : m.bg,
+                            color: m.color,
+                            border: `1px solid ${m.border}`,
+                          }}
+                        >
+                          <span className="flex items-center gap-2">
+                            <span className="inline-block w-2 h-2 rounded-full" style={{ background: m.color }} />
+                            {m.label}
+                            {requiresReason && !isCurrent && (
+                              <span className="text-[9px] font-medium opacity-70">(needs reason)</span>
+                            )}
+                          </span>
+                          {isCurrent && (
+                            <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400">Current</span>
+                          )}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
 
             {/* Terminate button */}
             {!['TERMINATED','ARCHIVED','CANCELED'].includes(contract.status) && (
