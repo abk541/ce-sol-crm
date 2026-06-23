@@ -143,11 +143,22 @@ export type ThemeMotion = {
 
 export type ThemeChrome = {
   // Component personality flags (consumed by index.css per-theme selectors)
-  btnStyle: 'gradient' | 'flat' | 'outline' | 'pill'
-  cardStyle: 'glass' | 'flat' | 'soft' | 'sharp'
+  btnStyle: 'gradient' | 'flat' | 'outline' | 'pill' | 'hard'
+  cardStyle: 'glass' | 'flat' | 'soft' | 'sharp' | 'hard'
   badgeStyle: 'soft' | 'outline' | 'solid'
   tableStriped: boolean
 }
+
+// Optional decorative pattern overlaid on the body. Drives data-bg-pattern
+// hooks in index.css. Default 'none' if omitted.
+export type ThemeBgPattern =
+  | 'none'
+  | 'grid'
+  | 'dots'
+  | 'scanlines'
+  | 'paper'
+  | 'diagonal'
+  | 'topo'
 
 export type Theme = {
   id: string
@@ -163,6 +174,11 @@ export type Theme = {
   motion: ThemeMotion
   chrome: ThemeChrome
   chartColors: string[]
-  // Preview swatches (4 colors) shown in the AppearanceMenu picker
+  // Preview swatches (4 colors) shown in the AppearanceMenu picker:
+  // [sidebarBg, cardBg, accent, accent2]
   preview: [string, string, string, string]
+  // Optional decorative pattern overlaid on body via ::before.
+  bgPattern?: ThemeBgPattern
+  // Optional tagline / family flag shown in tile UI.
+  tags?: string[]
 }

@@ -403,6 +403,125 @@ html[data-motion="instant"] * {
   animation-duration: 0ms !important;
 }
 
+/* ───────────────────────────────────────────────────────────────────
+   Decorative bg patterns (driven by data-bg-pattern on <html>)
+   Overlaid on a fixed pseudo-element behind app content.
+   ─────────────────────────────────────────────────────────────────── */
+html[data-bg-pattern]:not([data-bg-pattern="none"]) body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.45;
+  background-repeat: repeat;
+  background-attachment: fixed;
+}
+html[data-bg-pattern] body > * { position: relative; z-index: 1; }
+
+html[data-bg-pattern="grid"] body::before {
+  opacity: 0.30;
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--accent) 22%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--accent) 22%, transparent) 1px, transparent 1px);
+  background-size: 36px 36px;
+}
+
+html[data-bg-pattern="dots"] body::before {
+  opacity: 0.40;
+  background-image: radial-gradient(circle, color-mix(in srgb, var(--text-tertiary) 30%, transparent) 1px, transparent 1.5px);
+  background-size: 22px 22px;
+}
+
+html[data-bg-pattern="scanlines"] body::before {
+  opacity: 0.20;
+  background-image: repeating-linear-gradient(0deg,
+    color-mix(in srgb, var(--accent) 18%, transparent) 0 1px,
+    transparent 1px 3px);
+}
+
+html[data-bg-pattern="diagonal"] body::before {
+  opacity: 0.18;
+  background-image: repeating-linear-gradient(45deg,
+    color-mix(in srgb, var(--accent) 22%, transparent) 0 1px,
+    transparent 1px 14px);
+}
+
+html[data-bg-pattern="paper"] body::before {
+  opacity: 0.55;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='220' height='220'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.12 0 0 0 0 0.10 0 0 0 0 0.07 0 0 0 0.55 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+  background-size: 220px 220px;
+  mix-blend-mode: multiply;
+}
+
+html[data-bg-pattern="topo"] body::before {
+  opacity: 0.18;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='320' height='320' viewBox='0 0 320 320'><g fill='none' stroke='%23c99752' stroke-width='1' opacity='0.6'><circle cx='160' cy='160' r='30'/><circle cx='160' cy='160' r='60'/><circle cx='160' cy='160' r='90'/><circle cx='160' cy='160' r='120'/><circle cx='160' cy='160' r='150'/><circle cx='40' cy='40' r='20'/><circle cx='40' cy='40' r='50'/><circle cx='280' cy='280' r='25'/><circle cx='280' cy='280' r='55'/></g></svg>");
+  background-size: 320px 320px;
+}
+
+/* ───────────────────────────────────────────────────────────────────
+   Hard / brutalist personality — offset hard shadows, thick borders.
+   ─────────────────────────────────────────────────────────────────── */
+html[data-card="hard"] .glass,
+html[data-card="hard"] .glass-strong,
+html[data-card="hard"] .gradient-border,
+html[data-card="hard"] .premium-card,
+html[data-card="hard"] .kpi-card,
+html[data-card="hard"] .stat-card,
+html[data-card="hard"] .exec-panel,
+html[data-card="hard"] .exec-stat,
+html[data-card="hard"] .exec-tab-card,
+html[data-card="hard"] .exec-hero {
+  border-width: 2px;
+  border-color: var(--text-primary);
+  box-shadow: var(--shadow-md);
+  backdrop-filter: none;
+  background: var(--bg-card);
+}
+html[data-card="hard"] .glass:hover,
+html[data-card="hard"] .premium-card:hover,
+html[data-card="hard"] .kpi-card:hover,
+html[data-card="hard"] .stat-card:hover,
+html[data-card="hard"] .exec-stat:hover,
+html[data-card="hard"] .exec-tab-card:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: var(--shadow-lg);
+}
+
+html[data-card="hard"] .premium-card::before { display: none; }
+
+html[data-btn="hard"] .btn-primary {
+  background: var(--accent);
+  color: var(--text-inverse);
+  border: 2px solid var(--text-primary);
+  border-radius: 0;
+  box-shadow: var(--shadow-btn-primary);
+  text-shadow: none;
+  filter: none;
+}
+html[data-btn="hard"] .btn-primary::after { display: none; }
+html[data-btn="hard"] .btn-primary:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 6px 6px 0 var(--text-primary);
+  filter: none;
+}
+html[data-btn="hard"] .btn-primary:active {
+  transform: translate(0, 0);
+  box-shadow: 2px 2px 0 var(--text-primary);
+}
+html[data-btn="hard"] .btn-secondary,
+html[data-btn="hard"] .btn-danger {
+  border: 2px solid var(--text-primary);
+  border-radius: 0;
+  box-shadow: var(--shadow-sm);
+}
+html[data-btn="hard"] .btn-secondary:hover,
+html[data-btn="hard"] .btn-danger:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: var(--shadow-md);
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
    Appearance popover
    ═══════════════════════════════════════════════════════════════════════════ */

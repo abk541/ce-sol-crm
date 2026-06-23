@@ -16,33 +16,52 @@ export type FontEntry = {
   italic?: boolean
 }
 
-// Curated set: 20 fonts. Covers sans / serif / mono / display.
+// Curated set: 36 fonts. Covers sans / serif / mono / display / handwriting.
 export const FONT_CATALOG: FontEntry[] = [
-  // Sans
-  { family: 'Inter',             category: 'sans',    weights: '300;400;500;600;700;800' },
-  { family: 'Plus Jakarta Sans', category: 'sans',    weights: '300;400;500;600;700;800' },
-  { family: 'Manrope',           category: 'sans',    weights: '300;400;500;600;700;800' },
-  { family: 'DM Sans',           category: 'sans',    weights: '300;400;500;600;700;800;900' },
-  { family: 'Outfit',            category: 'sans',    weights: '300;400;500;600;700;800;900' },
-  { family: 'Sora',              category: 'sans',    weights: '300;400;500;600;700;800' },
-  { family: 'Work Sans',         category: 'sans',    weights: '300;400;500;600;700;800' },
-  { family: 'Public Sans',       category: 'sans',    weights: '300;400;500;600;700;800;900' },
-  { family: 'Nunito',            category: 'sans',    weights: '300;400;500;600;700;800;900' },
-  { family: 'Quicksand',         category: 'sans',    weights: '300;400;500;600;700' },
-  // Serif
-  { family: 'Source Serif 4',    category: 'serif',   weights: '300;400;500;600;700;800;900' },
-  { family: 'Playfair Display',  category: 'serif',   weights: '400;500;600;700;800;900' },
-  { family: 'Crimson Pro',       category: 'serif',   weights: '300;400;500;600;700;800;900' },
-  { family: 'EB Garamond',       category: 'serif',   weights: '400;500;600;700;800' },
-  { family: 'Lora',              category: 'serif',   weights: '400;500;600;700' },
-  { family: 'Source Sans 3',     category: 'sans',    weights: '300;400;500;600;700;800;900' },
-  // Mono
-  { family: 'JetBrains Mono',    category: 'mono',    weights: '300;400;500;600;700;800' },
-  { family: 'Fira Code',         category: 'mono',    weights: '300;400;500;600;700' },
-  { family: 'IBM Plex Mono',     category: 'mono',    weights: '300;400;500;600;700' },
-  // Display / distinctive
-  { family: 'Space Grotesk',     category: 'display', weights: '300;400;500;600;700' },
-  { family: 'Unbounded',         category: 'display', weights: '300;400;500;600;700;800;900' },
+  // ── Sans-serif ────────────────────────────────────────────────────
+  { family: 'Inter',               category: 'sans',    weights: '300;400;500;600;700;800' },
+  { family: 'Plus Jakarta Sans',   category: 'sans',    weights: '300;400;500;600;700;800' },
+  { family: 'Manrope',             category: 'sans',    weights: '300;400;500;600;700;800' },
+  { family: 'DM Sans',             category: 'sans',    weights: '300;400;500;600;700;800;900' },
+  { family: 'Outfit',              category: 'sans',    weights: '300;400;500;600;700;800;900' },
+  { family: 'Sora',                category: 'sans',    weights: '300;400;500;600;700;800' },
+  { family: 'Work Sans',           category: 'sans',    weights: '300;400;500;600;700;800' },
+  { family: 'Public Sans',         category: 'sans',    weights: '300;400;500;600;700;800;900' },
+  { family: 'Nunito',              category: 'sans',    weights: '300;400;500;600;700;800;900' },
+  { family: 'Quicksand',           category: 'sans',    weights: '300;400;500;600;700' },
+  { family: 'Source Sans 3',       category: 'sans',    weights: '300;400;500;600;700;800;900' },
+  { family: 'Karla',               category: 'sans',    weights: '300;400;500;600;700;800' },
+  { family: 'Geist',               category: 'sans',    weights: '300;400;500;600;700;800;900' },
+  { family: 'Bricolage Grotesque', category: 'sans',    weights: '300;400;500;600;700;800' },
+  { family: 'Onest',               category: 'sans',    weights: '300;400;500;600;700;800;900' },
+  // ── Serif ─────────────────────────────────────────────────────────
+  { family: 'Source Serif 4',      category: 'serif',   weights: '300;400;500;600;700;800;900' },
+  { family: 'Playfair Display',    category: 'serif',   weights: '400;500;600;700;800;900' },
+  { family: 'Crimson Pro',         category: 'serif',   weights: '300;400;500;600;700;800;900' },
+  { family: 'EB Garamond',         category: 'serif',   weights: '400;500;600;700;800' },
+  { family: 'Lora',                category: 'serif',   weights: '400;500;600;700' },
+  { family: 'Fraunces',            category: 'serif',   weights: '300;400;500;600;700;800;900' },
+  { family: 'Cormorant Garamond',  category: 'serif',   weights: '300;400;500;600;700' },
+  { family: 'Newsreader',          category: 'serif',   weights: '300;400;500;600;700;800' },
+  { family: 'Spectral',            category: 'serif',   weights: '300;400;500;600;700;800' },
+  { family: 'Bodoni Moda',         category: 'serif',   weights: '400;500;600;700;800;900' },
+  // ── Monospace ─────────────────────────────────────────────────────
+  { family: 'JetBrains Mono',      category: 'mono',    weights: '300;400;500;600;700;800' },
+  { family: 'Fira Code',           category: 'mono',    weights: '300;400;500;600;700' },
+  { family: 'IBM Plex Mono',       category: 'mono',    weights: '300;400;500;600;700' },
+  { family: 'Space Mono',          category: 'mono',    weights: '400;700' },
+  { family: 'Major Mono Display',  category: 'mono',    weights: '400' },
+  { family: 'VT323',               category: 'mono',    weights: '400' },
+  // ── Display / distinctive ─────────────────────────────────────────
+  { family: 'Space Grotesk',       category: 'display', weights: '300;400;500;600;700' },
+  { family: 'Unbounded',           category: 'display', weights: '300;400;500;600;700;800;900' },
+  { family: 'Syne',                category: 'display', weights: '400;500;600;700;800' },
+  { family: 'Bungee',              category: 'display', weights: '400' },
+  { family: 'Shrikhand',           category: 'display', weights: '400' },
+  // ── Handwriting / script ──────────────────────────────────────────
+  { family: 'Caveat',              category: 'display', weights: '400;500;600;700' },
+  { family: 'Pacifico',            category: 'display', weights: '400' },
+  { family: 'Lobster',             category: 'display', weights: '400' },
 ]
 
 export const FONT_BY_FAMILY: Record<string, FontEntry> = FONT_CATALOG.reduce(

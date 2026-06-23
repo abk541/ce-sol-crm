@@ -7,12 +7,31 @@ import { saas } from './saas'
 import { terminal } from './terminal'
 import { warm } from './warm'
 import { minimal } from './minimal'
+import { synthwave } from './synthwave'
+import { cyberpunk } from './cyberpunk'
+import { newsprint } from './newsprint'
+import { dracula } from './dracula'
+import { brutalist } from './brutalist'
+import { sunset } from './sunset'
+import { mint } from './mint'
+import { abyss } from './abyss'
+import { forest } from './forest'
 import type { Theme } from './types'
 
 export type { Theme } from './types'
 
-// Display order in the AppearanceMenu — new themes first, originals at end.
+// Display order in the AppearanceMenu — fresh / vivid themes first, then
+// productive defaults, then originals. Filterable via family tabs.
 export const THEMES: Theme[] = [
+  synthwave,
+  cyberpunk,
+  dracula,
+  brutalist,
+  newsprint,
+  sunset,
+  mint,
+  abyss,
+  forest,
   saas,
   corporate,
   terminal,
