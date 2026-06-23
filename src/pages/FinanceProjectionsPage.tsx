@@ -1109,26 +1109,26 @@ export default function FinanceProjectionsPage() {
       {/* Grouped table */}
       <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div className="overflow-x-auto">
-          <table className="w-full text-xs">
+          <table className="w-full text-[11px]">
             <thead className="bg-slate-50 text-[10px] font-bold uppercase tracking-wider text-slate-500">
               <tr>
-                <th className="px-3 py-2 text-left">Contract Name</th>
-                <th className="px-3 py-2 text-left">Contract Number</th>
-                <th className="px-3 py-2 text-left">Invoice Nr</th>
-                <th className="px-3 py-2 text-left">Invoice Date</th>
-                <th className="px-3 py-2 text-left">Service Period</th>
-                <th className="px-3 py-2 text-left">POP Year</th>
-                <th className="px-3 py-2 text-left">CLINs</th>
-                <th className="px-3 py-2 text-right">Amount</th>
-                <th className="px-3 py-2 text-left">Payment Method</th>
-                <th className="px-3 py-2 text-right">Sub Quote</th>
-                <th className="px-3 py-2 text-left">Due Date</th>
-                <th className="px-3 py-2 text-left">Gov Status</th>
-                <th className="px-3 py-2 text-left">Sub Invoice Status</th>
-                <th className="px-3 py-2 text-right" />
+                <th className="px-2 py-1.5 text-left">Contract Name</th>
+                <th className="px-2 py-1.5 text-left">Contract Number</th>
+                <th className="px-2 py-1.5 text-left">Invoice Nr</th>
+                <th className="px-2 py-1.5 text-left">Invoice Date</th>
+                <th className="px-2 py-1.5 text-left">Service Period</th>
+                <th className="px-2 py-1.5 text-left">POP Year</th>
+                <th className="px-2 py-1.5 text-left">CLINs</th>
+                <th className="px-2 py-1.5 text-right">Amount</th>
+                <th className="px-2 py-1.5 text-left">Payment</th>
+                <th className="px-2 py-1.5 text-right">Sub Quote</th>
+                <th className="px-2 py-1.5 text-left">Due Date</th>
+                <th className="px-2 py-1.5 text-left">Gov Status</th>
+                <th className="px-2 py-1.5 text-left">Sub Inv. Status</th>
+                <th className="px-2 py-1.5 text-right" />
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
+            <tbody>
               {groups.length === 0 && (
                 <tr>
                   <td colSpan={14} className="py-12 text-center text-sm text-slate-400">
@@ -1143,7 +1143,7 @@ export default function FinanceProjectionsPage() {
                 return (
                   <Fragment key={monthKey || 'unscheduled'}>
                     <tr className="bg-amber-50/70">
-                      <td colSpan={14} className="px-3 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-amber-700">
+                      <td colSpan={14} className="px-2 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-amber-700">
                         {monthLabel(monthKey)}
                       </td>
                     </tr>
@@ -1154,36 +1154,36 @@ export default function FinanceProjectionsPage() {
                       const note = row.invoice.notes?.trim()
                       return (
                         <Fragment key={row.invoice.id}>
-                        <tr className="hover:bg-slate-50">
-                          <td className="px-3 py-2 max-w-[260px]">
+                        <tr className="hover:bg-slate-50" style={{ borderTop: ri === 0 ? 'none' : '1px solid var(--border-default)' }}>
+                          <td className="px-2 py-1 max-w-[260px]">
                             <p className="truncate font-bold text-slate-800" title={row.contract?.title || ''}>
                               {row.contract?.title || '— missing contract —'}
                             </p>
                           </td>
-                          <td className="px-3 py-2 font-mono text-[11px] text-slate-600">
+                          <td className="px-2 py-1 font-mono text-[11px] text-slate-600">
                             {row.contract?.contractId || '—'}
                           </td>
-                          <td className="px-3 py-2 font-mono text-[11px] text-slate-700">
+                          <td className="px-2 py-1 font-mono text-[11px] text-slate-700">
                             {row.invoice.invoiceNumber}
                           </td>
-                          <td className="whitespace-nowrap px-3 py-2 text-slate-700">
+                          <td className="whitespace-nowrap px-2 py-1 text-slate-700">
                             {fmtDateMDY(row.invoice.invoiceDate)}
                           </td>
-                          <td className="whitespace-nowrap px-3 py-2 text-slate-700">
+                          <td className="whitespace-nowrap px-2 py-1 text-slate-700">
                             {servicePeriodLabel(row.invoice.serviceFrom, row.invoice.serviceTo)}
                           </td>
-                          <td className="whitespace-nowrap px-3 py-2 text-slate-700">
+                          <td className="whitespace-nowrap px-2 py-1 text-slate-700">
                             {LINE_YEAR_LABELS[(row.invoice.popYear || row.contract?.currentPopYear || 'base') as ContractLineYear]}
                           </td>
-                          <td className="max-w-[220px] px-3 py-2 text-slate-600">
+                          <td className="max-w-[220px] px-2 py-1 text-slate-600">
                             <p className="truncate" title={row.lineItems.map(lineItemLabel).join(', ')}>
                               {row.lineItems.length ? row.lineItems.map(line => line.clin).join(', ') : 'No CLINs'}
                             </p>
                           </td>
-                          <td className="whitespace-nowrap px-3 py-2 text-right font-bold text-slate-900">
+                          <td className="whitespace-nowrap px-2 py-1 text-right font-bold text-slate-900">
                             {formatCurrency(row.invoice.amount)}
                           </td>
-                          <td className="px-3 py-2">
+                          <td className="px-2 py-1">
                             <select
                               value={method ?? ''}
                               onChange={e => handleQuickMethod(row, e.target.value as InvoicePaymentMethod | '')}
@@ -1195,13 +1195,13 @@ export default function FinanceProjectionsPage() {
                               ))}
                             </select>
                           </td>
-                          <td className="whitespace-nowrap px-3 py-2 text-right font-bold text-slate-700">
+                          <td className="whitespace-nowrap px-2 py-1 text-right font-bold text-slate-700">
                             {formatCurrency(row.subQuote)}
                           </td>
-                          <td className="whitespace-nowrap px-3 py-2 text-slate-600">
+                          <td className="whitespace-nowrap px-2 py-1 text-slate-600">
                             {fmtDateMDY(row.dueDate)}
                           </td>
-                          <td className="px-3 py-2">
+                          <td className="px-2 py-1">
                             <select
                               value={govStatus}
                               onChange={e => handleQuickGovStatus(row, e.target.value as GovBillingStatus)}
@@ -1213,7 +1213,7 @@ export default function FinanceProjectionsPage() {
                               ))}
                             </select>
                           </td>
-                          <td className="px-3 py-2">
+                          <td className="px-2 py-1">
                             <select
                               value={row.invoice.subStatus ?? ''}
                               onChange={e => handleQuickSubStatus(row, e.target.value as SubInvoiceStatus | '')}
@@ -1226,34 +1226,34 @@ export default function FinanceProjectionsPage() {
                               ))}
                             </select>
                           </td>
-                          <td className="whitespace-nowrap px-3 py-2 text-right">
-                            <div className="flex justify-end gap-1">
+                          <td className="whitespace-nowrap px-2 py-1 text-right">
+                            <div className="flex justify-end gap-0.5">
                               <button
                                 type="button"
                                 onClick={() => openEdit(row.invoice.id)}
-                                className="flex h-7 w-7 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                                className="flex h-6 w-6 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700"
                                 title="Edit invoice"
                               >
-                                <Pencil size={12} />
+                                <Pencil size={11} />
                               </button>
                               <button
                                 type="button"
                                 onClick={() => handleGeneratePdf(row)}
-                                className="flex h-7 w-7 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                                className="flex h-6 w-6 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700"
                                 title="Generate invoice PDF"
                               >
-                                <Download size={12} />
+                                <Download size={11} />
                               </button>
                             </div>
                           </td>
                         </tr>
                         {note && (
-                          <tr key={`${row.invoice.id}-note`} className="bg-amber-50/40">
-                            <td colSpan={14} className="px-3 pb-2 pt-1">
-                              <div className="flex items-start gap-2 rounded-md border border-amber-100 bg-amber-50/80 px-3 py-1.5">
-                                <span className="mt-[1px] text-[10px] font-black uppercase tracking-[0.18em] text-amber-700">Note</span>
-                                <p className="text-[11px] leading-snug text-amber-900 whitespace-pre-wrap">{note}</p>
-                              </div>
+                          <tr key={`${row.invoice.id}-note`}>
+                            <td colSpan={14} className="px-3 pb-1 pt-0">
+                              <p className="text-[10px] italic leading-snug whitespace-pre-wrap" style={{ color: 'var(--text-tertiary)' }}>
+                                <span className="mr-1.5 font-black uppercase tracking-[0.16em] not-italic" style={{ color: 'var(--accent, #d7be7a)' }}>Note</span>
+                                {note}
+                              </p>
                             </td>
                           </tr>
                         )}
@@ -1262,26 +1262,26 @@ export default function FinanceProjectionsPage() {
                     })}
                     {/* Group subtotal */}
                     <tr key={`${monthKey}-subtotal`} className="bg-emerald-50/70 font-bold text-slate-800">
-                      <td colSpan={7} className="px-3 py-1.5 text-right text-[10px] uppercase tracking-wider text-slate-500">
+                      <td colSpan={7} className="px-2 py-1 text-right text-[10px] uppercase tracking-wider text-slate-500">
                         {monthLabel(monthKey)} subtotal
                       </td>
-                      <td className="whitespace-nowrap px-3 py-1.5 text-right text-emerald-800">
+                      <td className="whitespace-nowrap px-2 py-1 text-right text-emerald-800">
                         {formatCurrency(monthAmount)}
                       </td>
-                      <td className="px-3 py-1.5" />
-                      <td className="whitespace-nowrap px-3 py-1.5 text-right text-rose-700">
+                      <td className="px-2 py-1" />
+                      <td className="whitespace-nowrap px-2 py-1 text-right text-rose-700">
                         {formatCurrency(monthSubQuote)}
                       </td>
-                      <td className="px-3 py-1.5" />
-                      <td className="px-3 py-1.5 text-[10px] uppercase tracking-wider text-slate-500">
+                      <td className="px-2 py-1" />
+                      <td className="px-2 py-1 text-[10px] uppercase tracking-wider text-slate-500">
                         Profit: <span className={monthProfit >= 0 ? 'text-emerald-700' : 'text-rose-700'}>{formatCurrency(monthProfit)}</span>
                       </td>
-                      <td className="px-3 py-1.5" />
-                      <td className="px-3 py-1.5" />
+                      <td className="px-2 py-1" />
+                      <td className="px-2 py-1" />
                     </tr>
                     {/* Spacer between groups */}
                     {gi < groups.length - 1 && (
-                      <tr key={`${monthKey}-spacer`} className="h-1.5">
+                      <tr key={`${monthKey}-spacer`} className="h-1">
                         <td colSpan={14} />
                       </tr>
                     )}
@@ -1292,18 +1292,18 @@ export default function FinanceProjectionsPage() {
             {groups.length > 0 && (
               <tfoot>
                 <tr className="bg-slate-900 font-black text-white">
-                  <td colSpan={7} className="px-3 py-2 text-right text-[10px] uppercase tracking-[0.2em] text-slate-300">
+                  <td colSpan={7} className="px-2 py-1.5 text-right text-[10px] uppercase tracking-[0.2em] text-slate-300">
                     Grand total
                   </td>
-                  <td className="whitespace-nowrap px-3 py-2 text-right">{formatCurrency(totals.totalAmount)}</td>
-                  <td className="px-3 py-2" />
-                  <td className="whitespace-nowrap px-3 py-2 text-right">{formatCurrency(totals.totalSubQuote)}</td>
-                  <td className="px-3 py-2" />
-                  <td className="px-3 py-2 text-[10px] uppercase tracking-wider text-slate-300">
+                  <td className="whitespace-nowrap px-2 py-1.5 text-right">{formatCurrency(totals.totalAmount)}</td>
+                  <td className="px-2 py-1.5" />
+                  <td className="whitespace-nowrap px-2 py-1.5 text-right">{formatCurrency(totals.totalSubQuote)}</td>
+                  <td className="px-2 py-1.5" />
+                  <td className="px-2 py-1.5 text-[10px] uppercase tracking-wider text-slate-300">
                     Profit: <span className={totals.totalProfit >= 0 ? 'text-emerald-300' : 'text-rose-300'}>{formatCurrency(totals.totalProfit)}</span>
                   </td>
-                  <td className="px-3 py-2" />
-                  <td className="px-3 py-2" />
+                  <td className="px-2 py-1.5" />
+                  <td className="px-2 py-1.5" />
                 </tr>
               </tfoot>
             )}
