@@ -113,11 +113,11 @@ export const ocean: Theme = {
   },
   chrome: {
     btnStyle: 'gradient',
-    cardStyle: 'soft',
+    cardStyle: 'glass',
     badgeStyle: 'soft',
     tableStriped: false,
   },
   chartColors: ['#5EEAD4', '#7DD3FC', '#86EFAC', '#FCD34D', '#FCA5A5', '#A78BFA', '#F472B6'],
   preview: ['#081820', '#142B35', '#5EEAD4', '#7DD3FC'],
-  bgPattern: 'none',
+  bgPattern: 'topo',
 }

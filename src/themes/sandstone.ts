@@ -62,7 +62,7 @@ export const sandstone: Theme = {
     monoFamily: 'JetBrains Mono',
     headingWeight: 600,
     bodyWeight: 400,
-    headingLetterSpacing: '-0.02em',
+    headingLetterSpacing: '0.01em',
     bodyLetterSpacing: '0',
     headingTransform: 'none',
   },
@@ -119,5 +119,5 @@ export const sandstone: Theme = {
   },
   chartColors: ['#B26934', '#658B6F', '#D89867', '#5A7DA7', '#A88458', '#3F8B5C', '#B23A3A'],
   preview: ['#EFE3CB', '#FCF7EC', '#B26934', '#658B6F'],
-  bgPattern: 'none',
+  bgPattern: 'paper',
 }

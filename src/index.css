@@ -657,6 +657,16 @@ html[data-btn="hard"] .btn-danger:hover {
   max-height: 18rem;
   overflow-y: auto;
 }
+.appearance-font-list {
+  background: var(--bg-input);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-card);
+  max-height: 16rem;
+  overflow-y: auto;
+}
+.appearance-font-list > .appearance-font-option + .appearance-font-option {
+  border-top: 1px solid var(--border-subtle);
+}
 .appearance-font-option {
   display: flex;
   align-items: center;
@@ -682,6 +692,28 @@ html[data-btn="hard"] .btn-danger:hover {
   font-size: 13px;
   font-weight: 600;
   line-height: 1.2;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.appearance-font-option__specimen {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 24px;
+  padding: 0 6px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.01em;
+}
+.appearance-font-option.is-active .appearance-font-option__specimen {
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+  color: var(--accent);
 }
 .appearance-font-option__cat {
   font-size: 9.5px;

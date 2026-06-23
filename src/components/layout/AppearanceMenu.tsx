@@ -671,7 +671,7 @@ function RowLabel({
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Font picker — visual grid of font cards each rendered in its own face
+// Font picker — inline scrollable list with each row in its own face
 // ─────────────────────────────────────────────────────────────────────
 type FontFilter = 'all' | FontCategory
 
@@ -687,7 +687,7 @@ function FontSection({
   const [filter, setFilter] = useState<FontFilter>('all')
   const [search, setSearch] = useState('')
 
-  // Eagerly load fonts on mount so previews are typeset, not blank.
+  // Eagerly load all fonts so previews are typeset, not blank.
   useEffect(() => {
     FONT_CATALOG.forEach(f => loadFont(f.family))
   }, [loadFont])
@@ -752,75 +752,37 @@ function FontSection({
         />
       </div>
 
-      <div className="grid grid-cols-2 gap-2">
-        <FontTile
-          family={null}
-          category="auto"
-          active={activeFamily === null}
+      <div className="appearance-font-list">
+        <button
+          type="button"
           onClick={() => onPick(null)}
-        />
+          className={`appearance-font-option ${activeFamily === null ? 'is-active' : ''}`}
+        >
+          <span className="appearance-font-option__name">Match theme default</span>
+          <span className="appearance-font-option__cat">Auto</span>
+        </button>
         {filtered.map(font => (
-          <FontTile
+          <button
             key={font.family}
-            family={font.family}
-            category={font.category}
-            active={activeFamily === font.family}
+            type="button"
             onClick={() => onPick(font.family)}
-          />
+            className={`appearance-font-option ${activeFamily === font.family ? 'is-active' : ''}`}
+            style={{ fontFamily: `'${font.family}', sans-serif` }}
+          >
+            <span className="appearance-font-option__name">
+              <span className="appearance-font-option__specimen">Ag</span>
+              {font.family}
+            </span>
+            <span className="appearance-font-option__cat">{font.category}</span>
+          </button>
         ))}
         {filtered.length === 0 && (
-          <div className="col-span-2 rounded-lg border border-dashed border-[var(--border-default)] py-6 text-center text-[11px] text-[var(--text-tertiary)]">
+          <div className="px-3 py-4 text-center text-[11px] text-[var(--text-tertiary)]">
             No fonts match “{search}”.
           </div>
         )}
       </div>
     </section>
-  )
-}
-
-function FontTile({
-  family,
-  category,
-  active,
-  onClick,
-}: {
-  family: string | null
-  category: string
-  active: boolean
-  onClick: () => void
-}) {
-  const label = family ?? 'Theme default'
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`appearance-theme-tile flex flex-col items-stretch ${active ? 'is-active' : ''}`}
-      title={label}
-    >
-      <div
-        className="flex items-center justify-center px-3"
-        style={{
-          height: 56,
-          background:
-            'linear-gradient(180deg, color-mix(in srgb, var(--accent) 6%, var(--bg-card)), var(--bg-card))',
-          color: 'var(--text-primary)',
-          fontFamily: family ? `'${family}', sans-serif` : undefined,
-          fontWeight: 700,
-          fontSize: 22,
-          letterSpacing: '-0.01em',
-          lineHeight: 1,
-        }}
-      >
-        {family ? 'Ag' : 'Auto'}
-      </div>
-      <div className="appearance-theme-tile__meta">
-        <div className="appearance-theme-tile__name">
-          <span className="truncate">{label}</span>
-          {active && <Check size={11} className="shrink-0 text-[var(--accent)]" />}
-        </div>
-        <div className="appearance-theme-tile__blurb uppercase tracking-[0.12em]">{category}</div>
-      </div>
-    </button>
   )
 }
 

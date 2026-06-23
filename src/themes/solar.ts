@@ -60,11 +60,11 @@ export const solar: Theme = {
     headingFamily: 'Fraunces',
     bodyFamily: 'Inter',
     monoFamily: 'JetBrains Mono',
-    headingWeight: 600,
+    headingWeight: 700,
     bodyWeight: 400,
-    headingLetterSpacing: '-0.02em',
+    headingLetterSpacing: '0.04em',
     bodyLetterSpacing: '0',
-    headingTransform: 'none',
+    headingTransform: 'uppercase',
   },
   radius: {
     sm: '8px',
@@ -119,5 +119,5 @@ export const solar: Theme = {
   },
   chartColors: ['#D97706', '#B23A1F', '#F1A23E', '#4E8C42', '#5B7AA8', '#A85804', '#C68A2E'],
   preview: ['#F3E4BF', '#FFF9EB', '#D97706', '#B23A1F'],
-  bgPattern: 'none',
+  bgPattern: 'diagonal',
 }

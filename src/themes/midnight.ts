@@ -113,11 +113,11 @@ export const midnight: Theme = {
   },
   chrome: {
     btnStyle: 'gradient',
-    cardStyle: 'soft',
+    cardStyle: 'glass',
     badgeStyle: 'soft',
     tableStriped: false,
   },
   chartColors: ['#5BC0EB', '#9D8CFF', '#5EEAD4', '#FBBF24', '#F87171', '#34D399', '#F472B6'],
   preview: ['#080F1B', '#152138', '#5BC0EB', '#9D8CFF'],
-  bgPattern: 'none',
+  bgPattern: 'grid',
 }
