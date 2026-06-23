@@ -239,6 +239,23 @@ function applyTimezoneChange(
   return syncMoroccoProjection({ ...current, timezone: newTz })
 }
 
+function toTimeInputValue(time: string | undefined): string {
+  const raw = (time ?? '').trim()
+  if (!raw) return ''
+  const twelve = raw.match(/^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)$/i)
+  if (twelve) {
+    let h = Number(twelve[1]) % 12
+    if (twelve[3].toUpperCase() === 'PM') h += 12
+    const m = twelve[2] ?? '00'
+    return `${String(h).padStart(2, '0')}:${m.padStart(2, '0')}`
+  }
+  const twentyFour = raw.match(/^(\d{1,2}):(\d{2})/)
+  if (twentyFour) {
+    return `${String(Number(twentyFour[1])).padStart(2, '0')}:${twentyFour[2]}`
+  }
+  return ''
+}
+
 export function syncMoroccoProjection(current: Partial<Opportunity>): Partial<Opportunity> {
   if (!current.dueDate || !isCompleteClockTime(current.localTime)) {
     return { ...current, moroccoTime: '', moroccoDate: '' }
@@ -1162,13 +1179,22 @@ export function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => v
       {/* ── Schedule tab ── */}
       {tab === 'schedule' && (
         <div className="space-y-5">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-3 gap-4">
             <div>
               <label className={lbl}>Due Date *</label>
               <input
                 type="date"
                 value={form.dueDate ?? ''}
                 onChange={e => setForm(prev => applyScheduleFieldChange(prev, 'dueDate', e.target.value))}
+                className="input-field"
+              />
+            </div>
+            <div>
+              <label className={lbl}>Due Time</label>
+              <input
+                type="time"
+                value={toTimeInputValue(form.localTime)}
+                onChange={e => setForm(prev => applyScheduleFieldChange(prev, 'localTime', e.target.value))}
                 className="input-field"
               />
             </div>
@@ -2836,13 +2862,22 @@ function CreateModal({ onClose }: { onClose: () => void }) {
       {/* ── Schedule tab ── */}
       {tab === 'schedule' && (
         <div className="space-y-5">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-3 gap-4">
             <div>
               <label className={lbl}>Due Date *</label>
               <input
                 type="date"
                 value={form.dueDate ?? ''}
                 onChange={e => setForm(prev => applyScheduleFieldChange(prev, 'dueDate', e.target.value))}
+                className="input-field"
+              />
+            </div>
+            <div>
+              <label className={lbl}>Due Time</label>
+              <input
+                type="time"
+                value={toTimeInputValue(form.localTime)}
+                onChange={e => setForm(prev => applyScheduleFieldChange(prev, 'localTime', e.target.value))}
                 className="input-field"
               />
             </div>
