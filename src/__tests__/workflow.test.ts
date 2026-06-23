@@ -42,6 +42,7 @@ vi.mock('../lib/db', () => ({
   upsertNonSubReport: vi.fn().mockResolvedValue(null),
   upsertDeletionRequest: vi.fn().mockResolvedValue(null),
   upsertBDSubmission: vi.fn().mockResolvedValue(null),
+  deleteBDSubmissionRecord: vi.fn().mockResolvedValue(null),
 }))
 
 vi.mock('../lib/supabase', () => ({

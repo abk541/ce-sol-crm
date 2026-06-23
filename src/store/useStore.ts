@@ -46,6 +46,7 @@ import {
   upsertNonSubReport,
   upsertDeletionRequest,
   upsertBDSubmission,
+  deleteBDSubmissionRecord,
 } from '../lib/db'
 import { getAssignmentChain, isAssignedToAssociate } from '../lib/team'
 import { hasPermission } from '../lib/permissions'
@@ -145,6 +146,8 @@ interface AppState {
   // ── BD Submissions ─────────────────────────────────────────────────
   updateBDSubmission: (id: number, status: BDSubmission['status']) => void
   updateBDSubmissionDetails: (id: number, data: Partial<Omit<BDSubmission, 'id' | 'status'>>) => void
+  deleteBDSubmission: (id: number) => void
+  returnBDSubmissionToPipeline: (id: number) => void
 
   // ── Fresh Awards ───────────────────────────────────────────────────
   assignFreshAward: (id: string, assignments: Partial<FreshAward>) => void
@@ -1803,6 +1806,81 @@ export const useStore = create<AppState>()(
         }))
         const updated = get().bdSubmissions.find(b => b.id === id)
         if (updated) upsertBDSubmission(updated)
+      },
+
+      deleteBDSubmission: (id) => {
+        const actor = get().currentUser
+        if (!hasPermission(actor, 'opportunity:deleteApprove')) {
+          toast.error('Only the Capture Manager can delete submitted opportunities.')
+          return
+        }
+        const submission = get().bdSubmissions.find(row => row.id === id)
+        if (!submission) return
+
+        const linkedOpp = get().opportunities.find(opp => opp.solicitationId === submission.solicitationId)
+        set(s => ({
+          bdSubmissions: s.bdSubmissions.filter(row => row.id !== id),
+          opportunities: linkedOpp
+            ? s.opportunities.filter(opp => opp.id !== linkedOpp.id)
+            : s.opportunities,
+          nonSubReports: linkedOpp
+            ? s.nonSubReports.filter(report => report.opportunityId !== linkedOpp.id)
+            : s.nonSubReports,
+          deletionRequests: linkedOpp
+            ? s.deletionRequests.filter(request => request.opportunityId !== linkedOpp.id)
+            : s.deletionRequests,
+        }))
+
+        deleteBDSubmissionRecord(id)
+        if (linkedOpp) deleteOpportunityRecord(linkedOpp.id)
+        get().logActivity({
+          action: `Deleted submitted opportunity: ${submission.solicitation}`,
+          user: actor?.name || 'System',
+          userRole: actor?.role || 'CAPTURE_MANAGER',
+          entityType: 'opportunity',
+          entityId: linkedOpp?.id || String(id),
+          entityName: submission.solicitation,
+        })
+      },
+
+      returnBDSubmissionToPipeline: (id) => {
+        const actor = get().currentUser
+        if (!hasPermission(actor, 'opportunity:edit')) {
+          toast.error('Only the Capture Manager can move submitted opportunities back to the pipeline.')
+          return
+        }
+        const submission = get().bdSubmissions.find(row => row.id === id)
+        if (!submission) return
+        const linkedOpp = get().opportunities.find(opp => opp.solicitationId === submission.solicitationId)
+        if (!linkedOpp) {
+          toast.error('The original opportunity could not be found.')
+          return
+        }
+
+        const restored = normalizeOpportunityAssignmentStatus({
+          ...linkedOpp,
+          status: 'ACTIVE',
+          submittedAt: undefined,
+          nonSubmissionReportId: undefined,
+        }, get().employees)
+
+        set(s => ({
+          opportunities: s.opportunities.map(opp => opp.id === restored.id ? restored : opp),
+          bdSubmissions: s.bdSubmissions.filter(row => row.id !== id),
+        }))
+
+        upsertOpportunity(restored).then(saved => {
+          if (!saved) showDatabaseSaveError('Opportunity update')
+        })
+        deleteBDSubmissionRecord(id)
+        get().logActivity({
+          action: `Moved submitted opportunity back to General Pipeline: ${submission.solicitation}`,
+          user: actor?.name || 'System',
+          userRole: actor?.role || 'CAPTURE_MANAGER',
+          entityType: 'opportunity',
+          entityId: restored.id,
+          entityName: submission.solicitation,
+        })
       },
 
       // ── Activity Logs ───────────────────────────────────────────────

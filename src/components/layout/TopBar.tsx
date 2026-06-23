@@ -259,14 +259,14 @@ export default function TopBar() {
                   transition={{ duration: 0.14 }}
                   className="absolute left-0 top-11 z-50 w-[min(34rem,calc(100vw-2rem))] overflow-hidden rounded-2xl border shadow-2xl"
                   style={{
-                    background: 'linear-gradient(180deg, rgba(16,40,32,0.98), rgba(7,19,31,0.98))',
-                    borderColor: 'rgba(215,190,122,0.24)',
-                    boxShadow: '0 24px 70px rgba(0,0,0,0.44)',
+                    background: 'var(--exec-panel)',
+                    borderColor: 'var(--exec-border-strong)',
+                    boxShadow: 'var(--shadow-modal)',
                   }}
                 >
-                  <div className="border-b border-[#D7BE7A]/15 px-4 py-3">
-                    <p className="text-xs font-black text-slate-100">Global Search</p>
-                    <p className="mt-0.5 text-[11px] text-slate-400">Open the exact tab where the record currently lives.</p>
+                  <div className="border-b px-4 py-3" style={{ borderColor: 'var(--border-default)' }}>
+                    <p className="text-xs font-black" style={{ color: 'var(--text-primary)' }}>Global Search</p>
+                    <p className="mt-0.5 text-[11px]" style={{ color: 'var(--text-tertiary)' }}>Open the exact tab where the record currently lives.</p>
                   </div>
 
                   <div className="max-h-[28rem] overflow-y-auto p-2">
@@ -282,10 +282,11 @@ export default function TopBar() {
                           key={result.id}
                           type="button"
                           onClick={() => openGlobalSearchResult(result)}
-                          className="group w-full rounded-xl border border-transparent px-3 py-3 text-left transition-all hover:border-[#D7BE7A]/25 hover:bg-white/5"
+                          className="group w-full rounded-xl border border-transparent px-3 py-3 text-left transition-all hover:bg-white/5"
+                          style={{ borderColor: 'transparent' }}
                         >
                           <div className="flex items-start gap-3">
-                            <div className="mt-0.5 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl border border-[#D7BE7A]/18 bg-white/[0.055] text-[#D7BE7A]">
+                            <div className="mt-0.5 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl border" style={{ borderColor: 'var(--border-default)', background: 'var(--exec-panel-soft)', color: 'var(--accent)' }}>
                               {result.kind === 'contract' ? <FileCheck2 size={15} /> :
                                 result.kind === 'fresh_award' ? <Trophy size={15} /> :
                                 result.kind === 'bd_submission' ? <TrendingUp size={15} /> :
@@ -296,7 +297,7 @@ export default function TopBar() {
                             <div className="min-w-0 flex-1">
                               <div className="flex items-start justify-between gap-3">
                                 <p className="truncate text-xs font-black text-slate-100">{result.title}</p>
-                                <span className="shrink-0 rounded-full border border-[#D7BE7A]/20 bg-[#D7BE7A]/10 px-2 py-0.5 text-[9px] font-black uppercase tracking-wide text-[#D7BE7A]">
+                                <span className="shrink-0 rounded-full border px-2 py-0.5 text-[9px] font-black uppercase tracking-wide" style={{ borderColor: 'var(--border-default)', background: 'color-mix(in srgb, var(--accent) 11%, transparent)', color: 'var(--accent)' }}>
                                   Open
                                 </span>
                               </div>
@@ -335,8 +336,8 @@ export default function TopBar() {
             </motion.span>
             {unread > 0 && (
               <span
-                className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] rounded-full px-1 text-[10px] font-black text-[#07131F] ring-2 ring-[#07131F] flex items-center justify-center"
-                style={{ background: '#D7BE7A' }}
+                className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] rounded-full px-1 text-[10px] font-black ring-2 flex items-center justify-center"
+                style={{ background: 'var(--accent)', color: 'var(--bg-app)', ['--tw-ring-color' as any]: 'var(--bg-app)' }}
               >
                 {unread > 9 ? '9+' : unread}
               </span>
@@ -344,7 +345,7 @@ export default function TopBar() {
             {bellPulse && (
               <span
                 className="pointer-events-none absolute inset-0 rounded-xl"
-                style={{ boxShadow: '0 0 0 0 rgba(215,190,122,0.55)', animation: 'topbarBellPulse 1.2s ease-out 1' }}
+                style={{ boxShadow: '0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent)', animation: 'topbarBellPulse 1.2s ease-out 1' }}
               />
             )}
           </button>
@@ -360,9 +361,9 @@ export default function TopBar() {
                   transition={{ duration: 0.16 }}
                   className="absolute right-0 top-11 z-50 w-[min(24rem,calc(100vw-2rem))] overflow-hidden rounded-2xl border shadow-2xl"
                   style={{
-                    background: 'linear-gradient(180deg, rgba(16,40,32,0.98), rgba(7,19,31,0.98))',
-                    borderColor: 'rgba(215,190,122,0.24)',
-                    boxShadow: '0 24px 70px rgba(0,0,0,0.44)',
+                    background: 'var(--exec-panel)',
+                    borderColor: 'var(--exec-border-strong)',
+                    boxShadow: 'var(--shadow-modal)',
                   }}
                 >
                   <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">

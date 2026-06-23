@@ -8,6 +8,7 @@ import { cn } from '../../lib/utils'
 import CompanyLogo from '../shared/CompanyLogo'
 import { DEFAULT_EXPANDED_NAV_GROUPS, NAV_GROUPS } from '../../config/navigation'
 import { hasAnyPermission, hasPermission, ROLE_LABELS } from '../../lib/permissions'
+import { useAppearance } from '../../lib/appearance'
 
 function canSeeNavItem(user: ReturnType<typeof useStore.getState>['currentUser'], to: string) {
   if (to === '/pipeline') return hasPermission(user, 'opportunity:read')
@@ -27,27 +28,25 @@ function canSeeNavItem(user: ReturnType<typeof useStore.getState>['currentUser']
 
 export default function Sidebar() {
   const { sidebarCollapsed, toggleSidebar, currentUser, logout, notifications } = useStore()
+  const { prefs } = useAppearance()
   const location = useLocation()
   const [expanded, setExpanded] = useState<Record<string, boolean>>(DEFAULT_EXPANDED_NAV_GROUPS)
   const unread = notifications.filter(n => !n.read).length
+  const expandedWidth = prefs.theme === 'noir' ? 276 : prefs.theme === 'prism' ? 232 : prefs.theme === 'daylight' ? 246 : 256
+  const collapsedWidth = prefs.theme === 'noir' ? 76 : 66
 
   const toggleGroup = (label: string) =>
     setExpanded(p => ({ ...p, [label]: !p[label] }))
 
   return (
     <motion.aside
-      animate={{ width: sidebarCollapsed ? 68 : 256 }}
+      animate={{ width: sidebarCollapsed ? collapsedWidth : expandedWidth }}
       transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-      className="flex-shrink-0 flex flex-col h-screen sticky top-0 z-40 overflow-hidden"
-      style={{
-        background: 'linear-gradient(180deg, #07131F 0%, #0A1D2B 54%, #102820 100%)',
-        borderRight: '1px solid rgba(215,190,122,0.20)',
-        boxShadow: '10px 0 34px rgba(7,19,31,0.18)',
-      }}
+      className={`app-sidebar app-sidebar--${prefs.theme} flex-shrink-0 flex flex-col h-screen sticky top-0 z-40 overflow-hidden`}
     >
       {/* Logo */}
       <div className="flex items-center gap-3 px-4 py-4"
-           style={{ minHeight: 65, borderBottom: '1px solid rgba(215,190,122,0.16)' }}>
+           style={{ minHeight: 65, borderBottom: '1px solid var(--sidebar-border)' }}>
         {sidebarCollapsed ? (
           <CompanyLogo variant="icon" />
         ) : (
@@ -68,10 +67,10 @@ export default function Sidebar() {
           onClick={toggleSidebar}
           className={cn(
             'flex-shrink-0 w-6 h-6 rounded-md flex items-center justify-center',
-            'text-stone-300 hover:text-white transition-all',
+            'transition-all',
             sidebarCollapsed ? 'mx-auto' : 'ml-auto'
           )}
-          style={{ background: 'rgba(255,255,255,0.06)' }}
+          style={{ background: 'var(--sidebar-control-bg)', color: 'var(--sidebar-text)' }}
         >
           {sidebarCollapsed ? <ChevronRight size={13} /> : <ChevronLeft size={13} />}
         </button>
@@ -87,7 +86,8 @@ export default function Sidebar() {
             {!sidebarCollapsed && (
               <button
                 onClick={() => toggleGroup(group.label)}
-                className="flex items-center gap-1.5 w-full px-2 py-1 mb-0.5 text-[10px] font-bold uppercase tracking-[0.15em] text-stone-400 hover:text-stone-200 transition-colors"
+                className="flex items-center gap-1.5 w-full px-2 py-1 mb-0.5 text-[10px] font-bold uppercase tracking-[0.15em] transition-colors"
+                style={{ color: 'var(--sidebar-muted)' }}
               >
                 {group.label}
                 <ChevronDown
@@ -126,7 +126,7 @@ export default function Sidebar() {
                             size={15}
                             className={cn(
                               'flex-shrink-0 nav-icon',
-                              isActive ? 'text-[#D7BE7A]' : 'text-stone-400'
+                              isActive ? 'nav-icon-active' : 'nav-icon-idle'
                             )}
                           />
                           {!sidebarCollapsed && (
@@ -135,7 +135,6 @@ export default function Sidebar() {
                           {'badge' in item && item.badge && unread > 0 && (
                             <span className={cn(
                               'flex-shrink-0 min-w-[18px] h-[18px] rounded-full text-[9px] font-bold flex items-center justify-center',
-                              'bg-[#B8914E] text-white',
                               sidebarCollapsed ? 'absolute -top-1 -right-1 w-4 h-4 text-[8px]' : 'ml-auto'
                             )}>
                               {unread > 9 ? '9+' : unread}
@@ -160,7 +159,7 @@ export default function Sidebar() {
             'p-3',
             sidebarCollapsed ? 'flex flex-col items-center gap-2' : 'flex items-center gap-2.5'
           )}
-          style={{ borderTop: '1px solid rgba(215,190,122,0.16)' }}
+          style={{ borderTop: '1px solid var(--sidebar-border)' }}
         >
           <div className={cn(
             'flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white bg-gradient-to-br',
@@ -170,15 +169,15 @@ export default function Sidebar() {
           </div>
           {!sidebarCollapsed && (
             <div className="flex-1 min-w-0">
-              <p className="text-[13px] font-semibold text-stone-100 truncate">{currentUser.name}</p>
-              <p className="text-[10px] text-stone-400 font-medium truncate">{ROLE_LABELS[currentUser.role]}</p>
+              <p className="text-[13px] font-semibold truncate" style={{ color: 'var(--sidebar-text)' }}>{currentUser.name}</p>
+              <p className="text-[10px] font-medium truncate" style={{ color: 'var(--sidebar-muted)' }}>{ROLE_LABELS[currentUser.role]}</p>
             </div>
           )}
           <button
             onClick={logout}
             title="Logout"
-            className="flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-stone-400 hover:text-white transition-all"
-            style={{ background: 'rgba(255,255,255,0.05)' }}
+            className="flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center transition-all"
+            style={{ background: 'var(--sidebar-control-bg)', color: 'var(--sidebar-muted)' }}
           >
             <LogOut size={13} />
           </button>

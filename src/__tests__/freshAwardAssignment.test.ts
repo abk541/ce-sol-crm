@@ -32,6 +32,7 @@ vi.mock('../lib/db', () => ({
   upsertNonSubReport: vi.fn(),
   upsertDeletionRequest: vi.fn(),
   upsertBDSubmission: vi.fn(),
+  deleteBDSubmissionRecord: vi.fn(),
 }))
 
 import { useStore } from '../store/useStore'

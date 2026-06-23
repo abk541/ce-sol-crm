@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { Edit2, Filter, MoreHorizontal, Paperclip, Search, Trash2, TrendingUp, UploadCloud } from 'lucide-react'
-import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { Edit2, Filter, MoreHorizontal, Paperclip, RotateCcw, Search, Trash2, TrendingUp, UploadCloud, Users2 } from 'lucide-react'
+import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts'
 import type { BDSubmission, ContractType, FileAttachment, Opportunity, SetAside } from '../types'
 import { useStore } from '../store/useStore'
 import toast from 'react-hot-toast'
@@ -16,6 +16,7 @@ import SamGovListingButton from '../components/shared/SamGovListingButton'
 import {
   formatOpportunityMoroccoDueDateTime,
   formatOpportunitySourceDueDateTime,
+  SourcingModal,
 } from './PipelinePage'
 
 type BDTab = BDSubmission['status']
@@ -398,10 +399,22 @@ function FilterInput({
 }
 
 export default function BDTrackerPage() {
-  const { bdSubmissions, updateBDSubmission, updateBDSubmissionDetails, updateOpportunity, opportunities, employees, currentUser } = useStore()
+  const {
+    bdSubmissions,
+    updateBDSubmission,
+    updateBDSubmissionDetails,
+    deleteBDSubmission,
+    returnBDSubmissionToPipeline,
+    updateOpportunity,
+    opportunities,
+    employees,
+    currentUser,
+  } = useStore()
   const canEditOpportunities = hasPermission(currentUser, 'opportunity:edit')
+  const canDeleteSubmitted = hasPermission(currentUser, 'opportunity:deleteApprove')
   const [selectedRowId, setSelectedRowId] = useState<number | null>(null)
   const [editingRowId, setEditingRowId] = useState<number | null>(null)
+  const [sourcingOpp, setSourcingOpp] = useState<Opportunity | null>(null)
   const [searchParams] = useSearchParams()
   const globalRecordId = searchParams.get('record')
   const globalTab = searchParams.get('tab') as BDTab | null
@@ -470,27 +483,32 @@ export default function BDTrackerPage() {
   const editingRow = editingRowId === null ? null : bdSubmissions.find(row => row.id === editingRowId) ?? null
   const editingOpportunity = editingRow ? rowOpportunity(editingRow, opportunities) ?? null : null
 
-  const stats = {
-    submitted: baseFiltered.filter(s => s.status === 'SUBMITTED').length,
-    discussion: baseFiltered.filter(s => s.status === 'DISCUSSING').length,
-    awarded: baseFiltered.filter(s => s.status === 'AWARDED').length,
-    dropped: baseFiltered.filter(s => s.status === 'DROPPED').length,
-    winRate: baseFiltered.length ? Math.round((baseFiltered.filter(s => s.status === 'AWARDED').length / baseFiltered.length) * 100) : 0,
-  }
+  const outcomeChart = useMemo(() => {
+    const submitted = baseFiltered.filter(row => !['NOT_SUBMITTED', 'DROPPED'].includes(row.status)).length
+    const nonSubmitted = baseFiltered.filter(row => row.status === 'NOT_SUBMITTED').length
+    const dropped = baseFiltered.filter(row => row.status === 'DROPPED').length
+    return [
+      { name: 'Submitted', value: submitted, color: STATUS_META.SUBMITTED.color },
+      { name: 'Non-Submission', value: nonSubmitted, color: STATUS_META.NOT_SUBMITTED.color },
+      { name: 'Dropped', value: dropped, color: STATUS_META.DROPPED.color },
+    ].filter(row => row.value > 0)
+  }, [baseFiltered])
 
-  const statusChart = BD_TABS.map(t => ({ name: t.label, value: baseFiltered.filter(s => s.status === t.key).length, color: STATUS_META[t.key].color })).filter(d => d.value > 0)
-  const personChart = useMemo(() => {
-    const counts: Record<string, number> = {}
+  const associateOutcomes = useMemo(() => {
+    const counts: Record<string, { name: string; submitted: number; nonSubmitted: number; dropped: number; total: number }> = {}
     baseFiltered.forEach(row => {
       const opp = rowOpportunity(row, opportunities)
       const chain = getAssignmentChain(employees, opp?.assignedTo)
-      const key = filters.associate || filters.teamLead || filters.manager
-        ? (chain.associate?.name || row.supportAgent || 'Unassigned')
-        : (chain.manager?.name || row.bdm || 'Unassigned')
-      counts[key] = (counts[key] || 0) + 1
+      const key = chain.associate?.name || row.supportAgent || 'Unassigned'
+      const current = counts[key] || { name: key, submitted: 0, nonSubmitted: 0, dropped: 0, total: 0 }
+      if (row.status === 'NOT_SUBMITTED') current.nonSubmitted += 1
+      else if (row.status === 'DROPPED') current.dropped += 1
+      else current.submitted += 1
+      current.total += 1
+      counts[key] = current
     })
-    return Object.entries(counts).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value).slice(0, 8)
-  }, [baseFiltered, opportunities, employees, filters])
+    return Object.values(counts).sort((a, b) => b.total - a.total || a.name.localeCompare(b.name)).slice(0, 8)
+  }, [baseFiltered, opportunities, employees])
 
   const clearFilters = () => {
     setSearch('')
@@ -537,6 +555,20 @@ export default function BDTrackerPage() {
     return true
   }
 
+  const handleReturnToPipeline = (row: BDSubmission) => {
+    if (!confirm(`Move ${row.solicitation} back to General Pipeline?`)) return
+    returnBDSubmissionToPipeline(row.id)
+    setMenuOpen(null)
+    setSelectedRowId(null)
+  }
+
+  const handleDeleteSubmitted = (row: BDSubmission) => {
+    if (!confirm(`Delete submitted opportunity ${row.solicitation}? This is only for human-error cleanup.`)) return
+    deleteBDSubmission(row.id)
+    setMenuOpen(null)
+    setSelectedRowId(null)
+  }
+
   return (
     <div className="p-6 page-enter space-y-5">
       <div className="flex items-start justify-between gap-3">
@@ -549,81 +581,56 @@ export default function BDTrackerPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
-        {[
-          { label: 'Submitted', value: stats.submitted, meta: STATUS_META.SUBMITTED },
-          { label: 'Discussion', value: stats.discussion, meta: STATUS_META.DISCUSSING },
-          { label: 'Awarded', value: stats.awarded, meta: STATUS_META.AWARDED },
-          { label: 'Dropped', value: stats.dropped, meta: STATUS_META.DROPPED },
-          { label: 'Win Rate', value: `${stats.winRate}%`, meta: STATUS_META.AWARDED },
-        ].map(card => (
-          <div key={card.label} className="rounded-2xl border p-4 text-center" style={{ background: card.meta.bg, borderColor: card.meta.border }}>
-            <p className="text-2xl font-black" style={{ color: card.meta.color }}>{card.value}</p>
-            <p className="mt-1 text-xs font-semibold text-slate-600">{card.label}</p>
+      <div className="rounded-2xl border border-[var(--border-default)] bg-[var(--bg-card)] p-4 shadow-sm">
+        <div className="grid gap-4 lg:grid-cols-[300px_minmax(0,1fr)]">
+          <div>
+            <p className="text-sm font-bold text-[var(--text-primary)]">Associate Outcome Mix</p>
+            <p className="mt-1 text-xs text-[var(--text-muted)]">Submission, non-submission, and dropped outcomes from the current filters.</p>
+            <div className="mt-3 h-48">
+              {outcomeChart.length === 0 ? (
+                <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-[var(--border-default)] text-xs font-semibold text-[var(--text-muted)]">
+                  No tracker data yet.
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie data={outcomeChart} dataKey="value" nameKey="name" innerRadius={52} outerRadius={78} paddingAngle={3} stroke="transparent" strokeWidth={0} isAnimationActive={false}>
+                      {outcomeChart.map(d => <Cell key={d.name} fill={d.color} stroke="transparent" strokeWidth={0} />)}
+                    </Pie>
+                    <Tooltip />
+                  </PieChart>
+                </ResponsiveContainer>
+              )}
+            </div>
           </div>
-        ))}
-      </div>
 
-      <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="mb-3 flex flex-wrap items-center gap-3">
-          <div className="relative min-w-[260px] flex-1">
-            <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input value={search} onChange={e => { setSearch(e.target.value); setPage(1) }}
-              className="input-field w-full pl-9 text-xs" placeholder="Search opportunity, ID, or location..." />
+          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+            {associateOutcomes.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-[var(--border-default)] p-4 text-sm font-semibold text-[var(--text-muted)] sm:col-span-2 xl:col-span-4">
+                No associate outcome rows for the current filters.
+              </div>
+            ) : (
+              associateOutcomes.map(row => (
+                <div key={row.name} className="rounded-xl border border-[var(--border-default)] bg-white/[0.03] p-3">
+                  <p className="truncate text-sm font-black text-[var(--text-primary)]">{row.name}</p>
+                  <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+                    <div>
+                      <p className="text-base font-black" style={{ color: STATUS_META.SUBMITTED.color }}>{row.submitted}</p>
+                      <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--text-muted)]">Submitted</p>
+                    </div>
+                    <div>
+                      <p className="text-base font-black" style={{ color: STATUS_META.NOT_SUBMITTED.color }}>{row.nonSubmitted}</p>
+                      <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--text-muted)]">Non-Sub</p>
+                    </div>
+                    <div>
+                      <p className="text-base font-black" style={{ color: STATUS_META.DROPPED.color }}>{row.dropped}</p>
+                      <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--text-muted)]">Dropped</p>
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
-          <div className="w-full sm:w-64">
-            <PeriodFilter value={period} onChange={value => { setPeriod(value); setPage(1) }} placeholder="All due dates" />
-          </div>
-          <button onClick={clearFilters} className="btn-secondary text-xs">Clear</button>
-        </div>
-
-        <div className="grid grid-cols-1 gap-3 border-t border-slate-100 pt-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-          {FILTERS.map(filter => (
-            <FilterInput
-              key={filter.key}
-              id={`bd-filter-${filter.key}`}
-              label={filter.label}
-              value={filters[filter.key]}
-              placeholder={filter.placeholder}
-              suggestions={filterOptions[filter.key] ?? []}
-              onChange={value => {
-                setFilters(prev => ({ ...prev, [filter.key]: value }))
-                setPage(1)
-              }}
-            />
-          ))}
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="mb-3">
-            <p className="text-sm font-bold text-slate-800">Tracker Status Mix</p>
-            <p className="text-xs text-slate-400">Counts respect the date, search, person, and field filters.</p>
-          </div>
-          <ResponsiveContainer width="100%" height={180}>
-            <PieChart>
-              <Pie data={statusChart} dataKey="value" nameKey="name" innerRadius={48} outerRadius={72} paddingAngle={2} stroke="transparent" strokeWidth={0}>
-                {statusChart.map(d => <Cell key={d.name} fill={d.color} stroke="transparent" strokeWidth={0} />)}
-              </Pie>
-              <Tooltip />
-            </PieChart>
-          </ResponsiveContainer>
-        </div>
-        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="mb-3">
-            <p className="text-sm font-bold text-slate-800">Workload by Person</p>
-            <p className="text-xs text-slate-400">Changes from total to person-focused when manager, team lead, or associate filters are selected.</p>
-          </div>
-          <ResponsiveContainer width="100%" height={180}>
-            <BarChart data={personChart}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" vertical={false} />
-              <XAxis dataKey="name" tick={{ fill: '#94A3B8', fontSize: 10 }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fill: '#94A3B8', fontSize: 10 }} axisLine={false} tickLine={false} allowDecimals={false} />
-              <Tooltip />
-              <Bar dataKey="value" name="Opportunities" fill="#4338CA" radius={[5, 5, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
         </div>
       </div>
 
@@ -643,6 +650,37 @@ export default function BDTrackerPage() {
               </button>
             )
           })}
+        </div>
+
+        <div className="mb-4 rounded-2xl border border-[var(--border-default)] bg-[var(--bg-card)] p-4 shadow-sm">
+          <div className="mb-3 flex flex-wrap items-center gap-3">
+            <div className="relative min-w-[260px] flex-1">
+              <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
+              <input value={search} onChange={e => { setSearch(e.target.value); setPage(1) }}
+                className="input-field w-full pl-9 text-xs" placeholder="Search opportunity, ID, or location..." />
+            </div>
+            <div className="w-full sm:w-64">
+              <PeriodFilter value={period} onChange={value => { setPeriod(value); setPage(1) }} placeholder="All due dates" />
+            </div>
+            <button onClick={clearFilters} className="btn-secondary text-xs">Clear</button>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 border-t border-[var(--border-default)] pt-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+            {FILTERS.map(filter => (
+              <FilterInput
+                key={filter.key}
+                id={`bd-filter-${filter.key}`}
+                label={filter.label}
+                value={filters[filter.key]}
+                placeholder={filter.placeholder}
+                suggestions={filterOptions[filter.key] ?? []}
+                onChange={value => {
+                  setFilters(prev => ({ ...prev, [filter.key]: value }))
+                  setPage(1)
+                }}
+              />
+            ))}
+          </div>
         </div>
 
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
@@ -723,6 +761,42 @@ export default function BDTrackerPage() {
                                   variant="menu"
                                   onOpened={() => setMenuOpen(null)}
                                 />
+                                {opp && (
+                                  <button
+                                    onClick={() => {
+                                      setSourcingOpp(opp)
+                                      setMenuOpen(null)
+                                    }}
+                                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50 hover:text-slate-900"
+                                  >
+                                    <Users2 size={13} /> Sourcing
+                                  </button>
+                                )}
+                                <button
+                                  onClick={() => {
+                                    openEditForRow(s)
+                                    setMenuOpen(null)
+                                  }}
+                                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50 hover:text-slate-900"
+                                >
+                                  <Edit2 size={13} /> Edit Values
+                                </button>
+                                {canEditOpportunities && (
+                                  <button
+                                    onClick={() => handleReturnToPipeline(s)}
+                                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50 hover:text-slate-900"
+                                  >
+                                    <RotateCcw size={13} /> Move to General Pipeline
+                                  </button>
+                                )}
+                                {canDeleteSubmitted && (
+                                  <button
+                                    onClick={() => handleDeleteSubmitted(s)}
+                                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-red-500 transition-colors hover:bg-red-50"
+                                  >
+                                    <Trash2 size={13} /> Delete Submitted Opportunity
+                                  </button>
+                                )}
                                 <div className="my-1 border-t border-slate-100" />
                                 <p className="px-3 py-1 text-[9px] font-bold uppercase tracking-wider text-slate-400">Move to</p>
                                 {BD_TABS.filter(t => t.key !== s.status).map(t => {
@@ -895,11 +969,18 @@ export default function BDTrackerPage() {
                     </DrawerSection>
                   ) : null}
 
-                  {canEditOpportunities && (
+                  {(selectedOpportunity || canEditOpportunities) && (
                     <div className="sticky bottom-0 -mx-6 -mb-5 mt-4 flex justify-end gap-2 border-t border-[#D7BE7A]/15 bg-[#07131F]/95 px-6 py-4 backdrop-blur">
-                      <button className="btn-primary gap-2 text-xs" onClick={() => openEditForRow(selectedRow)}>
-                        <Edit2 size={13} /> Edit Record
-                      </button>
+                      {selectedOpportunity && (
+                        <button className="btn-secondary gap-2 text-xs" onClick={() => setSourcingOpp(selectedOpportunity)}>
+                          <Users2 size={13} /> Sourcing
+                        </button>
+                      )}
+                      {canEditOpportunities && (
+                        <button className="btn-primary gap-2 text-xs" onClick={() => openEditForRow(selectedRow)}>
+                          <Edit2 size={13} /> Edit Record
+                        </button>
+                      )}
                     </div>
                   )}
                 </>
@@ -916,6 +997,13 @@ export default function BDTrackerPage() {
           uploadedBy={currentUser?.username ?? currentUser?.name ?? 'unknown'}
           onClose={() => setEditingRowId(null)}
           onSave={form => saveTrackerDetails(editingRow, editingOpportunity, form)}
+        />
+      )}
+
+      {sourcingOpp && (
+        <SourcingModal
+          opp={sourcingOpp}
+          onClose={() => setSourcingOpp(null)}
         />
       )}
     </div>

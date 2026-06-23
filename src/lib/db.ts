@@ -1465,6 +1465,16 @@ export async function upsertBDSubmission(submission: BDSubmission): Promise<void
   }
 }
 
+export async function deleteBDSubmissionRecord(id: number): Promise<void> {
+  if (!isSupabaseConnected || !supabase) return
+  try {
+    const { error } = await supabase.from('bd_submissions').delete().eq('id', id)
+    if (error) console.error('[db] deleteBDSubmissionRecord error', error)
+  } catch (err) {
+    console.error('[db] deleteBDSubmissionRecord failed', err)
+  }
+}
+
 export async function clearBusinessData(): Promise<void> {
   if (!isSupabaseConnected || !supabase) return
   try {

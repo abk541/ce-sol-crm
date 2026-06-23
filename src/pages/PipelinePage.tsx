@@ -527,6 +527,16 @@ function makeOpportunityContact(): SamGovContact {
   }
 }
 
+function makeContractingOfficeContact(address = ''): SamGovContact {
+  return {
+    id: crypto.randomUUID(),
+    kind: 'CONTRACTING_OFFICE',
+    type: 'Contracting Office',
+    title: 'Contracting Office Address',
+    additionalInfo: address,
+  }
+}
+
 function opportunityContactHasData(contact: SamGovContact) {
   return Boolean(
     contact.fullName?.trim() ||
@@ -568,12 +578,143 @@ export function SamGovContactsPanel({
   onChange?: (contacts: SamGovContact[]) => void
 }) {
   const list = contacts ?? []
+  const officeContact = list.find(contact => contact.kind === 'CONTRACTING_OFFICE')
+  const pocContacts = list.filter(contact => contact.kind !== 'CONTRACTING_OFFICE')
   const updateContact = (id: string, patch: Partial<SamGovContact>) => {
     if (!onChange) return
     onChange(list.map(contact => contact.id === id ? { ...contact, ...patch } : contact))
   }
+  const updateOfficeAddress = (address: string) => {
+    if (!onChange) return
+    if (officeContact) {
+      updateContact(officeContact.id, {
+        kind: 'CONTRACTING_OFFICE',
+        type: 'Contracting Office',
+        title: 'Contracting Office Address',
+        additionalInfo: address,
+      })
+      return
+    }
+    onChange([makeContractingOfficeContact(address), ...list])
+  }
   const addContact = () => onChange?.([...list, makeOpportunityContact()])
   const removeContact = (id: string) => onChange?.(list.filter(contact => contact.id !== id))
+
+  if (editable) {
+    return (
+      <div className="space-y-4">
+        <section
+          className="rounded-2xl border p-4"
+          style={{ background: 'rgba(255,255,255,0.045)', borderColor: 'rgba(215,190,122,0.24)' }}
+        >
+          <div className="mb-3 flex items-start justify-between gap-4">
+            <div>
+              <p className="text-sm font-semibold text-slate-100">Contracting Office Address</p>
+              <p className="mt-0.5 text-xs text-slate-400">One address field for the contracting office listed on the opportunity.</p>
+            </div>
+            <span className="rounded-full border border-[#D7BE7A]/30 bg-[#D7BE7A]/10 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-[#F8E8B8]">
+              Address
+            </span>
+          </div>
+          <textarea
+            value={officeContact?.additionalInfo ?? ''}
+            onChange={event => updateOfficeAddress(event.target.value)}
+            rows={3}
+            className="input-field w-full resize-y"
+            placeholder="Contracting office street address, city, state, ZIP..."
+          />
+        </section>
+
+        <section className="space-y-3">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="text-sm font-semibold text-slate-100">Points of Contact</p>
+              <p className="text-xs text-slate-400">Primary and secondary POCs can be imported from SAM.gov or entered manually.</p>
+            </div>
+            <button type="button" onClick={addContact} className="btn-secondary flex-shrink-0">
+              <Plus size={13} /> Add POC
+            </button>
+          </div>
+
+          {pocContacts.length === 0 ? (
+            <div
+              className="rounded-xl border border-dashed p-6 text-center"
+              style={{ background: 'rgba(255,255,255,0.035)', borderColor: 'rgba(215,190,122,0.22)' }}
+            >
+              <p className="text-sm font-semibold text-slate-100">No POCs on file</p>
+              <p className="mt-1 text-xs text-slate-400">Add the primary and secondary contacts when available.</p>
+            </div>
+          ) : (
+            pocContacts.map(c => (
+              <div
+                key={c.id}
+                className="rounded-xl border p-4"
+                style={{ background: 'rgba(255,255,255,0.045)', borderColor: 'rgba(215,190,122,0.24)' }}
+              >
+                <div className="mb-3 flex items-start justify-between gap-3">
+                  <div className="grid flex-1 grid-cols-1 gap-3 sm:grid-cols-3">
+                    <div>
+                      <label className="mb-1.5 block text-[10px] font-black uppercase tracking-widest text-slate-400">POC Type</label>
+                      <select
+                        value={c.type ?? 'Primary POC'}
+                        onChange={event => updateContact(c.id, { kind: 'POC', type: event.target.value })}
+                        className="select-field"
+                      >
+                        <option value="Primary POC">Primary POC</option>
+                        <option value="Secondary POC">Secondary POC</option>
+                        <option value="Alternate POC">Alternate POC</option>
+                        <option value="Manual">Manual</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-[10px] font-black uppercase tracking-widest text-slate-400">Name</label>
+                      <input value={c.fullName ?? ''} onChange={event => updateContact(c.id, { kind: 'POC', fullName: event.target.value })} className="input-field" placeholder="Full name" />
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-[10px] font-black uppercase tracking-widest text-slate-400">Title / Role</label>
+                      <input value={c.title ?? ''} onChange={event => updateContact(c.id, { kind: 'POC', title: event.target.value })} className="input-field" placeholder="Contracting Officer" />
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => removeContact(c.id)}
+                    className="mt-6 flex h-9 w-9 items-center justify-center rounded-xl border border-red-400/35 text-red-200 transition-colors hover:bg-red-500/15"
+                    title="Remove POC"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  <div>
+                    <label className="mb-1.5 block text-[10px] font-black uppercase tracking-widest text-slate-400">Email</label>
+                    <input value={c.email ?? ''} onChange={event => updateContact(c.id, { kind: 'POC', email: event.target.value })} className="input-field" placeholder="email@example.com" />
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-[10px] font-black uppercase tracking-widest text-slate-400">Phone</label>
+                    <input value={c.phone ?? ''} onChange={event => updateContact(c.id, { kind: 'POC', phone: event.target.value })} className="input-field" placeholder="+1..." />
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-[10px] font-black uppercase tracking-widest text-slate-400">Fax</label>
+                    <input value={c.fax ?? ''} onChange={event => updateContact(c.id, { kind: 'POC', fax: event.target.value })} className="input-field" placeholder="Optional" />
+                  </div>
+                </div>
+                <div className="mt-3">
+                  <label className="mb-1.5 block text-[10px] font-black uppercase tracking-widest text-slate-400">Notes</label>
+                  <textarea
+                    value={c.additionalInfo ?? ''}
+                    onChange={event => updateContact(c.id, { kind: 'POC', additionalInfo: event.target.value })}
+                    rows={2}
+                    className="input-field w-full resize-none"
+                    placeholder="Office notes, extension, instructions..."
+                  />
+                </div>
+              </div>
+            ))
+          )}
+        </section>
+      </div>
+    )
+  }
 
   if (list.length === 0) {
     return (
@@ -2191,10 +2332,31 @@ function SubmitModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }
   }
 
   const confirm = async () => {
+    const total = parseFloat(contractAmount)
+    const yearly = parseFloat(yearlyValue)
+    const monthly = parseFloat(monthlyValue)
+
+    if (proposalAttachments.length === 0) {
+      toast.error('Attach at least one proposal file before submitting.')
+      return
+    }
+    if (!Number.isFinite(total) || total <= 0) {
+      toast.error('Enter the total contract amount before submitting.')
+      return
+    }
+    if (showYearlyMonthly && (!Number.isFinite(yearly) || yearly <= 0)) {
+      toast.error('Enter the yearly value before submitting this recurring proposal.')
+      return
+    }
+    if (showYearlyMonthly && (!Number.isFinite(monthly) || monthly <= 0)) {
+      toast.error('Enter the monthly value before submitting this recurring proposal.')
+      return
+    }
+
     const vals: { contractAmount?: number; baseAmount?: number; monthlyPayment?: number } = {}
-    if (contractAmount) vals.contractAmount = parseFloat(contractAmount)
-    if (yearlyValue)    vals.baseAmount     = parseFloat(yearlyValue)
-    if (monthlyValue)   vals.monthlyPayment = parseFloat(monthlyValue)
+    vals.contractAmount = total
+    if (showYearlyMonthly) vals.baseAmount = yearly
+    if (showYearlyMonthly) vals.monthlyPayment = monthly
     const proposalNames = proposalAttachments.map(att => att.name).filter(Boolean)
     submitOpportunity(opp.id, {
       ...vals,

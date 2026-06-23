@@ -21,6 +21,7 @@ import { useNavigate } from 'react-router-dom'
 import { getAssignmentChain } from '../lib/team'
 import { hasAnyPermission, hasPermission, ROLE_LABELS } from '../lib/permissions'
 import { chartColorsForTheme, useAppearance } from '../lib/appearance'
+import { NAICS_CODES } from '../data/naics'
 import type { BDSubmission, Contract, Employee, Opportunity } from '../types'
 
 const stagger = { animate: { transition: { staggerChildren: 0.05 } } }
@@ -659,12 +660,13 @@ function AgentDashboard() {
   )
 }
 
-type ExecutiveDashboardTab = 'bd' | 'team' | 'ops'
+type ExecutiveDashboardTab = 'bd' | 'team' | 'ops' | 'activity'
 
 const EXECUTIVE_TABS: Array<{ id: ExecutiveDashboardTab; label: string; icon: any; subtitle: string }> = [
   { id: 'bd', label: 'Business Development', icon: Target, subtitle: 'Pipeline, submissions, capture and agency return' },
-  { id: 'team', label: 'Team Performance', icon: Users, subtitle: 'Associate output, conversion, activity and active users' },
+  { id: 'team', label: 'Team Performance', icon: Users, subtitle: 'Associate output, conversion and active users' },
   { id: 'ops', label: 'Operations', icon: FileCheck2, subtitle: 'Awarded value, archive value and gross profit' },
+  { id: 'activity', label: 'Live Activity', icon: Activity, subtitle: 'Only the latest live activities' },
 ]
 
 const THEME_LABELS = {
@@ -691,6 +693,15 @@ function numberValue(...values: Array<number | string | undefined | null>) {
 function pct(value: number, total: number) {
   if (!total) return 0
   return Math.round((value / total) * 100)
+}
+
+const NAICS_TITLE_BY_CODE = new Map(NAICS_CODES.map(item => [item.code, item.title]))
+
+function naicsDisplay(code?: string) {
+  const clean = (code || '').trim()
+  if (!clean) return 'Unspecified'
+  const title = NAICS_TITLE_BY_CODE.get(clean)
+  return title ? `${clean} - ${title}` : clean
 }
 
 function monthKey(value?: string) {
@@ -790,7 +801,7 @@ function DashboardStat({
   accent: string
 }) {
   return (
-    <motion.div variants={fadeUp} className="exec-stat rounded-2xl border p-4" style={EXEC_PANEL_STYLE}>
+    <div className="exec-stat rounded-2xl border p-4" style={EXEC_PANEL_STYLE}>
       <div className="mb-4 flex items-start justify-between gap-3">
         <div className="flex h-10 w-10 items-center justify-center rounded-xl border" style={{ color: accent, background: `${accent}1A`, borderColor: `${accent}55` }}>
           <Icon size={18} />
@@ -799,10 +810,10 @@ function DashboardStat({
           Live
         </span>
       </div>
-      <div className="text-2xl font-black" style={{ color: 'var(--text-primary)' }}>{typeof value === 'number' ? <AnimatedNumber value={value} /> : value}</div>
+      <div className="text-2xl font-black" style={{ color: 'var(--text-primary)' }}>{typeof value === 'number' ? value.toLocaleString() : value}</div>
       <p className="mt-1 text-sm font-bold" style={{ color: 'var(--text-secondary)' }}>{label}</p>
       <p className="mt-1 text-xs" style={{ color: 'var(--text-tertiary)' }}>{detail}</p>
-    </motion.div>
+    </div>
   )
 }
 
@@ -818,7 +829,7 @@ function DashboardPanel({
   action?: ReactNode
 }) {
   return (
-    <motion.div variants={fadeUp} className="exec-panel rounded-2xl border" style={EXEC_PANEL_STYLE}>
+    <div className="exec-panel rounded-2xl border" style={EXEC_PANEL_STYLE}>
       <div className="flex items-start justify-between gap-3 border-b px-5 py-4" style={{ borderColor: 'var(--border-default)' }}>
         <div>
           <h3 className="text-sm font-black" style={{ color: 'var(--text-primary)' }}>{title}</h3>
@@ -827,7 +838,7 @@ function DashboardPanel({
         {action}
       </div>
       <div className="p-5">{children}</div>
-    </motion.div>
+    </div>
   )
 }
 
@@ -892,7 +903,7 @@ function ExecutiveDashboard() {
 
   const submittedByNaics = groupRows(
     periodSubmissions,
-    submission => submissionOpportunity(submission, visibleOpps)?.naicsCode || 'Unspecified',
+    submission => naicsDisplay(submissionOpportunity(submission, visibleOpps)?.naicsCode),
   ).slice(0, 8)
   const submittedByType = groupRows(periodSubmissions, submission => submission.type || 'Unspecified').slice(0, 6)
   const agencyPerformance = groupRows(
@@ -1016,7 +1027,7 @@ function ExecutiveDashboard() {
         </div>
       </motion.div>
 
-      <motion.div variants={stagger} initial="initial" animate="animate" className="grid grid-cols-1 gap-3 xl:grid-cols-3">
+      <motion.div variants={stagger} initial="initial" animate="animate" className="grid grid-cols-1 gap-3 xl:grid-cols-4">
         {EXECUTIVE_TABS.map(item => {
           const Icon = item.icon
           const active = tab === item.id
@@ -1063,9 +1074,9 @@ function ExecutiveDashboard() {
                   <YAxis yAxisId="count" tick={{ fill: '#9FB2AD', fontSize: 10 }} axisLine={false} tickLine={false} />
                   <YAxis yAxisId="value" orientation="right" tick={{ fill: '#9FB2AD', fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={v => `$${Math.round(v / 1000)}K`} />
                   <Tooltip content={<ExecutiveTooltip />} />
-                  <Area yAxisId="value" type="monotone" dataKey="value" name="Submitted Value" stroke={secondaryAccent} strokeWidth={2.5} fill="url(#submittedValue)" />
-                  <Bar yAxisId="count" dataKey="submitted" name="Submitted" fill={tertiaryAccent} radius={[5, 5, 0, 0]} />
-                  <Bar yAxisId="count" dataKey="awarded" name="Awarded" fill={accent} radius={[5, 5, 0, 0]} />
+                  <Area yAxisId="value" type="monotone" dataKey="value" name="Submitted Value" stroke={secondaryAccent} strokeWidth={2.5} fill="url(#submittedValue)" isAnimationActive={false} />
+                  <Bar yAxisId="count" dataKey="submitted" name="Submitted" fill={tertiaryAccent} radius={[5, 5, 0, 0]} isAnimationActive={false} />
+                  <Bar yAxisId="count" dataKey="awarded" name="Awarded" fill={accent} radius={[5, 5, 0, 0]} isAnimationActive={false} />
                 </ComposedChart>
               </ResponsiveContainer>
             </DashboardPanel>
@@ -1078,9 +1089,9 @@ function ExecutiveDashboard() {
                   <BarChart data={submittedByNaics} layout="vertical" margin={{ left: 16, right: 12 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="var(--exec-grid)" horizontal={false} />
                     <XAxis type="number" tick={{ fill: '#9FB2AD', fontSize: 10 }} axisLine={false} tickLine={false} />
-                    <YAxis dataKey="name" type="category" width={86} tick={{ fill: '#C7D7D3', fontSize: 11 }} axisLine={false} tickLine={false} />
+                    <YAxis dataKey="name" type="category" width={170} tick={{ fill: '#C7D7D3', fontSize: 10 }} axisLine={false} tickLine={false} />
                     <Tooltip content={<ExecutiveTooltip />} />
-                    <Bar dataKey="count" name="Submissions" fill={tertiaryAccent} radius={[0, 6, 6, 0]} />
+                    <Bar dataKey="count" name="Submissions" fill={tertiaryAccent} radius={[0, 6, 6, 0]} isAnimationActive={false} />
                   </BarChart>
                 </ResponsiveContainer>
               )}
@@ -1093,7 +1104,7 @@ function ExecutiveDashboard() {
                 <div className="flex h-[260px] items-center gap-4">
                   <ResponsiveContainer width="46%" height="100%">
                     <PieChart>
-                      <Pie data={submittedByType} dataKey="count" nameKey="name" innerRadius={50} outerRadius={78} paddingAngle={3} stroke="transparent" strokeWidth={0}>
+                      <Pie data={submittedByType} dataKey="count" nameKey="name" innerRadius={50} outerRadius={78} paddingAngle={3} stroke="transparent" strokeWidth={0} isAnimationActive={false}>
                         {submittedByType.map((_, index) => (
                           <Cell key={index} fill={chartColors[index % chartColors.length]} stroke="transparent" strokeWidth={0} />
                         ))}
@@ -1128,26 +1139,30 @@ function ExecutiveDashboard() {
             {agencyPerformance.length === 0 ? (
               <EmptyDashboardState label="No agency performance yet." />
             ) : (
-              <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-                {agencyPerformance.map((agency, index) => (
-                  <div key={agency.name} className="rounded-xl border p-4" style={{ borderColor: 'var(--exec-border)', background: 'var(--exec-panel-soft)' }}>
-                    <div className="mb-2 flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-black" style={{ color: 'var(--text-primary)' }}>{agency.name}</p>
-                        <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>{agency.count} submitted/captured records</p>
+              <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
+                <ResponsiveContainer width="100%" height={300}>
+                  <BarChart data={agencyPerformance} layout="vertical" margin={{ left: 16, right: 20 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--exec-grid)" horizontal={false} />
+                    <XAxis type="number" tick={{ fill: '#9FB2AD', fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={value => `$${Math.round(Number(value) / 1000)}K`} />
+                    <YAxis dataKey="name" type="category" width={170} tick={{ fill: '#C7D7D3', fontSize: 10 }} axisLine={false} tickLine={false} />
+                    <Tooltip content={<ExecutiveTooltip />} />
+                    <Bar dataKey="value" name="Awarded Value" fill={accent} radius={[0, 6, 6, 0]} isAnimationActive={false} />
+                  </BarChart>
+                </ResponsiveContainer>
+                <div className="space-y-2">
+                  {agencyPerformance.map((agency, index) => (
+                    <div key={agency.name} className="rounded-xl border p-3" style={{ borderColor: 'var(--exec-border)', background: 'var(--exec-panel-soft)' }}>
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-black" style={{ color: 'var(--text-primary)' }}>{agency.name}</p>
+                          <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>{agency.count} records</p>
+                        </div>
+                        <span className="h-2.5 w-2.5 rounded-full" style={{ background: chartColors[index % chartColors.length] }} />
                       </div>
-                      <span className="rounded-full px-2 py-1 text-xs font-black" style={{ color: 'var(--accent)', background: 'color-mix(in srgb, var(--accent) 12%, transparent)' }}>{formatCurrency(agency.value)}</span>
+                      <p className="mt-2 text-sm font-black" style={{ color: 'var(--accent)' }}>{formatCurrency(agency.value)}</p>
                     </div>
-                    <div className="h-2 overflow-hidden rounded-full bg-white/10">
-                      <motion.div
-                        className="h-full rounded-full"
-                        style={{ background: chartColors[index % chartColors.length] }}
-                        initial={{ width: 0 }}
-                        animate={{ width: `${pct(agency.value, Math.max(1, agencyPerformance[0]?.value || 1))}%` }}
-                      />
-                    </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
             )}
           </DashboardPanel>
@@ -1200,9 +1215,9 @@ function ExecutiveDashboard() {
                     <YAxis tick={{ fill: '#9FB2AD', fontSize: 10 }} axisLine={false} tickLine={false} />
                     <Tooltip content={<ExecutiveTooltip />} />
                     <Legend wrapperStyle={{ fontSize: 11, color: 'var(--text-secondary)' }} />
-                    <Bar dataKey="submitted" name="Submitted" fill={secondaryAccent} radius={[5, 5, 0, 0]} />
-                    <Bar dataKey="notSubmitted" name="Not Submitted" fill={chartColors[3]} radius={[5, 5, 0, 0]} />
-                    <Bar dataKey="dropped" name="Dropped" fill={chartColors[5]} radius={[5, 5, 0, 0]} />
+                    <Bar dataKey="submitted" name="Submitted" fill={secondaryAccent} radius={[5, 5, 0, 0]} isAnimationActive={false} />
+                    <Bar dataKey="notSubmitted" name="Not Submitted" fill={chartColors[3]} radius={[5, 5, 0, 0]} isAnimationActive={false} />
+                    <Bar dataKey="dropped" name="Dropped" fill={chartColors[5]} radius={[5, 5, 0, 0]} isAnimationActive={false} />
                   </BarChart>
                 </ResponsiveContainer>
               )}
@@ -1227,36 +1242,41 @@ function ExecutiveDashboard() {
             </DashboardPanel>
           </div>
 
-          {hasPermission(currentUser, 'admin:manageUsers') && (
-            <DashboardPanel
-              title="Activity Log"
-              subtitle="Latest app activity, shown directly from the live store"
-              action={<span className="rounded-full bg-emerald-400/10 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-emerald-300">Live</span>}
-            >
-              {recentActivity.length === 0 ? (
-                <EmptyDashboardState label="No activity recorded yet." />
-              ) : (
-                <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-                  {recentActivity.map(log => (
-                    <div key={log.id} className="rounded-xl border p-3" style={{ borderColor: 'var(--exec-border)', background: 'var(--exec-panel-soft)' }}>
-                      <div className="mb-2 flex items-start gap-3">
-                        <div className="flex h-8 w-8 items-center justify-center rounded-xl text-xs font-black" style={{ background: `${secondaryAccent}24`, color: secondaryAccent }}>
-                          {log.user.split(' ').map(part => part[0]).join('').slice(0, 2)}
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm font-semibold leading-snug" style={{ color: 'var(--text-primary)' }}>{log.action}</p>
-                          <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
-                            {log.user} | {new Date(log.createdAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
-                          </p>
-                        </div>
+        </motion.div>
+      )}
+
+      {tab === 'activity' && (
+        <div className="space-y-5">
+          <DashboardPanel
+            title="Live Activity Log"
+            subtitle="Latest app activity only"
+            action={<span className="rounded-full bg-emerald-400/10 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-emerald-300">Live</span>}
+          >
+            {!hasPermission(currentUser, 'admin:manageUsers') ? (
+              <EmptyDashboardState label="You do not have access to the live activity log." />
+            ) : recentActivity.length === 0 ? (
+              <EmptyDashboardState label="No activity recorded yet." />
+            ) : (
+              <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                {recentActivity.map(log => (
+                  <div key={log.id} className="rounded-xl border p-3" style={{ borderColor: 'var(--exec-border)', background: 'var(--exec-panel-soft)' }}>
+                    <div className="flex items-start gap-3">
+                      <div className="flex h-8 w-8 items-center justify-center rounded-xl text-xs font-black" style={{ background: `${secondaryAccent}24`, color: secondaryAccent }}>
+                        {log.user.split(' ').map(part => part[0]).join('').slice(0, 2)}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-semibold leading-snug" style={{ color: 'var(--text-primary)' }}>{log.action}</p>
+                        <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                          {log.user} | {new Date(log.createdAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                        </p>
                       </div>
                     </div>
-                  ))}
-                </div>
-              )}
-            </DashboardPanel>
-          )}
-        </motion.div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </DashboardPanel>
+        </div>
       )}
 
       {tab === 'ops' && (
@@ -1272,7 +1292,7 @@ function ExecutiveDashboard() {
               ) : (
                 <ResponsiveContainer width="100%" height={280}>
                   <PieChart>
-                    <Pie data={contractStatusRows} dataKey="count" nameKey="name" innerRadius={62} outerRadius={92} paddingAngle={3} stroke="transparent" strokeWidth={0}>
+                    <Pie data={contractStatusRows} dataKey="count" nameKey="name" innerRadius={62} outerRadius={92} paddingAngle={3} stroke="transparent" strokeWidth={0} isAnimationActive={false}>
                       {contractStatusRows.map((_, index) => (
                         <Cell key={index} fill={chartColors[index % chartColors.length]} stroke="transparent" strokeWidth={0} />
                       ))}
@@ -1294,7 +1314,7 @@ function ExecutiveDashboard() {
                     <XAxis dataKey="name" tick={{ fill: '#9FB2AD', fontSize: 11 }} axisLine={false} tickLine={false} />
                     <YAxis tick={{ fill: '#9FB2AD', fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={v => `$${Math.round(v / 1000)}K`} />
                     <Tooltip content={<ExecutiveTooltip />} />
-                    <Bar dataKey="value" name="Gross Profit Value" fill={accent} radius={[6, 6, 0, 0]} />
+                    <Bar dataKey="value" name="Gross Profit Value" fill={accent} radius={[6, 6, 0, 0]} isAnimationActive={false} />
                   </BarChart>
                 </ResponsiveContainer>
               )}

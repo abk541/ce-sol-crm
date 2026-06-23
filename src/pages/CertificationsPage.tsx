@@ -1,11 +1,11 @@
 import { useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Award, Clock3, Pencil, Plus, Search, ShieldCheck, Trash2, X } from 'lucide-react'
+import { Award, Clock3, Download, Paperclip, Pencil, Plus, Search, ShieldCheck, Trash2, UploadCloud, X } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useStore } from '../store/useStore'
 import { hasPermission } from '../lib/permissions'
 import { useEscapeKey } from '../lib/utils'
-import type { CompanyCertification, CompanyCertificationStatus } from '../types'
+import type { CompanyCertification, CompanyCertificationStatus, FileAttachment } from '../types'
 
 const CERT_STATUS_STYLE: Record<CompanyCertificationStatus, string> = {
   ACTIVE: 'bg-emerald-400/15 text-emerald-200 border-emerald-400/25',
@@ -44,6 +44,41 @@ function badgeClass(base: string) {
   return `inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${base}`
 }
 
+function fileToCertificationAttachment(file: File, uploadedBy: string): Promise<FileAttachment> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve({
+      id: `cert-att-${crypto.randomUUID()}`,
+      name: file.name,
+      attachedAt: new Date().toISOString(),
+      uploadedBy,
+      dataUrl: String(reader.result || ''),
+      mimeType: file.type || undefined,
+      size: file.size,
+    })
+    reader.onerror = () => reject(reader.error)
+    reader.readAsDataURL(file)
+  })
+}
+
+function downloadCertificationAttachment(cert: CompanyCertification, attachment = cert.attachments?.[0]) {
+  if (!attachment) {
+    toast.error('No certification attachment was uploaded.')
+    return
+  }
+  if (!attachment.dataUrl) {
+    toast.error('This certification only has file metadata. Re-upload the attachment to download it.')
+    return
+  }
+  const link = document.createElement('a')
+  link.href = attachment.dataUrl
+  link.download = attachment.name || `${cert.name}.pdf`
+  link.rel = 'noopener'
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+}
+
 function StatCard({
   icon: Icon,
   label,
@@ -80,7 +115,7 @@ function CertificationModal({
   cert: CompanyCertification | null
   onClose: () => void
 }) {
-  const { addCompanyCertification, updateCompanyCertification } = useStore()
+  const { addCompanyCertification, updateCompanyCertification, currentUser } = useStore()
   const [form, setForm] = useState({
     name: cert?.name ?? '',
     issuer: cert?.issuer ?? '',
@@ -89,7 +124,22 @@ function CertificationModal({
     expirationDate: cert?.expirationDate ?? '',
     notes: cert?.notes ?? '',
   })
+  const [attachments, setAttachments] = useState<FileAttachment[]>(cert?.attachments ?? [])
   const isEdit = Boolean(cert)
+
+  const handleFiles = async (files: FileList | null) => {
+    const list = Array.from(files ?? [])
+    if (!list.length) return
+    try {
+      const uploadedBy = currentUser?.username ?? currentUser?.name ?? 'current_user'
+      const next = await Promise.all(list.map(file => fileToCertificationAttachment(file, uploadedBy)))
+      setAttachments(prev => [...prev, ...next])
+      toast.success(list.length === 1 ? 'Certification file attached' : `${list.length} certification files attached`)
+    } catch (error) {
+      console.error(error)
+      toast.error('Certification attachment could not be uploaded.')
+    }
+  }
 
   const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault()
@@ -105,7 +155,7 @@ function CertificationModal({
       issuedDate: form.issuedDate,
       expirationDate: form.expirationDate || undefined,
       notes: form.notes.trim() || undefined,
-      attachments: cert?.attachments ?? [],
+      attachments,
     }
 
     if (cert) {
@@ -164,6 +214,42 @@ function CertificationModal({
           <div className="md:col-span-2">
             <label className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-400">Notes</label>
             <textarea className="input-field min-h-28 resize-y" value={form.notes} onChange={e => setForm(p => ({ ...p, notes: e.target.value }))} placeholder="Internal notes, renewal steps, or audit comments" />
+          </div>
+          <div className="md:col-span-2">
+            <label className="mb-2 block text-[10px] font-bold uppercase tracking-wide text-slate-400">Certification attachments</label>
+            <label className="flex cursor-pointer items-center justify-center gap-2 rounded-2xl border border-dashed border-[#D7BE7A]/35 bg-white/[0.04] px-4 py-5 text-sm font-bold text-slate-200 transition-colors hover:border-[#D7BE7A]/60 hover:bg-[#D7BE7A]/10">
+              <UploadCloud size={16} className="text-[#D7BE7A]" />
+              Upload certification file
+              <input
+                type="file"
+                className="hidden"
+                multiple
+                onChange={event => {
+                  handleFiles(event.target.files)
+                  event.currentTarget.value = ''
+                }}
+              />
+            </label>
+            {attachments.length > 0 && (
+              <div className="mt-3 space-y-2">
+                {attachments.map(att => (
+                  <div key={att.id} className="flex items-center gap-3 rounded-xl border border-[var(--border-default)] bg-white/[0.04] px-3 py-2">
+                    <Paperclip size={13} className="text-[#D7BE7A]" />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-xs font-bold text-white">{att.name}</p>
+                      <p className="text-[10px] text-slate-400">{formatDate(att.attachedAt)} | {att.uploadedBy}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setAttachments(prev => prev.filter(item => item.id !== att.id))}
+                      className="rounded-lg border border-red-400/30 px-2 py-1 text-[10px] font-bold text-red-200 hover:bg-red-500/10"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
@@ -248,11 +334,12 @@ export default function CertificationsPage() {
         </div>
 
         <div className="overflow-hidden rounded-xl border border-[var(--border-default)]">
-          <div className="grid grid-cols-[1.2fr_1fr_0.8fr_0.8fr_0.8fr_auto] gap-3 border-b border-[var(--border-default)] bg-[#07131F]/90 px-4 py-3 text-[10px] font-black uppercase tracking-wide text-amber-200">
+          <div className="grid grid-cols-[1.2fr_1fr_0.8fr_0.8fr_0.7fr_0.8fr_auto] gap-3 border-b border-[var(--border-default)] bg-[#07131F]/90 px-4 py-3 text-[10px] font-black uppercase tracking-wide text-amber-200">
             <span>Name</span>
             <span>Issuer</span>
             <span>Number</span>
             <span>Expires</span>
+            <span>File</span>
             <span>Status</span>
             <span className="text-right">Actions</span>
           </div>
@@ -265,9 +352,16 @@ export default function CertificationsPage() {
               const status = displayCertStatus(cert)
               const remaining = daysUntil(cert.expirationDate)
               return (
-                <div key={cert.id} className="grid grid-cols-[1.2fr_1fr_0.8fr_0.8fr_0.8fr_auto] items-center gap-3 border-b border-[var(--border-default)] px-4 py-4 last:border-b-0">
+                <div key={cert.id} className="grid grid-cols-[1.2fr_1fr_0.8fr_0.8fr_0.7fr_0.8fr_auto] items-center gap-3 border-b border-[var(--border-default)] px-4 py-4 last:border-b-0">
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-bold text-white">{cert.name}</p>
+                    <button
+                      type="button"
+                      onClick={() => downloadCertificationAttachment(cert)}
+                      className="block max-w-full truncate text-left text-sm font-bold text-white transition-colors hover:text-[#D7BE7A]"
+                      title={cert.attachments?.length ? `Download ${cert.attachments[0].name}` : 'No attachment uploaded'}
+                    >
+                      {cert.name}
+                    </button>
                     {cert.notes && <p className="mt-1 line-clamp-1 text-xs text-slate-400">{cert.notes}</p>}
                   </div>
                   <p className="truncate text-sm text-slate-300">{cert.issuer}</p>
@@ -276,6 +370,18 @@ export default function CertificationsPage() {
                     <p className="text-sm font-semibold text-white">{formatDate(cert.expirationDate)}</p>
                     {remaining !== null && remaining >= 0 && <p className="text-[10px] text-slate-400">{remaining} days left</p>}
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => downloadCertificationAttachment(cert)}
+                    className={`inline-flex w-fit items-center gap-1.5 rounded-full border px-2 py-1 text-[10px] font-bold ${
+                      cert.attachments?.length
+                        ? 'border-[#D7BE7A]/35 bg-[#D7BE7A]/10 text-[#F8E8B8] hover:bg-[#D7BE7A]/18'
+                        : 'border-slate-700 bg-slate-900/30 text-slate-500'
+                    }`}
+                  >
+                    {cert.attachments?.length ? <Download size={11} /> : <Paperclip size={11} />}
+                    {cert.attachments?.length ? `${cert.attachments.length} file${cert.attachments.length === 1 ? '' : 's'}` : 'None'}
+                  </button>
                   <span className={badgeClass(CERT_STATUS_STYLE[status])}>{status}</span>
                   <div className="flex justify-end gap-2">
                     {canManageCertifications ? (

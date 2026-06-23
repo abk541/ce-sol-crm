@@ -1,16 +1,20 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { Check, LayoutGrid, Palette, Sparkles, Type } from 'lucide-react'
+import { Check, Palette, Type } from 'lucide-react'
+import { useState } from 'react'
 import {
   FONT_OPTIONS,
   FONT_SIZE_OPTIONS,
   THEME_OPTIONS,
   useAppearance,
-  type FontId,
-  type FontSizeId,
-  type ThemeId,
 } from '../../lib/appearance'
 import { useEscapeKey } from '../../lib/utils'
-import { useState } from 'react'
+
+const THEME_SHORT_LABELS = {
+  aurora: 'Classic',
+  prism: 'Neon',
+  noir: 'Noir',
+  daylight: 'Light',
+} as const
 
 export default function AppearanceMenu() {
   const [open, setOpen] = useState(false)
@@ -23,81 +27,87 @@ export default function AppearanceMenu() {
       <button
         type="button"
         onClick={() => setOpen(v => !v)}
-        className="appearance-trigger relative flex h-9 w-9 items-center justify-center rounded-xl text-stone-300 transition-all hover:text-white"
+        className="appearance-trigger"
         aria-label="Open appearance controls"
         aria-expanded={open}
+        title="Style"
       >
-        <Palette size={16} />
-        <span className="pointer-events-none absolute inset-0 rounded-xl opacity-0 transition-opacity group-hover:opacity-100" />
+        <Palette size={15} />
       </button>
 
       <AnimatePresence>
         {open && (
           <>
-            <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+            <div className="fixed inset-0 z-20" onClick={() => setOpen(false)} />
             <motion.div
               key="appearance-popover"
-              initial={{ opacity: 0, y: -8, scale: 0.98 }}
+              initial={{ opacity: 0, y: -6, scale: 0.98 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: -8, scale: 0.98 }}
-              transition={{ duration: 0.16 }}
-              className="appearance-popover absolute right-0 top-11 z-50 w-[min(27rem,calc(100vw-2rem))] overflow-hidden rounded-[1.35rem] border shadow-2xl"
+              exit={{ opacity: 0, y: -6, scale: 0.98 }}
+              transition={{ duration: 0.14 }}
+              className="appearance-popover absolute right-0 top-11 z-50 w-[min(19rem,calc(100vw-2rem))] overflow-hidden rounded-2xl border shadow-2xl"
             >
-              <div className="appearance-popover__header px-4 py-4">
-                <div className="flex items-start gap-3">
-                  <div className="appearance-popover__icon">
-                    <Sparkles size={16} />
-                  </div>
+              <div className="appearance-popover__header px-3 py-3">
+                <div className="flex items-center justify-between gap-3">
                   <div>
-                    <p className="text-sm font-black text-[var(--text-primary)]">Appearance Studio</p>
-                    <p className="mt-1 text-[11px] text-[var(--text-tertiary)]">
-                      Switch the whole interface mood, font and reading size.
-                    </p>
+                    <p className="text-xs font-black text-[var(--text-primary)]">Style</p>
+                    <p className="mt-0.5 text-[10px] text-[var(--text-tertiary)]">Theme, type and scale.</p>
                   </div>
+                  <span className="appearance-popover__icon">
+                    <Palette size={13} />
+                  </span>
                 </div>
               </div>
 
-              <div className="max-h-[72vh] overflow-y-auto p-3">
+              <div className="space-y-3 p-3">
                 <section>
-                  <SectionTitle icon={LayoutGrid} label="Themes" />
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <SectionTitle label="Theme" />
+                  <div className="grid grid-cols-2 gap-1.5">
                     {THEME_OPTIONS.map(theme => (
-                      <ThemeChoice
+                      <button
                         key={theme.id}
-                        theme={theme}
-                        active={prefs.theme === theme.id}
+                        type="button"
                         onClick={() => updatePrefs({ theme: theme.id })}
-                      />
+                        className={`appearance-theme-chip ${prefs.theme === theme.id ? 'is-active' : ''}`}
+                      >
+                        <span className="flex min-w-0 items-center gap-2">
+                          <span className="appearance-swatch" style={{ background: `linear-gradient(135deg, ${theme.colors.join(',')})` }} />
+                          <span className="truncate">{THEME_SHORT_LABELS[theme.id]}</span>
+                        </span>
+                        {prefs.theme === theme.id && <Check size={11} />}
+                      </button>
                     ))}
                   </div>
                 </section>
 
-                <section className="mt-4">
-                  <SectionTitle icon={Type} label="Font" />
-                  <div className="grid grid-cols-2 gap-2">
+                <section>
+                  <SectionTitle label="Font" icon />
+                  <div className="appearance-pill-row">
                     {FONT_OPTIONS.map(font => (
-                      <SegmentChoice
+                      <button
                         key={font.id}
-                        active={prefs.font === font.id}
-                        label={font.name}
-                        description={font.description}
-                        onClick={() => updatePrefs({ font: font.id as FontId })}
-                      />
+                        type="button"
+                        onClick={() => updatePrefs({ font: font.id })}
+                        className={`appearance-pill ${prefs.font === font.id ? 'is-active' : ''}`}
+                      >
+                        {font.name}
+                      </button>
                     ))}
                   </div>
                 </section>
 
-                <section className="mt-4">
-                  <SectionTitle icon={Sparkles} label="Text Size" />
-                  <div className="grid grid-cols-3 gap-2">
+                <section>
+                  <SectionTitle label="Size" />
+                  <div className="appearance-pill-row three">
                     {FONT_SIZE_OPTIONS.map(size => (
-                      <SegmentChoice
+                      <button
                         key={size.id}
-                        active={prefs.size === size.id}
-                        label={size.name}
-                        description={size.description}
-                        onClick={() => updatePrefs({ size: size.id as FontSizeId })}
-                      />
+                        type="button"
+                        onClick={() => updatePrefs({ size: size.id })}
+                        className={`appearance-pill ${prefs.size === size.id ? 'is-active' : ''}`}
+                      >
+                        {size.name}
+                      </button>
                     ))}
                   </div>
                 </section>
@@ -110,68 +120,11 @@ export default function AppearanceMenu() {
   )
 }
 
-function SectionTitle({ icon: Icon, label }: { icon: typeof Palette; label: string }) {
+function SectionTitle({ label, icon = false }: { label: string; icon?: boolean }) {
   return (
-    <p className="mb-2 flex items-center gap-2 px-1 text-[10px] font-black uppercase tracking-[0.16em] text-[var(--text-tertiary)]">
-      <Icon size={12} />
+    <p className="mb-1.5 flex items-center gap-1.5 px-0.5 text-[9px] font-black uppercase tracking-[0.16em] text-[var(--text-tertiary)]">
+      {icon && <Type size={10} />}
       {label}
     </p>
-  )
-}
-
-function ThemeChoice({
-  theme,
-  active,
-  onClick,
-}: {
-  theme: (typeof THEME_OPTIONS)[number]
-  active: boolean
-  onClick: () => void
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`appearance-theme-choice ${active ? 'is-active' : ''}`}
-    >
-      <div className="mb-3 flex items-start justify-between gap-3">
-        <div className="flex gap-1.5">
-          {theme.colors.map(color => (
-            <span key={color} className="h-5 w-5 rounded-full border border-white/20" style={{ background: color }} />
-          ))}
-        </div>
-        {active && (
-          <span className="appearance-check">
-            <Check size={12} />
-          </span>
-        )}
-      </div>
-      <p className="text-left text-xs font-black text-[var(--text-primary)]">{theme.name}</p>
-      <p className="mt-1 text-left text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--accent)]">{theme.mood}</p>
-      <p className="mt-1 text-left text-[11px] leading-4 text-[var(--text-tertiary)]">{theme.description}</p>
-    </button>
-  )
-}
-
-function SegmentChoice({
-  active,
-  label,
-  description,
-  onClick,
-}: {
-  active: boolean
-  label: string
-  description: string
-  onClick: () => void
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`appearance-segment ${active ? 'is-active' : ''}`}
-    >
-      <span className="block text-xs font-black text-[var(--text-primary)]">{label}</span>
-      <span className="mt-1 block text-[10px] leading-4 text-[var(--text-tertiary)]">{description}</span>
-    </button>
   )
 }
