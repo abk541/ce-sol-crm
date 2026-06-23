@@ -1,7 +1,6 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   Check,
-  ChevronDown,
   Gauge,
   Moon,
   Palette,
@@ -16,7 +15,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { THEMES, type Theme } from '../../themes'
-import { FONT_CATALOG, type FontEntry } from '../../lib/fonts'
+import { FONT_CATALOG, type FontCategory, type FontEntry } from '../../lib/fonts'
 import {
   ACCENT_PRESETS,
   type DensityMode,
@@ -146,6 +145,7 @@ export default function AppearanceMenu() {
                     value={prefs.fontSize}
                     onChange={v => updatePrefs({ fontSize: v })}
                     onPreview={v => previewPrefs({ fontSize: v })}
+                    fontFamily={prefs.fontFamily}
                   />
                 </div>
               </motion.div>
@@ -391,7 +391,7 @@ function ThemeTile({
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Customize accordion: accent / density / radius / motion
+// Customize panel: always-open, prominent header, accent-first layout
 // ─────────────────────────────────────────────────────────────────────
 function CustomizeSection({
   accentOverride,
@@ -414,37 +414,55 @@ function CustomizeSection({
   onRadiusPreview: (n: number) => void
   onReduceMotion: (v: boolean) => void
 }) {
-  const [open, setOpen] = useState(
-    !!(accentOverride || density || radiusScale !== RADIUS_SCALE_DEFAULT || reduceMotion),
-  )
+  const overrides =
+    (accentOverride ? 1 : 0) +
+    (density ? 1 : 0) +
+    (radiusScale !== RADIUS_SCALE_DEFAULT ? 1 : 0) +
+    (reduceMotion ? 1 : 0)
   return (
-    <section className="rounded-lg border border-[var(--border-default)]">
-      <button
-        type="button"
-        onClick={() => setOpen(v => !v)}
-        className="flex w-full items-center justify-between gap-2 px-3 py-2.5 text-left"
+    <section className="overflow-hidden rounded-xl border border-[var(--border-strong)] bg-[var(--bg-card)] shadow-[var(--shadow-sm)]">
+      <div
+        className="flex items-center justify-between gap-2 px-3 py-2.5"
+        style={{
+          background:
+            'linear-gradient(90deg, color-mix(in srgb, var(--accent) 14%, transparent), color-mix(in srgb, var(--accent) 4%, transparent))',
+          borderBottom: '1px solid var(--border-default)',
+        }}
       >
-        <span className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-[0.16em] text-[var(--text-secondary)]">
-          <SlidersHorizontal size={11} />
+        <span className="flex items-center gap-2 text-[12px] font-black uppercase tracking-[0.14em] text-[var(--text-primary)]">
+          <span
+            className="inline-flex h-6 w-6 items-center justify-center rounded-md"
+            style={{
+              background: 'color-mix(in srgb, var(--accent) 22%, transparent)',
+              color: 'var(--accent)',
+            }}
+          >
+            <SlidersHorizontal size={13} />
+          </span>
           Customize
         </span>
-        <ChevronDown
-          size={13}
-          className={`text-[var(--text-tertiary)] transition-transform ${open ? 'rotate-180' : ''}`}
+        {overrides > 0 && (
+          <span
+            className="rounded-full px-2 py-0.5 text-[9px] font-black uppercase tracking-[0.12em]"
+            style={{
+              background: 'color-mix(in srgb, var(--accent) 18%, transparent)',
+              color: 'var(--accent)',
+            }}
+          >
+            {overrides} active
+          </span>
+        )}
+      </div>
+      <div className="space-y-4 px-3 py-3">
+        <AccentRow value={accentOverride} onChange={onAccent} />
+        <DensityRow value={density} onChange={onDensity} />
+        <RadiusRow
+          value={radiusScale}
+          onChange={onRadius}
+          onPreview={onRadiusPreview}
         />
-      </button>
-      {open && (
-        <div className="space-y-4 border-t border-[var(--border-default)] px-3 py-3">
-          <AccentRow value={accentOverride} onChange={onAccent} />
-          <DensityRow value={density} onChange={onDensity} />
-          <RadiusRow
-            value={radiusScale}
-            onChange={onRadius}
-            onPreview={onRadiusPreview}
-          />
-          <MotionRow value={reduceMotion} onChange={onReduceMotion} />
-        </div>
-      )}
+        <MotionRow value={reduceMotion} onChange={onReduceMotion} />
+      </div>
     </section>
   )
 }
@@ -653,8 +671,10 @@ function RowLabel({
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Font dropdown with search and per-entry preview
+// Font picker — visual grid of font cards each rendered in its own face
 // ─────────────────────────────────────────────────────────────────────
+type FontFilter = 'all' | FontCategory
+
 function FontSection({
   activeFamily,
   onPick,
@@ -664,152 +684,245 @@ function FontSection({
   onPick: (family: string | null) => void
   loadFont: (family: string) => void
 }) {
-  const [openList, setOpenList] = useState(false)
+  const [filter, setFilter] = useState<FontFilter>('all')
   const [search, setSearch] = useState('')
-  const wrapRef = useRef<HTMLDivElement | null>(null)
 
+  // Eagerly load fonts on mount so previews are typeset, not blank.
   useEffect(() => {
-    if (!openList) return
-    const onDown = (e: MouseEvent) => {
-      if (!wrapRef.current?.contains(e.target as Node)) setOpenList(false)
-    }
-    document.addEventListener('mousedown', onDown)
-    return () => document.removeEventListener('mousedown', onDown)
-  }, [openList])
-
-  useEffect(() => {
-    if (!openList) return
-    FONT_CATALOG.slice(0, 8).forEach(f => loadFont(f.family))
-  }, [openList, loadFont])
+    FONT_CATALOG.forEach(f => loadFont(f.family))
+  }, [loadFont])
 
   const filtered = useMemo<FontEntry[]>(() => {
     const q = search.trim().toLowerCase()
-    if (!q) return FONT_CATALOG
-    return FONT_CATALOG.filter(
-      f => f.family.toLowerCase().includes(q) || f.category.toLowerCase().includes(q),
-    )
-  }, [search])
+    return FONT_CATALOG.filter(f => {
+      if (filter !== 'all' && f.category !== filter) return false
+      if (!q) return true
+      return f.family.toLowerCase().includes(q) || f.category.toLowerCase().includes(q)
+    })
+  }, [filter, search])
 
-  const activeLabel = activeFamily ?? 'Match theme default'
+  const tabs: Array<{ id: FontFilter; label: string }> = [
+    { id: 'all', label: 'All' },
+    { id: 'sans', label: 'Sans' },
+    { id: 'serif', label: 'Serif' },
+    { id: 'mono', label: 'Mono' },
+    { id: 'display', label: 'Display' },
+  ]
 
   return (
-    <section ref={wrapRef}>
-      <RowLabel icon={<Type size={10} />} label="Font" />
-      <button
-        type="button"
-        onClick={() => setOpenList(v => !v)}
-        className="flex w-full items-center justify-between gap-2 rounded-lg border border-[var(--border-default)] bg-[var(--bg-input)] px-3 py-2 text-left text-[13px] text-[var(--text-primary)] transition-colors hover:border-[var(--border-strong)]"
-        style={activeFamily ? { fontFamily: `'${activeFamily}', sans-serif` } : undefined}
-      >
-        <span className="truncate">{activeLabel}</span>
-        <ChevronDown
-          size={14}
-          className={`shrink-0 text-[var(--text-tertiary)] transition-transform ${openList ? 'rotate-180' : ''}`}
-        />
-      </button>
+    <section>
+      <div className="mb-2 flex items-center justify-between gap-2 px-0.5">
+        <p className="flex items-center gap-1.5 text-[9px] font-black uppercase tracking-[0.16em] text-[var(--text-tertiary)]">
+          <Type size={10} />
+          Font
+        </p>
+        <span className="text-[9px] font-bold text-[var(--text-muted)]">
+          {filtered.length}/{FONT_CATALOG.length}
+        </span>
+      </div>
 
-      {openList && (
-        <div className="appearance-font-dropdown mt-1.5">
-          <div className="sticky top-0 z-10 border-b border-[var(--border-default)] bg-[var(--bg-modal)] p-2">
-            <div className="relative">
-              <Search
-                size={12}
-                className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-[var(--text-tertiary)]"
-              />
-              <input
-                autoFocus
-                type="text"
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-                placeholder="Search fonts…"
-                className="w-full rounded-md border border-[var(--border-default)] bg-[var(--bg-input)] py-1.5 pl-7 pr-2 text-[12px] text-[var(--text-primary)] outline-none focus:border-[var(--border-focus)]"
-              />
-            </div>
-          </div>
-
+      <div className="mb-2 inline-flex w-full rounded-md border border-[var(--border-default)] bg-[var(--bg-input)] p-0.5">
+        {tabs.map(t => (
           <button
+            key={t.id}
             type="button"
-            onClick={() => {
-              onPick(null)
-              setOpenList(false)
-            }}
-            className={`appearance-font-option ${activeFamily === null ? 'is-active' : ''}`}
+            onClick={() => setFilter(t.id)}
+            className={`flex-1 rounded px-2 py-1 text-[10px] font-bold uppercase tracking-[0.12em] transition-all ${
+              filter === t.id
+                ? 'bg-[var(--accent)] text-[var(--text-inverse)] shadow-[var(--shadow-xs)]'
+                : 'text-[var(--text-tertiary)] hover:text-[var(--text-primary)]'
+            }`}
           >
-            <span className="appearance-font-option__name">Match theme default</span>
-            <span className="appearance-font-option__cat">Auto</span>
+            {t.label}
           </button>
+        ))}
+      </div>
 
-          {filtered.map(font => (
-            <button
-              key={font.family}
-              type="button"
-              onMouseEnter={() => loadFont(font.family)}
-              onFocus={() => loadFont(font.family)}
-              onClick={() => {
-                loadFont(font.family)
-                onPick(font.family)
-                setOpenList(false)
-              }}
-              className={`appearance-font-option ${activeFamily === font.family ? 'is-active' : ''}`}
-              style={{ fontFamily: `'${font.family}', sans-serif` }}
-            >
-              <span className="appearance-font-option__name">{font.family}</span>
-              <span className="appearance-font-option__cat">{font.category}</span>
-            </button>
-          ))}
+      <div className="relative mb-2">
+        <Search
+          size={12}
+          className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-[var(--text-tertiary)]"
+        />
+        <input
+          type="text"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Search fonts…"
+          className="w-full rounded-md border border-[var(--border-default)] bg-[var(--bg-input)] py-1.5 pl-7 pr-2 text-[12px] text-[var(--text-primary)] outline-none focus:border-[var(--border-focus)]"
+        />
+      </div>
 
-          {filtered.length === 0 && (
-            <div className="px-3 py-4 text-center text-[11px] text-[var(--text-tertiary)]">
-              No fonts match “{search}”.
-            </div>
-          )}
-        </div>
-      )}
+      <div className="grid grid-cols-2 gap-2">
+        <FontTile
+          family={null}
+          category="auto"
+          active={activeFamily === null}
+          onClick={() => onPick(null)}
+        />
+        {filtered.map(font => (
+          <FontTile
+            key={font.family}
+            family={font.family}
+            category={font.category}
+            active={activeFamily === font.family}
+            onClick={() => onPick(font.family)}
+          />
+        ))}
+        {filtered.length === 0 && (
+          <div className="col-span-2 rounded-lg border border-dashed border-[var(--border-default)] py-6 text-center text-[11px] text-[var(--text-tertiary)]">
+            No fonts match “{search}”.
+          </div>
+        )}
+      </div>
     </section>
   )
 }
 
+function FontTile({
+  family,
+  category,
+  active,
+  onClick,
+}: {
+  family: string | null
+  category: string
+  active: boolean
+  onClick: () => void
+}) {
+  const label = family ?? 'Theme default'
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`appearance-theme-tile flex flex-col items-stretch ${active ? 'is-active' : ''}`}
+      title={label}
+    >
+      <div
+        className="flex items-center justify-center px-3"
+        style={{
+          height: 56,
+          background:
+            'linear-gradient(180deg, color-mix(in srgb, var(--accent) 6%, var(--bg-card)), var(--bg-card))',
+          color: 'var(--text-primary)',
+          fontFamily: family ? `'${family}', sans-serif` : undefined,
+          fontWeight: 700,
+          fontSize: 22,
+          letterSpacing: '-0.01em',
+          lineHeight: 1,
+        }}
+      >
+        {family ? 'Ag' : 'Auto'}
+      </div>
+      <div className="appearance-theme-tile__meta">
+        <div className="appearance-theme-tile__name">
+          <span className="truncate">{label}</span>
+          {active && <Check size={11} className="shrink-0 text-[var(--accent)]" />}
+        </div>
+        <div className="appearance-theme-tile__blurb uppercase tracking-[0.12em]">{category}</div>
+      </div>
+    </button>
+  )
+}
+
 // ─────────────────────────────────────────────────────────────────────
-// Font size slider
+// Size — live preview + preset chips + fine-tune slider
 // ─────────────────────────────────────────────────────────────────────
 function SizeSection({
   value,
   onChange,
   onPreview,
+  fontFamily,
 }: {
   value: number
   onChange: (v: number) => void
   onPreview: (v: number) => void
+  fontFamily: string | null
 }) {
+  const presets: Array<{ size: number; label: string }> = [
+    { size: 13, label: 'Small' },
+    { size: 15, label: 'Default' },
+    { size: 17, label: 'Comfy' },
+    { size: 19, label: 'Large' },
+  ]
   return (
     <section>
-      <RowLabel icon={<Type size={10} />} label="Size" />
-      <div className="rounded-lg border border-[var(--border-default)] bg-[var(--bg-input)] p-3">
-        <div className="flex items-baseline justify-between">
-          <span className="text-[11px] text-[var(--text-tertiary)]">Root font size</span>
-          <span className="text-[12px] font-bold text-[var(--text-primary)]">{value}px</span>
-        </div>
-        <input
-          type="range"
-          min={FONT_SIZE_MIN}
-          max={FONT_SIZE_MAX}
-          value={value}
-          onChange={e => onPreview(Number(e.target.value))}
-          onMouseUp={e => onChange(Number((e.target as HTMLInputElement).value))}
-          onTouchEnd={e => onChange(Number((e.target as HTMLInputElement).value))}
-          onKeyUp={e => onChange(Number((e.target as HTMLInputElement).value))}
-          className="appearance-slider mt-2"
-        />
-        <div className="mt-1.5 flex justify-between text-[9px] uppercase tracking-[0.14em] text-[var(--text-tertiary)]">
-          <span>{FONT_SIZE_MIN}px</span>
-          <button
-            type="button"
-            onClick={() => onChange(FONT_SIZE_DEFAULT)}
-            className="text-[9px] font-bold text-[var(--accent)] hover:underline"
+      <div className="mb-2 flex items-center justify-between gap-2 px-0.5">
+        <p className="flex items-center gap-1.5 text-[9px] font-black uppercase tracking-[0.16em] text-[var(--text-tertiary)]">
+          <Type size={10} />
+          Text size
+        </p>
+        <span className="text-[10px] font-black text-[var(--text-primary)]">{value}px</span>
+      </div>
+
+      <div className="overflow-hidden rounded-xl border border-[var(--border-default)] bg-[var(--bg-input)]">
+        <div
+          className="border-b border-[var(--border-default)] px-3 py-3"
+          style={{
+            background:
+              'linear-gradient(180deg, color-mix(in srgb, var(--accent) 6%, transparent), transparent)',
+            fontFamily: fontFamily ? `'${fontFamily}', sans-serif` : undefined,
+          }}
+        >
+          <div
+            className="font-bold text-[var(--text-primary)]"
+            style={{ fontSize: `${value}px`, lineHeight: 1.35, letterSpacing: '-0.01em' }}
           >
-            {FONT_SIZE_DEFAULT}px
-          </button>
-          <span>{FONT_SIZE_MAX}px</span>
+            The quick brown fox
+          </div>
+          <div
+            className="mt-0.5 text-[var(--text-tertiary)]"
+            style={{ fontSize: `${Math.max(11, value - 3)}px`, lineHeight: 1.4 }}
+          >
+            jumps over the lazy dog — 0123456789
+          </div>
+        </div>
+
+        <div className="grid grid-cols-4 gap-1 p-1.5">
+          {presets.map(p => {
+            const active = value === p.size
+            return (
+              <button
+                key={p.size}
+                type="button"
+                onClick={() => onChange(p.size)}
+                className={`flex flex-col items-center justify-center gap-0.5 rounded-md py-1.5 transition-all ${
+                  active
+                    ? 'bg-[var(--accent)] text-[var(--text-inverse)] shadow-[var(--shadow-xs)]'
+                    : 'bg-[var(--bg-card)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                }`}
+              >
+                <span className="text-[11px] font-black">{p.size}</span>
+                <span className="text-[8px] font-bold uppercase tracking-[0.12em] opacity-80">
+                  {p.label}
+                </span>
+              </button>
+            )
+          })}
+        </div>
+
+        <div className="border-t border-[var(--border-default)] px-3 py-2.5">
+          <input
+            type="range"
+            min={FONT_SIZE_MIN}
+            max={FONT_SIZE_MAX}
+            value={value}
+            onChange={e => onPreview(Number(e.target.value))}
+            onMouseUp={e => onChange(Number((e.target as HTMLInputElement).value))}
+            onTouchEnd={e => onChange(Number((e.target as HTMLInputElement).value))}
+            onKeyUp={e => onChange(Number((e.target as HTMLInputElement).value))}
+            className="appearance-slider"
+          />
+          <div className="mt-1 flex justify-between text-[9px] uppercase tracking-[0.14em] text-[var(--text-tertiary)]">
+            <span>{FONT_SIZE_MIN}px</span>
+            <button
+              type="button"
+              onClick={() => onChange(FONT_SIZE_DEFAULT)}
+              className="text-[9px] font-bold text-[var(--accent)] hover:underline"
+            >
+              {FONT_SIZE_DEFAULT}px default
+            </button>
+            <span>{FONT_SIZE_MAX}px</span>
+          </div>
         </div>
       </div>
     </section>

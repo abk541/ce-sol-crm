@@ -8,30 +8,38 @@ import { terminal } from './terminal'
 import { warm } from './warm'
 import { minimal } from './minimal'
 import { synthwave } from './synthwave'
-import { cyberpunk } from './cyberpunk'
 import { newsprint } from './newsprint'
 import { dracula } from './dracula'
-import { brutalist } from './brutalist'
 import { sunset } from './sunset'
 import { mint } from './mint'
 import { abyss } from './abyss'
 import { forest } from './forest'
+import { midnight } from './midnight'
+import { sandstone } from './sandstone'
+import { carbon } from './carbon'
+import { lavender } from './lavender'
+import { solar } from './solar'
+import { ocean } from './ocean'
 import type { Theme } from './types'
 
 export type { Theme } from './types'
 
-// Display order in the AppearanceMenu — fresh / vivid themes first, then
-// productive defaults, then originals. Filterable via family tabs.
+// Display order in the AppearanceMenu — calm / usable themes first, then
+// vivid statement themes, then originals. Filterable via family tabs.
 export const THEMES: Theme[] = [
-  synthwave,
-  cyberpunk,
-  dracula,
-  brutalist,
-  newsprint,
-  sunset,
+  sandstone,
+  lavender,
+  solar,
   mint,
+  sunset,
+  newsprint,
+  ocean,
+  midnight,
+  carbon,
+  dracula,
   abyss,
   forest,
+  synthwave,
   saas,
   corporate,
   terminal,
