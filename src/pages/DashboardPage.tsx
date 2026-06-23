@@ -16,6 +16,7 @@ import {
 import { useStore } from '../store/useStore'
 import AnimatedNumber from '../components/shared/AnimatedNumber'
 import PeriodFilter, { type Period, filterByPeriod } from '../components/shared/PeriodFilter'
+import TeamStatisticsPanel from '../components/shared/TeamStatisticsPanel'
 import { formatCurrency, avatarColor } from '../lib/utils'
 import { useNavigate } from 'react-router-dom'
 import { getAssignmentChain } from '../lib/team'
@@ -656,6 +657,8 @@ function AgentDashboard() {
           </div>
         )}
       </motion.div>
+
+      <TeamStatisticsPanel />
     </div>
   )
 }
@@ -1041,6 +1044,8 @@ function ExecutiveDashboard() {
           )
         })}
       </motion.div>
+
+      <TeamStatisticsPanel defaultPeriod={period} />
 
       {tab === 'bd' && (
         <motion.div variants={stagger} initial="initial" animate="animate" className="space-y-5">
