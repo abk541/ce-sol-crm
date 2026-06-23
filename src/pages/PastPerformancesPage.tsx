@@ -6,7 +6,7 @@ import {
   History, Search, Download, FileText,
   Building2, DollarSign, Calendar, MapPin,
   ChevronDown, X, Save, Eye, Tag, MoreHorizontal, Pencil,
-  Mail, Phone, User as UserIcon,
+  Mail, Phone, User as UserIcon, Sparkles, RotateCcw,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import type { Contract, ContractPoC, PastPerformance, ContractType, ContractFinanceType, SetAside } from '../types'
@@ -16,6 +16,7 @@ import FloatingActionMenu from '../components/shared/FloatingActionMenu'
 import toast from 'react-hot-toast'
 
 type PocDraft = { name: string; email: string; phone: string }
+type PocSeed = { draft: PocDraft; source: 'pocs' | 'samGov' | 'none' }
 
 function findContractingPoc(pocs: ContractPoC[] | undefined): ContractPoC | undefined {
   return (pocs || []).find(p => p.role === 'KO')
@@ -30,23 +31,98 @@ function pocToDraft(poc: ContractPoC | undefined): PocDraft {
 function draftHasContent(d: PocDraft): boolean {
   return !!(d.name.trim() || d.email.trim() || d.phone.trim())
 }
+function draftsEqual(a: PocDraft, b: PocDraft): boolean {
+  return a.name === b.name && a.email === b.email && a.phone === b.phone
+}
+
+function pickSamGovKO(contract: Contract | undefined): PocDraft | undefined {
+  const sam = contract?.samGovContacts || []
+  const co = sam.find(c => c.kind === 'CONTRACTING_OFFICE' && (c.fullName?.trim() || c.email?.trim() || c.phone?.trim()))
+  if (co) return { name: co.fullName?.trim() || '', email: co.email?.trim() || '', phone: co.phone?.trim() || '' }
+  return undefined
+}
+function pickSamGovPoc(contract: Contract | undefined): PocDraft | undefined {
+  const sam = contract?.samGovContacts || []
+  const primary = sam.find(c => (c.kind ?? 'POC') !== 'CONTRACTING_OFFICE' && /primary/i.test(c.type || '') && (c.fullName?.trim() || c.email?.trim() || c.phone?.trim()))
+  const any = sam.find(c => (c.kind ?? 'POC') !== 'CONTRACTING_OFFICE' && (c.fullName?.trim() || c.email?.trim() || c.phone?.trim()))
+  const chosen = primary || any
+  if (chosen) return { name: chosen.fullName?.trim() || '', email: chosen.email?.trim() || '', phone: chosen.phone?.trim() || '' }
+  return undefined
+}
+
+function seedContractingFromContract(contract: Contract | undefined): PocSeed {
+  const ko = findContractingPoc(contract?.pocs)
+  if (ko) {
+    const draft = pocToDraft(ko)
+    if (draftHasContent(draft)) return { draft, source: 'pocs' }
+  }
+  const samKO = pickSamGovKO(contract) || pickSamGovPoc(contract)
+  if (samKO) return { draft: samKO, source: 'samGov' }
+  return { draft: { name: '', email: '', phone: '' }, source: 'none' }
+}
+
+function seedTechnicalFromContract(contract: Contract | undefined): PocSeed {
+  const tech = findTechnicalPoc(contract?.pocs)
+  if (tech) {
+    const draft = pocToDraft(tech)
+    if (draftHasContent(draft)) return { draft, source: 'pocs' }
+  }
+  const samPoc = pickSamGovPoc(contract)
+  if (samPoc) return { draft: samPoc, source: 'samGov' }
+  return { draft: { name: '', email: '', phone: '' }, source: 'none' }
+}
 
 function PocFieldset({
   title,
   subtitle,
   value,
   onChange,
+  seed,
 }: {
   title: string
   subtitle?: string
   value: PocDraft
   onChange: (next: PocDraft) => void
+  seed?: PocSeed
 }) {
+  const seedDraft = seed?.draft
+  const source = seed?.source ?? 'none'
+  const isAutoFilled = source !== 'none' && !!seedDraft && draftsEqual(value, seedDraft)
+  const canReset = source !== 'none' && !!seedDraft && !draftsEqual(value, seedDraft)
+  const sourceLabel = source === 'pocs'
+    ? 'Auto-filled from contract POCs'
+    : source === 'samGov'
+      ? 'Auto-filled from SAM.gov contacts'
+      : null
+
   return (
     <div className="rounded-xl border border-slate-200 p-3 space-y-2" style={{ background: 'var(--bg-raised)' }}>
-      <div>
-        <p className="text-xs font-bold text-slate-700">{title}</p>
-        {subtitle && <p className="text-[10px] text-slate-400">{subtitle}</p>}
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-xs font-bold text-slate-700">{title}</p>
+          {subtitle && <p className="text-[10px] text-slate-400">{subtitle}</p>}
+        </div>
+        {sourceLabel && (
+          <div className="flex items-center gap-1.5 flex-shrink-0">
+            {isAutoFilled && (
+              <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider"
+                    style={{ background: 'rgba(215,190,122,0.14)', color: 'var(--accent, #d7be7a)' }}
+                    title={sourceLabel}>
+                <Sparkles size={9} /> Auto
+              </span>
+            )}
+            {canReset && (
+              <button
+                type="button"
+                onClick={() => seedDraft && onChange(seedDraft)}
+                className="inline-flex items-center gap-1 rounded-full border border-slate-200 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-slate-500 hover:text-slate-700"
+                title={`Reset to ${sourceLabel?.toLowerCase()}`}
+              >
+                <RotateCcw size={9} /> Reset
+              </button>
+            )}
+          </div>
+        )}
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
         <div>
@@ -126,11 +202,11 @@ function ExportModal({ pp, onClose }: { pp: PastPerformance; onClose: () => void
     () => contracts.find(c => c.id === pp.contractId || c.contractId === pp.contractNumber),
     [contracts, pp.contractId, pp.contractNumber],
   )
-  const seedContractingPoc = useMemo(() => pocToDraft(findContractingPoc(linkedContract?.pocs)), [linkedContract])
-  const seedTechnicalPoc = useMemo(() => pocToDraft(findTechnicalPoc(linkedContract?.pocs)), [linkedContract])
+  const seedContracting = useMemo(() => seedContractingFromContract(linkedContract), [linkedContract])
+  const seedTechnical = useMemo(() => seedTechnicalFromContract(linkedContract), [linkedContract])
 
-  const [contractingPoc, setContractingPoc] = useState(seedContractingPoc)
-  const [technicalPoc, setTechnicalPoc] = useState(seedTechnicalPoc)
+  const [contractingPoc, setContractingPoc] = useState(seedContracting.draft)
+  const [technicalPoc, setTechnicalPoc] = useState(seedTechnical.draft)
 
   const handleExport = async () => {
     if (!desc.trim()) { setTouched(true); return }
@@ -237,12 +313,14 @@ function ExportModal({ pp, onClose }: { pp: PastPerformance; onClose: () => void
             subtitle="Cell 8 of the PDF template"
             value={contractingPoc}
             onChange={setContractingPoc}
+            seed={seedContracting}
           />
           <PocFieldset
             title="Technical POC"
             subtitle="Cell 9 of the PDF template"
             value={technicalPoc}
             onChange={setTechnicalPoc}
+            seed={seedTechnical}
           />
 
           <p className="text-xs text-slate-400">
@@ -278,8 +356,10 @@ function EditPPModal({ pp, onClose }: { pp: PastPerformance; onClose: () => void
   )
   const initialContractingPoc = useMemo(() => findContractingPoc(linkedContract?.pocs), [linkedContract])
   const initialTechnicalPoc = useMemo(() => findTechnicalPoc(linkedContract?.pocs), [linkedContract])
-  const [contractingPoc, setContractingPoc] = useState<PocDraft>(() => pocToDraft(initialContractingPoc))
-  const [technicalPoc, setTechnicalPoc] = useState<PocDraft>(() => pocToDraft(initialTechnicalPoc))
+  const seedContracting = useMemo(() => seedContractingFromContract(linkedContract), [linkedContract])
+  const seedTechnical = useMemo(() => seedTechnicalFromContract(linkedContract), [linkedContract])
+  const [contractingPoc, setContractingPoc] = useState<PocDraft>(() => seedContracting.draft)
+  const [technicalPoc, setTechnicalPoc] = useState<PocDraft>(() => seedTechnical.draft)
 
   const set = <K extends keyof PastPerformance>(k: K, v: PastPerformance[K]) =>
     setForm(p => ({ ...p, [k]: v }))
@@ -487,12 +567,14 @@ function EditPPModal({ pp, onClose }: { pp: PastPerformance; onClose: () => void
                   subtitle="Cell 8 of the PDF template — saved on the contract as KO"
                   value={contractingPoc}
                   onChange={setContractingPoc}
+                  seed={seedContracting}
                 />
                 <PocFieldset
                   title="Technical POC"
                   subtitle="Cell 9 of the PDF template — saved on the contract as COR"
                   value={technicalPoc}
                   onChange={setTechnicalPoc}
+                  seed={seedTechnical}
                 />
               </div>
             </div>
