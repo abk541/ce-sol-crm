@@ -799,7 +799,7 @@ export default function BDTrackerPage() {
                                 )}
                                 <div className="my-1 border-t border-slate-100" />
                                 <p className="px-3 py-1 text-[9px] font-bold uppercase tracking-wider text-slate-400">Move to</p>
-                                {BD_TABS.filter(t => t.key !== s.status).map(t => {
+                                {BD_TABS.filter(t => t.key !== s.status && t.key !== 'NOT_SUBMITTED' && t.key !== 'DROPPED').map(t => {
                                   const itemMeta = STATUS_META[t.key]
                                   return (
                                     <button key={t.key} onClick={() => {

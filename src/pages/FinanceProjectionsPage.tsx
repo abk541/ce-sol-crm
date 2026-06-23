@@ -23,6 +23,7 @@ import type {
   ContractInvoice,
   ContractLineItem,
   ContractLineYear,
+  GovBillingStatus,
   InvoicePaymentMethod,
   SubInvoiceStatus,
 } from '../types'
@@ -56,6 +57,23 @@ const SUB_STATUS_BADGE: Record<SubInvoiceStatus, string> = {
   NOT_PAID: 'bg-slate-100 text-slate-600',
   PARTIAL:  'bg-amber-100 text-amber-700',
   PAID:     'bg-emerald-100 text-emerald-700',
+}
+
+const GOV_STATUS_OPTIONS: { value: GovBillingStatus; label: string }[] = [
+  { value: 'SUBMITTED',         label: 'Submitted' },
+  { value: 'SENT_FOR_APPROVAL', label: 'Sent for approval' },
+  { value: 'BILLED',            label: 'Billed' },
+  { value: 'REJECTED',          label: 'Rejected' },
+  { value: 'PAID',              label: 'Paid' },
+]
+const GOV_STATUS_LABEL: Record<GovBillingStatus, string> =
+  Object.fromEntries(GOV_STATUS_OPTIONS.map(o => [o.value, o.label])) as Record<GovBillingStatus, string>
+const GOV_STATUS_BADGE: Record<GovBillingStatus, string> = {
+  SUBMITTED:         'bg-indigo-100 text-indigo-700',
+  SENT_FOR_APPROVAL: 'bg-violet-100 text-violet-700',
+  BILLED:            'bg-sky-100 text-sky-700',
+  REJECTED:          'bg-rose-100 text-rose-700',
+  PAID:              'bg-emerald-100 text-emerald-700',
 }
 
 const LINE_YEAR_LABELS: Record<ContractLineYear, string> = {
@@ -737,6 +755,7 @@ export default function FinanceProjectionsPage() {
   const [yearFilter, setYearFilter] = useState<string>('ALL')
   const [monthFilter, setMonthFilter] = useState<string>('ALL')
   const [methodFilter, setMethodFilter] = useState<InvoicePaymentMethod | 'ALL'>('ALL')
+  const [govStatusFilter, setGovStatusFilter] = useState<GovBillingStatus | 'ALL'>('ALL')
   const [searchTerm, setSearchTerm] = useState<string>('')
 
   useEffect(() => {
@@ -752,6 +771,7 @@ export default function FinanceProjectionsPage() {
       if (yearFilter !== 'ALL' && y !== yearFilter) return false
       if (monthFilter !== 'ALL' && m !== monthFilter) return false
       if (methodFilter !== 'ALL' && r.invoice.paymentMethod !== methodFilter) return false
+      if (govStatusFilter !== 'ALL' && r.invoice.status !== govStatusFilter) return false
       if (term) {
         const haystack = [
           r.contract?.title,
@@ -763,7 +783,7 @@ export default function FinanceProjectionsPage() {
       }
       return true
     })
-  }, [allRows, yearFilter, monthFilter, methodFilter, searchTerm])
+  }, [allRows, yearFilter, monthFilter, methodFilter, govStatusFilter, searchTerm])
 
   // Sort by invoice date ascending so monthly groups appear chronologically.
   const sortedRows = useMemo(
@@ -893,6 +913,11 @@ export default function FinanceProjectionsPage() {
       subStatus: next || undefined,
     })
   }
+  const handleQuickGovStatus = (row: Row, next: GovBillingStatus) => {
+    updateContractInvoice(row.invoice.contractId, row.invoice.id, {
+      status: next,
+    })
+  }
   const handleQuickMethod = (row: Row, next: InvoicePaymentMethod | '') => {
     updateContractInvoice(row.invoice.contractId, row.invoice.id, {
       paymentMethod: next || undefined,
@@ -917,6 +942,7 @@ export default function FinanceProjectionsPage() {
     setYearFilter(defaultYear)
     setMonthFilter('ALL')
     setMethodFilter('ALL')
+    setGovStatusFilter('ALL')
     setSearchTerm('')
   }
 
@@ -924,6 +950,7 @@ export default function FinanceProjectionsPage() {
     (yearFilter !== defaultYear ? 1 : 0) +
     (monthFilter !== 'ALL' ? 1 : 0) +
     (methodFilter !== 'ALL' ? 1 : 0) +
+    (govStatusFilter !== 'ALL' ? 1 : 0) +
     (searchTerm.trim() ? 1 : 0)
 
   return (
@@ -1064,6 +1091,18 @@ export default function FinanceProjectionsPage() {
               ...PAYMENT_METHOD_OPTIONS.map(o => ({ value: o.value, label: o.label })),
             ]}
           />
+
+          <FilterSelect
+            icon={<Filter size={12} />}
+            label="Gov Status"
+            value={govStatusFilter}
+            onChange={v => setGovStatusFilter(v as GovBillingStatus | 'ALL')}
+            active={govStatusFilter !== 'ALL'}
+            options={[
+              { value: 'ALL', label: 'All statuses' },
+              ...GOV_STATUS_OPTIONS.map(o => ({ value: o.value, label: o.label })),
+            ]}
+          />
         </div>
       </div>
 
@@ -1084,14 +1123,15 @@ export default function FinanceProjectionsPage() {
                 <th className="px-3 py-2 text-left">Payment Method</th>
                 <th className="px-3 py-2 text-right">Sub Quote</th>
                 <th className="px-3 py-2 text-left">Due Date</th>
-                <th className="px-3 py-2 text-left">Sub Status</th>
+                <th className="px-3 py-2 text-left">Gov Status</th>
+                <th className="px-3 py-2 text-left">Sub Invoice Status</th>
                 <th className="px-3 py-2 text-right" />
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {groups.length === 0 && (
                 <tr>
-                  <td colSpan={13} className="py-12 text-center text-sm text-slate-400">
+                  <td colSpan={14} className="py-12 text-center text-sm text-slate-400">
                     No invoices match the current filters. Click <span className="font-bold">Add invoice</span> to record one.
                   </td>
                 </tr>
@@ -1103,15 +1143,18 @@ export default function FinanceProjectionsPage() {
                 return (
                   <Fragment key={monthKey || 'unscheduled'}>
                     <tr className="bg-amber-50/70">
-                      <td colSpan={13} className="px-3 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-amber-700">
+                      <td colSpan={14} className="px-3 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-amber-700">
                         {monthLabel(monthKey)}
                       </td>
                     </tr>
                     {rows.map((row, ri) => {
                       const subStatus = row.subStatus
+                      const govStatus = row.invoice.status
                       const method = row.invoice.paymentMethod
+                      const note = row.invoice.notes?.trim()
                       return (
-                        <tr key={row.invoice.id} className="hover:bg-slate-50">
+                        <Fragment key={row.invoice.id}>
+                        <tr className="hover:bg-slate-50">
                           <td className="px-3 py-2 max-w-[260px]">
                             <p className="truncate font-bold text-slate-800" title={row.contract?.title || ''}>
                               {row.contract?.title || '— missing contract —'}
@@ -1160,6 +1203,18 @@ export default function FinanceProjectionsPage() {
                           </td>
                           <td className="px-3 py-2">
                             <select
+                              value={govStatus}
+                              onChange={e => handleQuickGovStatus(row, e.target.value as GovBillingStatus)}
+                              className={`rounded-md border border-slate-200 px-1.5 py-0.5 text-[11px] font-bold focus:border-indigo-400 focus:outline-none ${GOV_STATUS_BADGE[govStatus]}`}
+                              title={`Gov billing status: ${GOV_STATUS_LABEL[govStatus]}`}
+                            >
+                              {GOV_STATUS_OPTIONS.map(o => (
+                                <option key={o.value} value={o.value}>{o.label}</option>
+                              ))}
+                            </select>
+                          </td>
+                          <td className="px-3 py-2">
+                            <select
                               value={row.invoice.subStatus ?? ''}
                               onChange={e => handleQuickSubStatus(row, e.target.value as SubInvoiceStatus | '')}
                               className={`rounded-md border border-slate-200 px-1.5 py-0.5 text-[11px] font-bold focus:border-indigo-400 focus:outline-none ${SUB_STATUS_BADGE[subStatus]}`}
@@ -1192,6 +1247,17 @@ export default function FinanceProjectionsPage() {
                             </div>
                           </td>
                         </tr>
+                        {note && (
+                          <tr key={`${row.invoice.id}-note`} className="bg-amber-50/40">
+                            <td colSpan={14} className="px-3 pb-2 pt-1">
+                              <div className="flex items-start gap-2 rounded-md border border-amber-100 bg-amber-50/80 px-3 py-1.5">
+                                <span className="mt-[1px] text-[10px] font-black uppercase tracking-[0.18em] text-amber-700">Note</span>
+                                <p className="text-[11px] leading-snug text-amber-900 whitespace-pre-wrap">{note}</p>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                        </Fragment>
                       )
                     })}
                     {/* Group subtotal */}
@@ -1211,11 +1277,12 @@ export default function FinanceProjectionsPage() {
                         Profit: <span className={monthProfit >= 0 ? 'text-emerald-700' : 'text-rose-700'}>{formatCurrency(monthProfit)}</span>
                       </td>
                       <td className="px-3 py-1.5" />
+                      <td className="px-3 py-1.5" />
                     </tr>
                     {/* Spacer between groups */}
                     {gi < groups.length - 1 && (
                       <tr key={`${monthKey}-spacer`} className="h-1.5">
-                        <td colSpan={13} />
+                        <td colSpan={14} />
                       </tr>
                     )}
                   </Fragment>
@@ -1235,6 +1302,7 @@ export default function FinanceProjectionsPage() {
                   <td className="px-3 py-2 text-[10px] uppercase tracking-wider text-slate-300">
                     Profit: <span className={totals.totalProfit >= 0 ? 'text-emerald-300' : 'text-rose-300'}>{formatCurrency(totals.totalProfit)}</span>
                   </td>
+                  <td className="px-3 py-2" />
                   <td className="px-3 py-2" />
                 </tr>
               </tfoot>

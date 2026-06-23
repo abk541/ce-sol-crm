@@ -2,7 +2,6 @@ import {
   Bell,
   Building2,
   ClipboardList,
-  Database,
   DollarSign,
   FileCheck2,
   FileText,
@@ -67,7 +66,6 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'Databases',
     items: [
       { to: '/subk-database', icon: Building2, label: 'Subk Database' },
-      { to: '/database',      icon: Database,  label: 'INT-Database' },
       { to: '/certifications', icon: ShieldCheck, label: 'Company Certifications' },
       { to: '/past-performances', icon: History, label: 'Past Performances' },
     ],

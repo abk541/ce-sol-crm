@@ -118,7 +118,6 @@ export default function App() {
           <Route path="subk-database"     element={<PermissionGuard anyOf={['sourcing:read', 'operations:manage']}><SubkDatabasePage /></PermissionGuard>} />
           <Route path="certifications"    element={<PermissionGuard permission="hr:viewCertifications"><CertificationsPage /></PermissionGuard>} />
           <Route path="notifications"     element={<NotificationsPage />} />
-          <Route path="database"          element={<PermissionGuard permission="admin:manageUsers"><PlaceholderPage title="INT-Database" /></PermissionGuard>} />
           <Route path="admin"             element={<PermissionGuard permission="admin:manageUsers"><AdminPage /></PermissionGuard>} />
           <Route path="hr"                element={<PermissionGuard permission="hr:viewCertifications"><HRPage /></PermissionGuard>} />
           <Route path="settings"          element={<PlaceholderPage title="Settings" />} />

@@ -19,7 +19,6 @@ function canSeeNavItem(user: ReturnType<typeof useStore.getState>['currentUser']
   if (to === '/contracts') return hasPermission(user, 'contract:read')
   if (to === '/fresh-award' || to === '/finance-projections') return hasPermission(user, 'operations:manage')
   if (to === '/subk-database') return hasAnyPermission(user, ['sourcing:read', 'operations:manage'])
-  if (to === '/database') return hasPermission(user, 'admin:manageUsers')
   if (to === '/past-performances') return hasPermission(user, 'contract:read')
   if (to === '/admin') return hasPermission(user, 'admin:manageUsers')
   if (to === '/hr') return hasPermission(user, 'hr:viewCertifications')
