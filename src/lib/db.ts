@@ -940,6 +940,78 @@ function employeeRowsForSync(employees: Employee[]): Record<string, unknown>[] {
     .map(empToDb)
 }
 
+type ExistingEmployeeIdentity = { id: string; email: string }
+
+function existingEmployeesByExactEmail(existing: ExistingEmployeeIdentity[]) {
+  return existing.reduce<Map<string, ExistingEmployeeIdentity[]>>((map, employee) => {
+    const email = employee.email
+    if (!email) return map
+    map.set(email, [...(map.get(email) ?? []), employee])
+    return map
+  }, new Map())
+}
+
+function isDuplicateEmployeeEmailError(error: unknown) {
+  const row = error as { code?: string; message?: string } | null
+  return row?.code === '23505' && /email/i.test(row.message ?? '')
+}
+
+function legacyEmployeeEmail(email: string, employeeId: string) {
+  const safeId = employeeId.replace(/[^a-zA-Z0-9_-]/g, '').slice(-16) || 'legacy'
+  const at = email.indexOf('@')
+  if (at > 0) {
+    return `${email.slice(0, at)}+legacy-${safeId}${email.slice(at)}`
+  }
+  return `${email}+legacy-${safeId}`
+}
+
+async function releaseEmployeeEmailConflicts(
+  row: Record<string, unknown>,
+  existingByEmail: Map<string, ExistingEmployeeIdentity[]>,
+): Promise<boolean> {
+  if (!supabase) return false
+  const email = String(row.email ?? '')
+  const desiredId = String(row.id ?? '')
+  const conflicts = (existingByEmail.get(email) ?? []).filter(employee => employee.id !== desiredId)
+  if (conflicts.length === 0) return false
+
+  for (const conflict of conflicts) {
+    const { error } = await supabase
+      .from('employees')
+      .update({ email: legacyEmployeeEmail(conflict.email, conflict.id) })
+      .eq('id', conflict.id)
+
+    if (error) {
+      console.error('[db] release employee email conflict error', error)
+      return false
+    }
+  }
+
+  return true
+}
+
+async function upsertEmployeeRowForSync(
+  row: Record<string, unknown>,
+  existingByEmail: Map<string, ExistingEmployeeIdentity[]>,
+): Promise<boolean> {
+  if (!supabase) return false
+
+  let { error } = await supabase.from('employees').upsert(row, { onConflict: 'id' }).select()
+  if (!error) return true
+
+  if (isDuplicateEmployeeEmailError(error)) {
+    const released = await releaseEmployeeEmailConflicts(row, existingByEmail)
+    if (released) {
+      const retry = await supabase.from('employees').upsert(row, { onConflict: 'id' }).select()
+      error = retry.error
+      if (!error) return true
+    }
+  }
+
+  console.error('[db] upsert employee row error', error)
+  return false
+}
+
 // ── User mapper ──────────────────────────────────────────────────────────────
 
 function userToDb(u: User): Record<string, unknown> {
@@ -1570,11 +1642,6 @@ export async function seedEmployeesIfEmpty(employees: Employee[]): Promise<boole
   if (!isSupabaseConnected || !supabase || employees.length === 0) return true
 
   try {
-    // employees.email has a UNIQUE constraint. Legacy data can have a DB row
-    // owning an email under a different id than the local user. Upserting on
-    // id would fail the whole batch with 23505; skip drifted rows so the rest
-    // still sync. We do not rewrite DB ids here because manager_id and
-    // opportunities/contracts.assigned_to reference them.
     const { data: existing, error: fetchError } = await supabase
       .from('employees')
       .select('id, email')
@@ -1582,29 +1649,31 @@ export async function seedEmployeesIfEmpty(employees: Employee[]): Promise<boole
       console.error('[db] seedEmployeesIfEmpty fetch existing error', fetchError)
       return false
     }
-    const existingIdByEmail = new Map<string, string>()
-    for (const row of existing ?? []) {
-      const email = ((row.email as string | null) ?? '').toLowerCase()
-      if (email) existingIdByEmail.set(email, row.id as string)
+    const identities = (existing ?? [])
+      .map(row => ({
+        id: String((row as Record<string, unknown>).id ?? ''),
+        email: String((row as Record<string, unknown>).email ?? ''),
+      }))
+      .filter(row => row.id && row.email)
+    const existingByEmail = existingEmployeesByExactEmail(identities)
+    const rows = employeeRowsForSync(employees)
+
+    const synced = await upsertBatched('employees', rows)
+    if (synced) {
+      console.log('[db] Synced employee hierarchy in Supabase.')
+      return true
     }
-    const safe: Employee[] = []
-    const drifted: Array<{ localId: string; dbId: string; email: string }> = []
-    for (const e of employees) {
-      const email = (e.email ?? '').toLowerCase()
-      const dbId = email ? existingIdByEmail.get(email) : undefined
-      if (dbId && dbId !== e.id) {
-        drifted.push({ localId: e.id, dbId, email: e.email ?? '' })
-      } else {
-        safe.push(e)
-      }
+
+    // If the batch hit a stale unique-email conflict, repair only the exact
+    // conflicting legacy row and retry row-by-row so assigned_to FK targets
+    // are present before opportunities/contracts are saved.
+    let allSynced = true
+    for (const row of rows) {
+      const ok = await upsertEmployeeRowForSync(row, existingByEmail)
+      if (!ok) allSynced = false
     }
-    if (drifted.length > 0) {
-      console.warn('[db] Skipping employees with id drift (DB owns email under a different id):', drifted)
-    }
-    if (safe.length === 0) return true
-    const synced = await upsertBatched('employees', employeeRowsForSync(safe))
-    if (synced) console.log('[db] Synced employee hierarchy in Supabase.')
-    return synced
+    if (allSynced) console.log('[db] Synced employee hierarchy in Supabase.')
+    return allSynced
   } catch (err) {
     console.error('[db] seedEmployeesIfEmpty failed', err)
     return false
