@@ -16,19 +16,37 @@ export default function Layout() {
       </div>
 
       <Toaster
-        position="bottom-right"
+        position="top-center"
+        gutter={10}
+        containerStyle={{ top: 24, zIndex: 9999 }}
         toastOptions={{
+          duration: 6000,
           style: {
             background: '#0A1D2B',
             color: '#F8FBF7',
-            border: '1px solid rgba(215,190,122,0.18)',
-            boxShadow: '0 18px 44px rgba(0,0,0,0.34), 0 2px 10px rgba(184,145,78,0.12)',
-            borderRadius: '10px',
-            fontSize: '13px',
+            border: '1px solid rgba(215,190,122,0.28)',
+            boxShadow: '0 22px 60px rgba(0,0,0,0.45), 0 2px 10px rgba(184,145,78,0.18)',
+            borderRadius: '12px',
+            fontSize: '15px',
             fontWeight: 500,
+            lineHeight: '1.45',
+            padding: '14px 18px',
+            minWidth: '320px',
+            maxWidth: '560px',
           },
-          success: { iconTheme: { primary: '#1F7A78', secondary: '#FFFFFF' } },
-          error:   { iconTheme: { primary: '#EF4444', secondary: '#FFFFFF' } },
+          success: {
+            duration: 5000,
+            iconTheme: { primary: '#1F7A78', secondary: '#FFFFFF' },
+          },
+          error: {
+            duration: 8000,
+            iconTheme: { primary: '#EF4444', secondary: '#FFFFFF' },
+            style: {
+              background: '#3B0D0D',
+              color: '#FEE2E2',
+              border: '1px solid rgba(239,68,68,0.55)',
+            },
+          },
         }}
       />
     </div>
