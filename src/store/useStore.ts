@@ -2213,15 +2213,9 @@ export const useStore = create<AppState>()(
 
           set(s => {
             const dbUsers = data.users
-            const dbIds = new Set(dbUsers.map(u => u.id))
-            const dbEmails = new Set(dbUsers.map(u => u.email.toLowerCase()))
-            // Keep any locally-known users that aren't yet in the DB (e.g.
-            // user just created in another browser session before Supabase
-            // round-trip). The DB version wins on conflict.
-            const localOnly = s.users.filter(u =>
-              !dbIds.has(u.id) && !dbEmails.has(u.email.toLowerCase())
-            )
-            const merged = [...dbUsers, ...localOnly]
+            // When Supabase has users, it is the source of truth. Do not
+            // preserve stale local-only users after an admin/database reset.
+            const merged = dbUsers
             // Auth flags on the active user are monotonic forward (firstLogin:
             // true → false). If a stale DB read disagrees with the local
             // just-completed state, don't regress.
@@ -2299,16 +2293,10 @@ export const useStore = create<AppState>()(
               deleteOpportunityRecord(opp.id)
             })
 
-            // Merge DB users with any local-only users that haven't synced yet.
             const localUsers = get().users
             const localCurrentUser = get().currentUser
-            const dbUserIds = new Set(data.users.map(u => u.id))
-            const dbUserEmails = new Set(data.users.map(u => u.email.toLowerCase()))
-            const localOnlyUsers = localUsers.filter(u =>
-              !dbUserIds.has(u.id) && !dbUserEmails.has(u.email.toLowerCase())
-            )
             const mergedUsers = data.users.length > 0
-              ? [...data.users, ...localOnlyUsers]
+              ? data.users
               : localUsers
             // See syncUsersFromDb: never regress monotonic auth flags for the
             // active user when the DB read is stale relative to a just-completed
@@ -2375,16 +2363,18 @@ export const useStore = create<AppState>()(
     }),
     {
       name: 'ces-crm-store',
+      // v17: reset all persisted app data after database cleanup; Supabase users
+      // are now the source of truth when connected.
       // v16: removed MFA from the auth flow; needsMFASetup is no longer in state.
       // v15: refresh seeded department users to the Moroccan BD/OPS hierarchy.
       // v14: first forced refresh of seeded department users.
       // v13: assignment employees are derived strictly from active users so
       // deleted/inactive users disappear from assignment pickers.
-      version: 16,
+      version: 17,
       migrate: (persistedState: unknown, fromVersion: number) => {
         const s = persistedState as Record<string, unknown>
         delete s.needsMFASetup
-        if (fromVersion < 4) {
+        if (fromVersion < 17) {
           return {
             ...s,
             currentUser:     null,

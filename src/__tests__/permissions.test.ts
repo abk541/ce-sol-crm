@@ -18,17 +18,15 @@ function user(role: Role): User {
 }
 
 describe('role permissions', () => {
-  it('seeds one login account for each app role', () => {
-    const seededRoles = new Set(MOCK_USERS.map(user => user.role))
-
-    expect(seededRoles).toEqual(new Set<Role>([
-      'CAPTURE_MANAGER',
-      'BD_MANAGER',
-      'TEAM_LEAD',
-      'ASSOCIATE',
-      'OPS_MANAGER',
-    ]))
-    expect(MOCK_USERS.every(user => user.email && user.password && user.status === 'active')).toBe(true)
+  it('starts with only the Capture Manager seed login', () => {
+    expect(MOCK_USERS).toHaveLength(1)
+    expect(MOCK_USERS[0]).toMatchObject({
+      id: 'u0',
+      email: 'abk@cesolutionplus.com',
+      role: 'CAPTURE_MANAGER',
+      status: 'active',
+    })
+    expect(MOCK_USERS[0].password).toBeTruthy()
   })
 
   it('gives Capture Manager full control', () => {
