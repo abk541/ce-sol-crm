@@ -1570,10 +1570,39 @@ export async function seedEmployeesIfEmpty(employees: Employee[]): Promise<boole
   if (!isSupabaseConnected || !supabase || employees.length === 0) return true
 
   try {
-    const synced = await upsertBatched(
-      'employees',
-      employeeRowsForSync(employees),
-    )
+    // employees.email has a UNIQUE constraint. Legacy data can have a DB row
+    // owning an email under a different id than the local user. Upserting on
+    // id would fail the whole batch with 23505; skip drifted rows so the rest
+    // still sync. We do not rewrite DB ids here because manager_id and
+    // opportunities/contracts.assigned_to reference them.
+    const { data: existing, error: fetchError } = await supabase
+      .from('employees')
+      .select('id, email')
+    if (fetchError) {
+      console.error('[db] seedEmployeesIfEmpty fetch existing error', fetchError)
+      return false
+    }
+    const existingIdByEmail = new Map<string, string>()
+    for (const row of existing ?? []) {
+      const email = ((row.email as string | null) ?? '').toLowerCase()
+      if (email) existingIdByEmail.set(email, row.id as string)
+    }
+    const safe: Employee[] = []
+    const drifted: Array<{ localId: string; dbId: string; email: string }> = []
+    for (const e of employees) {
+      const email = (e.email ?? '').toLowerCase()
+      const dbId = email ? existingIdByEmail.get(email) : undefined
+      if (dbId && dbId !== e.id) {
+        drifted.push({ localId: e.id, dbId, email: e.email ?? '' })
+      } else {
+        safe.push(e)
+      }
+    }
+    if (drifted.length > 0) {
+      console.warn('[db] Skipping employees with id drift (DB owns email under a different id):', drifted)
+    }
+    if (safe.length === 0) return true
+    const synced = await upsertBatched('employees', employeeRowsForSync(safe))
     if (synced) console.log('[db] Synced employee hierarchy in Supabase.')
     return synced
   } catch (err) {
