@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
@@ -6,7 +6,7 @@ import {
   Clock, AlertTriangle, Flame, Trophy, Activity,
   TrendingUp, TrendingDown, BarChart2, Percent,
   X, ExternalLink, ChevronRight, Users, Zap,
-  MoreHorizontal,
+  MoreHorizontal, Building2,
 } from 'lucide-react'
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -23,7 +23,7 @@ import { getAssignmentChain } from '../lib/team'
 import { hasAnyPermission, hasPermission, ROLE_LABELS } from '../lib/permissions'
 import { chartColorsForTheme, useAppearance } from '../lib/appearance'
 import { NAICS_CODES } from '../data/naics'
-import type { BDSubmission, Contract, Employee, Opportunity, User } from '../types'
+import type { BDSubmission, Contract, Employee, EmployeeTeam, Opportunity, User } from '../types'
 
 const stagger = { animate: { transition: { staggerChildren: 0.05 } } }
 const fadeUp = {
@@ -971,6 +971,7 @@ function BdPiePanel({
 
 type ChartGroupRow = { name: string; value: number; count: number }
 type MonthCount = { month: string; submitted: number; awarded: number }
+type MonthValue = { month: string; value: number; awarded: number }
 
 type MemberRollup = {
   employee: Employee
@@ -986,7 +987,12 @@ type MemberRollup = {
   byStatus: ChartGroupRow[]
   byType: ChartGroupRow[]
   byNaics: ChartGroupRow[]
+  bySetAside: ChartGroupRow[]
+  byPriority: ChartGroupRow[]
+  byAgency: ChartGroupRow[]
+  assignedByStatus: ChartGroupRow[]
   monthsData: MonthCount[]
+  valueByMonth: MonthValue[]
   recent: BDSubmission[]
 }
 
@@ -1006,7 +1012,11 @@ type TeamRollup = {
   captureRate: number
   memberStats: MemberRollup[]
   monthsData: MonthCount[]
+  valueByMonth: MonthValue[]
   byStatus: ChartGroupRow[]
+  bySetAside: ChartGroupRow[]
+  byPriority: ChartGroupRow[]
+  byAgency: ChartGroupRow[]
   byMember: Array<{ name: string; submitted: number; awarded: number; value: number }>
   byRole: ChartGroupRow[]
 }
@@ -1036,6 +1046,8 @@ function TeamsOverview({
   tertiaryAccent,
   onPickTeam,
   onPickMember,
+  emptyLabel,
+  kpiLabel,
 }: {
   teamRollups: TeamRollup[]
   activeUsers: User[]
@@ -1045,6 +1057,8 @@ function TeamsOverview({
   tertiaryAccent: string
   onPickTeam: (managerId: string) => void
   onPickMember: (employeeId: string) => void
+  emptyLabel?: string
+  kpiLabel?: string
 }) {
   const totalMembers = teamRollups.reduce((sum, t) => sum + t.members.length, 0)
   const totalSubs = teamRollups.reduce((sum, t) => sum + t.subs.length, 0)
@@ -1053,7 +1067,7 @@ function TeamsOverview({
   return (
     <>
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-        <DashboardStat icon={Users} label="Active Teams" value={teamRollups.length} detail="Teams led by a manager" accent={accent} />
+        <DashboardStat icon={Users} label={kpiLabel || 'Active Teams'} value={teamRollups.length} detail="Teams led by a manager" accent={accent} />
         <DashboardStat icon={Users} label="Team Members" value={totalMembers} detail="People assigned to a team" accent={tertiaryAccent} />
         <DashboardStat icon={Send} label="Total Submissions" value={totalSubs} detail="Submissions across all teams" accent={secondaryAccent} />
         <DashboardStat icon={Trophy} label="Total Awards" value={totalAwards} detail="Awarded submissions" accent={accent} />
@@ -1062,7 +1076,7 @@ function TeamsOverview({
 
       {teamRollups.length === 0 ? (
         <DashboardPanel title="No teams yet" subtitle="Create employees and assign managers to form teams.">
-          <EmptyDashboardState label="No team data to display." />
+          <EmptyDashboardState label={emptyLabel || 'No team data to display.'} />
         </DashboardPanel>
       ) : (
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
@@ -1301,6 +1315,103 @@ function TeamDetailView({
         </DashboardPanel>
       </div>
 
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <DashboardPanel title="By Set-Aside" subtitle="Assigned opportunities by set-aside">
+          {rollup.bySetAside.length === 0 ? (
+            <EmptyDashboardState label="No assigned opportunities." />
+          ) : (
+            <div className="flex h-[220px] items-center gap-3">
+              <ResponsiveContainer width="55%" height="100%">
+                <PieChart>
+                  <Pie data={rollup.bySetAside} dataKey="count" nameKey="name" innerRadius={42} outerRadius={68} paddingAngle={3} stroke="transparent" isAnimationActive={false}>
+                    {rollup.bySetAside.map((row, idx) => (
+                      <Cell key={row.name} fill={chartColors[idx % chartColors.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip content={<ExecutiveTooltip />} />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="flex-1 space-y-1.5">
+                {rollup.bySetAside.map((row, idx) => {
+                  const color = chartColors[idx % chartColors.length]
+                  return (
+                    <div key={row.name} className="flex items-center justify-between gap-2 text-[11px]">
+                      <span className="flex min-w-0 items-center gap-1.5 truncate font-bold" style={{ color: 'var(--text-secondary)' }}>
+                        <span className="h-2 w-2 flex-shrink-0 rounded-full" style={{ background: color }} />
+                        <span className="truncate">{row.name}</span>
+                      </span>
+                      <span className="flex-shrink-0 font-black" style={{ color: 'var(--text-primary)' }}>{row.count}</span>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+        </DashboardPanel>
+
+        <DashboardPanel title="By Priority" subtitle="Assigned opportunities by priority">
+          {rollup.byPriority.length === 0 ? (
+            <EmptyDashboardState label="No assigned opportunities." />
+          ) : (
+            <ResponsiveContainer width="100%" height={220}>
+              <PieChart>
+                <Pie data={rollup.byPriority} dataKey="count" nameKey="name" innerRadius={42} outerRadius={78} paddingAngle={3} stroke="transparent" isAnimationActive={false}>
+                  {rollup.byPriority.map((row, idx) => (
+                    <Cell key={row.name} fill={chartColors[(idx + 2) % chartColors.length]} />
+                  ))}
+                </Pie>
+                <Tooltip content={<ExecutiveTooltip />} />
+                <Legend wrapperStyle={{ fontSize: 10, color: '#C7D7D3' }} />
+              </PieChart>
+            </ResponsiveContainer>
+          )}
+        </DashboardPanel>
+
+        <DashboardPanel title="Top Agencies" subtitle="By number of assigned opportunities">
+          {rollup.byAgency.length === 0 ? (
+            <EmptyDashboardState label="No assigned opportunities." />
+          ) : (
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={rollup.byAgency} layout="vertical">
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--exec-grid)" horizontal={false} />
+                <XAxis type="number" tick={{ fill: '#9FB2AD', fontSize: 10 }} axisLine={false} tickLine={false} allowDecimals={false} />
+                <YAxis type="category" dataKey="name" tick={{ fill: '#9FB2AD', fontSize: 10 }} axisLine={false} tickLine={false} width={88} />
+                <Tooltip content={<ExecutiveTooltip />} />
+                <Bar dataKey="count" name="Opportunities" fill={tertiaryAccent} radius={[0, 5, 5, 0]} isAnimationActive={false} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </DashboardPanel>
+      </div>
+
+      <DashboardPanel title="Submitted Value Trend" subtitle="Total vs. awarded submitted value, past 6 months">
+        {rollup.valueByMonth.every(m => m.value === 0 && m.awarded === 0) ? (
+          <EmptyDashboardState label="No submitted value in the last 6 months." />
+        ) : (
+          <ResponsiveContainer width="100%" height={240}>
+            <AreaChart data={rollup.valueByMonth}>
+              <defs>
+                <linearGradient id="teamValueGradient" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor={secondaryAccent} stopOpacity={0.4} />
+                  <stop offset="95%" stopColor={secondaryAccent} stopOpacity={0} />
+                </linearGradient>
+                <linearGradient id="teamAwardedGradient" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor={accent} stopOpacity={0.5} />
+                  <stop offset="95%" stopColor={accent} stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--exec-grid)" vertical={false} />
+              <XAxis dataKey="month" tick={{ fill: '#9FB2AD', fontSize: 11 }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fill: '#9FB2AD', fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={v => `$${Math.round(v / 1000)}K`} />
+              <Tooltip content={<ExecutiveTooltip />} formatter={(v: number) => formatCurrency(v)} />
+              <Legend wrapperStyle={{ fontSize: 11, color: '#C7D7D3' }} />
+              <Area type="monotone" dataKey="value" name="Submitted Value" stroke={secondaryAccent} fill="url(#teamValueGradient)" strokeWidth={2} isAnimationActive={false} />
+              <Area type="monotone" dataKey="awarded" name="Awarded Value" stroke={accent} fill="url(#teamAwardedGradient)" strokeWidth={2} isAnimationActive={false} />
+            </AreaChart>
+          </ResponsiveContainer>
+        )}
+      </DashboardPanel>
+
       <DashboardPanel title="Team Members" subtitle="Click any member to drill into their personal scorecard">
         {rollup.memberStats.length === 0 ? (
           <EmptyDashboardState label="This team has no members yet." />
@@ -1490,6 +1601,123 @@ function MemberDetailView({
         </DashboardPanel>
       </div>
 
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <DashboardPanel title="Assigned by Set-Aside" subtitle="Their assigned opportunities by set-aside">
+          {rollup.bySetAside.length === 0 ? (
+            <EmptyDashboardState label="No assigned opportunities." />
+          ) : (
+            <ResponsiveContainer width="100%" height={220}>
+              <PieChart>
+                <Pie data={rollup.bySetAside} dataKey="count" nameKey="name" innerRadius={46} outerRadius={74} paddingAngle={3} stroke="transparent" isAnimationActive={false}>
+                  {rollup.bySetAside.map((row, idx) => (
+                    <Cell key={row.name} fill={chartColors[idx % chartColors.length]} />
+                  ))}
+                </Pie>
+                <Tooltip content={<ExecutiveTooltip />} />
+                <Legend wrapperStyle={{ fontSize: 11, color: 'var(--text-secondary)' }} />
+              </PieChart>
+            </ResponsiveContainer>
+          )}
+        </DashboardPanel>
+
+        <DashboardPanel title="Assigned by Priority" subtitle="Their assigned opportunities by priority">
+          {rollup.byPriority.length === 0 ? (
+            <EmptyDashboardState label="No assigned opportunities." />
+          ) : (
+            <ResponsiveContainer width="100%" height={220}>
+              <PieChart>
+                <Pie data={rollup.byPriority} dataKey="count" nameKey="name" innerRadius={46} outerRadius={74} paddingAngle={3} stroke="transparent" isAnimationActive={false}>
+                  {rollup.byPriority.map((row, idx) => (
+                    <Cell key={row.name} fill={chartColors[(idx + 2) % chartColors.length]} />
+                  ))}
+                </Pie>
+                <Tooltip content={<ExecutiveTooltip />} />
+                <Legend wrapperStyle={{ fontSize: 11, color: 'var(--text-secondary)' }} />
+              </PieChart>
+            </ResponsiveContainer>
+          )}
+        </DashboardPanel>
+
+        <DashboardPanel title="Pipeline Status" subtitle="Currently assigned opportunities by status">
+          {rollup.assignedByStatus.length === 0 ? (
+            <EmptyDashboardState label="No assigned opportunities." />
+          ) : (
+            <ResponsiveContainer width="100%" height={220}>
+              <PieChart>
+                <Pie data={rollup.assignedByStatus} dataKey="count" nameKey="name" innerRadius={46} outerRadius={74} paddingAngle={3} stroke="transparent" isAnimationActive={false}>
+                  {rollup.assignedByStatus.map((row, idx) => (
+                    <Cell key={row.name} fill={STATUS_COLORS[row.name] || chartColors[idx % chartColors.length]} />
+                  ))}
+                </Pie>
+                <Tooltip content={<ExecutiveTooltip />} />
+                <Legend wrapperStyle={{ fontSize: 11, color: 'var(--text-secondary)' }} />
+              </PieChart>
+            </ResponsiveContainer>
+          )}
+        </DashboardPanel>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <DashboardPanel title="Top Agencies" subtitle="Their assigned opportunities by client">
+          {rollup.byAgency.length === 0 ? (
+            <EmptyDashboardState label="No assigned opportunities." />
+          ) : (
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={rollup.byAgency} layout="vertical">
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--exec-grid)" horizontal={false} />
+                <XAxis type="number" tick={{ fill: '#9FB2AD', fontSize: 10 }} axisLine={false} tickLine={false} allowDecimals={false} />
+                <YAxis type="category" dataKey="name" tick={{ fill: '#9FB2AD', fontSize: 10 }} axisLine={false} tickLine={false} width={88} />
+                <Tooltip content={<ExecutiveTooltip />} />
+                <Bar dataKey="count" name="Opportunities" fill={tertiaryAccent} radius={[0, 5, 5, 0]} isAnimationActive={false} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </DashboardPanel>
+
+        <DashboardPanel title="NAICS Mix" subtitle="Submitted by NAICS category">
+          {rollup.byNaics.length === 0 ? (
+            <EmptyDashboardState label="No submissions." />
+          ) : (
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={rollup.byNaics.slice(0, 6)} layout="vertical">
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--exec-grid)" horizontal={false} />
+                <XAxis type="number" tick={{ fill: '#9FB2AD', fontSize: 10 }} axisLine={false} tickLine={false} allowDecimals={false} />
+                <YAxis type="category" dataKey="name" tick={{ fill: '#9FB2AD', fontSize: 10 }} axisLine={false} tickLine={false} width={88} />
+                <Tooltip content={<ExecutiveTooltip />} />
+                <Bar dataKey="count" name="Submissions" fill={secondaryAccent} radius={[0, 5, 5, 0]} isAnimationActive={false} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </DashboardPanel>
+
+        <DashboardPanel title="Value Trend" subtitle="Submitted vs awarded value (last 6 months)">
+          {rollup.valueByMonth.every(m => m.value === 0 && m.awarded === 0) ? (
+            <EmptyDashboardState label="No submitted value in the last 6 months." />
+          ) : (
+            <ResponsiveContainer width="100%" height={220}>
+              <AreaChart data={rollup.valueByMonth}>
+                <defs>
+                  <linearGradient id={`memberValue-${rollup.employee.id}`} x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={secondaryAccent} stopOpacity={0.45} />
+                    <stop offset="95%" stopColor={secondaryAccent} stopOpacity={0} />
+                  </linearGradient>
+                  <linearGradient id={`memberAwarded-${rollup.employee.id}`} x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={accent} stopOpacity={0.5} />
+                    <stop offset="95%" stopColor={accent} stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--exec-grid)" vertical={false} />
+                <XAxis dataKey="month" tick={{ fill: '#9FB2AD', fontSize: 11 }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fill: '#9FB2AD', fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={v => `$${Math.round(v / 1000)}K`} />
+                <Tooltip content={<ExecutiveTooltip />} formatter={(v: number) => formatCurrency(v)} />
+                <Area type="monotone" dataKey="value" name="Submitted Value" stroke={secondaryAccent} fill={`url(#memberValue-${rollup.employee.id})`} strokeWidth={2} isAnimationActive={false} />
+                <Area type="monotone" dataKey="awarded" name="Awarded Value" stroke={accent} fill={`url(#memberAwarded-${rollup.employee.id})`} strokeWidth={2} isAnimationActive={false} />
+              </AreaChart>
+            </ResponsiveContainer>
+          )}
+        </DashboardPanel>
+      </div>
+
       <div className="exec-section-grid">
         <DashboardPanel title="Recent Submissions" subtitle="Most recent activity">
           {rollup.recent.length === 0 ? (
@@ -1555,7 +1783,8 @@ function ExecutiveDashboard() {
   const navigate = useNavigate()
   const [period, setPeriod] = useState<Period | null>(null)
   const [tab, setTab] = useState<ExecutiveDashboardTab>('bd')
-  const [teamView, setTeamView] = useState<TeamView>({ mode: 'teams' })
+  const [bdTeamView, setBdTeamView] = useState<TeamView>({ mode: 'teams' })
+  const [opsTeamView, setOpsTeamView] = useState<TeamView>({ mode: 'teams' })
   const chartColors = chartColorsForTheme(prefs.theme)
   const accent = chartColors[0]
   const secondaryAccent = chartColors[1]
@@ -1575,20 +1804,69 @@ function ExecutiveDashboard() {
     [contracts, period],
   )
 
-  const activeOpportunities = periodOpps.filter(opp => ['ACTIVE', 'DISCUSSION'].includes(opp.status))
-  const capturedContracts = periodOpps.filter(opp => !!opp.capturedOn || ['ACTIVE', 'DISCUSSION', 'SUBMITTED', 'WON'].includes(opp.status))
-  const awardedSubmissions = periodSubmissions.filter(submission => submission.status === 'AWARDED')
-  const submittedValue = periodSubmissions.reduce((sum, submission) => sum + submissionValue(submission, visibleOpps), 0)
-  const captureRate = pct(capturedContracts.length, periodSubmissions.length)
-  const winRate = pct(awardedSubmissions.length, periodSubmissions.length)
+  // ── BD vs OPS scoping (so each tab shows only its own people's data) ─────
+  const employeeTeamMap = useMemo(() => {
+    const map = new Map<string, EmployeeTeam>()
+    for (const employee of employees) map.set(employee.id, employee.team ?? 'BD')
+    return map
+  }, [employees])
+  const opportunityTeam = useMemo(() => (opp: Opportunity): EmployeeTeam | null => {
+    const chain = getAssignmentChain(employees, opp.assignedTo)
+    const topId = chain.manager?.id ?? chain.teamLead?.id ?? chain.associate?.id
+    if (!topId) return null
+    return employeeTeamMap.get(topId) ?? 'BD'
+  }, [employees, employeeTeamMap])
+  const submissionTeam = useMemo(() => (submission: BDSubmission): EmployeeTeam | null => {
+    const opp = submissionOpportunity(submission, visibleOpps)
+    if (opp) {
+      const team = opportunityTeam(opp)
+      if (team) return team
+    }
+    const candidateIds = [submission.bdm, ...(submission.bds || []), submission.supportAgent].filter(Boolean) as string[]
+    for (const id of candidateIds) {
+      const team = employeeTeamMap.get(id)
+      if (team) return team
+    }
+    return null
+  }, [opportunityTeam, employeeTeamMap, visibleOpps])
+
+  const bdPeriodOpps = useMemo(
+    () => periodOpps.filter(opp => {
+      const team = opportunityTeam(opp)
+      return team === null || team === 'BD'
+    }),
+    [periodOpps, opportunityTeam],
+  )
+  const opsPeriodOpps = useMemo(
+    () => periodOpps.filter(opp => opportunityTeam(opp) === 'OPS'),
+    [periodOpps, opportunityTeam],
+  )
+  const bdPeriodSubs = useMemo(
+    () => periodSubmissions.filter(submission => {
+      const team = submissionTeam(submission)
+      return team === null || team === 'BD'
+    }),
+    [periodSubmissions, submissionTeam],
+  )
+  const opsPeriodSubs = useMemo(
+    () => periodSubmissions.filter(submission => submissionTeam(submission) === 'OPS'),
+    [periodSubmissions, submissionTeam],
+  )
+
+  const activeOpportunities = bdPeriodOpps.filter(opp => ['ACTIVE', 'DISCUSSION'].includes(opp.status))
+  const capturedContracts = bdPeriodOpps.filter(opp => !!opp.capturedOn || ['ACTIVE', 'DISCUSSION', 'SUBMITTED', 'WON'].includes(opp.status))
+  const awardedSubmissions = bdPeriodSubs.filter(submission => submission.status === 'AWARDED')
+  const submittedValue = bdPeriodSubs.reduce((sum, submission) => sum + submissionValue(submission, visibleOpps), 0)
+  const captureRate = pct(capturedContracts.length, bdPeriodSubs.length)
+  const winRate = pct(awardedSubmissions.length, bdPeriodSubs.length)
 
   const submittedByNaics = groupRows(
-    periodSubmissions,
+    bdPeriodSubs,
     submission => naicsDisplay(submissionOpportunity(submission, visibleOpps)?.naicsCode),
   ).slice(0, 8)
-  const submittedByType = groupRows(periodSubmissions, submission => submission.type || 'Unspecified').slice(0, 6)
+  const submittedByType = groupRows(bdPeriodSubs, submission => submission.type || 'Unspecified').slice(0, 6)
   const agencyPerformance = groupRows(
-    periodSubmissions,
+    bdPeriodSubs,
     submission => submissionOpportunity(submission, visibleOpps)?.client || 'Unspecified agency',
     submission => submission.status === 'AWARDED' ? submissionValue(submission, visibleOpps) : 0,
   ).slice(0, 8)
@@ -1596,9 +1874,9 @@ function ExecutiveDashboard() {
   const months = lastMonths(6)
   const submissionTrend = months.map(month => ({
     month: month.month,
-    submitted: periodSubmissions.filter(submission => monthKey(submission.submittedOn) === month.key).length,
-    awarded: periodSubmissions.filter(submission => monthKey(submission.submittedOn) === month.key && submission.status === 'AWARDED').length,
-    value: periodSubmissions
+    submitted: bdPeriodSubs.filter(submission => monthKey(submission.submittedOn) === month.key).length,
+    awarded: bdPeriodSubs.filter(submission => monthKey(submission.submittedOn) === month.key && submission.status === 'AWARDED').length,
+    value: bdPeriodSubs
       .filter(submission => monthKey(submission.submittedOn) === month.key)
       .reduce((sum, submission) => sum + submissionValue(submission, visibleOpps), 0),
   }))
@@ -1628,37 +1906,37 @@ function ExecutiveDashboard() {
 
   // ── Business Development distributions ────────────────────────────────────
   const oppsByStatus = useMemo(
-    () => groupRows(periodOpps, opp => opp.status || 'Unspecified'),
-    [periodOpps],
+    () => groupRows(bdPeriodOpps, opp => opp.status || 'Unspecified'),
+    [bdPeriodOpps],
   )
   const oppsBySetAside = useMemo(
-    () => groupRows(periodOpps, opp => opp.setAside || 'Unspecified'),
-    [periodOpps],
+    () => groupRows(bdPeriodOpps, opp => opp.setAside || 'Unspecified'),
+    [bdPeriodOpps],
   )
   const oppsByPriority = useMemo(
-    () => groupRows(periodOpps, opp => opp.priority || 'Unspecified'),
-    [periodOpps],
+    () => groupRows(bdPeriodOpps, opp => opp.priority || 'Unspecified'),
+    [bdPeriodOpps],
   )
   const oppsByType = useMemo(
-    () => groupRows(periodOpps, opp => opp.type || 'Unspecified'),
-    [periodOpps],
+    () => groupRows(bdPeriodOpps, opp => opp.type || 'Unspecified'),
+    [bdPeriodOpps],
   )
   const conversionFunnel = useMemo(() => {
-    const total = periodOpps.length
-    const submitted = periodSubmissions.length
+    const total = bdPeriodOpps.length
+    const submitted = bdPeriodSubs.length
     const awarded = awardedSubmissions.length
     return [
       { name: 'Opportunities', value: total, fill: chartColors[2] },
       { name: 'Submitted', value: submitted, fill: chartColors[1] },
       { name: 'Awarded', value: awarded, fill: chartColors[0] },
     ]
-  }, [periodOpps.length, periodSubmissions.length, awardedSubmissions.length, chartColors])
+  }, [bdPeriodOpps.length, bdPeriodSubs.length, awardedSubmissions.length, chartColors])
   const topOpenOpps = useMemo(
-    () => [...periodOpps]
+    () => [...bdPeriodOpps]
       .filter(opp => ['ACTIVE', 'DISCUSSION', 'NEW_ASSIGNMENT'].includes(opp.status))
       .sort((a, b) => opportunityValue(b) - opportunityValue(a))
       .slice(0, 10),
-    [periodOpps],
+    [bdPeriodOpps],
   )
 
   // ── Team rollups ──────────────────────────────────────────────────────────
@@ -1708,11 +1986,25 @@ function ExecutiveDashboard() {
     const byStatus = groupRows(subs, submission => submission.status || 'Unspecified')
     const byType = groupRows(subs, submission => submission.type || 'Unspecified')
     const byNaics = groupRows(subs, submission => naicsDisplay(submissionOpportunity(submission, visibleOpps)?.naicsCode))
+    const bySetAside = groupRows(assignedOpps, opp => opp.setAside || 'Unspecified')
+    const byPriority = groupRows(assignedOpps, opp => opp.priority || 'Unspecified')
+    const byAgency = groupRows(assignedOpps, opp => opp.client || 'Unspecified agency').slice(0, 6)
+    const assignedByStatus = groupRows(assignedOpps, opp => opp.status || 'Unspecified')
     const monthsData = lastMonths(6).map(month => ({
       month: month.month,
       submitted: subs.filter(s => monthKey(s.submittedOn) === month.key).length,
       awarded: subs.filter(s => monthKey(s.submittedOn) === month.key && s.status === 'AWARDED').length,
     }))
+    const valueByMonth = lastMonths(6).map(month => {
+      const monthSubs = subs.filter(s => monthKey(s.submittedOn) === month.key)
+      return {
+        month: month.month,
+        value: monthSubs.reduce((sum, s) => sum + submissionValue(s, visibleOpps), 0),
+        awarded: monthSubs
+          .filter(s => s.status === 'AWARDED')
+          .reduce((sum, s) => sum + submissionValue(s, visibleOpps), 0),
+      }
+    })
     const recent = [...subs]
       .sort((a, b) => new Date(b.submittedOn || 0).getTime() - new Date(a.submittedOn || 0).getTime())
       .slice(0, 8)
@@ -1722,8 +2014,9 @@ function ExecutiveDashboard() {
       value, awardedValue,
       winRate: pct(awarded.length, subs.length),
       captureRate: pct(subs.length, assignedOpps.length),
-      byStatus, byType, byNaics,
+      byStatus, byType, byNaics, bySetAside, byPriority, byAgency, assignedByStatus,
       monthsData,
+      valueByMonth,
       recent,
     }
   }, [employeesById, periodSubmissions, visibleOpps, employees])
@@ -1766,6 +2059,16 @@ function ExecutiveDashboard() {
       submitted: subs.filter(s => monthKey(s.submittedOn) === month.key).length,
       awarded: subs.filter(s => monthKey(s.submittedOn) === month.key && s.status === 'AWARDED').length,
     }))
+    const valueByMonth = lastMonths(6).map(month => {
+      const monthSubs = subs.filter(s => monthKey(s.submittedOn) === month.key)
+      return {
+        month: month.month,
+        value: monthSubs.reduce((sum, s) => sum + submissionValue(s, visibleOpps), 0),
+        awarded: monthSubs
+          .filter(s => s.status === 'AWARDED')
+          .reduce((sum, s) => sum + submissionValue(s, visibleOpps), 0),
+      }
+    })
     return {
       manager,
       members,
@@ -1776,7 +2079,11 @@ function ExecutiveDashboard() {
       captureRate: pct(subs.length, assignedOpps.length),
       memberStats,
       monthsData,
+      valueByMonth,
       byStatus: groupRows(subs, submission => submission.status || 'Unspecified'),
+      bySetAside: groupRows(assignedOpps, opp => opp.setAside || 'Unspecified'),
+      byPriority: groupRows(assignedOpps, opp => opp.priority || 'Unspecified'),
+      byAgency: groupRows(assignedOpps, opp => opp.client || 'Unspecified agency').slice(0, 6),
       byMember: memberStats.map(m => ({
         name: m.employee.name.split(' ')[0],
         submitted: m.subs.length,
@@ -1788,21 +2095,46 @@ function ExecutiveDashboard() {
   }, [employeesById, collectReports, periodSubmissions, visibleOpps, employees, nonSubReports, period, computeMemberRollup])
 
   // BD managers head their own teams; the OPS lead is mirrored as a BD_MANAGER with team='OPS'.
-  const teamHeads = useMemo(() => {
-    return employees.filter(e => e.role === 'BD_MANAGER')
-  }, [employees])
-  const teamRollups = useMemo(
-    () => teamHeads.map(head => computeTeamRollup(head.id)!).filter(Boolean),
-    [teamHeads, computeTeamRollup],
+  const bdTeamHeads = useMemo(
+    () => employees.filter(e => e.role === 'BD_MANAGER' && (e.team ?? 'BD') === 'BD'),
+    [employees],
   )
-  const activeTeamRollup = useMemo(
-    () => teamView.mode === 'team' ? computeTeamRollup(teamView.managerId) : null,
-    [teamView, computeTeamRollup],
+  const opsTeamHeads = useMemo(
+    () => employees.filter(e => e.role === 'BD_MANAGER' && e.team === 'OPS'),
+    [employees],
   )
-  const activeMemberRollup = useMemo(
-    () => teamView.mode === 'member' ? computeMemberRollup(teamView.employeeId) : null,
-    [teamView, computeMemberRollup],
+  const bdTeamRollups = useMemo(
+    () => bdTeamHeads.map(head => computeTeamRollup(head.id)!).filter(Boolean),
+    [bdTeamHeads, computeTeamRollup],
   )
+  const opsTeamRollups = useMemo(
+    () => opsTeamHeads.map(head => computeTeamRollup(head.id)!).filter(Boolean),
+    [opsTeamHeads, computeTeamRollup],
+  )
+  const activeBdTeamRollup = useMemo(
+    () => bdTeamView.mode === 'team' ? computeTeamRollup(bdTeamView.managerId) : null,
+    [bdTeamView, computeTeamRollup],
+  )
+  const activeBdMemberRollup = useMemo(
+    () => bdTeamView.mode === 'member' ? computeMemberRollup(bdTeamView.employeeId) : null,
+    [bdTeamView, computeMemberRollup],
+  )
+  const activeOpsTeamRollup = useMemo(
+    () => opsTeamView.mode === 'team' ? computeTeamRollup(opsTeamView.managerId) : null,
+    [opsTeamView, computeTeamRollup],
+  )
+  const activeOpsMemberRollup = useMemo(
+    () => opsTeamView.mode === 'member' ? computeMemberRollup(opsTeamView.employeeId) : null,
+    [opsTeamView, computeMemberRollup],
+  )
+
+  // Smooth-scroll to top of dashboard when drilling into a team or member.
+  useEffect(() => {
+    if (bdTeamView.mode !== 'teams') window.scrollTo({ top: 0, behavior: 'smooth' })
+  }, [bdTeamView])
+  useEffect(() => {
+    if (opsTeamView.mode !== 'teams') window.scrollTo({ top: 0, behavior: 'smooth' })
+  }, [opsTeamView])
 
   const goToPipeline = (recordId?: string) => {
     if (recordId) navigate(`/pipeline?record=${encodeURIComponent(recordId)}`)
@@ -1813,7 +2145,7 @@ function ExecutiveDashboard() {
   const bdStats = [
     { icon: Target, label: 'Active Opportunities', value: activeOpportunities.length, detail: 'Currently in Contract Opportunities', accent: tertiaryAccent },
     { icon: FileCheck2, label: 'Total Captured Contracts', value: capturedContracts.length, detail: 'Captured opportunity records', accent },
-    { icon: Send, label: 'Submitted Opportunities', value: periodSubmissions.length, detail: 'Submitted from Contract Opportunities', accent: secondaryAccent },
+    { icon: Send, label: 'Submitted Opportunities', value: bdPeriodSubs.length, detail: 'Submitted from Contract Opportunities', accent: secondaryAccent },
     { icon: DollarSign, label: 'Submitted Value', value: formatCurrency(submittedValue), detail: 'Dollar value submitted', accent: chartColors[3] },
     { icon: Percent, label: 'Capture Rate', value: `${captureRate}%`, detail: 'Captured opportunities / submitted', accent: chartColors[4] },
     { icon: Trophy, label: 'Win Rate', value: `${winRate}%`, detail: 'Awarded from submitted opportunities', accent },
@@ -2080,61 +2412,63 @@ function ExecutiveDashboard() {
 
       {tab === 'team' && (
         <motion.div variants={stagger} initial="initial" animate="animate" className="space-y-5">
-          {teamView.mode === 'teams' && (
+          {bdTeamView.mode === 'teams' && (
             <TeamsOverview
-              teamRollups={teamRollups}
+              teamRollups={bdTeamRollups}
               activeUsers={activeUsers}
               chartColors={chartColors}
               accent={accent}
               secondaryAccent={secondaryAccent}
               tertiaryAccent={tertiaryAccent}
-              onPickTeam={(managerId) => setTeamView({ mode: 'team', managerId })}
-              onPickMember={(employeeId) => setTeamView({ mode: 'member', employeeId })}
+              emptyLabel="No Business Development teams yet."
+              kpiLabel="Business Development Teams"
+              onPickTeam={(managerId) => setBdTeamView({ mode: 'team', managerId })}
+              onPickMember={(employeeId) => setBdTeamView({ mode: 'member', employeeId })}
             />
           )}
 
-          {teamView.mode === 'team' && activeTeamRollup && (
+          {bdTeamView.mode === 'team' && activeBdTeamRollup && (
             <TeamDetailView
-              rollup={activeTeamRollup}
+              rollup={activeBdTeamRollup}
               chartColors={chartColors}
               accent={accent}
               secondaryAccent={secondaryAccent}
               tertiaryAccent={tertiaryAccent}
-              onBack={() => setTeamView({ mode: 'teams' })}
-              onPickMember={(employeeId) => setTeamView({ mode: 'member', employeeId })}
+              onBack={() => setBdTeamView({ mode: 'teams' })}
+              onPickMember={(employeeId) => setBdTeamView({ mode: 'member', employeeId })}
             />
           )}
 
-          {teamView.mode === 'team' && !activeTeamRollup && (
+          {bdTeamView.mode === 'team' && !activeBdTeamRollup && (
             <DashboardPanel title="Team not found" subtitle="">
               <div className="flex items-center justify-between gap-3">
                 <EmptyDashboardState label="This team is no longer available." />
-                <button onClick={() => setTeamView({ mode: 'teams' })} className="rounded-xl border px-3 py-1.5 text-xs font-black" style={{ borderColor: 'var(--exec-border-strong)', color: 'var(--text-primary)', background: 'var(--exec-panel-soft)' }}>
+                <button onClick={() => setBdTeamView({ mode: 'teams' })} className="rounded-xl border px-3 py-1.5 text-xs font-black" style={{ borderColor: 'var(--exec-border-strong)', color: 'var(--text-primary)', background: 'var(--exec-panel-soft)' }}>
                   Back to teams
                 </button>
               </div>
             </DashboardPanel>
           )}
 
-          {teamView.mode === 'member' && activeMemberRollup && (
+          {bdTeamView.mode === 'member' && activeBdMemberRollup && (
             <MemberDetailView
-              rollup={activeMemberRollup}
+              rollup={activeBdMemberRollup}
               employees={employees}
               chartColors={chartColors}
               accent={accent}
               secondaryAccent={secondaryAccent}
               tertiaryAccent={tertiaryAccent}
-              onBack={() => setTeamView({ mode: 'teams' })}
-              onBackToTeam={(managerId) => setTeamView({ mode: 'team', managerId })}
+              onBack={() => setBdTeamView({ mode: 'teams' })}
+              onBackToTeam={(managerId) => setBdTeamView({ mode: 'team', managerId })}
               onOpenOpportunity={(id) => goToPipeline(id)}
             />
           )}
 
-          {teamView.mode === 'member' && !activeMemberRollup && (
+          {bdTeamView.mode === 'member' && !activeBdMemberRollup && (
             <DashboardPanel title="Member not found" subtitle="">
               <div className="flex items-center justify-between gap-3">
                 <EmptyDashboardState label="This member is no longer available." />
-                <button onClick={() => setTeamView({ mode: 'teams' })} className="rounded-xl border px-3 py-1.5 text-xs font-black" style={{ borderColor: 'var(--exec-border-strong)', color: 'var(--text-primary)', background: 'var(--exec-panel-soft)' }}>
+                <button onClick={() => setBdTeamView({ mode: 'teams' })} className="rounded-xl border px-3 py-1.5 text-xs font-black" style={{ borderColor: 'var(--exec-border-strong)', color: 'var(--text-primary)', background: 'var(--exec-panel-soft)' }}>
                   Back to teams
                 </button>
               </div>
@@ -2244,6 +2578,81 @@ function ExecutiveDashboard() {
                 </div>
               )}
             </DashboardPanel>
+          </div>
+
+          <div className="exec-panel rounded-2xl border p-5" style={EXEC_PANEL_STYLE}>
+            <div className="mb-4 flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-2xl" style={{ background: `${tertiaryAccent}1F`, color: tertiaryAccent }}>
+                <Building2 size={20} />
+              </div>
+              <div>
+                <h2 className="text-lg font-black" style={{ color: 'var(--text-primary)' }}>Operations Team Performance</h2>
+                <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>Operations teams, members, and individual scorecards</p>
+              </div>
+            </div>
+
+            {opsTeamView.mode === 'teams' && (
+              <TeamsOverview
+                teamRollups={opsTeamRollups}
+                activeUsers={activeUsers}
+                chartColors={chartColors}
+                accent={accent}
+                secondaryAccent={secondaryAccent}
+                tertiaryAccent={tertiaryAccent}
+                kpiLabel="Operations Teams"
+                emptyLabel="No Operations teams yet. Create employees with team='OPS' and assign a manager."
+                onPickTeam={(managerId) => setOpsTeamView({ mode: 'team', managerId })}
+                onPickMember={(employeeId) => setOpsTeamView({ mode: 'member', employeeId })}
+              />
+            )}
+
+            {opsTeamView.mode === 'team' && activeOpsTeamRollup && (
+              <TeamDetailView
+                rollup={activeOpsTeamRollup}
+                chartColors={chartColors}
+                accent={accent}
+                secondaryAccent={secondaryAccent}
+                tertiaryAccent={tertiaryAccent}
+                onBack={() => setOpsTeamView({ mode: 'teams' })}
+                onPickMember={(employeeId) => setOpsTeamView({ mode: 'member', employeeId })}
+              />
+            )}
+
+            {opsTeamView.mode === 'team' && !activeOpsTeamRollup && (
+              <DashboardPanel title="Team not found" subtitle="">
+                <div className="flex items-center justify-between gap-3">
+                  <EmptyDashboardState label="This team is no longer available." />
+                  <button onClick={() => setOpsTeamView({ mode: 'teams' })} className="rounded-xl border px-3 py-1.5 text-xs font-black" style={{ borderColor: 'var(--exec-border-strong)', color: 'var(--text-primary)', background: 'var(--exec-panel-soft)' }}>
+                    Back to teams
+                  </button>
+                </div>
+              </DashboardPanel>
+            )}
+
+            {opsTeamView.mode === 'member' && activeOpsMemberRollup && (
+              <MemberDetailView
+                rollup={activeOpsMemberRollup}
+                employees={employees}
+                chartColors={chartColors}
+                accent={accent}
+                secondaryAccent={secondaryAccent}
+                tertiaryAccent={tertiaryAccent}
+                onBack={() => setOpsTeamView({ mode: 'teams' })}
+                onBackToTeam={(managerId) => setOpsTeamView({ mode: 'team', managerId })}
+                onOpenOpportunity={(id) => goToPipeline(id)}
+              />
+            )}
+
+            {opsTeamView.mode === 'member' && !activeOpsMemberRollup && (
+              <DashboardPanel title="Member not found" subtitle="">
+                <div className="flex items-center justify-between gap-3">
+                  <EmptyDashboardState label="This member is no longer available." />
+                  <button onClick={() => setOpsTeamView({ mode: 'teams' })} className="rounded-xl border px-3 py-1.5 text-xs font-black" style={{ borderColor: 'var(--exec-border-strong)', color: 'var(--text-primary)', background: 'var(--exec-panel-soft)' }}>
+                    Back to teams
+                  </button>
+                </div>
+              </DashboardPanel>
+            )}
           </div>
         </motion.div>
       )}

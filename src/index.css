@@ -799,9 +799,20 @@ html[data-btn="hard"] .btn-danger:hover {
   border-color: var(--exec-border-strong);
   transform: translateY(-2px);
 }
+.exec-tab-card { cursor: pointer; position: relative; }
 .exec-tab-card.is-active {
-  border-color: var(--exec-border-strong);
+  border-color: var(--accent);
   background: var(--exec-panel-strong);
+  box-shadow: 0 0 0 1px var(--accent), var(--exec-shadow);
+}
+.exec-tab-card.is-active::after {
+  content: '';
+  position: absolute;
+  inset-inline: 12px;
+  top: -1px;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--accent);
 }
 
 .exec-section-grid {
