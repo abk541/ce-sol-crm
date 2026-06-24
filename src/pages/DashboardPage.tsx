@@ -23,7 +23,7 @@ import { getAssignmentChain } from '../lib/team'
 import { hasAnyPermission, hasPermission, ROLE_LABELS } from '../lib/permissions'
 import { chartColorsForTheme, useAppearance } from '../lib/appearance'
 import { NAICS_CODES } from '../data/naics'
-import type { BDSubmission, Contract, Employee, Opportunity } from '../types'
+import type { BDSubmission, Contract, Employee, Opportunity, User } from '../types'
 
 const stagger = { animate: { transition: { staggerChildren: 0.05 } } }
 const fadeUp = {
@@ -665,6 +665,11 @@ function AgentDashboard() {
 
 type ExecutiveDashboardTab = 'bd' | 'team' | 'ops' | 'activity'
 
+type TeamView =
+  | { mode: 'teams' }
+  | { mode: 'team'; managerId: string }
+  | { mode: 'member'; employeeId: string }
+
 const EXECUTIVE_TABS: Array<{ id: ExecutiveDashboardTab; label: string; icon: any; subtitle: string }> = [
   { id: 'bd', label: 'Business Development', icon: Target, subtitle: 'Pipeline, submissions, capture and agency return' },
   { id: 'team', label: 'Team Performance', icon: Users, subtitle: 'Associate output, conversion and active users' },
@@ -789,15 +794,25 @@ function DashboardStat({
   value,
   detail,
   accent,
+  onClick,
 }: {
   icon: any
   label: string
   value: string | number
   detail: string
   accent: string
+  onClick?: () => void
 }) {
+  const clickable = typeof onClick === 'function'
   return (
-    <div className="exec-stat rounded-2xl border p-4" style={EXEC_PANEL_STYLE}>
+    <div
+      role={clickable ? 'button' : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      onClick={onClick}
+      onKeyDown={clickable ? (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onClick?.() } } : undefined}
+      className={`exec-stat rounded-2xl border p-4 ${clickable ? 'cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-transparent' : ''}`}
+      style={EXEC_PANEL_STYLE}
+    >
       <div className="mb-4 flex items-start justify-between gap-3">
         <div className="flex h-10 w-10 items-center justify-center rounded-xl border" style={{ color: accent, background: `${accent}1A`, borderColor: `${accent}55` }}>
           <Icon size={18} />
@@ -809,6 +824,11 @@ function DashboardStat({
       <div className="text-2xl font-black" style={{ color: 'var(--text-primary)' }}>{typeof value === 'number' ? value.toLocaleString() : value}</div>
       <p className="mt-1 text-sm font-bold" style={{ color: 'var(--text-secondary)' }}>{label}</p>
       <p className="mt-1 text-xs" style={{ color: 'var(--text-tertiary)' }}>{detail}</p>
+      {clickable && (
+        <p className="mt-2 inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-wide" style={{ color: accent }}>
+          View details <ChevronRight size={11} />
+        </p>
+      )}
     </div>
   )
 }
@@ -866,11 +886,676 @@ function ExecutiveTooltip({ active, payload, label }: any) {
   )
 }
 
+type BdPieRow = { name: string; value: number; count: number }
+
+function BdPiePanel({
+  title,
+  subtitle,
+  data,
+  chartColors,
+  total,
+  onSlice,
+  colorOverride,
+}: {
+  title: string
+  subtitle: string
+  data: BdPieRow[]
+  chartColors: string[]
+  total: number
+  onSlice: (row: BdPieRow) => void
+  colorOverride?: (name: string) => string | undefined
+}) {
+  const colorFor = (name: string, index: number) =>
+    colorOverride?.(name) ?? chartColors[index % chartColors.length]
+  return (
+    <DashboardPanel title={title} subtitle={subtitle}>
+      {data.length === 0 ? (
+        <EmptyDashboardState label="No data in range." />
+      ) : (
+        <div className="flex h-[260px] flex-col gap-3">
+          <ResponsiveContainer width="100%" height={140}>
+            <PieChart>
+              <Pie
+                data={data}
+                dataKey="count"
+                nameKey="name"
+                innerRadius={42}
+                outerRadius={64}
+                paddingAngle={3}
+                stroke="transparent"
+                strokeWidth={0}
+                isAnimationActive={false}
+                onClick={(entry: any) => entry?.payload && onSlice(entry.payload)}
+                cursor="pointer"
+              >
+                {data.map((row, index) => (
+                  <Cell key={row.name} fill={colorFor(row.name, index)} stroke="transparent" strokeWidth={0} />
+                ))}
+              </Pie>
+              <Tooltip content={<ExecutiveTooltip />} />
+            </PieChart>
+          </ResponsiveContainer>
+          <div className="flex-1 space-y-1.5 overflow-y-auto pr-1">
+            {data.slice(0, 6).map((row, index) => {
+              const color = colorFor(row.name, index)
+              const ratio = pct(row.count, Math.max(1, total))
+              return (
+                <button
+                  key={row.name}
+                  type="button"
+                  onClick={() => onSlice(row)}
+                  className="block w-full rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-white/5"
+                >
+                  <div className="mb-1 flex items-center justify-between gap-2 text-[11px]">
+                    <span className="flex items-center gap-1.5 truncate font-bold" style={{ color: 'var(--text-secondary)' }}>
+                      <span className="h-2 w-2 flex-shrink-0 rounded-full" style={{ background: color }} />
+                      <span className="truncate">{row.name}</span>
+                    </span>
+                    <span className="flex-shrink-0 font-black" style={{ color: 'var(--text-primary)' }}>{row.count} <span className="font-bold opacity-60">({ratio}%)</span></span>
+                  </div>
+                  <div className="h-1 overflow-hidden rounded-full bg-white/10">
+                    <div className="h-full rounded-full" style={{ width: `${ratio}%`, background: color }} />
+                  </div>
+                </button>
+              )
+            })}
+            {data.length > 6 && (
+              <p className="px-2 pt-1 text-[10px]" style={{ color: 'var(--text-muted)' }}>+{data.length - 6} more</p>
+            )}
+          </div>
+        </div>
+      )}
+    </DashboardPanel>
+  )
+}
+
+type ChartGroupRow = { name: string; value: number; count: number }
+type MonthCount = { month: string; submitted: number; awarded: number }
+
+type MemberRollup = {
+  employee: Employee
+  subs: BDSubmission[]
+  assignedOpps: Opportunity[]
+  awarded: BDSubmission[]
+  lost: BDSubmission[]
+  dropped: BDSubmission[]
+  value: number
+  awardedValue: number
+  winRate: number
+  captureRate: number
+  byStatus: ChartGroupRow[]
+  byType: ChartGroupRow[]
+  byNaics: ChartGroupRow[]
+  monthsData: MonthCount[]
+  recent: BDSubmission[]
+}
+
+type TeamRollup = {
+  manager: Employee
+  members: Employee[]
+  all: Employee[]
+  subs: BDSubmission[]
+  assignedOpps: Opportunity[]
+  awarded: BDSubmission[]
+  lost: BDSubmission[]
+  dropped: BDSubmission[]
+  notSubmitted: unknown[]
+  value: number
+  awardedValue: number
+  winRate: number
+  captureRate: number
+  memberStats: MemberRollup[]
+  monthsData: MonthCount[]
+  byStatus: ChartGroupRow[]
+  byMember: Array<{ name: string; submitted: number; awarded: number; value: number }>
+  byRole: ChartGroupRow[]
+}
+
+function ROLE_BADGE_LABEL(role: string) {
+  return ROLE_LABELS[role as keyof typeof ROLE_LABELS] || role
+}
+
+function MetricTile({ label, value, accent, hint }: { label: string; value: string | number; accent: string; hint?: string }) {
+  return (
+    <div className="rounded-xl border px-3 py-2.5" style={{ borderColor: 'var(--exec-border)', background: 'var(--exec-panel-soft)' }}>
+      <p className="text-[10px] font-bold uppercase tracking-wide" style={{ color: 'var(--text-tertiary)' }}>{label}</p>
+      <p className="mt-0.5 text-lg font-black" style={{ color: accent }}>
+        {typeof value === 'number' ? value.toLocaleString() : value}
+      </p>
+      {hint && <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{hint}</p>}
+    </div>
+  )
+}
+
+function TeamsOverview({
+  teamRollups,
+  activeUsers,
+  chartColors,
+  accent,
+  secondaryAccent,
+  tertiaryAccent,
+  onPickTeam,
+  onPickMember,
+}: {
+  teamRollups: TeamRollup[]
+  activeUsers: User[]
+  chartColors: string[]
+  accent: string
+  secondaryAccent: string
+  tertiaryAccent: string
+  onPickTeam: (managerId: string) => void
+  onPickMember: (employeeId: string) => void
+}) {
+  const totalMembers = teamRollups.reduce((sum, t) => sum + t.members.length, 0)
+  const totalSubs = teamRollups.reduce((sum, t) => sum + t.subs.length, 0)
+  const totalAwards = teamRollups.reduce((sum, t) => sum + t.awarded.length, 0)
+  const totalValue = teamRollups.reduce((sum, t) => sum + t.value, 0)
+  return (
+    <>
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+        <DashboardStat icon={Users} label="Active Teams" value={teamRollups.length} detail="Teams led by a manager" accent={accent} />
+        <DashboardStat icon={Users} label="Team Members" value={totalMembers} detail="People assigned to a team" accent={tertiaryAccent} />
+        <DashboardStat icon={Send} label="Total Submissions" value={totalSubs} detail="Submissions across all teams" accent={secondaryAccent} />
+        <DashboardStat icon={Trophy} label="Total Awards" value={totalAwards} detail="Awarded submissions" accent={accent} />
+        <DashboardStat icon={Zap} label="Active Users" value={activeUsers.length} detail="Currently active accounts" accent={chartColors[3]} />
+      </div>
+
+      {teamRollups.length === 0 ? (
+        <DashboardPanel title="No teams yet" subtitle="Create employees and assign managers to form teams.">
+          <EmptyDashboardState label="No team data to display." />
+        </DashboardPanel>
+      ) : (
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+          {teamRollups.map((team, teamIndex) => {
+            const color = chartColors[teamIndex % chartColors.length]
+            const topMembers = team.memberStats.slice(0, 6)
+            return (
+              <div
+                key={team.manager.id}
+                className="exec-panel flex flex-col gap-4 rounded-2xl border p-5"
+                style={{ ...EXEC_PANEL_STYLE, borderColor: 'var(--exec-border)' }}
+              >
+                <div className="flex items-start gap-3">
+                  <div className={`flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br ${avatarColor(team.manager.avatar)} text-sm font-black text-white`}>
+                    {team.manager.avatar.slice(0, 2)}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <p className="truncate text-base font-black" style={{ color: 'var(--text-primary)' }}>{team.manager.name}'s Team</p>
+                      <span className="rounded-full px-2 py-0.5 text-[10px] font-black uppercase" style={{ background: `${color}1F`, color }}>
+                        {(team.manager.team ?? 'BD')}
+                      </span>
+                    </div>
+                    <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
+                      {ROLE_BADGE_LABEL(team.manager.role)} · {team.members.length} member{team.members.length === 1 ? '' : 's'}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => onPickTeam(team.manager.id)}
+                    className="rounded-xl border px-3 py-1.5 text-xs font-black transition-all hover:-translate-y-px"
+                    style={{ borderColor: 'var(--exec-border-strong)', color: accent, background: 'var(--exec-panel-soft)' }}
+                  >
+                    View team <ChevronRight size={12} className="-mr-0.5 ml-0.5 inline" />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  <MetricTile label="Submitted" value={team.subs.length} accent={secondaryAccent} />
+                  <MetricTile label="Awarded" value={team.awarded.length} accent={accent} />
+                  <MetricTile label="Win rate" value={`${team.winRate}%`} accent={tertiaryAccent} />
+                  <MetricTile label="Value" value={formatCurrency(team.value)} accent={chartColors[3]} hint={`${formatCurrency(team.awardedValue)} awarded`} />
+                </div>
+
+                {team.byMember.length > 0 ? (
+                  <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_180px]">
+                    <ResponsiveContainer width="100%" height={150}>
+                      <BarChart data={team.byMember} onClick={() => onPickTeam(team.manager.id)} style={{ cursor: 'pointer' }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="var(--exec-grid)" vertical={false} />
+                        <XAxis dataKey="name" tick={{ fill: '#9FB2AD', fontSize: 10 }} axisLine={false} tickLine={false} />
+                        <YAxis tick={{ fill: '#9FB2AD', fontSize: 10 }} axisLine={false} tickLine={false} />
+                        <Tooltip content={<ExecutiveTooltip />} />
+                        <Bar dataKey="submitted" name="Submitted" fill={secondaryAccent} radius={[4, 4, 0, 0]} isAnimationActive={false} />
+                        <Bar dataKey="awarded" name="Awarded" fill={accent} radius={[4, 4, 0, 0]} isAnimationActive={false} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                    {team.byStatus.length > 0 && (
+                      <ResponsiveContainer width="100%" height={150}>
+                        <PieChart>
+                          <Pie data={team.byStatus} dataKey="count" nameKey="name" innerRadius={36} outerRadius={58} paddingAngle={3} stroke="transparent" isAnimationActive={false}>
+                            {team.byStatus.map((row, idx) => (
+                              <Cell key={row.name} fill={STATUS_COLORS[row.name] || chartColors[idx % chartColors.length]} />
+                            ))}
+                          </Pie>
+                          <Tooltip content={<ExecutiveTooltip />} />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    )}
+                  </div>
+                ) : (
+                  <EmptyDashboardState label="No submissions yet for this team." />
+                )}
+
+                <div className="space-y-1">
+                  <p className="text-[11px] font-bold uppercase tracking-wide" style={{ color: 'var(--text-tertiary)' }}>Top contributors</p>
+                  {topMembers.length === 0 ? (
+                    <p className="text-xs" style={{ color: 'var(--text-muted)' }}>No member activity yet.</p>
+                  ) : (
+                    <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                      {topMembers.map((member) => (
+                        <button
+                          key={member.employee.id}
+                          type="button"
+                          onClick={() => onPickMember(member.employee.id)}
+                          className="flex items-center gap-2 rounded-lg border p-2 text-left transition-all hover:-translate-y-px"
+                          style={{ borderColor: 'var(--exec-border)', background: 'var(--exec-panel-soft)' }}
+                        >
+                          <div className={`flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg bg-gradient-to-br ${avatarColor(member.employee.avatar)} text-[10px] font-black text-white`}>
+                            {member.employee.avatar.slice(0, 2)}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-xs font-black" style={{ color: 'var(--text-primary)' }}>{member.employee.name}</p>
+                            <p className="text-[10px]" style={{ color: 'var(--text-tertiary)' }}>{member.subs.length} sub · {member.awarded.length} awd · {member.winRate}%</p>
+                          </div>
+                          <ChevronRight size={12} style={{ color: 'var(--text-muted)' }} />
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </>
+  )
+}
+
+function TeamDetailView({
+  rollup,
+  chartColors,
+  accent,
+  secondaryAccent,
+  tertiaryAccent,
+  onBack,
+  onPickMember,
+}: {
+  rollup: TeamRollup
+  chartColors: string[]
+  accent: string
+  secondaryAccent: string
+  tertiaryAccent: string
+  onBack: () => void
+  onPickMember: (employeeId: string) => void
+}) {
+  const teamLabel = rollup.manager.team ?? 'BD'
+  return (
+    <>
+      <div className="flex items-center justify-between gap-3">
+        <button
+          type="button"
+          onClick={onBack}
+          className="inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-black uppercase tracking-wide transition-all hover:-translate-y-px"
+          style={{ borderColor: 'var(--exec-border-strong)', color: 'var(--text-primary)', background: 'var(--exec-panel-soft)' }}
+        >
+          <ChevronRight size={12} style={{ transform: 'rotate(180deg)' }} />
+          Teams
+        </button>
+        <p className="text-xs font-bold uppercase tracking-wide" style={{ color: 'var(--text-tertiary)' }}>
+          Teams / <span style={{ color: 'var(--text-primary)' }}>{rollup.manager.name}'s Team</span>
+        </p>
+      </div>
+
+      <div className="exec-panel rounded-2xl border p-5" style={EXEC_PANEL_STYLE}>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+          <div className={`flex h-16 w-16 flex-shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br ${avatarColor(rollup.manager.avatar)} text-base font-black text-white`}>
+            {rollup.manager.avatar.slice(0, 2)}
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-xl font-black" style={{ color: 'var(--text-primary)' }}>{rollup.manager.name}'s Team</h2>
+              <span className="rounded-full px-2 py-0.5 text-[10px] font-black uppercase" style={{ background: `${accent}1F`, color: accent }}>{teamLabel}</span>
+            </div>
+            <p className="text-sm" style={{ color: 'var(--text-tertiary)' }}>
+              {ROLE_BADGE_LABEL(rollup.manager.role)} · {rollup.members.length} member{rollup.members.length === 1 ? '' : 's'}
+            </p>
+          </div>
+        </div>
+        <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+          <MetricTile label="Members" value={rollup.members.length} accent={tertiaryAccent} />
+          <MetricTile label="Submitted" value={rollup.subs.length} accent={secondaryAccent} />
+          <MetricTile label="Awarded" value={rollup.awarded.length} accent={accent} />
+          <MetricTile label="Lost" value={rollup.lost.length} accent={chartColors[5]} />
+          <MetricTile label="Win rate" value={`${rollup.winRate}%`} accent={chartColors[4]} />
+          <MetricTile label="Value" value={formatCurrency(rollup.value)} accent={chartColors[3]} hint={`${formatCurrency(rollup.awardedValue)} awarded`} />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <DashboardPanel title="Submission Trend" subtitle="Past 6 months">
+          {rollup.monthsData.every(m => m.submitted === 0 && m.awarded === 0) ? (
+            <EmptyDashboardState label="No submissions in the last 6 months." />
+          ) : (
+            <ResponsiveContainer width="100%" height={220}>
+              <ComposedChart data={rollup.monthsData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--exec-grid)" vertical={false} />
+                <XAxis dataKey="month" tick={{ fill: '#9FB2AD', fontSize: 11 }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fill: '#9FB2AD', fontSize: 10 }} axisLine={false} tickLine={false} allowDecimals={false} />
+                <Tooltip content={<ExecutiveTooltip />} />
+                <Bar dataKey="submitted" name="Submitted" fill={secondaryAccent} radius={[5, 5, 0, 0]} isAnimationActive={false} />
+                <Bar dataKey="awarded" name="Awarded" fill={accent} radius={[5, 5, 0, 0]} isAnimationActive={false} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          )}
+        </DashboardPanel>
+
+        <DashboardPanel title="By Status" subtitle="Submitted records by current status">
+          {rollup.byStatus.length === 0 ? (
+            <EmptyDashboardState label="No submissions." />
+          ) : (
+            <div className="flex h-[220px] items-center gap-3">
+              <ResponsiveContainer width="55%" height="100%">
+                <PieChart>
+                  <Pie data={rollup.byStatus} dataKey="count" nameKey="name" innerRadius={42} outerRadius={68} paddingAngle={3} stroke="transparent" isAnimationActive={false}>
+                    {rollup.byStatus.map((row, idx) => (
+                      <Cell key={row.name} fill={STATUS_COLORS[row.name] || chartColors[idx % chartColors.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip content={<ExecutiveTooltip />} />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="flex-1 space-y-1.5">
+                {rollup.byStatus.map((row, idx) => {
+                  const color = STATUS_COLORS[row.name] || chartColors[idx % chartColors.length]
+                  return (
+                    <div key={row.name} className="flex items-center justify-between gap-2 text-[11px]">
+                      <span className="flex min-w-0 items-center gap-1.5 truncate font-bold" style={{ color: 'var(--text-secondary)' }}>
+                        <span className="h-2 w-2 flex-shrink-0 rounded-full" style={{ background: color }} />
+                        <span className="truncate">{row.name}</span>
+                      </span>
+                      <span className="flex-shrink-0 font-black" style={{ color: 'var(--text-primary)' }}>{row.count}</span>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+        </DashboardPanel>
+
+        <DashboardPanel title="Submissions by Member" subtitle="Per-member output">
+          {rollup.byMember.length === 0 ? (
+            <EmptyDashboardState label="No member output yet." />
+          ) : (
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={rollup.byMember}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--exec-grid)" vertical={false} />
+                <XAxis dataKey="name" tick={{ fill: '#9FB2AD', fontSize: 11 }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fill: '#9FB2AD', fontSize: 10 }} axisLine={false} tickLine={false} allowDecimals={false} />
+                <Tooltip content={<ExecutiveTooltip />} />
+                <Bar dataKey="submitted" name="Submitted" fill={secondaryAccent} radius={[5, 5, 0, 0]} isAnimationActive={false} />
+                <Bar dataKey="awarded" name="Awarded" fill={accent} radius={[5, 5, 0, 0]} isAnimationActive={false} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </DashboardPanel>
+      </div>
+
+      <DashboardPanel title="Team Members" subtitle="Click any member to drill into their personal scorecard">
+        {rollup.memberStats.length === 0 ? (
+          <EmptyDashboardState label="This team has no members yet." />
+        ) : (
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {rollup.memberStats.map((member) => (
+              <button
+                key={member.employee.id}
+                type="button"
+                onClick={() => onPickMember(member.employee.id)}
+                className="flex items-start gap-3 rounded-xl border p-3 text-left transition-all hover:-translate-y-px"
+                style={{ borderColor: 'var(--exec-border)', background: 'var(--exec-panel-soft)' }}
+              >
+                <div className={`flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-gradient-to-br ${avatarColor(member.employee.avatar)} text-xs font-black text-white`}>
+                  {member.employee.avatar.slice(0, 2)}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-black" style={{ color: 'var(--text-primary)' }}>{member.employee.name}</p>
+                  <p className="text-[11px]" style={{ color: 'var(--text-tertiary)' }}>{ROLE_BADGE_LABEL(member.employee.role)}</p>
+                  <div className="mt-2 grid grid-cols-3 gap-1.5">
+                    <div>
+                      <p className="text-[10px] font-bold uppercase" style={{ color: 'var(--text-muted)' }}>Sub</p>
+                      <p className="text-sm font-black" style={{ color: secondaryAccent }}>{member.subs.length}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-bold uppercase" style={{ color: 'var(--text-muted)' }}>Awd</p>
+                      <p className="text-sm font-black" style={{ color: accent }}>{member.awarded.length}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-bold uppercase" style={{ color: 'var(--text-muted)' }}>Win</p>
+                      <p className="text-sm font-black" style={{ color: tertiaryAccent }}>{member.winRate}%</p>
+                    </div>
+                  </div>
+                  <p className="mt-1.5 text-xs font-bold" style={{ color: 'var(--text-secondary)' }}>{formatCurrency(member.value)}</p>
+                </div>
+                <ChevronRight size={14} style={{ color: 'var(--text-muted)' }} />
+              </button>
+            ))}
+          </div>
+        )}
+      </DashboardPanel>
+    </>
+  )
+}
+
+function MemberDetailView({
+  rollup,
+  employees,
+  chartColors,
+  accent,
+  secondaryAccent,
+  tertiaryAccent,
+  onBack,
+  onBackToTeam,
+  onOpenOpportunity,
+}: {
+  rollup: MemberRollup
+  employees: Employee[]
+  chartColors: string[]
+  accent: string
+  secondaryAccent: string
+  tertiaryAccent: string
+  onBack: () => void
+  onBackToTeam: (managerId: string) => void
+  onOpenOpportunity: (id: string) => void
+}) {
+  // Find this person's team head (walk up manager chain to the team lead role).
+  const teamHead = (() => {
+    const idMap = new Map(employees.map(e => [e.id, e]))
+    let current: Employee | undefined = rollup.employee
+    const seen = new Set<string>()
+    while (current && !seen.has(current.id)) {
+      seen.add(current.id)
+      if (current.role === 'BD_MANAGER') return current
+      if (!current.managerId) return current
+      current = idMap.get(current.managerId)
+    }
+    return current ?? rollup.employee
+  })()
+  return (
+    <>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onBack}
+            className="inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-black uppercase tracking-wide transition-all hover:-translate-y-px"
+            style={{ borderColor: 'var(--exec-border-strong)', color: 'var(--text-primary)', background: 'var(--exec-panel-soft)' }}
+          >
+            <ChevronRight size={12} style={{ transform: 'rotate(180deg)' }} />
+            Teams
+          </button>
+          {teamHead && teamHead.id !== rollup.employee.id && (
+            <button
+              type="button"
+              onClick={() => onBackToTeam(teamHead.id)}
+              className="inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-black uppercase tracking-wide transition-all hover:-translate-y-px"
+              style={{ borderColor: 'var(--exec-border-strong)', color: 'var(--text-primary)', background: 'var(--exec-panel-soft)' }}
+            >
+              <ChevronRight size={12} style={{ transform: 'rotate(180deg)' }} />
+              {teamHead.name}'s team
+            </button>
+          )}
+        </div>
+        <p className="text-xs font-bold uppercase tracking-wide" style={{ color: 'var(--text-tertiary)' }}>
+          Teams / {teamHead?.name ?? '—'} / <span style={{ color: 'var(--text-primary)' }}>{rollup.employee.name}</span>
+        </p>
+      </div>
+
+      <div className="exec-panel rounded-2xl border p-5" style={EXEC_PANEL_STYLE}>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+          <div className={`flex h-20 w-20 flex-shrink-0 items-center justify-center rounded-3xl bg-gradient-to-br ${avatarColor(rollup.employee.avatar)} text-lg font-black text-white`}>
+            {rollup.employee.avatar.slice(0, 2)}
+          </div>
+          <div className="min-w-0 flex-1">
+            <h2 className="text-2xl font-black" style={{ color: 'var(--text-primary)' }}>{rollup.employee.name}</h2>
+            <p className="text-sm" style={{ color: 'var(--text-tertiary)' }}>
+              {ROLE_BADGE_LABEL(rollup.employee.role)} · {rollup.employee.email}
+            </p>
+            {rollup.employee.department && (
+              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{rollup.employee.department}</p>
+            )}
+          </div>
+        </div>
+        <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+          <MetricTile label="Assigned" value={rollup.assignedOpps.length} accent={tertiaryAccent} />
+          <MetricTile label="Submitted" value={rollup.subs.length} accent={secondaryAccent} />
+          <MetricTile label="Awarded" value={rollup.awarded.length} accent={accent} />
+          <MetricTile label="Lost / Dropped" value={rollup.lost.length + rollup.dropped.length} accent={chartColors[5]} />
+          <MetricTile label="Win rate" value={`${rollup.winRate}%`} accent={chartColors[4]} />
+          <MetricTile label="Value" value={formatCurrency(rollup.value)} accent={chartColors[3]} hint={`${formatCurrency(rollup.awardedValue)} awarded`} />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <DashboardPanel title="By Status" subtitle="Their submissions by current status">
+          {rollup.byStatus.length === 0 ? (
+            <EmptyDashboardState label="No submissions." />
+          ) : (
+            <ResponsiveContainer width="100%" height={220}>
+              <PieChart>
+                <Pie data={rollup.byStatus} dataKey="count" nameKey="name" innerRadius={46} outerRadius={74} paddingAngle={3} stroke="transparent" isAnimationActive={false}>
+                  {rollup.byStatus.map((row, idx) => (
+                    <Cell key={row.name} fill={STATUS_COLORS[row.name] || chartColors[idx % chartColors.length]} />
+                  ))}
+                </Pie>
+                <Tooltip content={<ExecutiveTooltip />} />
+                <Legend wrapperStyle={{ fontSize: 11, color: 'var(--text-secondary)' }} />
+              </PieChart>
+            </ResponsiveContainer>
+          )}
+        </DashboardPanel>
+
+        <DashboardPanel title="By Type" subtitle="Type of opportunities submitted">
+          {rollup.byType.length === 0 ? (
+            <EmptyDashboardState label="No submissions." />
+          ) : (
+            <ResponsiveContainer width="100%" height={220}>
+              <PieChart>
+                <Pie data={rollup.byType} dataKey="count" nameKey="name" innerRadius={46} outerRadius={74} paddingAngle={3} stroke="transparent" isAnimationActive={false}>
+                  {rollup.byType.map((row, idx) => (
+                    <Cell key={row.name} fill={chartColors[idx % chartColors.length]} />
+                  ))}
+                </Pie>
+                <Tooltip content={<ExecutiveTooltip />} />
+                <Legend wrapperStyle={{ fontSize: 11, color: 'var(--text-secondary)' }} />
+              </PieChart>
+            </ResponsiveContainer>
+          )}
+        </DashboardPanel>
+
+        <DashboardPanel title="Trend" subtitle="Last 6 months">
+          {rollup.monthsData.every(m => m.submitted === 0 && m.awarded === 0) ? (
+            <EmptyDashboardState label="No activity in the last 6 months." />
+          ) : (
+            <ResponsiveContainer width="100%" height={220}>
+              <ComposedChart data={rollup.monthsData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--exec-grid)" vertical={false} />
+                <XAxis dataKey="month" tick={{ fill: '#9FB2AD', fontSize: 11 }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fill: '#9FB2AD', fontSize: 10 }} axisLine={false} tickLine={false} allowDecimals={false} />
+                <Tooltip content={<ExecutiveTooltip />} />
+                <Bar dataKey="submitted" name="Submitted" fill={secondaryAccent} radius={[5, 5, 0, 0]} isAnimationActive={false} />
+                <Bar dataKey="awarded" name="Awarded" fill={accent} radius={[5, 5, 0, 0]} isAnimationActive={false} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          )}
+        </DashboardPanel>
+      </div>
+
+      <div className="exec-section-grid">
+        <DashboardPanel title="Recent Submissions" subtitle="Most recent activity">
+          {rollup.recent.length === 0 ? (
+            <EmptyDashboardState label="No recent submissions." />
+          ) : (
+            <div className="space-y-2">
+              {rollup.recent.map((submission) => {
+                const color = STATUS_COLORS[submission.status] || accent
+                return (
+                  <div
+                    key={submission.id}
+                    className="flex items-center gap-3 rounded-xl border p-3"
+                    style={{ borderColor: 'var(--exec-border)', background: 'var(--exec-panel-soft)' }}
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-black" style={{ color: 'var(--text-primary)' }}>{submission.solicitation || submission.solicitationId || 'Untitled'}</p>
+                      <p className="truncate text-[11px]" style={{ color: 'var(--text-tertiary)' }}>{submission.submittedOn || 'No date'} · {submission.type || 'No type'}</p>
+                    </div>
+                    <span className="rounded-full px-2 py-0.5 text-[10px] font-black uppercase" style={{ background: `${color}1F`, color }}>{submission.status}</span>
+                    <p className="text-sm font-black" style={{ color: accent }}>{formatCurrency(Number(submission.value) || 0)}</p>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </DashboardPanel>
+
+        <DashboardPanel title="Assigned Opportunities" subtitle="Click to open in pipeline">
+          {rollup.assignedOpps.length === 0 ? (
+            <EmptyDashboardState label="No opportunities assigned." />
+          ) : (
+            <div className="space-y-2">
+              {rollup.assignedOpps.slice(0, 10).map((opp) => (
+                <button
+                  key={opp.id}
+                  type="button"
+                  onClick={() => onOpenOpportunity(opp.id)}
+                  className="flex w-full items-center gap-3 rounded-xl border p-3 text-left transition-all hover:-translate-y-px"
+                  style={{ borderColor: 'var(--exec-border)', background: 'var(--exec-panel-soft)' }}
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-black" style={{ color: 'var(--text-primary)' }}>{opp.solicitation || opp.solicitationId || 'Untitled opportunity'}</p>
+                    <p className="truncate text-[11px]" style={{ color: 'var(--text-tertiary)' }}>{opp.client || 'No agency'} · {opp.status}</p>
+                  </div>
+                  <p className="flex-shrink-0 text-sm font-black" style={{ color: accent }}>{formatCurrency(opportunityValue(opp))}</p>
+                  <ChevronRight size={14} style={{ color: 'var(--text-muted)' }} />
+                </button>
+              ))}
+              {rollup.assignedOpps.length > 10 && (
+                <p className="px-2 pt-1 text-[10px]" style={{ color: 'var(--text-muted)' }}>+{rollup.assignedOpps.length - 10} more</p>
+              )}
+            </div>
+          )}
+        </DashboardPanel>
+      </div>
+    </>
+  )
+}
+
 function ExecutiveDashboard() {
   const { opportunities, nonSubReports, activityLogs, currentUser, bdSubmissions, contracts, employees, users } = useStore()
   const { prefs } = useAppearance()
+  const navigate = useNavigate()
   const [period, setPeriod] = useState<Period | null>(null)
   const [tab, setTab] = useState<ExecutiveDashboardTab>('bd')
+  const [teamView, setTeamView] = useState<TeamView>({ mode: 'teams' })
   const chartColors = chartColorsForTheme(prefs.theme)
   const accent = chartColors[0]
   const secondaryAccent = chartColors[1]
@@ -918,46 +1603,6 @@ function ExecutiveDashboard() {
       .reduce((sum, submission) => sum + submissionValue(submission, visibleOpps), 0),
   }))
 
-  const bdAssociates = employees.filter(employee => (employee.team ?? 'BD') === 'BD' && employee.role === 'ASSOCIATE')
-  const teamRows = bdAssociates.map(employee => {
-    const submissions = periodSubmissions.filter(submission => matchesEmployee(employee, submission, visibleOpps, employees))
-    const assignedOpps = visibleOpps.filter(opp => getAssignmentChain(employees, opp.assignedTo).associate?.id === employee.id)
-    const approvedNonSubs = nonSubReports.filter(report => {
-      const opp = visibleOpps.find(item => item.id === report.opportunityId)
-      return report.status === 'APPROVED' &&
-        filterByPeriod(report.reviewedAt || report.submittedAt, period) &&
-        getAssignmentChain(employees, opp?.assignedTo).associate?.id === employee.id
-    })
-    const droppedReports = nonSubReports.filter(report => {
-      const opp = visibleOpps.find(item => item.id === report.opportunityId)
-      return report.status === 'DECLINED' &&
-        filterByPeriod(report.reviewedAt || report.submittedAt, period) &&
-        getAssignmentChain(employees, opp?.assignedTo).associate?.id === employee.id
-    })
-    const droppedSubmissions = submissions.filter(submission => submission.status === 'DROPPED')
-    const awards = submissions.filter(submission => submission.status === 'AWARDED').length
-    return {
-      id: employee.id,
-      name: employee.name,
-      avatar: employee.avatar,
-      assigned: assignedOpps.length,
-      submitted: submissions.length,
-      notSubmitted: approvedNonSubs.length,
-      dropped: droppedReports.length + droppedSubmissions.length,
-      awarded: awards,
-      conversion: pct(awards, submissions.length),
-      value: submissions.reduce((sum, submission) => sum + submissionValue(submission, visibleOpps), 0),
-    }
-  }).sort((a, b) => b.submitted - a.submitted || b.value - a.value)
-
-  const teamChartRows = teamRows.slice(0, 8).map(row => ({
-    name: row.name.split(' ')[0],
-    submitted: row.submitted,
-    notSubmitted: row.notSubmitted,
-    dropped: row.dropped,
-    conversion: row.conversion,
-  }))
-
   const recentActivity = [...activityLogs]
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     .slice(0, 16)
@@ -980,6 +1625,190 @@ function ExecutiveDashboard() {
     contract => contract.type || 'Unspecified',
     contract => grossProfitForContract(contract),
   ).slice(0, 7)
+
+  // ── Business Development distributions ────────────────────────────────────
+  const oppsByStatus = useMemo(
+    () => groupRows(periodOpps, opp => opp.status || 'Unspecified'),
+    [periodOpps],
+  )
+  const oppsBySetAside = useMemo(
+    () => groupRows(periodOpps, opp => opp.setAside || 'Unspecified'),
+    [periodOpps],
+  )
+  const oppsByPriority = useMemo(
+    () => groupRows(periodOpps, opp => opp.priority || 'Unspecified'),
+    [periodOpps],
+  )
+  const oppsByType = useMemo(
+    () => groupRows(periodOpps, opp => opp.type || 'Unspecified'),
+    [periodOpps],
+  )
+  const conversionFunnel = useMemo(() => {
+    const total = periodOpps.length
+    const submitted = periodSubmissions.length
+    const awarded = awardedSubmissions.length
+    return [
+      { name: 'Opportunities', value: total, fill: chartColors[2] },
+      { name: 'Submitted', value: submitted, fill: chartColors[1] },
+      { name: 'Awarded', value: awarded, fill: chartColors[0] },
+    ]
+  }, [periodOpps.length, periodSubmissions.length, awardedSubmissions.length, chartColors])
+  const topOpenOpps = useMemo(
+    () => [...periodOpps]
+      .filter(opp => ['ACTIVE', 'DISCUSSION', 'NEW_ASSIGNMENT'].includes(opp.status))
+      .sort((a, b) => opportunityValue(b) - opportunityValue(a))
+      .slice(0, 10),
+    [periodOpps],
+  )
+
+  // ── Team rollups ──────────────────────────────────────────────────────────
+  const employeesById = useMemo(
+    () => new Map(employees.map(employee => [employee.id, employee])),
+    [employees],
+  )
+  const reportsByManager = useMemo(() => {
+    const map = new Map<string | null, Employee[]>()
+    for (const employee of employees) {
+      const key = employee.managerId
+      const list = map.get(key) ?? []
+      list.push(employee)
+      map.set(key, list)
+    }
+    return map
+  }, [employees])
+  const collectReports = useMemo(() => (rootId: string): Employee[] => {
+    const out: Employee[] = []
+    const stack = [rootId]
+    while (stack.length) {
+      const id = stack.pop()!
+      for (const child of reportsByManager.get(id) ?? []) {
+        out.push(child)
+        stack.push(child.id)
+      }
+    }
+    return out
+  }, [reportsByManager])
+
+  const computeMemberRollup = useMemo(() => (employeeId: string) => {
+    const employee = employeesById.get(employeeId)
+    if (!employee) return null
+    const subs = periodSubmissions.filter(submission =>
+      matchesEmployee(employee, submission, visibleOpps, employees))
+    const assignedOpps = visibleOpps.filter(opp => {
+      const chain = getAssignmentChain(employees, opp.assignedTo)
+      return chain.associate?.id === employee.id ||
+        chain.teamLead?.id === employee.id ||
+        chain.manager?.id === employee.id
+    })
+    const awarded = subs.filter(submission => submission.status === 'AWARDED')
+    const lost = subs.filter(submission => submission.status === 'LOST')
+    const dropped = subs.filter(submission => submission.status === 'DROPPED' || submission.status === 'CANCELED')
+    const value = subs.reduce((sum, submission) => sum + submissionValue(submission, visibleOpps), 0)
+    const awardedValue = awarded.reduce((sum, submission) => sum + submissionValue(submission, visibleOpps), 0)
+    const byStatus = groupRows(subs, submission => submission.status || 'Unspecified')
+    const byType = groupRows(subs, submission => submission.type || 'Unspecified')
+    const byNaics = groupRows(subs, submission => naicsDisplay(submissionOpportunity(submission, visibleOpps)?.naicsCode))
+    const monthsData = lastMonths(6).map(month => ({
+      month: month.month,
+      submitted: subs.filter(s => monthKey(s.submittedOn) === month.key).length,
+      awarded: subs.filter(s => monthKey(s.submittedOn) === month.key && s.status === 'AWARDED').length,
+    }))
+    const recent = [...subs]
+      .sort((a, b) => new Date(b.submittedOn || 0).getTime() - new Date(a.submittedOn || 0).getTime())
+      .slice(0, 8)
+    return {
+      employee,
+      subs, assignedOpps, awarded, lost, dropped,
+      value, awardedValue,
+      winRate: pct(awarded.length, subs.length),
+      captureRate: pct(subs.length, assignedOpps.length),
+      byStatus, byType, byNaics,
+      monthsData,
+      recent,
+    }
+  }, [employeesById, periodSubmissions, visibleOpps, employees])
+
+  const computeTeamRollup = useMemo(() => (managerId: string) => {
+    const manager = employeesById.get(managerId)
+    if (!manager) return null
+    const members = collectReports(managerId)
+    const all = [manager, ...members]
+    const subs = periodSubmissions.filter(submission =>
+      all.some(employee => matchesEmployee(employee, submission, visibleOpps, employees)))
+    const assignedOpps = visibleOpps.filter(opp => {
+      const chain = getAssignmentChain(employees, opp.assignedTo)
+      return all.some(employee =>
+        employee.id === chain.manager?.id ||
+        employee.id === chain.teamLead?.id ||
+        employee.id === chain.associate?.id)
+    })
+    const awarded = subs.filter(submission => submission.status === 'AWARDED')
+    const lost = subs.filter(submission => submission.status === 'LOST')
+    const dropped = subs.filter(submission => submission.status === 'DROPPED' || submission.status === 'CANCELED')
+    const notSubmitted = nonSubReports.filter(report => {
+      if (report.status !== 'APPROVED') return false
+      if (!filterByPeriod(report.reviewedAt || report.submittedAt, period)) return false
+      const opp = visibleOpps.find(item => item.id === report.opportunityId)
+      const chain = getAssignmentChain(employees, opp?.assignedTo)
+      return all.some(employee =>
+        employee.id === chain.associate?.id ||
+        employee.id === chain.teamLead?.id ||
+        employee.id === chain.manager?.id)
+    })
+    const value = subs.reduce((sum, submission) => sum + submissionValue(submission, visibleOpps), 0)
+    const awardedValue = awarded.reduce((sum, submission) => sum + submissionValue(submission, visibleOpps), 0)
+    const memberStats = members
+      .map(employee => computeMemberRollup(employee.id)!)
+      .filter(Boolean)
+      .sort((a, b) => b.subs.length - a.subs.length || b.value - a.value)
+    const monthsData = lastMonths(6).map(month => ({
+      month: month.month,
+      submitted: subs.filter(s => monthKey(s.submittedOn) === month.key).length,
+      awarded: subs.filter(s => monthKey(s.submittedOn) === month.key && s.status === 'AWARDED').length,
+    }))
+    return {
+      manager,
+      members,
+      all,
+      subs, assignedOpps, awarded, lost, dropped, notSubmitted,
+      value, awardedValue,
+      winRate: pct(awarded.length, subs.length),
+      captureRate: pct(subs.length, assignedOpps.length),
+      memberStats,
+      monthsData,
+      byStatus: groupRows(subs, submission => submission.status || 'Unspecified'),
+      byMember: memberStats.map(m => ({
+        name: m.employee.name.split(' ')[0],
+        submitted: m.subs.length,
+        awarded: m.awarded.length,
+        value: m.value,
+      })),
+      byRole: groupRows(all, employee => ROLE_LABELS[employee.role] ?? employee.role),
+    }
+  }, [employeesById, collectReports, periodSubmissions, visibleOpps, employees, nonSubReports, period, computeMemberRollup])
+
+  // BD managers head their own teams; the OPS lead is mirrored as a BD_MANAGER with team='OPS'.
+  const teamHeads = useMemo(() => {
+    return employees.filter(e => e.role === 'BD_MANAGER')
+  }, [employees])
+  const teamRollups = useMemo(
+    () => teamHeads.map(head => computeTeamRollup(head.id)!).filter(Boolean),
+    [teamHeads, computeTeamRollup],
+  )
+  const activeTeamRollup = useMemo(
+    () => teamView.mode === 'team' ? computeTeamRollup(teamView.managerId) : null,
+    [teamView, computeTeamRollup],
+  )
+  const activeMemberRollup = useMemo(
+    () => teamView.mode === 'member' ? computeMemberRollup(teamView.employeeId) : null,
+    [teamView, computeMemberRollup],
+  )
+
+  const goToPipeline = (recordId?: string) => {
+    if (recordId) navigate(`/pipeline?record=${encodeURIComponent(recordId)}`)
+    else navigate('/pipeline')
+  }
+  const goToContracts = () => navigate('/contracts')
 
   const bdStats = [
     { icon: Target, label: 'Active Opportunities', value: activeOpportunities.length, detail: 'Currently in Contract Opportunities', accent: tertiaryAccent },
@@ -1050,13 +1879,51 @@ function ExecutiveDashboard() {
       {tab === 'bd' && (
         <motion.div variants={stagger} initial="initial" animate="animate" className="space-y-5">
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">
-            {bdStats.map(stat => <DashboardStat key={stat.label} {...stat} />)}
+            {bdStats.map(stat => (
+              <DashboardStat key={stat.label} {...stat} onClick={() => goToPipeline()} />
+            ))}
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <BdPiePanel
+              title="By Status"
+              subtitle="Pipeline distribution across statuses"
+              data={oppsByStatus}
+              chartColors={chartColors}
+              total={periodOpps.length}
+              onSlice={() => goToPipeline()}
+              colorOverride={(name) => STATUS_COLORS[name]}
+            />
+            <BdPiePanel
+              title="By Set-Aside"
+              subtitle="Active socio-economic designations"
+              data={oppsBySetAside}
+              chartColors={chartColors}
+              total={periodOpps.length}
+              onSlice={() => goToPipeline()}
+            />
+            <BdPiePanel
+              title="By Priority"
+              subtitle="Priority mix in the current period"
+              data={oppsByPriority}
+              chartColors={chartColors}
+              total={periodOpps.length}
+              onSlice={() => goToPipeline()}
+            />
+            <BdPiePanel
+              title="By Type"
+              subtitle="OTJ, recurring and other vehicles"
+              data={oppsByType}
+              chartColors={chartColors}
+              total={periodOpps.length}
+              onSlice={() => goToPipeline()}
+            />
           </div>
 
           <div className="exec-section-grid">
             <DashboardPanel title="Submission Trend" subtitle="Submissions, awards and dollar value by month">
               <ResponsiveContainer width="100%" height={260}>
-                <ComposedChart data={submissionTrend}>
+                <ComposedChart data={submissionTrend} onClick={() => goToPipeline()} style={{ cursor: 'pointer' }}>
                   <defs>
                     <linearGradient id="submittedValue" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="0%" stopColor={secondaryAccent} stopOpacity={0.34} />
@@ -1075,12 +1942,51 @@ function ExecutiveDashboard() {
               </ResponsiveContainer>
             </DashboardPanel>
 
+            <DashboardPanel title="Conversion Funnel" subtitle="Opportunities → Submitted → Awarded">
+              {periodOpps.length === 0 ? (
+                <EmptyDashboardState label="No opportunities in range." />
+              ) : (
+                <div className="flex h-[260px] flex-col gap-3">
+                  <ResponsiveContainer width="100%" height={150}>
+                    <BarChart data={conversionFunnel} layout="vertical" margin={{ left: 8, right: 12 }} onClick={() => goToPipeline()} style={{ cursor: 'pointer' }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--exec-grid)" horizontal={false} />
+                      <XAxis type="number" tick={{ fill: '#9FB2AD', fontSize: 10 }} axisLine={false} tickLine={false} />
+                      <YAxis dataKey="name" type="category" width={110} tick={{ fill: '#C7D7D3', fontSize: 11, fontWeight: 700 }} axisLine={false} tickLine={false} />
+                      <Tooltip content={<ExecutiveTooltip />} />
+                      <Bar dataKey="value" name="Records" radius={[0, 8, 8, 0]} isAnimationActive={false}>
+                        {conversionFunnel.map(entry => (
+                          <Cell key={entry.name} fill={entry.fill} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                  <div className="grid grid-cols-3 gap-2 px-1">
+                    {conversionFunnel.map((stage, idx) => {
+                      const prev = idx === 0 ? stage.value : conversionFunnel[idx - 1].value
+                      const conv = pct(stage.value, prev || 1)
+                      return (
+                        <div key={stage.name} className="rounded-xl border p-2 text-center" style={{ borderColor: 'var(--exec-border)', background: 'var(--exec-panel-soft)' }}>
+                          <p className="text-[10px] font-bold uppercase tracking-wide" style={{ color: 'var(--text-tertiary)' }}>{stage.name}</p>
+                          <p className="mt-0.5 text-base font-black" style={{ color: 'var(--text-primary)' }}>{stage.value}</p>
+                          {idx > 0 && (
+                            <p className="text-[10px] font-bold" style={{ color: stage.fill }}>{conv}% of prior</p>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+            </DashboardPanel>
+          </div>
+
+          <div className="exec-section-grid">
             <DashboardPanel title="Submitted by NAICS" subtitle="Submitted opportunities per NAICS code">
               {submittedByNaics.length === 0 ? (
                 <EmptyDashboardState label="No submitted NAICS data yet." />
               ) : (
-                <ResponsiveContainer width="100%" height={260}>
-                  <BarChart data={submittedByNaics} layout="vertical" margin={{ left: 16, right: 12 }}>
+                <ResponsiveContainer width="100%" height={300}>
+                  <BarChart data={submittedByNaics} layout="vertical" margin={{ left: 16, right: 12 }} onClick={() => goToPipeline()} style={{ cursor: 'pointer' }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="var(--exec-grid)" horizontal={false} />
                     <XAxis type="number" tick={{ fill: '#9FB2AD', fontSize: 10 }} axisLine={false} tickLine={false} />
                     <YAxis dataKey="name" type="category" width={170} tick={{ fill: '#C7D7D3', fontSize: 10 }} axisLine={false} tickLine={false} />
@@ -1091,39 +1997,42 @@ function ExecutiveDashboard() {
               )}
             </DashboardPanel>
 
-            <DashboardPanel title="Submitted by Type" subtitle="OTJ, recurring and other contract vehicles">
-              {submittedByType.length === 0 ? (
-                <EmptyDashboardState label="No submitted type data yet." />
+            <DashboardPanel
+              title="Top Open Opportunities"
+              subtitle="Highest value records open in pipeline"
+              action={topOpenOpps.length > 0 ? (
+                <button onClick={() => goToPipeline()} className="rounded-full border px-2.5 py-1 text-[10px] font-black uppercase tracking-wide transition-colors" style={{ borderColor: 'var(--exec-border-strong)', color: 'var(--accent)', background: 'var(--exec-panel-soft)' }}>
+                  Open pipeline
+                </button>
+              ) : undefined}
+            >
+              {topOpenOpps.length === 0 ? (
+                <EmptyDashboardState label="No open opportunities yet." />
               ) : (
-                <div className="flex h-[260px] items-center gap-4">
-                  <ResponsiveContainer width="46%" height="100%">
-                    <PieChart>
-                      <Pie data={submittedByType} dataKey="count" nameKey="name" innerRadius={50} outerRadius={78} paddingAngle={3} stroke="transparent" strokeWidth={0} isAnimationActive={false}>
-                        {submittedByType.map((_, index) => (
-                          <Cell key={index} fill={chartColors[index % chartColors.length]} stroke="transparent" strokeWidth={0} />
-                        ))}
-                      </Pie>
-                      <Tooltip content={<ExecutiveTooltip />} />
-                    </PieChart>
-                  </ResponsiveContainer>
-                  <div className="flex-1 space-y-3">
-                    {submittedByType.map((row, index) => (
-                      <div key={row.name}>
-                        <div className="mb-1 flex items-center justify-between gap-2 text-xs">
-                          <span className="font-bold" style={{ color: 'var(--text-secondary)' }}>{row.name}</span>
-                          <span className="font-black" style={{ color: 'var(--text-primary)' }}>{row.count}</span>
-                        </div>
-                        <div className="h-2 overflow-hidden rounded-full bg-white/10">
-                          <motion.div
-                            className="h-full rounded-full"
-                            style={{ background: chartColors[index % chartColors.length] }}
-                            initial={{ width: 0 }}
-                            animate={{ width: `${pct(row.count, Math.max(1, periodSubmissions.length))}%` }}
-                          />
-                        </div>
+                <div className="space-y-2">
+                  {topOpenOpps.map((opp, index) => (
+                    <button
+                      key={opp.id}
+                      type="button"
+                      onClick={() => goToPipeline(opp.id)}
+                      className="group flex w-full items-center gap-3 rounded-xl border p-3 text-left transition-all hover:-translate-y-px"
+                      style={{ borderColor: 'var(--exec-border)', background: 'var(--exec-panel-soft)' }}
+                    >
+                      <div className="w-6 flex-shrink-0 text-center text-xs font-black" style={{ color: 'var(--accent)' }}>#{index + 1}</div>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-black" style={{ color: 'var(--text-primary)' }}>{opp.solicitation || opp.solicitationId || 'Untitled opportunity'}</p>
+                        <p className="truncate text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
+                          {opp.client || 'No agency'} · {opp.status || 'No status'}{opp.setAside ? ` · ${opp.setAside}` : ''}
+                        </p>
                       </div>
-                    ))}
-                  </div>
+                      <div className="flex-shrink-0 text-right">
+                        <p className="text-sm font-black" style={{ color: 'var(--accent)' }}>{formatCurrency(opportunityValue(opp))}</p>
+                        <p className="text-[10px] font-bold" style={{ color: 'var(--text-muted)' }}>
+                          <span className="inline-flex items-center gap-0.5 opacity-70 group-hover:opacity-100">Open <ChevronRight size={11} /></span>
+                        </p>
+                      </div>
+                    </button>
+                  ))}
                 </div>
               )}
             </DashboardPanel>
@@ -1135,7 +2044,7 @@ function ExecutiveDashboard() {
             ) : (
               <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
                 <ResponsiveContainer width="100%" height={300}>
-                  <BarChart data={agencyPerformance} layout="vertical" margin={{ left: 16, right: 20 }}>
+                  <BarChart data={agencyPerformance} layout="vertical" margin={{ left: 16, right: 20 }} onClick={() => goToPipeline()} style={{ cursor: 'pointer' }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="var(--exec-grid)" horizontal={false} />
                     <XAxis type="number" tick={{ fill: '#9FB2AD', fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={value => `$${Math.round(Number(value) / 1000)}K`} />
                     <YAxis dataKey="name" type="category" width={170} tick={{ fill: '#C7D7D3', fontSize: 10 }} axisLine={false} tickLine={false} />
@@ -1145,7 +2054,13 @@ function ExecutiveDashboard() {
                 </ResponsiveContainer>
                 <div className="space-y-2">
                   {agencyPerformance.map((agency, index) => (
-                    <div key={agency.name} className="rounded-xl border p-3" style={{ borderColor: 'var(--exec-border)', background: 'var(--exec-panel-soft)' }}>
+                    <button
+                      key={agency.name}
+                      type="button"
+                      onClick={() => goToPipeline()}
+                      className="block w-full rounded-xl border p-3 text-left transition-all hover:-translate-y-px"
+                      style={{ borderColor: 'var(--exec-border)', background: 'var(--exec-panel-soft)' }}
+                    >
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
                           <p className="truncate text-sm font-black" style={{ color: 'var(--text-primary)' }}>{agency.name}</p>
@@ -1154,7 +2069,7 @@ function ExecutiveDashboard() {
                         <span className="h-2.5 w-2.5 rounded-full" style={{ background: chartColors[index % chartColors.length] }} />
                       </div>
                       <p className="mt-2 text-sm font-black" style={{ color: 'var(--accent)' }}>{formatCurrency(agency.value)}</p>
-                    </div>
+                    </button>
                   ))}
                 </div>
               </div>
@@ -1165,77 +2080,66 @@ function ExecutiveDashboard() {
 
       {tab === 'team' && (
         <motion.div variants={stagger} initial="initial" animate="animate" className="space-y-5">
-          <div className="grid grid-cols-1 gap-3 lg:grid-cols-4">
-            <DashboardStat icon={Users} label="Associates" value={bdAssociates.length} detail="BD associates in the current hierarchy" accent={tertiaryAccent} />
-            <DashboardStat icon={Send} label="Team Submissions" value={teamRows.reduce((sum, row) => sum + row.submitted, 0)} detail="Submitted opportunities by associates" accent={secondaryAccent} />
-            <DashboardStat icon={AlertTriangle} label="Non-Sub Approved" value={teamRows.reduce((sum, row) => sum + row.notSubmitted, 0)} detail="Approved non-submission reports" accent={chartColors[3]} />
-            <DashboardStat icon={Zap} label="Active Users" value={activeUsers.length} detail="Active company user accounts" accent={accent} />
-          </div>
+          {teamView.mode === 'teams' && (
+            <TeamsOverview
+              teamRollups={teamRollups}
+              activeUsers={activeUsers}
+              chartColors={chartColors}
+              accent={accent}
+              secondaryAccent={secondaryAccent}
+              tertiaryAccent={tertiaryAccent}
+              onPickTeam={(managerId) => setTeamView({ mode: 'team', managerId })}
+              onPickMember={(employeeId) => setTeamView({ mode: 'member', employeeId })}
+            />
+          )}
 
-          <div className="exec-section-grid">
-            <DashboardPanel title="Associates Leaderboard" subtitle="Ranked by submitted opportunities and awarded value">
-              {teamRows.length === 0 ? (
-                <EmptyDashboardState label="No associate performance yet." />
-              ) : (
-                <div className="space-y-3">
-                  {teamRows.slice(0, 8).map((row, index) => (
-                    <div key={row.id} className="flex items-center gap-3 rounded-xl border p-3" style={{ borderColor: 'var(--exec-border)', background: 'var(--exec-panel-soft)' }}>
-                      <div className="w-6 text-center text-xs font-black" style={{ color: 'var(--accent)' }}>#{index + 1}</div>
-                      <div className={`flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br ${avatarColor(row.avatar)} text-xs font-black text-white`}>
-                        {row.avatar.slice(0, 2)}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-black" style={{ color: 'var(--text-primary)' }}>{row.name}</p>
-                        <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>{row.submitted} submitted | {row.conversion}% conversion</p>
-                      </div>
-                      <div className="text-right">
-                        <p className="text-sm font-black" style={{ color: 'var(--accent)' }}>{formatCurrency(row.value)}</p>
-                        <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{row.awarded} awards</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </DashboardPanel>
+          {teamView.mode === 'team' && activeTeamRollup && (
+            <TeamDetailView
+              rollup={activeTeamRollup}
+              chartColors={chartColors}
+              accent={accent}
+              secondaryAccent={secondaryAccent}
+              tertiaryAccent={tertiaryAccent}
+              onBack={() => setTeamView({ mode: 'teams' })}
+              onPickMember={(employeeId) => setTeamView({ mode: 'member', employeeId })}
+            />
+          )}
 
-            <DashboardPanel title="Associate Output" subtitle="Submitted, non-submitted, dropped and conversion rate">
-              {teamChartRows.length === 0 ? (
-                <EmptyDashboardState label="No associate chart data yet." />
-              ) : (
-                <ResponsiveContainer width="100%" height={320}>
-                  <BarChart data={teamChartRows}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="var(--exec-grid)" vertical={false} />
-                    <XAxis dataKey="name" tick={{ fill: '#9FB2AD', fontSize: 11 }} axisLine={false} tickLine={false} />
-                    <YAxis tick={{ fill: '#9FB2AD', fontSize: 10 }} axisLine={false} tickLine={false} />
-                    <Tooltip content={<ExecutiveTooltip />} />
-                    <Legend wrapperStyle={{ fontSize: 11, color: 'var(--text-secondary)' }} />
-                    <Bar dataKey="submitted" name="Submitted" fill={secondaryAccent} radius={[5, 5, 0, 0]} isAnimationActive={false} />
-                    <Bar dataKey="notSubmitted" name="Not Submitted" fill={chartColors[3]} radius={[5, 5, 0, 0]} isAnimationActive={false} />
-                    <Bar dataKey="dropped" name="Dropped" fill={chartColors[5]} radius={[5, 5, 0, 0]} isAnimationActive={false} />
-                  </BarChart>
-                </ResponsiveContainer>
-              )}
-            </DashboardPanel>
-
-            <DashboardPanel title="Active Users" subtitle="Live view from active company accounts">
-              <div className="space-y-3">
-                {activeUsers.length === 0 && <EmptyDashboardState label="No active users found." />}
-                {activeUsers.slice(0, 9).map(user => (
-                  <div key={user.id} className="flex items-center gap-3 rounded-xl border p-3" style={{ borderColor: 'var(--exec-border)', background: 'var(--exec-panel-soft)' }}>
-                    <div className={`flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br ${avatarColor(user.avatar)} text-xs font-black text-white`}>
-                      {user.avatar.slice(0, 2)}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-black" style={{ color: 'var(--text-primary)' }}>{user.name}</p>
-                      <p className="text-xs" style={{ color: 'var(--text-tertiary)' }}>{ROLE_LABELS[user.role]}</p>
-                    </div>
-                    <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_14px_rgba(34,197,94,0.75)]" />
-                  </div>
-                ))}
+          {teamView.mode === 'team' && !activeTeamRollup && (
+            <DashboardPanel title="Team not found" subtitle="">
+              <div className="flex items-center justify-between gap-3">
+                <EmptyDashboardState label="This team is no longer available." />
+                <button onClick={() => setTeamView({ mode: 'teams' })} className="rounded-xl border px-3 py-1.5 text-xs font-black" style={{ borderColor: 'var(--exec-border-strong)', color: 'var(--text-primary)', background: 'var(--exec-panel-soft)' }}>
+                  Back to teams
+                </button>
               </div>
             </DashboardPanel>
-          </div>
+          )}
 
+          {teamView.mode === 'member' && activeMemberRollup && (
+            <MemberDetailView
+              rollup={activeMemberRollup}
+              employees={employees}
+              chartColors={chartColors}
+              accent={accent}
+              secondaryAccent={secondaryAccent}
+              tertiaryAccent={tertiaryAccent}
+              onBack={() => setTeamView({ mode: 'teams' })}
+              onBackToTeam={(managerId) => setTeamView({ mode: 'team', managerId })}
+              onOpenOpportunity={(id) => goToPipeline(id)}
+            />
+          )}
+
+          {teamView.mode === 'member' && !activeMemberRollup && (
+            <DashboardPanel title="Member not found" subtitle="">
+              <div className="flex items-center justify-between gap-3">
+                <EmptyDashboardState label="This member is no longer available." />
+                <button onClick={() => setTeamView({ mode: 'teams' })} className="rounded-xl border px-3 py-1.5 text-xs font-black" style={{ borderColor: 'var(--exec-border-strong)', color: 'var(--text-primary)', background: 'var(--exec-panel-soft)' }}>
+                  Back to teams
+                </button>
+              </div>
+            </DashboardPanel>
+          )}
         </motion.div>
       )}
 
