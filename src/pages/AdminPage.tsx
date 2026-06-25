@@ -11,8 +11,8 @@ import {
   PERMISSION_REGISTRY,
   PERMISSION_LABELS,
   PERMISSION_GROUP_LABELS,
-  PERMISSIONS_BY_ROLE,
   getPermissionGroup,
+  getEffectiveRolePermissions,
   type Permission,
 } from '../lib/permissions'
 import { fetchRemoteRowCounts, REMOTE_COUNT_TABLES, type RemoteCountTable } from '../lib/db'
@@ -477,6 +477,16 @@ export default function AdminPage() {
     lastSyncedAt,
     exportSnapshot,
     importSnapshot,
+    rolePermissionOverrides,
+    userPermissionGrants,
+    userPermissionRevokes,
+    permissionOverridesSyncStatus,
+    setRolePermissions,
+    resetRolePermissions,
+    setUserPermissionGrant,
+    setUserPermissionRevoke,
+    resetUserPermissions,
+    resetAllPermissionOverrides,
   } = useStore()
   const [search, setSearch] = useState('')
   const [modal, setModal] = useState<'create' | User | null>(null)
@@ -499,6 +509,13 @@ export default function AdminPage() {
 
   // Permissions Matrix: collapsed by default to keep the page short
   const [matrixOpen, setMatrixOpen] = useState(false)
+  // 'view' = read-only ✓ / — display, 'edit' = checkboxes with reset buttons.
+  // We default to 'view' so accidental clicks can't change RBAC.
+  const [matrixMode, setMatrixMode] = useState<'view' | 'edit'>('view')
+
+  // Per-user overrides: pick a user to see / edit their grants and revokes.
+  const [overrideUserId, setOverrideUserId] = useState<string>('')
+  const [userOverridesOpen, setUserOverridesOpen] = useState(false)
 
   // Workspace snapshot
   const [snapshotBusy, setSnapshotBusy] = useState(false)
@@ -1044,22 +1061,69 @@ export default function AdminPage() {
       <div className="mt-8">
         <SectionHeader icon={<Shield size={14} />} label="Permissions matrix" accent="violet" />
         <div className="glass rounded-2xl p-4 mb-6">
-          <div className="flex items-start justify-between gap-3">
-            <div>
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div className="max-w-2xl">
               <p className="text-xs text-slate-300">
-                Read-only view of what each role can do. Permissions are defined in code (<code className="font-mono text-violet-300">src/lib/permissions.ts</code>) — change them by editing that file.
+                Toggle what each role is allowed to do. Edits apply to every user with that role; use
+                <span className="text-violet-300"> per-user overrides</span> below to grant or revoke for a single user.
               </p>
-              <p className="text-[11px] text-slate-500 mt-1">
-                {PERMISSION_REGISTRY.length} permissions across {Object.keys(PERMISSION_GROUP_LABELS).length} groups.
-              </p>
+              <div className="flex items-center gap-2 mt-2 flex-wrap">
+                <span className="text-[10px] text-slate-500">
+                  {PERMISSION_REGISTRY.length} permissions · {Object.keys(PERMISSION_GROUP_LABELS).length} groups
+                </span>
+                {permissionOverridesSyncStatus === 'synced' && (
+                  <span className="badge bg-emerald-500/15 text-emerald-300 border-emerald-500/25 border text-[10px] inline-flex items-center gap-1">
+                    <Check size={10} /> Synced to Supabase
+                  </span>
+                )}
+                {permissionOverridesSyncStatus === 'local' && (
+                  <span
+                    className="badge bg-amber-500/15 text-amber-300 border-amber-500/25 border text-[10px] inline-flex items-center gap-1"
+                    title="Apply supabase/migrations/019_permission_overrides.sql to share these edits across browsers."
+                  >
+                    <AlertTriangle size={10} /> Local-only (apply migration 019)
+                  </span>
+                )}
+                {permissionOverridesSyncStatus === 'unknown' && !isSupabaseConnected && (
+                  <span className="badge bg-slate-500/15 text-slate-300 border-slate-500/25 border text-[10px]">
+                    Offline — local-only
+                  </span>
+                )}
+              </div>
             </div>
-            <button
-              onClick={() => setMatrixOpen(o => !o)}
-              className="btn-ghost text-[11px] text-violet-300 hover:text-violet-200 inline-flex items-center gap-1"
-            >
-              {matrixOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-              {matrixOpen ? 'Hide' : 'Show'} matrix
-            </button>
+            <div className="flex items-center gap-2 flex-wrap">
+              {matrixOpen && matrixMode === 'edit' && (
+                <button
+                  onClick={async () => {
+                    if (!confirm('Reset every role to its default permissions and clear all per-user overrides? This cannot be undone.')) return
+                    await resetAllPermissionOverrides()
+                    toast.success('Permissions reset to defaults')
+                  }}
+                  className="btn-ghost text-[11px] text-rose-300 hover:text-rose-200 inline-flex items-center gap-1"
+                >
+                  <RotateCcw size={12} /> Reset all to defaults
+                </button>
+              )}
+              {matrixOpen && (
+                <button
+                  onClick={() => setMatrixMode(m => (m === 'view' ? 'edit' : 'view'))}
+                  className={`btn-ghost text-[11px] inline-flex items-center gap-1 px-2.5 py-1 rounded-md border ${
+                    matrixMode === 'edit'
+                      ? 'border-violet-500/40 text-violet-200 bg-violet-500/10'
+                      : 'border-slate-700 text-slate-300 hover:text-violet-200'
+                  }`}
+                >
+                  {matrixMode === 'edit' ? <><Lock size={12} /> Stop editing</> : <><Pencil size={12} /> Edit</>}
+                </button>
+              )}
+              <button
+                onClick={() => setMatrixOpen(o => !o)}
+                className="btn-ghost text-[11px] text-violet-300 hover:text-violet-200 inline-flex items-center gap-1"
+              >
+                {matrixOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                {matrixOpen ? 'Hide' : 'Show'} matrix
+              </button>
+            </div>
           </div>
           {matrixOpen && (
             <div className="overflow-x-auto mt-4">
@@ -1067,11 +1131,31 @@ export default function AdminPage() {
                 <thead>
                   <tr>
                     <th className="min-w-[260px]">Permission</th>
-                    {ROLES.map(r => (
-                      <th key={r} className="text-center min-w-[110px]">
-                        <span className={`badge border text-[9px] ${ROLE_BADGE[r]}`}>{ROLE_LABELS[r]}</span>
-                      </th>
-                    ))}
+                    {ROLES.map(r => {
+                      const customized = rolePermissionOverrides[r] !== undefined
+                      return (
+                        <th key={r} className="text-center min-w-[120px]">
+                          <div className="flex flex-col items-center gap-1">
+                            <span className={`badge border text-[9px] ${ROLE_BADGE[r]}`}>{ROLE_LABELS[r]}</span>
+                            {customized && (
+                              <span className="text-[9px] text-amber-300">customized</span>
+                            )}
+                            {matrixMode === 'edit' && customized && (
+                              <button
+                                onClick={async () => {
+                                  await resetRolePermissions(r)
+                                  toast.success(`${ROLE_LABELS[r]} reset to defaults`)
+                                }}
+                                className="text-[9px] text-slate-500 hover:text-rose-300 inline-flex items-center gap-1"
+                                title="Reset this role to default permissions"
+                              >
+                                <RotateCcw size={9} /> reset
+                              </button>
+                            )}
+                          </div>
+                        </th>
+                      )
+                    })}
                   </tr>
                 </thead>
                 <tbody>
@@ -1095,14 +1179,40 @@ export default function AdminPage() {
                               <div className="text-[10px] text-slate-600 font-mono">{perm}</div>
                             </td>
                             {ROLES.map(r => {
-                              const allowed = PERMISSIONS_BY_ROLE[r].includes(perm)
+                              const allowed = getEffectiveRolePermissions(r).includes(perm)
+                              if (matrixMode === 'view') {
+                                return (
+                                  <td key={r} className="text-center">
+                                    {allowed ? (
+                                      <Check size={14} className="inline text-emerald-400" />
+                                    ) : (
+                                      <span className="text-slate-700 text-xs">—</span>
+                                    )}
+                                  </td>
+                                )
+                              }
+                              const isCaptureAdmin = r === 'CAPTURE_MANAGER' && perm === 'admin:manageUsers'
                               return (
                                 <td key={r} className="text-center">
-                                  {allowed ? (
-                                    <Check size={14} className="inline text-emerald-400" />
-                                  ) : (
-                                    <span className="text-slate-700 text-xs">—</span>
-                                  )}
+                                  <label
+                                    className={`inline-flex items-center justify-center cursor-pointer ${
+                                      isCaptureAdmin ? 'cursor-not-allowed opacity-60' : ''
+                                    }`}
+                                    title={isCaptureAdmin ? 'Capture Manager always keeps user management to avoid lockout.' : undefined}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={allowed}
+                                      disabled={isCaptureAdmin}
+                                      onChange={async (e) => {
+                                        const nextAllowed = e.target.checked
+                                        const current = new Set(getEffectiveRolePermissions(r))
+                                        if (nextAllowed) current.add(perm); else current.delete(perm)
+                                        await setRolePermissions(r, Array.from(current))
+                                      }}
+                                      className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-violet-500 focus:ring-violet-500"
+                                    />
+                                  </label>
                                 </td>
                               )
                             })}
@@ -1113,8 +1223,172 @@ export default function AdminPage() {
                   })}
                 </tbody>
               </table>
+              {matrixMode === 'edit' && (
+                <p className="text-[10px] text-slate-500 mt-3">
+                  Changes save instantly. Use <span className="text-amber-300">Reset all to defaults</span> if you need to start over.
+                </p>
+              )}
             </div>
           )}
+        </div>
+
+        {/* Per-user overrides */}
+        <div className="glass rounded-2xl p-4 mb-6">
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div className="max-w-2xl">
+              <div className="flex items-center gap-2">
+                <UserCog size={14} className="text-violet-300" />
+                <h3 className="text-xs font-semibold text-slate-200">Per-user overrides</h3>
+              </div>
+              <p className="text-[11px] text-slate-500 mt-1">
+                Grant a permission to a single user (in addition to their role) or revoke one their role would
+                normally have. Use this when, say, one Associate needs to submit non-submission reports but the
+                rest don't.
+              </p>
+            </div>
+            <button
+              onClick={() => setUserOverridesOpen(o => !o)}
+              className="btn-ghost text-[11px] text-violet-300 hover:text-violet-200 inline-flex items-center gap-1"
+            >
+              {userOverridesOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+              {userOverridesOpen ? 'Hide' : 'Show'} per-user editor
+            </button>
+          </div>
+          {userOverridesOpen && (() => {
+            const selectableUsers = users.filter(u => u.id !== currentUser?.id)
+            const selectedUser = users.find(u => u.id === overrideUserId)
+            const grants  = selectedUser ? (userPermissionGrants[selectedUser.id]  ?? []) : []
+            const revokes = selectedUser ? (userPermissionRevokes[selectedUser.id] ?? []) : []
+            const grantSet  = new Set(grants)
+            const revokeSet = new Set(revokes)
+            const customCount = selectableUsers.filter(u =>
+              (userPermissionGrants[u.id]  ?? []).length > 0 ||
+              (userPermissionRevokes[u.id] ?? []).length > 0
+            ).length
+            return (
+              <div className="mt-4">
+                <div className="flex items-center gap-2 mb-3 flex-wrap">
+                  <label className="text-[11px] text-slate-400">User:</label>
+                  <select
+                    value={overrideUserId}
+                    onChange={e => setOverrideUserId(e.target.value)}
+                    className="bg-slate-900/60 border border-slate-700 rounded-md text-xs text-slate-200 px-2 py-1 min-w-[240px]"
+                  >
+                    <option value="">— Select a user —</option>
+                    {selectableUsers.map(u => {
+                      const hasCustom = (userPermissionGrants[u.id]  ?? []).length > 0
+                                     || (userPermissionRevokes[u.id] ?? []).length > 0
+                      return (
+                        <option key={u.id} value={u.id}>
+                          {u.name} ({ROLE_LABELS[u.role]}){hasCustom ? ' • customized' : ''}
+                        </option>
+                      )
+                    })}
+                  </select>
+                  {customCount > 0 && (
+                    <span className="text-[10px] text-amber-300">
+                      {customCount} user{customCount === 1 ? '' : 's'} currently customized
+                    </span>
+                  )}
+                  {selectedUser && (grants.length > 0 || revokes.length > 0) && (
+                    <button
+                      onClick={async () => {
+                        if (!confirm(`Clear all permission overrides for ${selectedUser.name}? Their effective permissions will revert to their role defaults.`)) return
+                        await resetUserPermissions(selectedUser.id)
+                        toast.success(`Cleared overrides for ${selectedUser.name}`)
+                      }}
+                      className="btn-ghost text-[11px] text-rose-300 hover:text-rose-200 inline-flex items-center gap-1 ml-auto"
+                    >
+                      <RotateCcw size={12} /> Clear overrides for this user
+                    </button>
+                  )}
+                </div>
+
+                {!selectedUser ? (
+                  <p className="text-[11px] text-slate-500">
+                    Pick a user from the dropdown to view and edit their effective permissions.
+                  </p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          <th className="min-w-[260px]">Permission</th>
+                          <th className="text-center min-w-[100px]">From role</th>
+                          <th className="text-center min-w-[100px]">Grant extra</th>
+                          <th className="text-center min-w-[100px]">Revoke</th>
+                          <th className="text-center min-w-[100px]">Effective</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {Object.entries(PERMISSION_GROUP_LABELS).map(([groupKey, groupLabel]) => {
+                          const perms = PERMISSION_REGISTRY.filter(p => getPermissionGroup(p) === groupKey)
+                          if (perms.length === 0) return null
+                          return (
+                            <Fragment key={groupKey}>
+                              <tr>
+                                <td colSpan={5} className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 bg-slate-900/30 py-2">
+                                  {groupLabel}
+                                </td>
+                              </tr>
+                              {perms.map((perm: Permission) => {
+                                const fromRole = getEffectiveRolePermissions(selectedUser.role).includes(perm)
+                                const grantOn  = grantSet.has(perm)
+                                const revokeOn = revokeSet.has(perm)
+                                const effective = (fromRole && !revokeOn) || grantOn
+                                return (
+                                  <tr key={perm}>
+                                    <td>
+                                      <div className="text-xs text-slate-200">{PERMISSION_LABELS[perm]}</div>
+                                      <div className="text-[10px] text-slate-600 font-mono">{perm}</div>
+                                    </td>
+                                    <td className="text-center">
+                                      {fromRole ? (
+                                        <Check size={14} className="inline text-emerald-400" />
+                                      ) : (
+                                        <span className="text-slate-700 text-xs">—</span>
+                                      )}
+                                    </td>
+                                    <td className="text-center">
+                                      <input
+                                        type="checkbox"
+                                        checked={grantOn}
+                                        disabled={fromRole}
+                                        title={fromRole ? 'Already granted by role — no extra grant needed.' : undefined}
+                                        onChange={(e) => { void setUserPermissionGrant(selectedUser.id, perm, e.target.checked) }}
+                                        className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-emerald-500 focus:ring-emerald-500 disabled:opacity-30"
+                                      />
+                                    </td>
+                                    <td className="text-center">
+                                      <input
+                                        type="checkbox"
+                                        checked={revokeOn}
+                                        disabled={!fromRole}
+                                        title={!fromRole ? 'Role does not grant this permission — nothing to revoke.' : undefined}
+                                        onChange={(e) => { void setUserPermissionRevoke(selectedUser.id, perm, e.target.checked) }}
+                                        className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-rose-500 focus:ring-rose-500 disabled:opacity-30"
+                                      />
+                                    </td>
+                                    <td className="text-center">
+                                      {effective ? (
+                                        <Check size={14} className="inline text-emerald-400" />
+                                      ) : (
+                                        <span className="text-slate-700 text-xs">—</span>
+                                      )}
+                                    </td>
+                                  </tr>
+                                )
+                              })}
+                            </Fragment>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )
+          })()}
         </div>
       </div>
 

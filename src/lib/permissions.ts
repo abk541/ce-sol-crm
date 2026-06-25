@@ -135,7 +135,7 @@ export const PERMISSIONS_BY_ROLE: Record<Role, Permission[]> = {
 
 export function hasPermission(user: User | null | undefined, permission: Permission) {
   if (!user) return false
-  return PERMISSIONS_BY_ROLE[user.role]?.includes(permission) ?? false
+  return getEffectiveUserPermissions(user).has(permission)
 }
 
 export function hasAnyPermission(user: User | null | undefined, permissions: Permission[]) {
@@ -148,4 +148,56 @@ export function isCaptureManager(user: User | null | undefined) {
 
 export function canManageOperations(user: User | null | undefined) {
   return hasPermission(user, 'operations:manage')
+}
+
+// ── Runtime overrides ────────────────────────────────────────────────────────
+// These are mutated by the Zustand store (see useStore.ts), which subscribes
+// to itself and calls applyPermissionOverrides() on every state change. We
+// keep the override table here (a plain module variable) instead of importing
+// the store to avoid a circular import.
+//
+// Falsy values fall back to defaults, so a fresh install with no overrides
+// behaves exactly like before this feature was added — that's how we keep
+// hasPermission() backward-compatible for every existing caller.
+
+let activeRoleOverrides: Partial<Record<Role, Permission[]>> = {}
+let activeUserGrants: Record<string, Permission[]> = {}
+let activeUserRevokes: Record<string, Permission[]> = {}
+
+export function applyPermissionOverrides(
+  rolePerms?: Partial<Record<Role, Permission[]>> | null,
+  userGrants?: Record<string, Permission[]> | null,
+  userRevokes?: Record<string, Permission[]> | null,
+) {
+  activeRoleOverrides = rolePerms ?? {}
+  activeUserGrants    = userGrants ?? {}
+  activeUserRevokes   = userRevokes ?? {}
+}
+
+export function getEffectiveRolePermissions(role: Role): Permission[] {
+  const override = activeRoleOverrides[role]
+  return override ?? PERMISSIONS_BY_ROLE[role] ?? []
+}
+
+export function getEffectiveUserPermissions(
+  user: { id: string; role: Role } | null | undefined,
+): Set<Permission> {
+  if (!user) return new Set()
+  const base    = getEffectiveRolePermissions(user.role)
+  const grants  = activeUserGrants[user.id]  ?? []
+  const revokes = new Set<Permission>(activeUserRevokes[user.id] ?? [])
+  const out = new Set<Permission>()
+  for (const p of base)   if (!revokes.has(p)) out.add(p)
+  for (const g of grants) out.add(g)
+  return out
+}
+
+export function isRoleCustomized(role: Role): boolean {
+  return Array.isArray(activeRoleOverrides[role])
+}
+
+export function userHasCustomOverrides(userId: string): boolean {
+  const g = activeUserGrants[userId]
+  const r = activeUserRevokes[userId]
+  return (Array.isArray(g) && g.length > 0) || (Array.isArray(r) && r.length > 0)
 }

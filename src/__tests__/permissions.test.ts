@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, afterEach } from 'vitest'
 import { MOCK_USERS } from '../data/mock'
-import { hasPermission } from '../lib/permissions'
+import { applyPermissionOverrides, getEffectiveRolePermissions, getEffectiveUserPermissions, hasPermission } from '../lib/permissions'
 import type { Role, User } from '../types'
 
 function user(role: Role): User {
@@ -107,5 +107,66 @@ describe('role permissions', () => {
     expect(hasPermission(opsManager, 'hr:viewCertifications')).toBe(true)
     expect(hasPermission(opsManager, 'hr:manageCertifications')).toBe(false)
     expect(hasPermission(opsManager, 'hr:reviewRequests')).toBe(false)
+  })
+})
+
+describe('permission overrides', () => {
+  afterEach(() => {
+    // Always clear overrides between tests so one test never leaks state into
+    // another and the default-role tests above keep passing if reordered.
+    applyPermissionOverrides({}, {}, {})
+  })
+
+  it('falls back to defaults when no overrides are applied', () => {
+    const associate = user('ASSOCIATE')
+    expect(hasPermission(associate, 'opportunity:create')).toBe(false)
+    expect(hasPermission(associate, 'sourcing:read')).toBe(true)
+  })
+
+  it('lets a role override replace the default permission set', () => {
+    applyPermissionOverrides({ ASSOCIATE: ['opportunity:create', 'opportunity:read'] }, {}, {})
+    const associate = user('ASSOCIATE')
+    expect(hasPermission(associate, 'opportunity:create')).toBe(true)
+    expect(hasPermission(associate, 'opportunity:read')).toBe(true)
+    // Defaults that aren't in the override are dropped:
+    expect(hasPermission(associate, 'sourcing:read')).toBe(false)
+  })
+
+  it('grants an extra permission to one user without affecting peers', () => {
+    const alice = { ...user('ASSOCIATE'), id: 'alice' }
+    const bob   = { ...user('ASSOCIATE'), id: 'bob'   }
+    applyPermissionOverrides({}, { alice: ['nonSubmission:submit'] }, {})
+    expect(hasPermission(alice, 'nonSubmission:submit')).toBe(true)
+    expect(hasPermission(bob,   'nonSubmission:submit')).toBe(false)
+  })
+
+  it('revokes a role-granted permission for one user without affecting peers', () => {
+    const alice = { ...user('ASSOCIATE'), id: 'alice' }
+    const bob   = { ...user('ASSOCIATE'), id: 'bob'   }
+    applyPermissionOverrides({}, {}, { alice: ['sourcing:read'] })
+    expect(hasPermission(alice, 'sourcing:read')).toBe(false)
+    expect(hasPermission(bob,   'sourcing:read')).toBe(true)
+  })
+
+  it('grant beats revoke for the same user + permission', () => {
+    const alice = { ...user('ASSOCIATE'), id: 'alice' }
+    applyPermissionOverrides({}, { alice: ['opportunity:create'] }, { alice: ['opportunity:create'] })
+    expect(hasPermission(alice, 'opportunity:create')).toBe(true)
+  })
+
+  it('getEffectiveUserPermissions returns the merged set', () => {
+    const alice = { ...user('ASSOCIATE'), id: 'alice' }
+    applyPermissionOverrides({}, { alice: ['opportunity:create'] }, { alice: ['sourcing:read'] })
+    const effective = getEffectiveUserPermissions(alice)
+    expect(effective.has('opportunity:create')).toBe(true)  // granted
+    expect(effective.has('sourcing:read')).toBe(false)       // revoked
+    expect(effective.has('opportunity:read')).toBe(true)     // unchanged role default
+  })
+
+  it('getEffectiveRolePermissions reflects role-level overrides', () => {
+    applyPermissionOverrides({ BD_MANAGER: ['opportunity:create'] }, {}, {})
+    expect(getEffectiveRolePermissions('BD_MANAGER')).toEqual(['opportunity:create'])
+    // Untouched roles still return their built-in defaults.
+    expect(getEffectiveRolePermissions('CAPTURE_MANAGER').length).toBeGreaterThan(10)
   })
 })

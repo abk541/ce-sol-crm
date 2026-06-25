@@ -17,11 +17,13 @@ import type {
   LockedSubkDocuments,
   NonSubmissionReport,
   PastPerformance,
+  Role,
   SamGovContact,
   Subcontractor,
   SubcontractorContact,
   User,
 } from '../types'
+import type { Permission } from './permissions'
 import {
   normalizeContractDeliverables,
   serializeContractDeliverables,
@@ -1695,6 +1697,161 @@ export async function fetchRemoteRowCounts(): Promise<Record<RemoteCountTable, n
     }
   }))
   return out
+}
+
+// ── Permission overrides ─────────────────────────────────────────────────────
+//
+// Backed by tables created in migration 019_permission_overrides.sql. If that
+// migration hasn't been applied, fetch/save calls fail with a "relation does
+// not exist" error — we detect that specifically and signal the caller to
+// drop into local-only mode without surfacing a scary toast.
+
+export type RolePermissionsMap  = Partial<Record<Role, Permission[]>>
+export type UserPermissionGrant = Record<string, Permission[]>
+
+export interface PermissionOverridesPayload {
+  roles:   RolePermissionsMap
+  grants:  UserPermissionGrant
+  revokes: UserPermissionGrant
+}
+
+function isMissingTableError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false
+  const e = err as { code?: string; message?: string }
+  if (e.code === '42P01') return true
+  if (typeof e.message === 'string' && /relation .* does not exist/i.test(e.message)) return true
+  return false
+}
+
+export interface PermissionOverridesResult {
+  ok: boolean
+  missingTable: boolean
+  payload?: PermissionOverridesPayload
+}
+
+export async function fetchPermissionOverrides(): Promise<PermissionOverridesResult> {
+  if (!isSupabaseConnected || !supabase) {
+    return { ok: false, missingTable: false }
+  }
+  try {
+    const [rolesRes, usersRes] = await Promise.all([
+      supabase.from('role_permission_overrides').select('role, permissions'),
+      supabase.from('user_permission_overrides').select('user_id, grants, revokes'),
+    ])
+    if (rolesRes.error && isMissingTableError(rolesRes.error)) {
+      return { ok: false, missingTable: true }
+    }
+    if (usersRes.error && isMissingTableError(usersRes.error)) {
+      return { ok: false, missingTable: true }
+    }
+    if (rolesRes.error) {
+      console.error('[db] fetchPermissionOverrides roles error', rolesRes.error)
+      return { ok: false, missingTable: false }
+    }
+    if (usersRes.error) {
+      console.error('[db] fetchPermissionOverrides users error', usersRes.error)
+      return { ok: false, missingTable: false }
+    }
+    const roles: RolePermissionsMap = {}
+    for (const row of rolesRes.data ?? []) {
+      const r = row as { role: Role; permissions: unknown }
+      if (Array.isArray(r.permissions)) roles[r.role] = r.permissions as Permission[]
+    }
+    const grants:  UserPermissionGrant = {}
+    const revokes: UserPermissionGrant = {}
+    for (const row of usersRes.data ?? []) {
+      const r = row as { user_id: string; grants: unknown; revokes: unknown }
+      if (Array.isArray(r.grants)  && r.grants.length  > 0) grants[r.user_id]  = r.grants  as Permission[]
+      if (Array.isArray(r.revokes) && r.revokes.length > 0) revokes[r.user_id] = r.revokes as Permission[]
+    }
+    return { ok: true, missingTable: false, payload: { roles, grants, revokes } }
+  } catch (err) {
+    if (isMissingTableError(err)) return { ok: false, missingTable: true }
+    console.error('[db] fetchPermissionOverrides failed', err)
+    return { ok: false, missingTable: false }
+  }
+}
+
+export async function saveRolePermissionOverride(role: Role, permissions: Permission[] | null): Promise<PermissionOverridesResult> {
+  if (!isSupabaseConnected || !supabase) return { ok: false, missingTable: false }
+  try {
+    if (permissions == null) {
+      const { error } = await supabase.from('role_permission_overrides').delete().eq('role', role)
+      if (error) {
+        if (isMissingTableError(error)) return { ok: false, missingTable: true }
+        console.error('[db] saveRolePermissionOverride delete error', error)
+        return { ok: false, missingTable: false }
+      }
+      return { ok: true, missingTable: false }
+    }
+    const { error } = await supabase
+      .from('role_permission_overrides')
+      .upsert({ role, permissions, updated_at: new Date().toISOString() }, { onConflict: 'role' })
+    if (error) {
+      if (isMissingTableError(error)) return { ok: false, missingTable: true }
+      console.error('[db] saveRolePermissionOverride upsert error', error)
+      return { ok: false, missingTable: false }
+    }
+    return { ok: true, missingTable: false }
+  } catch (err) {
+    if (isMissingTableError(err)) return { ok: false, missingTable: true }
+    console.error('[db] saveRolePermissionOverride failed', err)
+    return { ok: false, missingTable: false }
+  }
+}
+
+export async function saveUserPermissionOverride(
+  userId: string,
+  grants: Permission[],
+  revokes: Permission[],
+): Promise<PermissionOverridesResult> {
+  if (!isSupabaseConnected || !supabase) return { ok: false, missingTable: false }
+  try {
+    if (grants.length === 0 && revokes.length === 0) {
+      const { error } = await supabase.from('user_permission_overrides').delete().eq('user_id', userId)
+      if (error) {
+        if (isMissingTableError(error)) return { ok: false, missingTable: true }
+        console.error('[db] saveUserPermissionOverride delete error', error)
+        return { ok: false, missingTable: false }
+      }
+      return { ok: true, missingTable: false }
+    }
+    const { error } = await supabase
+      .from('user_permission_overrides')
+      .upsert(
+        { user_id: userId, grants, revokes, updated_at: new Date().toISOString() },
+        { onConflict: 'user_id' },
+      )
+    if (error) {
+      if (isMissingTableError(error)) return { ok: false, missingTable: true }
+      console.error('[db] saveUserPermissionOverride upsert error', error)
+      return { ok: false, missingTable: false }
+    }
+    return { ok: true, missingTable: false }
+  } catch (err) {
+    if (isMissingTableError(err)) return { ok: false, missingTable: true }
+    console.error('[db] saveUserPermissionOverride failed', err)
+    return { ok: false, missingTable: false }
+  }
+}
+
+export async function clearAllPermissionOverrides(): Promise<PermissionOverridesResult> {
+  if (!isSupabaseConnected || !supabase) return { ok: false, missingTable: false }
+  try {
+    const [r1, r2] = await Promise.all([
+      supabase.from('role_permission_overrides').delete().neq('role', '__never__'),
+      supabase.from('user_permission_overrides').delete().neq('user_id', '__never__'),
+    ])
+    if (r1.error && isMissingTableError(r1.error)) return { ok: false, missingTable: true }
+    if (r2.error && isMissingTableError(r2.error)) return { ok: false, missingTable: true }
+    if (r1.error) { console.error('[db] clearAllPermissionOverrides r1', r1.error); return { ok: false, missingTable: false } }
+    if (r2.error) { console.error('[db] clearAllPermissionOverrides r2', r2.error); return { ok: false, missingTable: false } }
+    return { ok: true, missingTable: false }
+  } catch (err) {
+    if (isMissingTableError(err)) return { ok: false, missingTable: true }
+    console.error('[db] clearAllPermissionOverrides failed', err)
+    return { ok: false, missingTable: false }
+  }
 }
 
 // ── Seed if empty ────────────────────────────────────────────────────────────

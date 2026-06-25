@@ -9,7 +9,7 @@ import type {
   BDSubmission, FileAttachment, CompanyCertification, EmployeeRequest,
   CompanyCertificationStatus, EmployeeRequestStatus,
   ContractLineItem, ContractInvoice, ContractVehicleOrder, UserPreferences, EmployeeTeam,
-  ContractStatus,
+  ContractStatus, Role,
 } from '../types'
 import {
   MOCK_USERS, MOCK_OPPORTUNITIES, MOCK_NOTIFICATIONS,
@@ -52,9 +52,13 @@ import {
   upsertBDSubmission,
   deleteBDSubmissionRecord,
   bulkDeleteFromTable,
+  fetchPermissionOverrides,
+  saveRolePermissionOverride,
+  saveUserPermissionOverride,
+  clearAllPermissionOverrides,
 } from '../lib/db'
 import { getAssignmentChain, isAssignedToAssociate } from '../lib/team'
-import { hasPermission } from '../lib/permissions'
+import { hasPermission, applyPermissionOverrides, type Permission } from '../lib/permissions'
 import { nextInvoiceSequenceFromContracts } from '../lib/invoiceNumbers'
 
 interface AppState {
@@ -89,6 +93,23 @@ interface AppState {
   // Wall-clock of the last successful initializeStore/syncUsersFromDb run.
   // Surfaced in the Admin System Health card. null = never synced this session.
   lastSyncedAt: number | null
+
+  // ── Permission overrides ─────────────────────────────────────────
+  // Edited from the Admin → Permissions matrix UI. Each is optional:
+  // - rolePermissionOverrides[role]:        when present, fully replaces the
+  //   built-in PERMISSIONS_BY_ROLE[role] permission list for that role.
+  // - userPermissionGrants[userId]:         extra permissions granted to a
+  //   specific user on top of their role.
+  // - userPermissionRevokes[userId]:        permissions removed from that
+  //   specific user (even if their role normally has them).
+  // The store subscribes to itself and pushes these into permissions.ts so
+  // hasPermission() picks up changes without an extra prop drill.
+  rolePermissionOverrides: Partial<Record<Role, Permission[]>>
+  userPermissionGrants: Record<string, Permission[]>
+  userPermissionRevokes: Record<string, Permission[]>
+  // 'synced' = pushed to Supabase, 'local' = only in localStorage,
+  // 'unknown' = haven't tried yet this session.
+  permissionOverridesSyncStatus: 'synced' | 'local' | 'unknown'
 
   // UI
   sidebarCollapsed: boolean
@@ -208,6 +229,14 @@ interface AppState {
   setRequireAssociateForActivePipeline: (value: boolean) => void
   consumeInvoiceNumber: () => number
   setPref: <K extends keyof UserPreferences>(key: K, value: UserPreferences[K]) => void
+
+  // ── Permission editor ──────────────────────────────────────────────
+  setRolePermissions: (role: Role, permissions: Permission[]) => Promise<void>
+  resetRolePermissions: (role: Role) => Promise<void>
+  setUserPermissionGrant: (userId: string, permission: Permission, granted: boolean) => Promise<void>
+  setUserPermissionRevoke: (userId: string, permission: Permission, revoked: boolean) => Promise<void>
+  resetUserPermissions: (userId: string) => Promise<void>
+  resetAllPermissionOverrides: () => Promise<void>
 
   // ── DB ─────────────────────────────────────────────────────────────
   dbReady: boolean
@@ -548,6 +577,10 @@ export const useStore = create<AppState>()(
       needsPurge: false,
       userSessions: {},
       lastSyncedAt: null,
+      rolePermissionOverrides: {},
+      userPermissionGrants: {},
+      userPermissionRevokes: {},
+      permissionOverridesSyncStatus: 'unknown',
 
       // ── Auth ────────────────────────────────────────────────────────
       login: (email, password) => {
@@ -2448,6 +2481,24 @@ export const useStore = create<AppState>()(
           } else {
             set({ lastSyncedAt: Date.now() })
           }
+
+          // Pull permission overrides from Supabase if available; falls back
+          // to whatever rehydrated from localStorage otherwise.
+          try {
+            const r = await fetchPermissionOverrides()
+            if (r.ok && r.payload) {
+              set({
+                rolePermissionOverrides: r.payload.roles,
+                userPermissionGrants:    r.payload.grants,
+                userPermissionRevokes:   r.payload.revokes,
+                permissionOverridesSyncStatus: 'synced',
+              })
+            } else if (r.missingTable) {
+              set({ permissionOverridesSyncStatus: 'local' })
+            }
+          } catch (err) {
+            console.error('[Store] fetchPermissionOverrides failed', err)
+          }
         } catch (err) {
           console.error('[Store] Supabase init failed, using local data', err)
           set({ dbReady: true })
@@ -2492,6 +2543,107 @@ export const useStore = create<AppState>()(
         return current
       },
       setPref: (key, value) => set(s => ({ prefs: { ...s.prefs, [key]: value } })),
+
+      // ── Permission editor ────────────────────────────────────────────
+      // Every mutator updates local Zustand state synchronously, then fires a
+      // best-effort save to Supabase. If the migration hasn't been applied
+      // (missingTable === true) we flip permissionOverridesSyncStatus to
+      // 'local' so the UI can show that state without nagging the user.
+      setRolePermissions: async (role, permissions) => {
+        const unique = Array.from(new Set(permissions))
+        set(s => ({ rolePermissionOverrides: { ...s.rolePermissionOverrides, [role]: unique } }))
+        const r = await saveRolePermissionOverride(role, unique)
+        if (r.missingTable) {
+          set({ permissionOverridesSyncStatus: 'local' })
+        } else if (r.ok) {
+          set({ permissionOverridesSyncStatus: 'synced' })
+        }
+      },
+      resetRolePermissions: async (role) => {
+        set(s => {
+          const next = { ...s.rolePermissionOverrides }
+          delete next[role]
+          return { rolePermissionOverrides: next }
+        })
+        const r = await saveRolePermissionOverride(role, null)
+        if (r.missingTable) {
+          set({ permissionOverridesSyncStatus: 'local' })
+        } else if (r.ok) {
+          set({ permissionOverridesSyncStatus: 'synced' })
+        }
+      },
+      setUserPermissionGrant: async (userId, permission, granted) => {
+        // Toggling a grant clears any matching revoke for the same permission
+        // so the two halves can't disagree.
+        const before = get()
+        const currentGrants  = new Set(before.userPermissionGrants[userId]  ?? [])
+        const currentRevokes = new Set(before.userPermissionRevokes[userId] ?? [])
+        if (granted) {
+          currentGrants.add(permission)
+          currentRevokes.delete(permission)
+        } else {
+          currentGrants.delete(permission)
+        }
+        const nextGrantsArr  = Array.from(currentGrants)
+        const nextRevokesArr = Array.from(currentRevokes)
+        set(s => ({
+          userPermissionGrants:  { ...s.userPermissionGrants,  [userId]: nextGrantsArr  },
+          userPermissionRevokes: { ...s.userPermissionRevokes, [userId]: nextRevokesArr },
+        }))
+        const r = await saveUserPermissionOverride(userId, nextGrantsArr, nextRevokesArr)
+        if (r.missingTable) {
+          set({ permissionOverridesSyncStatus: 'local' })
+        } else if (r.ok) {
+          set({ permissionOverridesSyncStatus: 'synced' })
+        }
+      },
+      setUserPermissionRevoke: async (userId, permission, revoked) => {
+        const before = get()
+        const currentGrants  = new Set(before.userPermissionGrants[userId]  ?? [])
+        const currentRevokes = new Set(before.userPermissionRevokes[userId] ?? [])
+        if (revoked) {
+          currentRevokes.add(permission)
+          currentGrants.delete(permission)
+        } else {
+          currentRevokes.delete(permission)
+        }
+        const nextGrantsArr  = Array.from(currentGrants)
+        const nextRevokesArr = Array.from(currentRevokes)
+        set(s => ({
+          userPermissionGrants:  { ...s.userPermissionGrants,  [userId]: nextGrantsArr  },
+          userPermissionRevokes: { ...s.userPermissionRevokes, [userId]: nextRevokesArr },
+        }))
+        const r = await saveUserPermissionOverride(userId, nextGrantsArr, nextRevokesArr)
+        if (r.missingTable) {
+          set({ permissionOverridesSyncStatus: 'local' })
+        } else if (r.ok) {
+          set({ permissionOverridesSyncStatus: 'synced' })
+        }
+      },
+      resetUserPermissions: async (userId) => {
+        set(s => {
+          const grants  = { ...s.userPermissionGrants  }
+          const revokes = { ...s.userPermissionRevokes }
+          delete grants[userId]
+          delete revokes[userId]
+          return { userPermissionGrants: grants, userPermissionRevokes: revokes }
+        })
+        const r = await saveUserPermissionOverride(userId, [], [])
+        if (r.missingTable) {
+          set({ permissionOverridesSyncStatus: 'local' })
+        } else if (r.ok) {
+          set({ permissionOverridesSyncStatus: 'synced' })
+        }
+      },
+      resetAllPermissionOverrides: async () => {
+        set({ rolePermissionOverrides: {}, userPermissionGrants: {}, userPermissionRevokes: {} })
+        const r = await clearAllPermissionOverrides()
+        if (r.missingTable) {
+          set({ permissionOverridesSyncStatus: 'local' })
+        } else if (r.ok) {
+          set({ permissionOverridesSyncStatus: 'synced' })
+        }
+      },
 
       // ── Admin bulk operations (destructive) ──────────────────────────
       // Each wipe* clears the matching local slice immediately and best-effort
@@ -2901,6 +3053,7 @@ export const useStore = create<AppState>()(
     }),
     {
       name: 'ces-crm-store',
+      // v20: persist role / per-user permission overrides edited from Admin.
       // v19: track per-user lastLoginAt in a browser-local userSessions slice.
       // v18: introduce requireAssociateForActivePipeline toggle; defaults to true
       // (Mode A = legacy behavior, Associate required before an opp becomes ACTIVE).
@@ -2911,7 +3064,7 @@ export const useStore = create<AppState>()(
       // v14: first forced refresh of seeded department users.
       // v13: assignment employees are derived strictly from active users so
       // deleted/inactive users disappear from assignment pickers.
-      version: 19,
+      version: 20,
       migrate: (persistedState: unknown, fromVersion: number) => {
         const s = persistedState as Record<string, unknown>
         delete s.needsMFASetup
@@ -2946,6 +3099,9 @@ export const useStore = create<AppState>()(
             nextInvoiceNumber: 1,
             prefs:           { notificationSound: true },
             userSessions:    {},
+            rolePermissionOverrides: {},
+            userPermissionGrants:    {},
+            userPermissionRevokes:   {},
           }
         }
         const nextUsers = mergeSeedUsers(s.users, fromVersion < 15)
@@ -2972,6 +3128,9 @@ export const useStore = create<AppState>()(
             notificationSound: (s.prefs as Record<string, unknown> | undefined)?.notificationSound !== false,
           },
           userSessions: (s.userSessions && typeof s.userSessions === 'object') ? s.userSessions as Record<string, { lastLoginAt?: string }> : {},
+          rolePermissionOverrides: (s.rolePermissionOverrides && typeof s.rolePermissionOverrides === 'object') ? s.rolePermissionOverrides as Partial<Record<Role, Permission[]>> : {},
+          userPermissionGrants:    (s.userPermissionGrants    && typeof s.userPermissionGrants    === 'object') ? s.userPermissionGrants    as Record<string, Permission[]> : {},
+          userPermissionRevokes:   (s.userPermissionRevokes   && typeof s.userPermissionRevokes   === 'object') ? s.userPermissionRevokes   as Record<string, Permission[]> : {},
           needsPurge: false,
           dbReady: false,
         }
@@ -3006,9 +3165,26 @@ export const useStore = create<AppState>()(
         notifications:     s.notifications,
         prefs:             s.prefs,
         userSessions:      s.userSessions,
+        rolePermissionOverrides: s.rolePermissionOverrides,
+        userPermissionGrants:    s.userPermissionGrants,
+        userPermissionRevokes:   s.userPermissionRevokes,
         needsPurge:        false,
         dbReady:           false,
       }),
     }
   )
 )
+
+// Push initial overrides into the permissions module so the very first
+// hasPermission() call after page load (e.g. Sidebar route gating) already
+// sees rehydrated values from localStorage.
+{
+  const s = useStore.getState()
+  applyPermissionOverrides(s.rolePermissionOverrides, s.userPermissionGrants, s.userPermissionRevokes)
+}
+
+// Subscribe-by-selector keeps the permissions module in sync with the store
+// without re-running on unrelated state changes.
+useStore.subscribe(s => {
+  applyPermissionOverrides(s.rolePermissionOverrides, s.userPermissionGrants, s.userPermissionRevokes)
+})
