@@ -4390,7 +4390,18 @@ export default function ContractsPage() {
           <div className="relative">
             <Search size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <input value={search} onChange={e => setSearch(e.target.value)}
-                className="input-field pl-9 text-xs py-2 w-56" placeholder="Search contracts…" />
+                className={`input-field pl-9 text-xs py-2 w-56 ${search ? 'pr-8' : ''}`} placeholder="Search contracts…" />
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 flex h-5 w-5 items-center justify-center rounded-full bg-rose-500/15 text-rose-500 transition-colors hover:bg-rose-500 hover:text-white"
+                aria-label="Clear search"
+                title="Clear search"
+              >
+                <X size={11} strokeWidth={2.5} />
+              </button>
+            )}
           </div>
           <PeriodFilter value={period} onChange={setPeriod} />
         </div>
@@ -4411,21 +4422,37 @@ export default function ContractsPage() {
           </button>
         </div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
-          {filterFields.map(field => (
-            <div key={field.key}>
-              <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-slate-400">{field.label}</label>
-              <input
-                value={columnFilters[field.key] || ''}
-                list={`contract-filter-${field.key}`}
-                onChange={e => setColumnFilters(prev => ({ ...prev, [field.key]: e.target.value }))}
-                className="input-field w-full py-1.5 text-xs"
-                placeholder={`Any ${field.label.toLowerCase()}`}
-              />
-              <datalist id={`contract-filter-${field.key}`}>
-                {(filterOptions[field.key] || []).map(option => <option key={option} value={option} />)}
-              </datalist>
-            </div>
-          ))}
+          {filterFields.map(field => {
+            const fieldValue = columnFilters[field.key] || ''
+            return (
+              <div key={field.key}>
+                <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-slate-400">{field.label}</label>
+                <div className="relative">
+                  <input
+                    value={fieldValue}
+                    list={`contract-filter-${field.key}`}
+                    onChange={e => setColumnFilters(prev => ({ ...prev, [field.key]: e.target.value }))}
+                    className={`input-field w-full py-1.5 text-xs ${fieldValue ? 'pr-7' : ''}`}
+                    placeholder={`Any ${field.label.toLowerCase()}`}
+                  />
+                  {fieldValue && (
+                    <button
+                      type="button"
+                      onClick={() => setColumnFilters(prev => ({ ...prev, [field.key]: '' }))}
+                      className="absolute right-1.5 top-1/2 -translate-y-1/2 flex h-4 w-4 items-center justify-center rounded-full bg-rose-500/15 text-rose-500 transition-colors hover:bg-rose-500 hover:text-white"
+                      aria-label={`Clear ${field.label} filter`}
+                      title={`Clear ${field.label}`}
+                    >
+                      <X size={10} strokeWidth={2.5} />
+                    </button>
+                  )}
+                </div>
+                <datalist id={`contract-filter-${field.key}`}>
+                  {(filterOptions[field.key] || []).map(option => <option key={option} value={option} />)}
+                </datalist>
+              </div>
+            )
+          })}
         </div>
       </div>
 

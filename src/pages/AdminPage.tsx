@@ -629,7 +629,18 @@ export default function AdminPage() {
           <div className="relative max-w-sm">
             <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
             <input value={search} onChange={e => setSearch(e.target.value)}
-              className="input-field pl-9 text-xs" placeholder="Search by name, email, role\u2026" />
+              className={`input-field pl-9 text-xs ${search ? 'pr-8' : ''}`} placeholder="Search by name, email, role\u2026" />
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 flex h-5 w-5 items-center justify-center rounded-full bg-rose-500/15 text-rose-500 transition-colors hover:bg-rose-500 hover:text-white"
+                aria-label="Clear search"
+                title="Clear search"
+              >
+                <X size={11} strokeWidth={2.5} />
+              </button>
+            )}
           </div>
         </div>
       )}

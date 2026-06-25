@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { Edit2, Filter, MoreHorizontal, Paperclip, RotateCcw, Search, Trash2, TrendingUp, UploadCloud, Users2 } from 'lucide-react'
+import { Edit2, Filter, MoreHorizontal, Paperclip, RotateCcw, Search, Trash2, TrendingUp, UploadCloud, Users2, X } from 'lucide-react'
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts'
 import type { BDSubmission, ContractType, FileAttachment, Opportunity, SetAside } from '../types'
 import { useStore } from '../store/useStore'
@@ -390,7 +390,20 @@ function FilterInput({
   return (
     <div>
       <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-slate-400">{label}</label>
-      <input value={value} list={id} onChange={e => onChange(e.target.value)} className="input-field w-full py-1.5 text-xs" placeholder={placeholder} />
+      <div className="relative">
+        <input value={value} list={id} onChange={e => onChange(e.target.value)} className={`input-field w-full py-1.5 text-xs ${value ? 'pr-7' : ''}`} placeholder={placeholder} />
+        {value && (
+          <button
+            type="button"
+            onClick={() => onChange('')}
+            className="absolute right-1.5 top-1/2 -translate-y-1/2 flex h-4 w-4 items-center justify-center rounded-full bg-rose-500/15 text-rose-500 transition-colors hover:bg-rose-500 hover:text-white"
+            aria-label={`Clear ${label} filter`}
+            title={`Clear ${label}`}
+          >
+            <X size={10} strokeWidth={2.5} />
+          </button>
+        )}
+      </div>
       <datalist id={id}>
         {suggestions.map(s => <option key={s} value={s} />)}
       </datalist>
@@ -657,7 +670,18 @@ export default function BDTrackerPage() {
             <div className="relative min-w-[260px] flex-1">
               <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
               <input value={search} onChange={e => { setSearch(e.target.value); setPage(1) }}
-                className="input-field w-full pl-9 text-xs" placeholder="Search opportunity, ID, or location..." />
+                className={`input-field w-full pl-9 text-xs ${search ? 'pr-8' : ''}`} placeholder="Search opportunity, ID, or location..." />
+              {search && (
+                <button
+                  type="button"
+                  onClick={() => { setSearch(''); setPage(1) }}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 flex h-5 w-5 items-center justify-center rounded-full bg-rose-500/15 text-rose-500 transition-colors hover:bg-rose-500 hover:text-white"
+                  aria-label="Clear search"
+                  title="Clear search"
+                >
+                  <X size={11} strokeWidth={2.5} />
+                </button>
+              )}
             </div>
             <div className="w-full sm:w-64">
               <PeriodFilter value={period} onChange={value => { setPeriod(value); setPage(1) }} placeholder="All due dates" />

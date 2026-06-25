@@ -17,10 +17,18 @@ import { useStore } from '../store/useStore'
 import { hasPermission } from '../lib/permissions'
 import { useEscapeKey } from '../lib/utils'
 import type {
+  CompanyCertification,
+  CompanyCertificationStatus,
   EmployeeRequest,
   EmployeeRequestStatus,
   EmployeeRequestType,
 } from '../types'
+
+const CERT_STATUS_STYLE: Record<CompanyCertificationStatus, string> = {
+  ACTIVE: 'bg-emerald-400/15 text-emerald-200 border-emerald-400/25',
+  EXPIRING: 'bg-amber-400/15 text-amber-200 border-amber-400/25',
+  EXPIRED: 'bg-red-400/15 text-red-200 border-red-400/25',
+}
 
 const REQUEST_STATUS_STYLE: Record<EmployeeRequestStatus, string> = {
   PENDING: 'bg-amber-400/15 text-amber-200 border-amber-400/25',
@@ -41,6 +49,13 @@ const REQUEST_TYPE_LABEL: Record<EmployeeRequestType, string> = {
 const REQUEST_TYPES: EmployeeRequestType[] = ['TIME_OFF', 'DOCUMENT', 'CERTIFICATION', 'PAYROLL', 'ACCESS', 'OTHER']
 const REQUEST_STATUSES: EmployeeRequestStatus[] = ['PENDING', 'IN_REVIEW', 'APPROVED', 'DECLINED']
 
+function formatDate(value?: string) {
+  if (!value) return '-'
+  const date = new Date(value.includes('T') ? value : `${value}T00:00:00`)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
 function formatDateTime(value?: string) {
   if (!value) return '-'
   const date = new Date(value)
@@ -52,6 +67,26 @@ function formatDateTime(value?: string) {
     hour: 'numeric',
     minute: '2-digit',
   })
+}
+
+function displayCertStatus(cert: CompanyCertification): CompanyCertificationStatus {
+  if (!cert.expirationDate) return 'ACTIVE'
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const expires = new Date(`${cert.expirationDate}T00:00:00`)
+  if (Number.isNaN(expires.getTime())) return cert.status
+  if (expires < today) return 'EXPIRED'
+  const days = Math.ceil((expires.getTime() - today.getTime()) / (24 * 60 * 60 * 1000))
+  return days <= 45 ? 'EXPIRING' : 'ACTIVE'
+}
+
+function daysUntil(value?: string) {
+  if (!value) return null
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const target = new Date(`${value}T00:00:00`)
+  if (Number.isNaN(target.getTime())) return null
+  return Math.ceil((target.getTime() - today.getTime()) / (24 * 60 * 60 * 1000))
 }
 
 function badgeClass(base: string) {
@@ -401,11 +436,22 @@ export default function HRPage() {
           <div className="relative w-full lg:w-80">
             <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
-              className="input-field pl-9"
+              className={`input-field pl-9 ${search ? 'pr-9' : ''}`}
               value={search}
               onChange={e => setSearch(e.target.value)}
               placeholder="Search requests..."
             />
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch('')}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 flex h-5 w-5 items-center justify-center rounded-full bg-rose-500/15 text-rose-500 transition-colors hover:bg-rose-500 hover:text-white"
+                aria-label="Clear search"
+                title="Clear search"
+              >
+                <X size={11} strokeWidth={2.5} />
+              </button>
+            )}
           </div>
         </div>
 

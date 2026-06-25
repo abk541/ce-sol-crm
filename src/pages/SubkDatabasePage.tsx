@@ -431,7 +431,18 @@ export default function SubkDatabasePage() {
         <div className="relative">
           <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <input value={search} onChange={e => setSearch(e.target.value)}
-            className="input-field pl-9 text-sm" placeholder="Search company, contact, NAICS…" />
+            className={`input-field pl-9 text-sm ${search ? 'pr-8' : ''}`} placeholder="Search company, contact, NAICS…" />
+          {search && (
+            <button
+              type="button"
+              onClick={() => setSearch('')}
+              className="absolute right-2 top-1/2 -translate-y-1/2 flex h-5 w-5 items-center justify-center rounded-full bg-rose-500/15 text-rose-500 transition-colors hover:bg-rose-500 hover:text-white"
+              aria-label="Clear search"
+              title="Clear search"
+            >
+              <X size={11} strokeWidth={2.5} />
+            </button>
+          )}
         </div>
         <div className="flex gap-1 p-1 bg-slate-100 rounded-xl border border-slate-200">
           {['ALL', ...SETASIDE_OPTIONS].map(sa => (

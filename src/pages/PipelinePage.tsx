@@ -3435,13 +3435,26 @@ function ColumnFilterInput({
   return (
     <div>
       <label className="block text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1">{label}</label>
-      <input
-        value={value}
-        list={id}
-        onChange={e => onChange(e.target.value)}
-        className="input-field text-xs py-1.5 w-full"
-        placeholder={placeholder}
-      />
+      <div className="relative">
+        <input
+          value={value}
+          list={id}
+          onChange={e => onChange(e.target.value)}
+          className={`input-field text-xs py-1.5 w-full ${value ? 'pr-7' : ''}`}
+          placeholder={placeholder}
+        />
+        {value && (
+          <button
+            type="button"
+            onClick={() => onChange('')}
+            className="absolute right-1.5 top-1/2 -translate-y-1/2 flex h-4 w-4 items-center justify-center rounded-full bg-rose-500/15 text-rose-500 transition-colors hover:bg-rose-500 hover:text-white"
+            aria-label={`Clear ${label} filter`}
+            title={`Clear ${label}`}
+          >
+            <X size={10} strokeWidth={2.5} />
+          </button>
+        )}
+      </div>
       <datalist id={id}>
         {suggestions.map(s => <option key={s} value={s} />)}
       </datalist>

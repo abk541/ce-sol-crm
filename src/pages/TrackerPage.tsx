@@ -5,7 +5,7 @@ import { useSearchParams } from 'react-router-dom'
 import {
   ListChecks, Send, Trash2, CheckCircle2, XCircle,
   ChevronDown, AlertTriangle, Search, Clock, RotateCcw, MoreHorizontal,
-  ChevronLeft, ChevronRight,
+  ChevronLeft, ChevronRight, X,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { formatCurrency } from '../lib/utils'
@@ -247,7 +247,18 @@ export default function TrackerPage() {
         <div className="relative">
           <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <input value={search} onChange={e => setSearch(e.target.value)}
-            className="input-field pl-9 w-64 text-xs" placeholder="Search opportunities..." />
+            className={`input-field pl-9 w-64 text-xs ${search ? 'pr-8' : ''}`} placeholder="Search opportunities..." />
+          {search && (
+            <button
+              type="button"
+              onClick={() => setSearch('')}
+              className="absolute right-2 top-1/2 -translate-y-1/2 flex h-5 w-5 items-center justify-center rounded-full bg-rose-500/15 text-rose-500 transition-colors hover:bg-rose-500 hover:text-white"
+              aria-label="Clear search"
+              title="Clear search"
+            >
+              <X size={11} strokeWidth={2.5} />
+            </button>
+          )}
         </div>
       </motion.div>
 

@@ -329,11 +329,22 @@ export default function CertificationsPage() {
           <div className="relative w-full lg:w-80">
             <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
-              className="input-field pl-9"
+              className={`input-field pl-9 ${search ? 'pr-9' : ''}`}
               value={search}
               onChange={e => setSearch(e.target.value)}
               placeholder="Search certifications..."
             />
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch('')}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 flex h-5 w-5 items-center justify-center rounded-full bg-rose-500/15 text-rose-500 transition-colors hover:bg-rose-500 hover:text-white"
+                aria-label="Clear search"
+                title="Clear search"
+              >
+                <X size={11} strokeWidth={2.5} />
+              </button>
+            )}
           </div>
         </div>
 
