@@ -57,7 +57,6 @@ function formatRelative(iso?: string): string {
 
 const REMOTE_TABLE_LOCAL_KEY: Record<RemoteCountTable, string> = {
   users: 'users',
-  employees: 'employees',
   opportunities: 'opportunities',
   contracts: 'contracts',
   fresh_awards: 'freshAwards',
@@ -73,7 +72,6 @@ const REMOTE_TABLE_LOCAL_KEY: Record<RemoteCountTable, string> = {
 
 const REMOTE_TABLE_LABEL: Record<RemoteCountTable, string> = {
   users: 'Users',
-  employees: 'Employees',
   opportunities: 'Opportunities',
   contracts: 'Contracts',
   fresh_awards: 'Fresh awards',
@@ -827,7 +825,6 @@ export default function AdminPage() {
                           case 'deletionRequests': return deletionRequests.length
                           case 'notifications':    return notifications.length
                           case 'activityLogs':     return activityLogs.length
-                          case 'employees':        return useStore.getState().employees.length
                           default: return 0
                         }
                       })()

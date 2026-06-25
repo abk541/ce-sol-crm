@@ -1658,7 +1658,6 @@ export async function bulkDeleteFromTable(
 
 export const REMOTE_COUNT_TABLES = [
   'users',
-  'employees',
   'opportunities',
   'contracts',
   'fresh_awards',
