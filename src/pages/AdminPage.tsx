@@ -1,11 +1,22 @@
-import { useState, useMemo, Fragment } from 'react'
+import { useState, useMemo, useEffect, useCallback, Fragment } from 'react'
 import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Plus, Pencil, Trash2, X, Check, Shield, Search, Clock, Save, Network, List, GripVertical, Eye, EyeOff, KeyRound, RotateCcw, Users, GitBranch, AlertTriangle, Bomb, Database, FileText, Award, Bell, Activity, Briefcase, FolderTree, UserCog } from 'lucide-react'
+import { Plus, Pencil, Trash2, X, Check, Shield, Search, Clock, Save, Network, List, GripVertical, Eye, EyeOff, KeyRound, RotateCcw, Users, GitBranch, AlertTriangle, Bomb, Database, FileText, Award, Bell, Activity, Briefcase, FolderTree, UserCog, Wifi, WifiOff, Download, Upload, ChevronDown, ChevronUp, RefreshCw, HardDrive, Lock } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import type { User, Role, EmployeeTeam } from '../types'
 import { avatarColor, useEscapeKey } from '../lib/utils'
-import { hasPermission, ROLE_LABELS } from '../lib/permissions'
+import {
+  hasPermission,
+  ROLE_LABELS,
+  PERMISSION_REGISTRY,
+  PERMISSION_LABELS,
+  PERMISSION_GROUP_LABELS,
+  PERMISSIONS_BY_ROLE,
+  getPermissionGroup,
+  type Permission,
+} from '../lib/permissions'
+import { fetchRemoteRowCounts, REMOTE_COUNT_TABLES, type RemoteCountTable } from '../lib/db'
+import { isSupabaseConnected, supabaseHost } from '../lib/supabase'
 import toast from 'react-hot-toast'
 
 const ROLES: Role[] = ['CAPTURE_MANAGER', 'BD_MANAGER', 'TEAM_LEAD', 'ASSOCIATE', 'OPS_MANAGER']
@@ -24,6 +35,56 @@ function teamOf(u: User): EmployeeTeam | null {
   if (u.role === 'BD_MANAGER') return 'BD'
   if (u.role === 'OPS_MANAGER') return 'OPS'
   return u.team ?? 'BD'
+}
+
+function formatRelative(iso?: string): string {
+  if (!iso) return 'Never'
+  const t = new Date(iso).getTime()
+  if (!Number.isFinite(t)) return 'Never'
+  const diff = Date.now() - t
+  if (diff < 0) return 'In the future'
+  const m = Math.floor(diff / 60_000)
+  if (m < 1)   return 'Just now'
+  if (m < 60)  return `${m}m ago`
+  const h = Math.floor(m / 60)
+  if (h < 24)  return `${h}h ago`
+  const d = Math.floor(h / 24)
+  if (d < 30)  return `${d}d ago`
+  const mo = Math.floor(d / 30)
+  if (mo < 12) return `${mo}mo ago`
+  return `${Math.floor(mo / 12)}y ago`
+}
+
+const REMOTE_TABLE_LOCAL_KEY: Record<RemoteCountTable, string> = {
+  users: 'users',
+  employees: 'employees',
+  opportunities: 'opportunities',
+  contracts: 'contracts',
+  fresh_awards: 'freshAwards',
+  past_performances: 'pastPerformances',
+  subcontractors: 'subcontractors',
+  subk_database: 'subkDatabase',
+  bd_submissions: 'bdSubmissions',
+  non_submission_reports: 'nonSubReports',
+  deletion_requests: 'deletionRequests',
+  notifications: 'notifications',
+  activity_logs: 'activityLogs',
+}
+
+const REMOTE_TABLE_LABEL: Record<RemoteCountTable, string> = {
+  users: 'Users',
+  employees: 'Employees',
+  opportunities: 'Opportunities',
+  contracts: 'Contracts',
+  fresh_awards: 'Fresh awards',
+  past_performances: 'Past performances',
+  subcontractors: 'Subcontractors',
+  subk_database: 'Subk database',
+  bd_submissions: 'BD submissions',
+  non_submission_reports: 'Non-submission reports',
+  deletion_requests: 'Deletion requests',
+  notifications: 'Notifications',
+  activity_logs: 'Activity logs',
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -414,6 +475,10 @@ export default function AdminPage() {
     resetOperations,
     wipeNonAdminUsers,
     resetEntireWorkspace,
+    userSessions,
+    lastSyncedAt,
+    exportSnapshot,
+    importSnapshot,
   } = useStore()
   const [search, setSearch] = useState('')
   const [modal, setModal] = useState<'create' | User | null>(null)
@@ -428,6 +493,37 @@ export default function AdminPage() {
   const [danger, setDanger] = useState<DangerAction | null>(null)
   const [dangerBusy, setDangerBusy] = useState(false)
   const [contractClient, setContractClient] = useState<string>('')
+
+  // System Health: remote row counts loaded on demand
+  const [remoteCounts, setRemoteCounts] = useState<Record<RemoteCountTable, number | null> | null>(null)
+  const [remoteCountsLoading, setRemoteCountsLoading] = useState(false)
+  const [healthOpen, setHealthOpen] = useState(true)
+
+  // Permissions Matrix: collapsed by default to keep the page short
+  const [matrixOpen, setMatrixOpen] = useState(false)
+
+  // Workspace snapshot
+  const [snapshotBusy, setSnapshotBusy] = useState(false)
+
+  const refreshRemoteCounts = useCallback(async () => {
+    if (!isSupabaseConnected) {
+      setRemoteCounts(null)
+      return
+    }
+    setRemoteCountsLoading(true)
+    try {
+      const counts = await fetchRemoteRowCounts()
+      setRemoteCounts(counts)
+    } finally {
+      setRemoteCountsLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (isSupabaseConnected && healthOpen && remoteCounts == null) {
+      void refreshRemoteCounts()
+    }
+  }, [healthOpen, remoteCounts, refreshRemoteCounts])
 
   if (!hasPermission(currentUser, 'admin:manageUsers')) {
     return (
@@ -651,6 +747,129 @@ export default function AdminPage() {
         </div>
       </div>
 
+      {/* ── System Health ────────────────────────────────────────────── */}
+      <SectionHeader icon={<Activity size={14} />} label="System health" accent="cyan" />
+      <div className="glass rounded-2xl p-4 mb-6">
+        <div className="flex items-start justify-between gap-3 mb-3">
+          <div className="flex items-center gap-2">
+            {isSupabaseConnected ? (
+              <Wifi size={16} className="text-emerald-400" />
+            ) : (
+              <WifiOff size={16} className="text-amber-400" />
+            )}
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold text-slate-200">
+                  Supabase {isSupabaseConnected ? 'connected' : 'offline (local-only mode)'}
+                </span>
+                {isSupabaseConnected && supabaseHost && (
+                  <span className="text-[10px] text-slate-500 font-mono">{supabaseHost}</span>
+                )}
+              </div>
+              <p className="text-[11px] text-slate-500 mt-0.5">
+                Last sync: <span className="text-slate-300">{formatRelative(lastSyncedAt ? new Date(lastSyncedAt).toISOString() : undefined)}</span>
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setHealthOpen(o => !o)}
+              className="btn-ghost text-[11px] text-slate-400 hover:text-slate-200 inline-flex items-center gap-1"
+            >
+              {healthOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+              {healthOpen ? 'Hide' : 'Show'} tables
+            </button>
+            {isSupabaseConnected && (
+              <button
+                onClick={() => void refreshRemoteCounts()}
+                disabled={remoteCountsLoading}
+                className="btn-ghost text-[11px] text-cyan-300 hover:text-cyan-200 inline-flex items-center gap-1 disabled:opacity-40"
+              >
+                <RefreshCw size={12} className={remoteCountsLoading ? 'animate-spin' : ''} />
+                Refresh
+              </button>
+            )}
+          </div>
+        </div>
+        {healthOpen && (
+          <>
+            {!isSupabaseConnected ? (
+              <div className="text-xs text-slate-400 bg-amber-500/5 border border-amber-500/15 rounded-lg p-3">
+                Supabase credentials are not configured. The app is reading and writing only to this browser's
+                local storage. Set <code className="font-mono text-amber-300">VITE_SUPABASE_URL</code> and
+                <code className="font-mono text-amber-300"> VITE_SUPABASE_ANON_KEY</code> to enable sync.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Table</th>
+                      <th className="text-right">Local</th>
+                      <th className="text-right">Remote</th>
+                      <th className="text-right">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {REMOTE_COUNT_TABLES.map(table => {
+                      const localKey = REMOTE_TABLE_LOCAL_KEY[table]
+                      const localVal = (() => {
+                        switch (localKey) {
+                          case 'users':            return users.length
+                          case 'opportunities':    return opportunities.length
+                          case 'contracts':        return contracts.length
+                          case 'freshAwards':      return freshAwards.length
+                          case 'pastPerformances': return pastPerformances.length
+                          case 'subcontractors':   return subcontractors.length
+                          case 'subkDatabase':     return subkDatabase.length
+                          case 'bdSubmissions':    return bdSubmissions.length
+                          case 'nonSubReports':    return nonSubReports.length
+                          case 'deletionRequests': return deletionRequests.length
+                          case 'notifications':    return notifications.length
+                          case 'activityLogs':     return activityLogs.length
+                          case 'employees':        return useStore.getState().employees.length
+                          default: return 0
+                        }
+                      })()
+                      const remoteVal = remoteCounts?.[table] ?? null
+                      const drift = remoteVal != null && localVal !== remoteVal
+                      return (
+                        <tr key={table}>
+                          <td className="text-xs text-slate-300">{REMOTE_TABLE_LABEL[table]}</td>
+                          <td className="text-xs text-slate-200 text-right font-mono">{localVal}</td>
+                          <td className="text-xs text-right font-mono">
+                            {remoteCountsLoading && remoteCounts == null ? (
+                              <span className="text-slate-600">…</span>
+                            ) : remoteVal == null ? (
+                              <span className="text-slate-600">—</span>
+                            ) : (
+                              <span className="text-slate-200">{remoteVal}</span>
+                            )}
+                          </td>
+                          <td className="text-right">
+                            {remoteVal == null ? (
+                              <span className="text-[10px] text-slate-600">unknown</span>
+                            ) : drift ? (
+                              <span className="badge bg-amber-500/15 text-amber-300 border-amber-500/25 border text-[10px]">drift</span>
+                            ) : (
+                              <span className="badge bg-emerald-500/15 text-emerald-300 border-emerald-500/25 border text-[10px]">in sync</span>
+                            )}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+                <p className="text-[10px] text-slate-500 mt-3">
+                  Drift just means the count differs — usually because another browser made a change you haven't
+                  pulled yet. Reload the page or use Refresh to re-fetch.
+                </p>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
       {/* Stats row */}
       <SectionHeader icon={<Users size={14} />} label="People &amp; roles" accent="emerald" />
 
@@ -758,7 +977,7 @@ export default function AdminPage() {
           <thead>
             <tr>
               <th>User</th><th>Username</th><th>Email</th><th>Role</th><th>Team</th>
-              <th>Status</th><th>First Login</th><th>Created</th><th>Actions</th>
+              <th>Status</th><th>First Login</th><th>Last seen</th><th>Created</th><th>Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -802,6 +1021,9 @@ export default function AdminPage() {
                       {u.firstLogin ? 'Pending' : 'Complete'}
                     </span>
                   </td>
+                  <td className="text-slate-400 text-xs" title={userSessions[u.id]?.lastLoginAt ?? 'Never logged in on this browser'}>
+                    {formatRelative(userSessions[u.id]?.lastLoginAt)}
+                  </td>
                   <td className="text-slate-600 text-xs">{u.createdAt}</td>
                   <td>
                     <div className="flex items-center gap-1">
@@ -820,6 +1042,170 @@ export default function AdminPage() {
         </table>
       </div>
       )}
+
+      {/* ── Permissions matrix ───────────────────────────────────────── */}
+      <div className="mt-8">
+        <SectionHeader icon={<Shield size={14} />} label="Permissions matrix" accent="violet" />
+        <div className="glass rounded-2xl p-4 mb-6">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-xs text-slate-300">
+                Read-only view of what each role can do. Permissions are defined in code (<code className="font-mono text-violet-300">src/lib/permissions.ts</code>) — change them by editing that file.
+              </p>
+              <p className="text-[11px] text-slate-500 mt-1">
+                {PERMISSION_REGISTRY.length} permissions across {Object.keys(PERMISSION_GROUP_LABELS).length} groups.
+              </p>
+            </div>
+            <button
+              onClick={() => setMatrixOpen(o => !o)}
+              className="btn-ghost text-[11px] text-violet-300 hover:text-violet-200 inline-flex items-center gap-1"
+            >
+              {matrixOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+              {matrixOpen ? 'Hide' : 'Show'} matrix
+            </button>
+          </div>
+          {matrixOpen && (
+            <div className="overflow-x-auto mt-4">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th className="min-w-[260px]">Permission</th>
+                    {ROLES.map(r => (
+                      <th key={r} className="text-center min-w-[110px]">
+                        <span className={`badge border text-[9px] ${ROLE_BADGE[r]}`}>{ROLE_LABELS[r]}</span>
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {Object.entries(PERMISSION_GROUP_LABELS).map(([groupKey, groupLabel]) => {
+                    const perms = PERMISSION_REGISTRY.filter(p => getPermissionGroup(p) === groupKey)
+                    if (perms.length === 0) return null
+                    return (
+                      <Fragment key={groupKey}>
+                        <tr>
+                          <td
+                            colSpan={1 + ROLES.length}
+                            className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 bg-slate-900/30 py-2"
+                          >
+                            {groupLabel}
+                          </td>
+                        </tr>
+                        {perms.map((perm: Permission) => (
+                          <tr key={perm}>
+                            <td>
+                              <div className="text-xs text-slate-200">{PERMISSION_LABELS[perm]}</div>
+                              <div className="text-[10px] text-slate-600 font-mono">{perm}</div>
+                            </td>
+                            {ROLES.map(r => {
+                              const allowed = PERMISSIONS_BY_ROLE[r].includes(perm)
+                              return (
+                                <td key={r} className="text-center">
+                                  {allowed ? (
+                                    <Check size={14} className="inline text-emerald-400" />
+                                  ) : (
+                                    <span className="text-slate-700 text-xs">—</span>
+                                  )}
+                                </td>
+                              )
+                            })}
+                          </tr>
+                        ))}
+                      </Fragment>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── Workspace snapshot ───────────────────────────────────────── */}
+      <div className="mt-8">
+        <SectionHeader icon={<HardDrive size={14} />} label="Workspace snapshot" accent="amber" />
+        <div className="glass rounded-2xl p-4 mb-6">
+          <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
+            <div className="max-w-xl">
+              <p className="text-xs text-slate-300 leading-relaxed">
+                Download a JSON snapshot of every record currently in this browser, or restore a previous snapshot.
+                Use this to back up before risky changes, or to copy a working dataset onto another browser.
+              </p>
+              {isSupabaseConnected && (
+                <p className="text-[11px] text-amber-300 mt-2">
+                  Restoring only rewrites local state — Supabase tables are not touched. If you want a clean
+                  database first, use <span className="font-semibold">Reset entire workspace</span> below.
+                </p>
+              )}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={() => {
+                  setSnapshotBusy(true)
+                  try {
+                    const payload = exportSnapshot()
+                    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+                    const url = URL.createObjectURL(blob)
+                    const a = document.createElement('a')
+                    a.href = url
+                    a.download = `ce-sol-crm-snapshot-${new Date().toISOString().slice(0, 10)}.json`
+                    document.body.appendChild(a)
+                    a.click()
+                    document.body.removeChild(a)
+                    URL.revokeObjectURL(url)
+                    toast.success('Snapshot downloaded')
+                  } catch (err) {
+                    console.error('[admin] exportSnapshot failed', err)
+                    toast.error('Could not export snapshot')
+                  } finally {
+                    setSnapshotBusy(false)
+                  }
+                }}
+                disabled={snapshotBusy}
+                className="btn-primary inline-flex items-center gap-1.5 text-xs disabled:opacity-50"
+              >
+                <Download size={12} /> Download snapshot
+              </button>
+              <label className="btn-ghost inline-flex items-center gap-1.5 text-xs cursor-pointer border border-amber-500/30 text-amber-200 px-3 py-1.5 rounded-lg hover:bg-amber-500/10">
+                <Upload size={12} /> Restore from file
+                <input
+                  type="file"
+                  accept="application/json,.json"
+                  className="hidden"
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0]
+                    e.target.value = ''
+                    if (!file) return
+                    setSnapshotBusy(true)
+                    try {
+                      const text = await file.text()
+                      let parsed: unknown
+                      try {
+                        parsed = JSON.parse(text)
+                      } catch {
+                        toast.error('That file is not valid JSON')
+                        return
+                      }
+                      const result = importSnapshot(parsed)
+                      if (!result.ok) {
+                        toast.error(result.error || 'Restore failed')
+                        return
+                      }
+                      const total = Object.values(result.counts ?? {}).reduce((a, b) => a + b, 0)
+                      toast.success(`Restored ${total} records across ${Object.keys(result.counts ?? {}).length} slices`)
+                    } catch (err) {
+                      console.error('[admin] importSnapshot failed', err)
+                      toast.error('Could not read snapshot file')
+                    } finally {
+                      setSnapshotBusy(false)
+                    }
+                  }}
+                />
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
 
       {/* ── Danger Zone ──────────────────────────────────────────────── */}
       <div className="mt-10">
@@ -1472,13 +1858,16 @@ function PersonRow({
 // Admin layout helpers — section headers + Danger Zone modal
 // ─────────────────────────────────────────────────────────────────────────────
 
-const SECTION_ACCENT: Record<'indigo' | 'emerald' | 'rose', { fg: string; bg: string; line: string }> = {
+const SECTION_ACCENT: Record<'indigo' | 'emerald' | 'rose' | 'cyan' | 'violet' | 'amber', { fg: string; bg: string; line: string }> = {
   indigo:  { fg: '#a5b4fc', bg: 'rgba(99,102,241,0.12)',  line: 'rgba(99,102,241,0.25)' },
   emerald: { fg: '#6ee7b7', bg: 'rgba(16,185,129,0.12)',  line: 'rgba(16,185,129,0.25)' },
   rose:    { fg: '#fda4af', bg: 'rgba(244,63,94,0.14)',   line: 'rgba(244,63,94,0.30)' },
+  cyan:    { fg: '#67e8f9', bg: 'rgba(6,182,212,0.12)',   line: 'rgba(6,182,212,0.25)'  },
+  violet:  { fg: '#c4b5fd', bg: 'rgba(139,92,246,0.12)',  line: 'rgba(139,92,246,0.25)' },
+  amber:   { fg: '#fcd34d', bg: 'rgba(245,158,11,0.12)',  line: 'rgba(245,158,11,0.25)' },
 }
 
-function SectionHeader({ icon, label, accent }: { icon: React.ReactNode; label: string; accent: 'indigo' | 'emerald' | 'rose' }) {
+function SectionHeader({ icon, label, accent }: { icon: React.ReactNode; label: string; accent: 'indigo' | 'emerald' | 'rose' | 'cyan' | 'violet' | 'amber' }) {
   const palette = SECTION_ACCENT[accent]
   return (
     <div className="flex items-center gap-3 mb-3">

@@ -55,7 +55,47 @@ const ALL_PERMISSIONS: Permission[] = [
   'hr:reviewRequests',
 ]
 
-const PERMISSIONS_BY_ROLE: Record<Role, Permission[]> = {
+export const PERMISSION_REGISTRY: ReadonlyArray<Permission> = ALL_PERMISSIONS
+
+export const PERMISSION_LABELS: Record<Permission, string> = {
+  'admin:manageUsers':           'Manage user accounts',
+  'opportunity:create':          'Create opportunities',
+  'opportunity:read':            'View opportunities',
+  'opportunity:edit':            'Edit opportunities',
+  'opportunity:comment':         'Comment on opportunities',
+  'opportunity:submitProposal':  'Submit proposals',
+  'opportunity:assign':          'Assign opportunities',
+  'opportunity:cancel':          'Cancel opportunities',
+  'opportunity:deleteRequest':   'Request opportunity deletion',
+  'opportunity:deleteApprove':   'Approve / deny deletion requests',
+  'sourcing:read':               'View sourcing database',
+  'sourcing:write':              'Edit sourcing database',
+  'nonSubmission:submit':        'Submit non-submission reports',
+  'nonSubmission:viewAll':       'View all non-submission reports',
+  'nonSubmission:review':        'Review non-submission reports',
+  'contract:read':               'View contracts',
+  'contract:edit':               'Edit contracts',
+  'operations:manage':           'Manage operations workflow',
+  'hr:manageCertifications':     'Manage company certifications',
+  'hr:viewCertifications':       'View company certifications',
+  'hr:reviewRequests':           'Review HR / employee requests',
+}
+
+export const PERMISSION_GROUP_LABELS: Record<string, string> = {
+  admin:         'Administration',
+  opportunity:   'Opportunities',
+  sourcing:      'Sourcing',
+  nonSubmission: 'Non-submission reporting',
+  contract:      'Contracts',
+  operations:    'Operations',
+  hr:            'HR',
+}
+
+export function getPermissionGroup(perm: Permission): string {
+  return perm.split(':')[0]
+}
+
+export const PERMISSIONS_BY_ROLE: Record<Role, Permission[]> = {
   CAPTURE_MANAGER: ALL_PERMISSIONS,
   BD_MANAGER: [
     'opportunity:read',

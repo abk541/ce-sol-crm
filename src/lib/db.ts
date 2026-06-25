@@ -1656,6 +1656,48 @@ export async function bulkDeleteFromTable(
   }
 }
 
+export const REMOTE_COUNT_TABLES = [
+  'users',
+  'employees',
+  'opportunities',
+  'contracts',
+  'fresh_awards',
+  'past_performances',
+  'subcontractors',
+  'subk_database',
+  'bd_submissions',
+  'non_submission_reports',
+  'deletion_requests',
+  'notifications',
+  'activity_logs',
+] as const
+
+export type RemoteCountTable = typeof REMOTE_COUNT_TABLES[number]
+
+// Fetch row counts for the main business tables. Returns null per-table when
+// the count call errors (auth, RLS, table missing) so the caller can render a
+// neutral "—" instead of crashing the whole health card.
+export async function fetchRemoteRowCounts(): Promise<Record<RemoteCountTable, number | null>> {
+  const out = {} as Record<RemoteCountTable, number | null>
+  for (const table of REMOTE_COUNT_TABLES) out[table] = null
+  if (!isSupabaseConnected || !supabase) return out
+  await Promise.all(REMOTE_COUNT_TABLES.map(async table => {
+    try {
+      const { count, error } = await supabase!.from(table).select('*', { count: 'exact', head: true })
+      if (error) {
+        console.error(`[db] fetchRemoteRowCounts ${table} error`, error)
+        out[table] = null
+        return
+      }
+      out[table] = count ?? 0
+    } catch (err) {
+      console.error(`[db] fetchRemoteRowCounts ${table} failed`, err)
+      out[table] = null
+    }
+  }))
+  return out
+}
+
 // ── Seed if empty ────────────────────────────────────────────────────────────
 
 export async function seedEmployeesIfEmpty(employees: Employee[]): Promise<boolean> {

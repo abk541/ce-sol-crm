@@ -82,6 +82,14 @@ interface AppState {
   companyCertifications: CompanyCertification[]
   employeeRequests: EmployeeRequest[]
 
+  // Per-user session metadata (browser-local; not synced to Supabase).
+  // Tracks last login per user account so admins can spot dormant accounts.
+  userSessions: Record<string, { lastLoginAt?: string }>
+
+  // Wall-clock of the last successful initializeStore/syncUsersFromDb run.
+  // Surfaced in the Admin System Health card. null = never synced this session.
+  lastSyncedAt: number | null
+
   // UI
   sidebarCollapsed: boolean
   nonSubGraceHours: number
@@ -225,6 +233,39 @@ interface AppState {
   resetOperations: () => Promise<number>
   wipeNonAdminUsers: () => Promise<number>
   resetEntireWorkspace: () => Promise<number>
+
+  // ── Workspace snapshot ─────────────────────────────────────────────
+  exportSnapshot: () => SnapshotPayload
+  importSnapshot: (payload: unknown) => { ok: boolean; error?: string; counts?: Record<string, number> }
+}
+
+export interface SnapshotPayload {
+  version: 1
+  exportedAt: string
+  exportedBy: string | null
+  data: {
+    users: User[]
+    employees: Employee[]
+    opportunities: Opportunity[]
+    contracts: Contract[]
+    freshAwards: FreshAward[]
+    pastPerformances: PastPerformance[]
+    subcontractors: Subcontractor[]
+    subkDatabase: SubkDatabaseEntry[]
+    bdSubmissions: BDSubmission[]
+    nonSubReports: NonSubmissionReport[]
+    deletionRequests: DeletionRequest[]
+    notifications: Notification[]
+    activityLogs: ActivityLog[]
+    companyCertifications: CompanyCertification[]
+    employeeRequests: EmployeeRequest[]
+  }
+  settings: {
+    nonSubGraceHours: number
+    nonSubGraceMinutes: number
+    requireAssociateForActivePipeline: boolean
+    nextInvoiceNumber: number
+  }
 }
 
 // Contract status advancement order
@@ -505,6 +546,8 @@ export const useStore = create<AppState>()(
       prefs: { notificationSound: true },
       dbReady: false,
       needsPurge: false,
+      userSessions: {},
+      lastSyncedAt: null,
 
       // ── Auth ────────────────────────────────────────────────────────
       login: (email, password) => {
@@ -517,7 +560,14 @@ export const useStore = create<AppState>()(
           set({ currentUser: user, needsFirstLogin: true, accessNoticeAccepted: false })
           return { ok: true, needsFirst: true }
         }
-        set({ currentUser: user, isAuthenticated: true, loginTimestamp: Date.now(), accessNoticeAccepted: false })
+        const nowIso = new Date().toISOString()
+        set(s => ({
+          currentUser: user,
+          isAuthenticated: true,
+          loginTimestamp: Date.now(),
+          accessNoticeAccepted: false,
+          userSessions: { ...s.userSessions, [user.id]: { ...(s.userSessions[user.id] ?? {}), lastLoginAt: nowIso } },
+        }))
         return { ok: true }
       },
 
@@ -545,6 +595,7 @@ export const useStore = create<AppState>()(
           needsFirstLogin: false,
           isAuthenticated: true,
           loginTimestamp: Date.now(),
+          userSessions: { ...s.userSessions, [updated.id]: { ...(s.userSessions[updated.id] ?? {}), lastLoginAt: new Date().toISOString() } },
         }))
         return true
       },
@@ -2304,6 +2355,7 @@ export const useStore = create<AppState>()(
               needsFirstLogin: refreshed.firstLogin === true,
             })
           }
+          set({ lastSyncedAt: Date.now() })
         } catch (err) {
           console.error('[Store] syncUsersFromDb failed', err)
         }
@@ -2391,7 +2443,10 @@ export const useStore = create<AppState>()(
                 nextInvoiceSequenceFromContracts(data.contracts),
               ),
               dbReady: true,
+              lastSyncedAt: Date.now(),
             })
+          } else {
+            set({ lastSyncedAt: Date.now() })
           }
         } catch (err) {
           console.error('[Store] Supabase init failed, using local data', err)
@@ -2728,9 +2783,125 @@ export const useStore = create<AppState>()(
         })
         return total + removedUsers.length
       },
+
+      // ── Workspace snapshot ───────────────────────────────────────────
+      exportSnapshot: () => {
+        const s = get()
+        return {
+          version: 1,
+          exportedAt: new Date().toISOString(),
+          exportedBy: s.currentUser?.name ?? null,
+          data: {
+            users: s.users,
+            employees: s.employees,
+            opportunities: s.opportunities,
+            contracts: s.contracts,
+            freshAwards: s.freshAwards,
+            pastPerformances: s.pastPerformances,
+            subcontractors: s.subcontractors,
+            subkDatabase: s.subkDatabase,
+            bdSubmissions: s.bdSubmissions,
+            nonSubReports: s.nonSubReports,
+            deletionRequests: s.deletionRequests,
+            notifications: s.notifications,
+            activityLogs: s.activityLogs,
+            companyCertifications: s.companyCertifications,
+            employeeRequests: s.employeeRequests,
+          },
+          settings: {
+            nonSubGraceHours: s.nonSubGraceHours,
+            nonSubGraceMinutes: s.nonSubGraceMinutes,
+            requireAssociateForActivePipeline: s.requireAssociateForActivePipeline,
+            nextInvoiceNumber: s.nextInvoiceNumber,
+          },
+        }
+      },
+
+      importSnapshot: (payload) => {
+        // Permissive shape validator: accepts the canonical snapshot shape
+        // and tolerates missing optional slices. Anything malformed bails
+        // out without mutating state.
+        if (!payload || typeof payload !== 'object') {
+          return { ok: false, error: 'Snapshot file is empty or not valid JSON.' }
+        }
+        const p = payload as Partial<SnapshotPayload>
+        if (p.version !== 1) {
+          return { ok: false, error: `Unsupported snapshot version: ${String(p.version ?? 'unknown')}. This build expects version 1.` }
+        }
+        const d = p.data
+        if (!d || typeof d !== 'object') {
+          return { ok: false, error: 'Snapshot is missing the "data" section.' }
+        }
+        const arr = <T,>(v: unknown, fallback: T[]): T[] => (Array.isArray(v) ? v as T[] : fallback)
+        const nextUsers          = arr<User>(d.users, get().users)
+        const nextOpportunities  = arr<Opportunity>(d.opportunities, [])
+        const nextContracts      = arr<Contract>(d.contracts, [])
+        const nextFreshAwards    = arr<FreshAward>(d.freshAwards, [])
+        const nextPastPerf       = arr<PastPerformance>(d.pastPerformances, [])
+        const nextSubs           = arr<Subcontractor>(d.subcontractors, [])
+        const nextSubk           = arr<SubkDatabaseEntry>(d.subkDatabase, [])
+        const nextBd             = arr<BDSubmission>(d.bdSubmissions, [])
+        const nextNonSub         = arr<NonSubmissionReport>(d.nonSubReports, [])
+        const nextDelReq         = arr<DeletionRequest>(d.deletionRequests, [])
+        const nextNotif          = arr<Notification>(d.notifications, [])
+        const nextActivity       = arr<ActivityLog>(d.activityLogs, [])
+        const nextCerts          = arr<CompanyCertification>(d.companyCertifications, [])
+        const nextEmpReq         = arr<EmployeeRequest>(d.employeeRequests, [])
+
+        set(s => ({
+          users: nextUsers,
+          employees: syncEmployeesWithUsers(nextUsers, arr<Employee>(d.employees, [])),
+          opportunities: nextOpportunities,
+          contracts: nextContracts,
+          freshAwards: nextFreshAwards,
+          pastPerformances: nextPastPerf,
+          subcontractors: nextSubs,
+          subkDatabase: nextSubk,
+          bdSubmissions: nextBd,
+          nonSubReports: nextNonSub,
+          deletionRequests: nextDelReq,
+          notifications: nextNotif,
+          activityLogs: nextActivity,
+          companyCertifications: nextCerts,
+          employeeRequests: nextEmpReq,
+          nonSubGraceHours:  Number(p.settings?.nonSubGraceHours ?? s.nonSubGraceHours),
+          nonSubGraceMinutes: Number(p.settings?.nonSubGraceMinutes ?? s.nonSubGraceMinutes),
+          requireAssociateForActivePipeline: p.settings?.requireAssociateForActivePipeline ?? s.requireAssociateForActivePipeline,
+          nextInvoiceNumber: Math.max(1, Math.trunc(Number(p.settings?.nextInvoiceNumber ?? s.nextInvoiceNumber) || 1)),
+        }))
+
+        get().logActivity({
+          action: `Restored workspace snapshot exported on ${p.exportedAt ?? 'unknown date'} by ${p.exportedBy ?? 'unknown'}`,
+          user: get().currentUser?.name || 'System',
+          userRole: get().currentUser?.role || 'CAPTURE_MANAGER',
+          entityType: 'admin',
+          entityName: 'snapshot',
+        })
+
+        return {
+          ok: true,
+          counts: {
+            users: nextUsers.length,
+            opportunities: nextOpportunities.length,
+            contracts: nextContracts.length,
+            freshAwards: nextFreshAwards.length,
+            pastPerformances: nextPastPerf.length,
+            subcontractors: nextSubs.length,
+            subkDatabase: nextSubk.length,
+            bdSubmissions: nextBd.length,
+            nonSubReports: nextNonSub.length,
+            deletionRequests: nextDelReq.length,
+            notifications: nextNotif.length,
+            activityLogs: nextActivity.length,
+            companyCertifications: nextCerts.length,
+            employeeRequests: nextEmpReq.length,
+          },
+        }
+      },
     }),
     {
       name: 'ces-crm-store',
+      // v19: track per-user lastLoginAt in a browser-local userSessions slice.
       // v18: introduce requireAssociateForActivePipeline toggle; defaults to true
       // (Mode A = legacy behavior, Associate required before an opp becomes ACTIVE).
       // v17: reset all persisted app data after database cleanup; Supabase users
@@ -2740,7 +2911,7 @@ export const useStore = create<AppState>()(
       // v14: first forced refresh of seeded department users.
       // v13: assignment employees are derived strictly from active users so
       // deleted/inactive users disappear from assignment pickers.
-      version: 18,
+      version: 19,
       migrate: (persistedState: unknown, fromVersion: number) => {
         const s = persistedState as Record<string, unknown>
         delete s.needsMFASetup
@@ -2774,6 +2945,7 @@ export const useStore = create<AppState>()(
             requireAssociateForActivePipeline: true,
             nextInvoiceNumber: 1,
             prefs:           { notificationSound: true },
+            userSessions:    {},
           }
         }
         const nextUsers = mergeSeedUsers(s.users, fromVersion < 15)
@@ -2799,6 +2971,7 @@ export const useStore = create<AppState>()(
           prefs: {
             notificationSound: (s.prefs as Record<string, unknown> | undefined)?.notificationSound !== false,
           },
+          userSessions: (s.userSessions && typeof s.userSessions === 'object') ? s.userSessions as Record<string, { lastLoginAt?: string }> : {},
           needsPurge: false,
           dbReady: false,
         }
@@ -2832,6 +3005,7 @@ export const useStore = create<AppState>()(
         employeeRequests:  s.employeeRequests,
         notifications:     s.notifications,
         prefs:             s.prefs,
+        userSessions:      s.userSessions,
         needsPurge:        false,
         dbReady:           false,
       }),

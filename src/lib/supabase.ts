@@ -34,3 +34,12 @@ export const supabase = (supabaseUrl && supabaseAnonKey)
   : null
 
 export const isSupabaseConnected = !!supabase
+
+export const supabaseHost = (() => {
+  if (!supabaseUrl) return null
+  try {
+    return new URL(supabaseUrl).host
+  } catch {
+    return supabaseUrl
+  }
+})()
