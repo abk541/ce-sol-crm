@@ -42,6 +42,7 @@ function makeData(overrides: Partial<GlobalSearchData> = {}): GlobalSearchData {
     nonSubReports: [],
     pastPerformances: [],
     employees,
+    requireAssociateForActivePipeline: true,
     ...overrides,
   }
 }

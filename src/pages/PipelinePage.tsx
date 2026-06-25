@@ -3562,7 +3562,7 @@ function DueDateTimeCell({ opp }: { opp: Opportunity }) {
 }
 
 export default function PipelinePage() {
-  const { opportunities, employees, currentUser, deletionRequests, moveOpportunityToBDTracker, deleteSubcontractor } = useStore()
+  const { opportunities, employees, currentUser, deletionRequests, moveOpportunityToBDTracker, deleteSubcontractor, requireAssociateForActivePipeline } = useStore()
   const [searchParams] = useSearchParams()
   const globalRecordId = searchParams.get('record')
 
@@ -3609,7 +3609,7 @@ export default function PipelinePage() {
   }, [globalRecordId, opportunities])
 
   const filterOptions = useMemo(() => {
-    const visibleOpps = opportunities.filter(o => !o.isDeleted && !o.nonSubmissionReportId && OPP_VIEW_STATUSES.includes(o.status as any) && isAssignedToAssociate(employees, o.assignedTo))
+    const visibleOpps = opportunities.filter(o => !o.isDeleted && !o.nonSubmissionReportId && OPP_VIEW_STATUSES.includes(o.status as any) && (requireAssociateForActivePipeline ? isAssignedToAssociate(employees, o.assignedTo) : !!o.assignedTo))
     return COLUMN_FILTERS.reduce((acc, col) => {
       const values = visibleOpps
         .map(o => getColumnFilterValue(o, col.key, employees))
@@ -3618,10 +3618,10 @@ export default function PipelinePage() {
       acc[col.key] = Array.from(new Set(values)).sort((a, b) => a.localeCompare(b))
       return acc
     }, {} as Record<ColumnFilterKey, string[]>)
-  }, [opportunities, employees])
+  }, [opportunities, employees, requireAssociateForActivePipeline])
 
   const filtered = useMemo(() => {
-    let list = opportunities.filter(o => !o.isDeleted && !o.nonSubmissionReportId && OPP_VIEW_STATUSES.includes(o.status as any) && isAssignedToAssociate(employees, o.assignedTo))
+    let list = opportunities.filter(o => !o.isDeleted && !o.nonSubmissionReportId && OPP_VIEW_STATUSES.includes(o.status as any) && (requireAssociateForActivePipeline ? isAssignedToAssociate(employees, o.assignedTo) : !!o.assignedTo))
 
     if (dueDateRange) list = list.filter(o => filterByPeriod(o.dueDate, dueDateRange))
 
@@ -3637,7 +3637,7 @@ export default function PipelinePage() {
       return sort.dir === 'asc' ? r : -r
     })
     return list
-  }, [opportunities, employees, sort, dueDateRange, columnFilters])
+  }, [opportunities, employees, sort, dueDateRange, columnFilters, requireAssociateForActivePipeline])
 
   // Paginated slice
   const paginated = useMemo(() => {

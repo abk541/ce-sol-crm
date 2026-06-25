@@ -120,6 +120,7 @@ export default function TopBar() {
     bdSubmissions,
     nonSubReports,
     pastPerformances,
+    requireAssociateForActivePipeline,
   } = useStore()
   const soundEnabled = useStore(s => s.prefs.notificationSound)
   const location = useLocation()
@@ -156,8 +157,9 @@ export default function TopBar() {
       nonSubReports,
       pastPerformances,
       employees,
+      requireAssociateForActivePipeline,
     }),
-    [globalSearch, opportunities, contracts, freshAwards, bdSubmissions, nonSubReports, pastPerformances, employees],
+    [globalSearch, opportunities, contracts, freshAwards, bdSubmissions, nonSubReports, pastPerformances, employees, requireAssociateForActivePipeline],
   )
 
   useEffect(() => {

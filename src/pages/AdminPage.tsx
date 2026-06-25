@@ -1,7 +1,7 @@
 import { useState, Fragment } from 'react'
 import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Plus, Pencil, Trash2, X, Check, Shield, Search, Clock, Save, Network, List, GripVertical, Eye, EyeOff, KeyRound, RotateCcw, Users } from 'lucide-react'
+import { Plus, Pencil, Trash2, X, Check, Shield, Search, Clock, Save, Network, List, GripVertical, Eye, EyeOff, KeyRound, RotateCcw, Users, GitBranch } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import type { User, Role, EmployeeTeam } from '../types'
 import { avatarColor, useEscapeKey } from '../lib/utils'
@@ -382,6 +382,8 @@ export default function AdminPage() {
     nonSubGraceHours,
     nonSubGraceMinutes,
     updateNonSubGracePeriod,
+    requireAssociateForActivePipeline,
+    setRequireAssociateForActivePipeline,
   } = useStore()
   const [search, setSearch] = useState('')
   const [modal, setModal] = useState<'create' | User | null>(null)
@@ -543,6 +545,50 @@ export default function AdminPage() {
             <button type="button" onClick={saveNonSubTiming} className="btn-primary justify-center">
               <Save size={13} /> Save Timing
             </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="glass rounded-2xl p-4 mb-6">
+        <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
+          <div className="max-w-xl">
+            <div className="flex items-center gap-2 mb-1">
+              <GitBranch size={16} className="text-violet-300" />
+              <h2 className="text-sm font-bold text-white">Opportunity Activation Mode</h2>
+            </div>
+            <p className="text-xs text-slate-400">
+              {requireAssociateForActivePipeline
+                ? <>Currently <span className="font-semibold text-violet-200">Wait for Associate</span>: opportunities only enter the active pipeline once a Manager assigns an Associate. Manager/Team Lead-only opportunities stay in <span className="font-semibold text-slate-200">NEW_ASSIGNMENT</span> and are not part of the general pipeline.</>
+                : <>Currently <span className="font-semibold text-emerald-200">Manager/TL can carry it</span>: an opportunity becomes ACTIVE and counts in the general pipeline as soon as a Manager or Team Lead is assigned, even without an Associate. The assigned Manager/TL is treated as the current handler until an Associate is added.</>}
+            </p>
+            <p className="mt-2 text-[11px] text-amber-200/80">
+              Switching this setting immediately re-evaluates every existing opportunity. Status changes are saved to the database.
+            </p>
+          </div>
+          <div className="flex flex-col sm:flex-row gap-3 sm:items-center shrink-0">
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Mode</span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={requireAssociateForActivePipeline}
+              onClick={() => {
+                const next = !requireAssociateForActivePipeline
+                setRequireAssociateForActivePipeline(next)
+                toast.success(next ? 'Switched to: Wait for Associate' : 'Switched to: Manager/TL can carry it')
+              }}
+              className="relative inline-flex h-7 w-14 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-violet-400 focus:ring-offset-slate-900"
+              style={{
+                background: requireAssociateForActivePipeline ? '#7c3aed' : '#10b981',
+              }}
+            >
+              <span
+                className="inline-block h-5 w-5 transform rounded-full bg-white transition-transform shadow"
+                style={{ transform: requireAssociateForActivePipeline ? 'translateX(4px)' : 'translateX(32px)' }}
+              />
+            </button>
+            <span className="text-xs font-semibold text-slate-200 min-w-[140px]">
+              {requireAssociateForActivePipeline ? 'Wait for Associate' : 'Manager/TL can carry it'}
+            </span>
           </div>
         </div>
       </div>

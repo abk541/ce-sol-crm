@@ -85,6 +85,9 @@ interface AppState {
   sidebarCollapsed: boolean
   nonSubGraceHours: number
   nonSubGraceMinutes: number
+  // Mode A (true, default) requires an Associate before an opportunity becomes ACTIVE.
+  // Mode B (false) lets a Manager/TL carry an opportunity into ACTIVE on their own.
+  requireAssociateForActivePipeline: boolean
   nextInvoiceNumber: number   // global running sequence for generated contract invoices
   prefs: UserPreferences
 
@@ -193,6 +196,7 @@ interface AppState {
   // ── UI ─────────────────────────────────────────────────────────────
   toggleSidebar: () => void
   updateNonSubGracePeriod: (hours: number, minutes: number) => void
+  setRequireAssociateForActivePipeline: (value: boolean) => void
   consumeInvoiceNumber: () => number
   setPref: <K extends keyof UserPreferences>(key: K, value: UserPreferences[K]) => void
 
@@ -215,9 +219,16 @@ const STATUS_FLOW: Record<string, string> = {
 
 const PRE_SUBMISSION_STATUSES: Opportunity['status'][] = ['ACTIVE', 'NEW_ASSIGNMENT', 'DISCUSSION']
 
-function normalizeOpportunityAssignmentStatus(opp: Opportunity, employees: Employee[]): Opportunity {
+function normalizeOpportunityAssignmentStatus(
+  opp: Opportunity,
+  employees: Employee[],
+  requireAssociate: boolean,
+): Opportunity {
   if (!PRE_SUBMISSION_STATUSES.includes(opp.status)) return opp
-  const readyForContractOpportunities = isAssignedToAssociate(employees, opp.assignedTo)
+  // Mode A requires an Associate at the bottom of the chain; Mode B accepts any assignee.
+  const readyForContractOpportunities = requireAssociate
+    ? isAssignedToAssociate(employees, opp.assignedTo)
+    : !!opp.assignedTo
 
   if (readyForContractOpportunities && opp.status === 'NEW_ASSIGNMENT') {
     return { ...opp, status: 'ACTIVE' }
@@ -469,6 +480,7 @@ export const useStore = create<AppState>()(
       sidebarCollapsed: false,
       nonSubGraceHours: 0,
       nonSubGraceMinutes: 5,
+      requireAssociateForActivePipeline: true,
       nextInvoiceNumber: 1,
       prefs: { notificationSound: true },
       dbReady: false,
@@ -758,7 +770,11 @@ export const useStore = create<AppState>()(
         const allowed = await canUseSolicitationId(solicitationId, get().opportunities)
         if (!allowed) return false
 
-        const opp = normalizeOpportunityAssignmentStatus({ ...data, solicitationId, id: `o${Date.now()}` }, get().employees)
+        const opp = normalizeOpportunityAssignmentStatus(
+          { ...data, solicitationId, id: `o${Date.now()}` },
+          get().employees,
+          get().requireAssociateForActivePipeline,
+        )
         if (opp.assignedTo && !(await ensureAssignmentEmployeesSynced(get().employees))) return false
         const saved = await upsertOpportunity(opp)
         if (!saved) {
@@ -819,7 +835,13 @@ export const useStore = create<AppState>()(
         const previous = get().opportunities
         set(s => ({
           opportunities: s.opportunities.map(o =>
-            o.id === id ? normalizeOpportunityAssignmentStatus({ ...o, ...data }, s.employees) : o
+            o.id === id
+              ? normalizeOpportunityAssignmentStatus(
+                  { ...o, ...data },
+                  s.employees,
+                  get().requireAssociateForActivePipeline,
+                )
+              : o
           )
         }))
         const updated = get().opportunities.find(o => o.id === id)
@@ -1083,12 +1105,17 @@ export const useStore = create<AppState>()(
       // ── Contract management ─────────────────────────────────────────
       syncDueOpportunities: () => {
         const now = new Date()
-        const { nonSubGraceHours, nonSubGraceMinutes } = get()
+        const { nonSubGraceHours, nonSubGraceMinutes, requireAssociateForActivePipeline } = get()
         const graceMs = ((Math.max(0, nonSubGraceHours) * 60) + Math.max(0, nonSubGraceMinutes)) * 60_000
         const reportedOpportunityIds = new Set(get().nonSubReports.map(report => report.opportunityId))
         const reportableOpps = get().opportunities.filter(opp => {
           if (opp.isDeleted || !PRE_SUBMISSION_STATUSES.includes(opp.status) || opp.nonSubmissionReportId || reportedOpportunityIds.has(opp.id)) return false
-          if (!isAssignedToAssociate(get().employees, opp.assignedTo)) return false
+          // Mode A escalates only Associate-led opps; Mode B escalates any assigned opp.
+          if (requireAssociateForActivePipeline) {
+            if (!isAssignedToAssociate(get().employees, opp.assignedTo)) return false
+          } else {
+            if (!opp.assignedTo) return false
+          }
           if (!isNonSubmissionGraceReached(opp, graceMs, now)) return false
           return true
         })
@@ -1955,7 +1982,7 @@ export const useStore = create<AppState>()(
           status: 'ACTIVE',
           submittedAt: undefined,
           nonSubmissionReportId: undefined,
-        }, get().employees)
+        }, get().employees, get().requireAssociateForActivePipeline)
 
         set(s => ({
           opportunities: s.opportunities.map(opp => opp.id === restored.id ? restored : opp),
@@ -2156,7 +2183,11 @@ export const useStore = create<AppState>()(
         set(s => ({
           opportunities: s.opportunities.map(o =>
             o.id === opportunityId
-              ? normalizeOpportunityAssignmentStatus({ ...o, assignedTo: employeeId }, s.employees)
+              ? normalizeOpportunityAssignmentStatus(
+                  { ...o, assignedTo: employeeId },
+                  s.employees,
+                  get().requireAssociateForActivePipeline,
+                )
               : o
           )
         }))
@@ -2354,6 +2385,32 @@ export const useStore = create<AppState>()(
         nonSubGraceHours: Math.max(0, Math.trunc(Number(hours) || 0)),
         nonSubGraceMinutes: Math.max(0, Math.trunc(Number(minutes) || 0)),
       }),
+      setRequireAssociateForActivePipeline: (value) => {
+        const next = !!value
+        const prev = get().requireAssociateForActivePipeline
+        if (prev === next) return
+        // Retroactively re-evaluate every opportunity so ACTIVE/NEW_ASSIGNMENT
+        // matches the new mode immediately; bulk-upsert anything that flipped.
+        const employees = get().employees
+        const changed: Opportunity[] = []
+        const renormalized = get().opportunities.map(opp => {
+          const updated = normalizeOpportunityAssignmentStatus(opp, employees, next)
+          if (updated.status !== opp.status) changed.push(updated)
+          return updated
+        })
+        set({ requireAssociateForActivePipeline: next, opportunities: renormalized })
+        if (changed.length > 0 && isSupabaseConnected) {
+          void ensureAssignmentEmployeesSynced(employees).then(synced => {
+            if (!synced) return
+            void Promise.all(changed.map(opp => upsertOpportunity(opp))).then(results => {
+              const failures = results.filter(saved => !saved).length
+              if (failures > 0) {
+                toast.error(`${failures} opportunit${failures === 1 ? 'y' : 'ies'} could not sync to the database.`)
+              }
+            })
+          })
+        }
+      },
       consumeInvoiceNumber: () => {
         const current = Math.max(1, Math.trunc(Number(get().nextInvoiceNumber) || 1))
         set({ nextInvoiceNumber: current + 1 })
@@ -2363,6 +2420,8 @@ export const useStore = create<AppState>()(
     }),
     {
       name: 'ces-crm-store',
+      // v18: introduce requireAssociateForActivePipeline toggle; defaults to true
+      // (Mode A = legacy behavior, Associate required before an opp becomes ACTIVE).
       // v17: reset all persisted app data after database cleanup; Supabase users
       // are now the source of truth when connected.
       // v16: removed MFA from the auth flow; needsMFASetup is no longer in state.
@@ -2370,7 +2429,7 @@ export const useStore = create<AppState>()(
       // v14: first forced refresh of seeded department users.
       // v13: assignment employees are derived strictly from active users so
       // deleted/inactive users disappear from assignment pickers.
-      version: 17,
+      version: 18,
       migrate: (persistedState: unknown, fromVersion: number) => {
         const s = persistedState as Record<string, unknown>
         delete s.needsMFASetup
@@ -2401,6 +2460,7 @@ export const useStore = create<AppState>()(
             dbReady:         false,
             nonSubGraceHours: 0,
             nonSubGraceMinutes: 5,
+            requireAssociateForActivePipeline: true,
             nextInvoiceNumber: 1,
             prefs:           { notificationSound: true },
           }
@@ -2421,6 +2481,7 @@ export const useStore = create<AppState>()(
           accessNoticeAccepted: Boolean(s.accessNoticeAccepted),
           nonSubGraceHours: Number(s.nonSubGraceHours ?? 0),
           nonSubGraceMinutes: Number(s.nonSubGraceMinutes ?? 5),
+          requireAssociateForActivePipeline: s.requireAssociateForActivePipeline !== false,
           nextInvoiceNumber: Math.max(1, Math.trunc(Number(s.nextInvoiceNumber) || 1)),
           companyCertifications: Array.isArray(s.companyCertifications) ? s.companyCertifications : [],
           employeeRequests: Array.isArray(s.employeeRequests) ? s.employeeRequests : [],
@@ -2442,6 +2503,7 @@ export const useStore = create<AppState>()(
         sidebarCollapsed:  s.sidebarCollapsed,
         nonSubGraceHours:  s.nonSubGraceHours,
         nonSubGraceMinutes: s.nonSubGraceMinutes,
+        requireAssociateForActivePipeline: s.requireAssociateForActivePipeline,
         nextInvoiceNumber: s.nextInvoiceNumber,
         opportunities:     s.opportunities,
         contracts:         s.contracts,

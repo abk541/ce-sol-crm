@@ -29,6 +29,7 @@ export type GlobalSearchData = {
   nonSubReports: NonSubmissionReport[]
   pastPerformances: PastPerformance[]
   employees: Employee[]
+  requireAssociateForActivePipeline: boolean
 }
 
 function route(path: string, params: Record<string, string | number | undefined>) {
@@ -96,7 +97,12 @@ export function routeForOpportunity(opp: Opportunity, data: GlobalSearchData) {
   }
 
   if (PRE_SUBMISSION_STATUSES.includes(opp.status)) {
-    return route(isAssignedToAssociate(data.employees, opp.assignedTo) ? '/pipeline' : '/proposals', {
+    // Mode A sends opps without an Associate to /proposals; Mode B only sends
+    // completely unassigned opps there since any assignee makes the opp ACTIVE.
+    const liveInPipeline = data.requireAssociateForActivePipeline
+      ? isAssignedToAssociate(data.employees, opp.assignedTo)
+      : !!opp.assignedTo
+    return route(liveInPipeline ? '/pipeline' : '/proposals', {
       record: opp.id,
     })
   }
