@@ -1636,6 +1636,26 @@ export async function clearBusinessData(): Promise<void> {
   }
 }
 
+export async function bulkDeleteFromTable(
+  table: string,
+  filter?: { column: string; value: string | number | boolean },
+): Promise<boolean> {
+  if (!isSupabaseConnected || !supabase) return true
+  try {
+    let query = supabase.from(table).delete()
+    query = filter ? query.eq(filter.column, filter.value) : query.not('id', 'is', null)
+    const { error } = await query
+    if (error) {
+      console.error(`[db] bulkDeleteFromTable ${table} error`, error)
+      return false
+    }
+    return true
+  } catch (err) {
+    console.error(`[db] bulkDeleteFromTable ${table} failed`, err)
+    return false
+  }
+}
+
 // ── Seed if empty ────────────────────────────────────────────────────────────
 
 export async function seedEmployeesIfEmpty(employees: Employee[]): Promise<boolean> {

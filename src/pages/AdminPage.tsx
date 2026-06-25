@@ -1,7 +1,7 @@
-import { useState, Fragment } from 'react'
+import { useState, useMemo, Fragment } from 'react'
 import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Plus, Pencil, Trash2, X, Check, Shield, Search, Clock, Save, Network, List, GripVertical, Eye, EyeOff, KeyRound, RotateCcw, Users, GitBranch } from 'lucide-react'
+import { Plus, Pencil, Trash2, X, Check, Shield, Search, Clock, Save, Network, List, GripVertical, Eye, EyeOff, KeyRound, RotateCcw, Users, GitBranch, AlertTriangle, Bomb, Database, FileText, Award, Bell, Activity, Briefcase, FolderTree, UserCog } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import type { User, Role, EmployeeTeam } from '../types'
 import { avatarColor, useEscapeKey } from '../lib/utils'
@@ -384,6 +384,36 @@ export default function AdminPage() {
     updateNonSubGracePeriod,
     requireAssociateForActivePipeline,
     setRequireAssociateForActivePipeline,
+    opportunities,
+    contracts,
+    freshAwards,
+    pastPerformances,
+    subcontractors,
+    subkDatabase,
+    bdSubmissions,
+    nonSubReports,
+    deletionRequests,
+    notifications,
+    activityLogs,
+    companyCertifications,
+    employeeRequests,
+    wipeOpportunities,
+    wipeContracts,
+    wipeFreshAwards,
+    wipePastPerformances,
+    wipeSubcontractors,
+    wipeSubkDatabase,
+    wipeBDSubmissions,
+    wipeNonSubReports,
+    wipeDeletionRequests,
+    wipeNotifications,
+    wipeActivityLogs,
+    wipeCompanyCertifications,
+    wipeEmployeeRequests,
+    resetBDPipeline,
+    resetOperations,
+    wipeNonAdminUsers,
+    resetEntireWorkspace,
   } = useStore()
   const [search, setSearch] = useState('')
   const [modal, setModal] = useState<'create' | User | null>(null)
@@ -395,6 +425,9 @@ export default function AdminPage() {
   const [dragOverKey, setDragOverKey] = useState<string | null>(null)
   const [graceHours, setGraceHours] = useState(String(nonSubGraceHours))
   const [graceMinutes, setGraceMinutes] = useState(String(nonSubGraceMinutes))
+  const [danger, setDanger] = useState<DangerAction | null>(null)
+  const [dangerBusy, setDangerBusy] = useState(false)
+  const [contractClient, setContractClient] = useState<string>('')
 
   if (!hasPermission(currentUser, 'admin:manageUsers')) {
     return (
@@ -412,6 +445,29 @@ export default function AdminPage() {
     u.email.toLowerCase().includes(search.toLowerCase()) ||
     u.role.toLowerCase().includes(search.toLowerCase())
   )
+
+  const contractClients = useMemo(
+    () => Array.from(new Set(contracts.map(c => c.client).filter(Boolean))).sort(),
+    [contracts],
+  )
+
+  const removableUserCount = users.filter(u => u.role !== 'CAPTURE_MANAGER').length
+
+  const runDanger = async () => {
+    if (!danger) return
+    setDangerBusy(true)
+    try {
+      const n = await danger.run()
+      toast.success(danger.toastSuccess(n))
+      setDanger(null)
+      if (danger.id === 'wipe-contracts-client') setContractClient('')
+    } catch (err) {
+      console.error('[admin] danger action failed', err)
+      toast.error('Operation failed. Check the console for details.')
+    } finally {
+      setDangerBusy(false)
+    }
+  }
 
   const handleDelete = (u: User) => {
     if (u.id === currentUser?.id) { toast.error("You can't delete your own account."); return }
@@ -510,6 +566,8 @@ export default function AdminPage() {
         </button>
       </div>
 
+      <SectionHeader icon={<Save size={14} />} label="Workspace settings" accent="indigo" />
+
       <div className="glass rounded-2xl p-4 mb-6">
         <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
           <div className="max-w-xl">
@@ -594,6 +652,8 @@ export default function AdminPage() {
       </div>
 
       {/* Stats row */}
+      <SectionHeader icon={<Users size={14} />} label="People &amp; roles" accent="emerald" />
+
       <div className="grid grid-cols-3 sm:grid-cols-6 gap-3 mb-6">
         {ROLES.map(r => {
           const count = users.filter(u => u.role === r).length
@@ -761,6 +821,213 @@ export default function AdminPage() {
       </div>
       )}
 
+      {/* ── Danger Zone ──────────────────────────────────────────────── */}
+      <div className="mt-10">
+        <SectionHeader icon={<AlertTriangle size={14} />} label="Danger zone" accent="rose" />
+        <div
+          className="rounded-2xl p-5"
+          style={{
+            background: 'linear-gradient(135deg, rgba(244,63,94,0.06), rgba(220,38,38,0.04))',
+            border: '1px solid rgba(244,63,94,0.28)',
+          }}
+        >
+          <p className="text-xs text-slate-300 mb-4 leading-relaxed">
+            Every action here <span className="font-semibold text-rose-300">permanently</span> removes data from this
+            browser and from the connected database. Use these tools to clean up test data, hand a workspace over,
+            or start a team from scratch. <span className="text-rose-300 font-semibold">There is no undo.</span>
+          </p>
+
+          {/* Team-level resets */}
+          <h3 className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 mb-2">Team resets</h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mb-4">
+            <DangerCard
+              icon={<Briefcase size={14} />}
+              label="Reset BD pipeline"
+              subtitle={`${opportunities.length} opps · ${bdSubmissions.length} tracker · ${nonSubReports.length} reports`}
+              disabled={opportunities.length + bdSubmissions.length + nonSubReports.length + deletionRequests.length === 0}
+              onClick={() => setDanger({
+                id: 'reset-bd',
+                title: 'Reset the BD pipeline',
+                description: 'Clears the entire Business Development workspace.',
+                consequences: [
+                  `${opportunities.length} opportunit${opportunities.length === 1 ? 'y' : 'ies'} will be deleted`,
+                  `${bdSubmissions.length} BD tracker entr${bdSubmissions.length === 1 ? 'y' : 'ies'} will be deleted`,
+                  `${nonSubReports.length} non-submission report(s) will be deleted`,
+                  `${deletionRequests.length} pending deletion request(s) will be cleared`,
+                  'Contracts and operations records are NOT affected',
+                ],
+                confirmPhrase: 'reset BD',
+                destructiveLabel: 'Reset BD pipeline',
+                run: resetBDPipeline,
+                toastSuccess: (n) => `BD pipeline reset · ${n} record(s) removed.`,
+              })}
+            />
+            <DangerCard
+              icon={<FolderTree size={14} />}
+              label="Reset Operations"
+              subtitle={`${contracts.length} contracts · ${freshAwards.length} fresh · ${pastPerformances.length} past`}
+              disabled={contracts.length + freshAwards.length + pastPerformances.length === 0}
+              onClick={() => setDanger({
+                id: 'reset-ops',
+                title: 'Reset Operations',
+                description: 'Clears every contract and operational record.',
+                consequences: [
+                  `${contracts.length} contract(s) will be deleted (including invoices, line items, POCs, locks, warnings)`,
+                  `${freshAwards.length} fresh award(s) will be deleted`,
+                  `${pastPerformances.length} past performance(s) will be deleted`,
+                  'Opportunities and the BD pipeline are NOT affected',
+                ],
+                confirmPhrase: 'reset OPS',
+                destructiveLabel: 'Reset Operations',
+                run: resetOperations,
+                toastSuccess: (n) => `Operations reset · ${n} record(s) removed.`,
+              })}
+            />
+            <DangerCard
+              icon={<UserCog size={14} />}
+              label="Remove non-admin users"
+              subtitle={`${removableUserCount} account(s) will be removed`}
+              disabled={removableUserCount === 0}
+              onClick={() => setDanger({
+                id: 'wipe-users',
+                title: 'Remove non-admin users',
+                description: 'Deletes everyone except Capture Manager accounts.',
+                consequences: [
+                  `${removableUserCount} user account(s) will be removed`,
+                  'Capture Manager accounts are preserved so admins keep their access',
+                  'Assignments on existing opportunities and contracts will become unassigned',
+                ],
+                confirmPhrase: 'remove users',
+                destructiveLabel: 'Remove users',
+                run: wipeNonAdminUsers,
+                toastSuccess: (n) => `${n} user account(s) removed.`,
+              })}
+            />
+          </div>
+
+          {/* Contracts by client */}
+          {contractClients.length > 0 && (
+            <>
+              <h3 className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 mb-2">Contracts by client</h3>
+              <div className="rounded-xl border border-rose-500/15 bg-black/20 p-3 mb-4 flex flex-col sm:flex-row sm:items-center gap-3">
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-semibold text-slate-200">Delete every contract for a specific client</p>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    Pick a client, then click delete. All of that client's contracts (and their invoices, line items, POCs, locks, warnings) will be removed.
+                  </p>
+                </div>
+                <select
+                  value={contractClient}
+                  onChange={e => setContractClient(e.target.value)}
+                  className="select-field sm:w-60"
+                >
+                  <option value="">— Select client —</option>
+                  {contractClients.map(c => {
+                    const count = contracts.filter(x => x.client === c).length
+                    return <option key={c} value={c}>{c} ({count})</option>
+                  })}
+                </select>
+                <button
+                  type="button"
+                  disabled={!contractClient}
+                  onClick={() => {
+                    if (!contractClient) return
+                    const count = contracts.filter(c => c.client === contractClient).length
+                    setDanger({
+                      id: 'wipe-contracts-client',
+                      title: `Delete contracts for ${contractClient}`,
+                      description: `Removes every contract whose client is ${contractClient}.`,
+                      consequences: [
+                        `${count} contract(s) for ${contractClient} will be deleted`,
+                        'All linked invoices, line items, POCs, locks and warnings will be removed',
+                        `Other clients' contracts are NOT affected`,
+                      ],
+                      confirmPhrase: contractClient,
+                      destructiveLabel: `Delete ${contractClient} contracts`,
+                      run: () => wipeContracts(contractClient),
+                      toastSuccess: (n) => `${n} contract(s) for ${contractClient} removed.`,
+                    })
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  style={{ background: 'rgba(244,63,94,0.15)', color: '#fda4af', border: '1px solid rgba(244,63,94,0.35)' }}
+                >
+                  <Trash2 size={12} /> Delete client contracts
+                </button>
+              </div>
+            </>
+          )}
+
+          {/* Individual data type wipes */}
+          <h3 className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 mb-2">Clear individual data types</h3>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 mb-5">
+            {([
+              { id: 'wipe-opps',     icon: <Briefcase size={13} />,   label: 'Opportunities',     lower: 'opportunities',         count: opportunities.length,          run: wipeOpportunities },
+              { id: 'wipe-contracts',icon: <FolderTree size={13} />,  label: 'All contracts',     lower: 'contracts',             count: contracts.length,              run: () => wipeContracts() },
+              { id: 'wipe-fresh',    icon: <Award size={13} />,       label: 'Fresh awards',      lower: 'fresh awards',          count: freshAwards.length,            run: wipeFreshAwards },
+              { id: 'wipe-past',     icon: <FileText size={13} />,    label: 'Past performances', lower: 'past performances',     count: pastPerformances.length,       run: wipePastPerformances },
+              { id: 'wipe-subs',     icon: <Users size={13} />,       label: 'Subcontractors',    lower: 'subcontractors',        count: subcontractors.length,         run: wipeSubcontractors },
+              { id: 'wipe-subk',     icon: <Database size={13} />,    label: 'Sourcing entries',  lower: 'sourcing entries',      count: subkDatabase.length,           run: wipeSubkDatabase },
+              { id: 'wipe-bd',       icon: <List size={13} />,        label: 'BD tracker',        lower: 'BD tracker entries',    count: bdSubmissions.length,          run: wipeBDSubmissions },
+              { id: 'wipe-nonsub',   icon: <FileText size={13} />,    label: 'Non-sub reports',   lower: 'non-submission reports',count: nonSubReports.length,          run: wipeNonSubReports },
+              { id: 'wipe-delreq',   icon: <Trash2 size={13} />,      label: 'Deletion requests', lower: 'deletion requests',     count: deletionRequests.length,       run: wipeDeletionRequests },
+              { id: 'wipe-notif',    icon: <Bell size={13} />,        label: 'Notifications',     lower: 'notifications',         count: notifications.length,          run: wipeNotifications },
+              { id: 'wipe-activity', icon: <Activity size={13} />,    label: 'Activity log',      lower: 'activity log entries',  count: activityLogs.length,           run: wipeActivityLogs },
+              { id: 'wipe-certs',    icon: <Shield size={13} />,      label: 'Certifications',    lower: 'company certifications',count: companyCertifications.length,  run: wipeCompanyCertifications },
+              { id: 'wipe-empreq',   icon: <KeyRound size={13} />,    label: 'Employee requests', lower: 'employee requests',     count: employeeRequests.length,       run: wipeEmployeeRequests },
+            ] as const).map(w => (
+              <DangerCard
+                key={w.id}
+                icon={w.icon}
+                label={w.label}
+                subtitle={`${w.count} record(s)`}
+                compact
+                disabled={w.count === 0}
+                onClick={() => setDanger({
+                  id: w.id,
+                  title: `Delete all ${w.lower}`,
+                  description: `Permanently removes every ${w.lower.replace(/s$/, '')} from the workspace.`,
+                  consequences: [`All ${w.count} ${w.lower} will be permanently deleted`],
+                  confirmPhrase: 'DELETE',
+                  destructiveLabel: `Delete all ${w.lower}`,
+                  run: w.run,
+                  toastSuccess: (n) => `${n} ${w.lower} removed.`,
+                })}
+              />
+            ))}
+          </div>
+
+          {/* Total reset — biggest button */}
+          <button
+            type="button"
+            onClick={() => setDanger({
+              id: 'full-reset',
+              title: 'Reset the entire workspace',
+              description: 'Nukes every business record and every non-admin user account.',
+              consequences: [
+                'All opportunities, contracts, fresh awards and past performances are deleted',
+                'All subcontractors, sourcing entries, BD tracker rows and non-sub reports are deleted',
+                'All notifications, activity logs, certifications and employee requests are cleared',
+                `All ${removableUserCount} non-admin user account(s) are removed (Capture Managers are kept so you can keep logging in)`,
+                'Settings (timing / activation mode) are preserved',
+              ],
+              confirmPhrase: 'RESET EVERYTHING',
+              destructiveLabel: 'Reset entire workspace',
+              run: resetEntireWorkspace,
+              toastSuccess: (n) => `Workspace reset · ${n} item(s) removed.`,
+            })}
+            className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-xs font-bold uppercase tracking-wide transition-all hover:brightness-110"
+            style={{
+              background: 'linear-gradient(135deg, rgba(244,63,94,0.22), rgba(190,18,60,0.28))',
+              border: '1px solid rgba(244,63,94,0.55)',
+              color: '#fecdd3',
+              boxShadow: '0 8px 24px rgba(244,63,94,0.12)',
+            }}
+          >
+            <Bomb size={14} /> Reset entire workspace
+          </button>
+        </div>
+      </div>
+
       <AnimatePresence>
         {modal && (
           <UserModal
@@ -772,6 +1039,21 @@ export default function AdminPage() {
           />
         )}
       </AnimatePresence>
+
+      {createPortal(
+        <AnimatePresence>
+          {danger && (
+            <DangerConfirmModal
+              key={danger.id}
+              action={danger}
+              busy={dangerBusy}
+              onClose={() => { if (!dangerBusy) setDanger(null) }}
+              onConfirm={runDanger}
+            />
+          )}
+        </AnimatePresence>,
+        document.body,
+      )}
     </div>
   )
 }
@@ -1183,6 +1465,174 @@ function PersonRow({
         </div>
       </div>
     </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Admin layout helpers — section headers + Danger Zone modal
+// ─────────────────────────────────────────────────────────────────────────────
+
+const SECTION_ACCENT: Record<'indigo' | 'emerald' | 'rose', { fg: string; bg: string; line: string }> = {
+  indigo:  { fg: '#a5b4fc', bg: 'rgba(99,102,241,0.12)',  line: 'rgba(99,102,241,0.25)' },
+  emerald: { fg: '#6ee7b7', bg: 'rgba(16,185,129,0.12)',  line: 'rgba(16,185,129,0.25)' },
+  rose:    { fg: '#fda4af', bg: 'rgba(244,63,94,0.14)',   line: 'rgba(244,63,94,0.30)' },
+}
+
+function SectionHeader({ icon, label, accent }: { icon: React.ReactNode; label: string; accent: 'indigo' | 'emerald' | 'rose' }) {
+  const palette = SECTION_ACCENT[accent]
+  return (
+    <div className="flex items-center gap-3 mb-3">
+      <span
+        className="inline-flex items-center justify-center w-6 h-6 rounded-md"
+        style={{ background: palette.bg, color: palette.fg }}
+      >
+        {icon}
+      </span>
+      <h2 className="text-[11px] font-bold uppercase tracking-[0.14em]" style={{ color: palette.fg }}>{label}</h2>
+      <div className="flex-1 h-px" style={{ background: `linear-gradient(to right, ${palette.line}, transparent)` }} />
+    </div>
+  )
+}
+
+type DangerAction = {
+  id: string
+  title: string
+  description: string
+  consequences: string[]
+  confirmPhrase: string
+  destructiveLabel: string
+  run: () => Promise<number>
+  toastSuccess: (count: number) => string
+}
+
+function DangerCard({ icon, label, subtitle, onClick, disabled, compact }: {
+  icon: React.ReactNode
+  label: string
+  subtitle: string
+  onClick: () => void
+  disabled?: boolean
+  compact?: boolean
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={`text-left transition-all rounded-xl ${compact ? 'px-3 py-2.5' : 'px-3.5 py-3'} disabled:cursor-not-allowed disabled:opacity-40`}
+      style={{
+        background: disabled ? 'rgba(15,23,42,0.4)' : 'rgba(244,63,94,0.06)',
+        border: `1px solid ${disabled ? 'rgba(148,163,184,0.12)' : 'rgba(244,63,94,0.25)'}`,
+      }}
+      onMouseEnter={e => { if (!disabled) e.currentTarget.style.background = 'rgba(244,63,94,0.12)' }}
+      onMouseLeave={e => { if (!disabled) e.currentTarget.style.background = 'rgba(244,63,94,0.06)' }}
+    >
+      <div className="flex items-center gap-2 mb-1">
+        <span className="text-rose-300">{icon}</span>
+        <span className={`font-semibold text-slate-100 ${compact ? 'text-[11px]' : 'text-xs'}`}>{label}</span>
+      </div>
+      <p className="text-[10px] text-slate-500">{subtitle}</p>
+    </button>
+  )
+}
+
+function DangerConfirmModal({ action, busy, onClose, onConfirm }: {
+  action: DangerAction
+  busy: boolean
+  onClose: () => void
+  onConfirm: () => void
+}) {
+  const [typed, setTyped] = useState('')
+  useEscapeKey(() => { if (!busy) onClose() })
+  const phraseMatches = typed.trim() === action.confirmPhrase
+  return (
+    <motion.div
+      key={`danger-${action.id}`}
+      className="fixed inset-0 z-[90] flex items-center justify-center p-2 sm:p-4"
+      style={{ pointerEvents: 'none' }}
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+    >
+      <div
+        className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+        style={{ pointerEvents: 'all' }}
+        onClick={() => !busy && onClose()}
+      />
+      <motion.div
+        initial={{ scale: 0.96, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
+        exit={{ scale: 0.96, opacity: 0 }}
+        transition={{ duration: 0.18 }}
+        className="relative z-10 w-full max-w-lg flex flex-col max-h-[min(92vh,860px)] overflow-hidden rounded-2xl"
+        style={{
+          background: 'rgba(7,14,34,0.98)',
+          border: '1px solid rgba(244,63,94,0.45)',
+          boxShadow: '0 24px 80px rgba(244,63,94,0.16), 0 24px 80px rgba(0,0,0,0.7)',
+          pointerEvents: 'all',
+        }}
+      >
+        <div className="flex items-start justify-between p-5 pb-3 flex-shrink-0 border-b border-rose-500/15">
+          <div className="flex items-start gap-3">
+            <div className="w-9 h-9 rounded-lg flex items-center justify-center bg-rose-500/15 text-rose-300 flex-shrink-0">
+              <AlertTriangle size={18} />
+            </div>
+            <div>
+              <h2 className="text-base font-bold text-white">{action.title}</h2>
+              <p className="text-xs text-slate-400 mt-0.5">{action.description}</p>
+            </div>
+          </div>
+          <button onClick={() => !busy && onClose()} className="btn-ghost p-1.5" disabled={busy}>
+            <X size={13} />
+          </button>
+        </div>
+
+        <div className="px-5 py-4 overflow-y-auto flex-1 space-y-4">
+          <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-200 mb-1.5">This action is permanent</p>
+            <ul className="text-xs text-slate-300 space-y-1.5">
+              {action.consequences.map((c, i) => (
+                <li key={i} className="flex gap-2">
+                  <span className="text-rose-400 leading-tight">•</span>
+                  <span>{c}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+          <div>
+            <label className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 block mb-1.5">
+              Type <span className="font-mono text-rose-300 normal-case tracking-normal">{action.confirmPhrase}</span> to confirm
+            </label>
+            <input
+              type="text"
+              autoFocus
+              value={typed}
+              onChange={e => setTyped(e.target.value)}
+              disabled={busy}
+              spellCheck={false}
+              autoComplete="off"
+              className="input-field font-mono"
+              placeholder={action.confirmPhrase}
+            />
+          </div>
+        </div>
+
+        <div className="flex gap-2 p-5 pt-3 flex-shrink-0 border-t border-rose-500/10">
+          <button type="button" onClick={onClose} disabled={busy} className="btn-secondary flex-1 justify-center">
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={!phraseMatches || busy}
+            className="flex-1 justify-center inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-40"
+            style={{
+              background: phraseMatches && !busy ? '#e11d48' : 'rgba(244,63,94,0.15)',
+              color: phraseMatches && !busy ? '#fff' : 'rgba(244,63,94,0.55)',
+              border: '1px solid rgba(244,63,94,0.35)',
+            }}
+          >
+            <Bomb size={13} /> {busy ? 'Working…' : action.destructiveLabel}
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
   )
 }
 

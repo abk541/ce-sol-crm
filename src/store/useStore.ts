@@ -51,6 +51,7 @@ import {
   upsertDeletionRequest,
   upsertBDSubmission,
   deleteBDSubmissionRecord,
+  bulkDeleteFromTable,
 } from '../lib/db'
 import { getAssignmentChain, isAssignedToAssociate } from '../lib/team'
 import { hasPermission } from '../lib/permissions'
@@ -205,6 +206,25 @@ interface AppState {
   needsPurge: boolean
   initializeStore: () => Promise<void>
   syncUsersFromDb: () => Promise<void>
+
+  // ── Admin bulk operations (destructive) ────────────────────────────
+  wipeOpportunities: () => Promise<number>
+  wipeContracts: (clientFilter?: string) => Promise<number>
+  wipeFreshAwards: () => Promise<number>
+  wipePastPerformances: () => Promise<number>
+  wipeSubcontractors: () => Promise<number>
+  wipeSubkDatabase: () => Promise<number>
+  wipeBDSubmissions: () => Promise<number>
+  wipeNonSubReports: () => Promise<number>
+  wipeDeletionRequests: () => Promise<number>
+  wipeNotifications: () => Promise<number>
+  wipeActivityLogs: () => Promise<number>
+  wipeCompanyCertifications: () => Promise<number>
+  wipeEmployeeRequests: () => Promise<number>
+  resetBDPipeline: () => Promise<number>
+  resetOperations: () => Promise<number>
+  wipeNonAdminUsers: () => Promise<number>
+  resetEntireWorkspace: () => Promise<number>
 }
 
 // Contract status advancement order
@@ -2417,6 +2437,297 @@ export const useStore = create<AppState>()(
         return current
       },
       setPref: (key, value) => set(s => ({ prefs: { ...s.prefs, [key]: value } })),
+
+      // ── Admin bulk operations (destructive) ──────────────────────────
+      // Each wipe* clears the matching local slice immediately and best-effort
+      // mirrors the deletion in Supabase. Local-only mode still resolves and
+      // returns the count that was removed locally.
+      wipeOpportunities: async () => {
+        const count = get().opportunities.length
+        set({ opportunities: [], bdSubmissions: [], nonSubReports: [], deletionRequests: [] })
+        if (isSupabaseConnected) {
+          // FK ON DELETE CASCADE handles comments/subcontractors/non_sub_reports
+          // children automatically, but bd_submissions/deletion_requests live
+          // in a separate table that may carry orphan refs — wipe them too.
+          const ok = await bulkDeleteFromTable('opportunities')
+          await bulkDeleteFromTable('bd_submissions')
+          await bulkDeleteFromTable('non_submission_reports')
+          await bulkDeleteFromTable('deletion_requests')
+          if (!ok) toast.error('Opportunities were cleared locally but the database wipe failed.')
+        }
+        get().logActivity({
+          action: `Wiped all opportunities (${count})`,
+          user: get().currentUser?.name || 'System',
+          userRole: get().currentUser?.role || 'CAPTURE_MANAGER',
+          entityType: 'admin',
+          entityName: 'opportunities',
+        })
+        return count
+      },
+
+      wipeContracts: async (clientFilter) => {
+        const all = get().contracts
+        const targets = clientFilter ? all.filter(c => c.client === clientFilter) : all
+        const targetIds = new Set(targets.map(c => c.id))
+        set({
+          contracts: clientFilter ? all.filter(c => !targetIds.has(c.id)) : [],
+        })
+        if (isSupabaseConnected) {
+          // Cascade deletes invoices/line items/POCs/locked subs/warnings
+          const ok = clientFilter
+            ? await bulkDeleteFromTable('contracts', { column: 'client', value: clientFilter })
+            : await bulkDeleteFromTable('contracts')
+          if (!ok) toast.error('Contracts were cleared locally but the database wipe failed.')
+        }
+        get().logActivity({
+          action: clientFilter
+            ? `Wiped contracts for ${clientFilter} (${targets.length})`
+            : `Wiped all contracts (${targets.length})`,
+          user: get().currentUser?.name || 'System',
+          userRole: get().currentUser?.role || 'CAPTURE_MANAGER',
+          entityType: 'admin',
+          entityName: 'contracts',
+        })
+        return targets.length
+      },
+
+      wipeFreshAwards: async () => {
+        const count = get().freshAwards.length
+        set({ freshAwards: [] })
+        if (isSupabaseConnected) {
+          const ok = await bulkDeleteFromTable('fresh_awards')
+          if (!ok) toast.error('Fresh awards were cleared locally but the database wipe failed.')
+        }
+        return count
+      },
+
+      wipePastPerformances: async () => {
+        const count = get().pastPerformances.length
+        set({ pastPerformances: [] })
+        if (isSupabaseConnected) {
+          const ok = await bulkDeleteFromTable('past_performances')
+          if (!ok) toast.error('Past performances were cleared locally but the database wipe failed.')
+        }
+        return count
+      },
+
+      wipeSubcontractors: async () => {
+        const count = get().subcontractors.length
+        set({ subcontractors: [] })
+        if (isSupabaseConnected) {
+          const ok = await bulkDeleteFromTable('subcontractors')
+          if (!ok) toast.error('Subcontractors were cleared locally but the database wipe failed.')
+        }
+        return count
+      },
+
+      wipeSubkDatabase: async () => {
+        const count = get().subkDatabase.length
+        set({ subkDatabase: [] })
+        if (isSupabaseConnected) {
+          const ok = await bulkDeleteFromTable('subk_database')
+          if (!ok) toast.error('Sourcing entries were cleared locally but the database wipe failed.')
+        }
+        return count
+      },
+
+      wipeBDSubmissions: async () => {
+        const count = get().bdSubmissions.length
+        set({ bdSubmissions: [] })
+        if (isSupabaseConnected) {
+          const ok = await bulkDeleteFromTable('bd_submissions')
+          if (!ok) toast.error('BD tracker entries were cleared locally but the database wipe failed.')
+        }
+        return count
+      },
+
+      wipeNonSubReports: async () => {
+        const count = get().nonSubReports.length
+        set({ nonSubReports: [] })
+        if (isSupabaseConnected) {
+          const ok = await bulkDeleteFromTable('non_submission_reports')
+          if (!ok) toast.error('Non-submission reports were cleared locally but the database wipe failed.')
+        }
+        return count
+      },
+
+      wipeDeletionRequests: async () => {
+        const count = get().deletionRequests.length
+        set({ deletionRequests: [] })
+        if (isSupabaseConnected) {
+          const ok = await bulkDeleteFromTable('deletion_requests')
+          if (!ok) toast.error('Deletion requests were cleared locally but the database wipe failed.')
+        }
+        return count
+      },
+
+      wipeNotifications: async () => {
+        const count = get().notifications.length
+        set({ notifications: [] })
+        if (isSupabaseConnected) {
+          const ok = await bulkDeleteFromTable('notifications')
+          if (!ok) toast.error('Notifications were cleared locally but the database wipe failed.')
+        }
+        return count
+      },
+
+      wipeActivityLogs: async () => {
+        const count = get().activityLogs.length
+        set({ activityLogs: [] })
+        if (isSupabaseConnected) {
+          const ok = await bulkDeleteFromTable('activity_logs')
+          if (!ok) toast.error('Activity logs were cleared locally but the database wipe failed.')
+        }
+        return count
+      },
+
+      wipeCompanyCertifications: async () => {
+        const count = get().companyCertifications.length
+        set({ companyCertifications: [] })
+        return count
+      },
+
+      wipeEmployeeRequests: async () => {
+        const count = get().employeeRequests.length
+        set({ employeeRequests: [] })
+        return count
+      },
+
+      resetBDPipeline: async () => {
+        const before =
+          get().opportunities.length +
+          get().bdSubmissions.length +
+          get().nonSubReports.length +
+          get().deletionRequests.length
+        set({ opportunities: [], bdSubmissions: [], nonSubReports: [], deletionRequests: [] })
+        if (isSupabaseConnected) {
+          await bulkDeleteFromTable('opportunities')
+          await bulkDeleteFromTable('bd_submissions')
+          await bulkDeleteFromTable('non_submission_reports')
+          await bulkDeleteFromTable('deletion_requests')
+        }
+        get().logActivity({
+          action: `Reset BD pipeline (${before} records cleared)`,
+          user: get().currentUser?.name || 'System',
+          userRole: get().currentUser?.role || 'CAPTURE_MANAGER',
+          entityType: 'admin',
+          entityName: 'bd-pipeline',
+        })
+        return before
+      },
+
+      resetOperations: async () => {
+        const before =
+          get().contracts.length +
+          get().freshAwards.length +
+          get().pastPerformances.length
+        set({ contracts: [], freshAwards: [], pastPerformances: [] })
+        if (isSupabaseConnected) {
+          await bulkDeleteFromTable('contracts')
+          await bulkDeleteFromTable('fresh_awards')
+          await bulkDeleteFromTable('past_performances')
+        }
+        get().logActivity({
+          action: `Reset operations (${before} records cleared)`,
+          user: get().currentUser?.name || 'System',
+          userRole: get().currentUser?.role || 'CAPTURE_MANAGER',
+          entityType: 'admin',
+          entityName: 'operations',
+        })
+        return before
+      },
+
+      wipeNonAdminUsers: async () => {
+        // Keep CAPTURE_MANAGER (admin) accounts; remove everyone else.
+        const all = get().users
+        const survivors = all.filter(u => u.role === 'CAPTURE_MANAGER')
+        const removed = all.filter(u => u.role !== 'CAPTURE_MANAGER')
+        set(s => ({
+          users: survivors,
+          employees: syncEmployeesWithUsers(survivors, s.employees),
+        }))
+        if (isSupabaseConnected) {
+          // Remove rows one at a time so the existing per-row helper handles
+          // any FK side-effects already encoded in deleteUserRecord.
+          await Promise.all(removed.map(u => deleteUserRecord(u.id)))
+        }
+        get().logActivity({
+          action: `Removed ${removed.length} non-admin user account(s)`,
+          user: get().currentUser?.name || 'System',
+          userRole: get().currentUser?.role || 'CAPTURE_MANAGER',
+          entityType: 'admin',
+          entityName: 'users',
+        })
+        return removed.length
+      },
+
+      resetEntireWorkspace: async () => {
+        // Total wipe: every business slice + every non-admin user.
+        // Admin (CAPTURE_MANAGER) accounts and their derived employees are kept
+        // so the workspace stays usable after the reset.
+        const totals = {
+          opportunities: get().opportunities.length,
+          contracts: get().contracts.length,
+          freshAwards: get().freshAwards.length,
+          pastPerformances: get().pastPerformances.length,
+          subcontractors: get().subcontractors.length,
+          subkDatabase: get().subkDatabase.length,
+          bdSubmissions: get().bdSubmissions.length,
+          nonSubReports: get().nonSubReports.length,
+          deletionRequests: get().deletionRequests.length,
+          notifications: get().notifications.length,
+          activityLogs: get().activityLogs.length,
+          companyCertifications: get().companyCertifications.length,
+          employeeRequests: get().employeeRequests.length,
+        }
+        const total = Object.values(totals).reduce((sum, n) => sum + n, 0)
+        const all = get().users
+        const survivors = all.filter(u => u.role === 'CAPTURE_MANAGER')
+        const removedUsers = all.filter(u => u.role !== 'CAPTURE_MANAGER')
+
+        set(s => ({
+          opportunities: [],
+          contracts: [],
+          freshAwards: [],
+          pastPerformances: [],
+          subcontractors: [],
+          subkDatabase: [],
+          bdSubmissions: [],
+          nonSubReports: [],
+          deletionRequests: [],
+          notifications: [],
+          activityLogs: [],
+          companyCertifications: [],
+          employeeRequests: [],
+          users: survivors,
+          employees: syncEmployeesWithUsers(survivors, s.employees),
+        }))
+
+        if (isSupabaseConnected) {
+          // Order matters when not all FKs cascade — go children first.
+          await bulkDeleteFromTable('bd_submissions')
+          await bulkDeleteFromTable('non_submission_reports')
+          await bulkDeleteFromTable('deletion_requests')
+          await bulkDeleteFromTable('contracts')          // cascades invoices/line items/POCs/locks/warnings
+          await bulkDeleteFromTable('opportunities')      // cascades comments/subcontractors
+          await bulkDeleteFromTable('fresh_awards')
+          await bulkDeleteFromTable('past_performances')
+          await bulkDeleteFromTable('subcontractors')
+          await bulkDeleteFromTable('subk_database')
+          await bulkDeleteFromTable('notifications')
+          await bulkDeleteFromTable('activity_logs')
+          await Promise.all(removedUsers.map(u => deleteUserRecord(u.id)))
+        }
+
+        get().logActivity({
+          action: `Reset entire workspace (${total} business records and ${removedUsers.length} user(s) removed)`,
+          user: get().currentUser?.name || 'System',
+          userRole: get().currentUser?.role || 'CAPTURE_MANAGER',
+          entityType: 'admin',
+          entityName: 'workspace',
+        })
+        return total + removedUsers.length
+      },
     }),
     {
       name: 'ces-crm-store',

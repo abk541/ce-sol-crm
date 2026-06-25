@@ -522,7 +522,7 @@ export interface ActivityLog {
   action: string
   user: string
   userRole: Role
-  entityType: 'opportunity' | 'contract' | 'subcontractor' | 'user' | 'report' | 'fresh_award' | 'past_performance' | 'hr'
+  entityType: 'opportunity' | 'contract' | 'subcontractor' | 'user' | 'report' | 'fresh_award' | 'past_performance' | 'hr' | 'admin'
   entityId?: string
   entityName?: string
   createdAt: string
