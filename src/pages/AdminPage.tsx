@@ -704,7 +704,7 @@ export default function AdminPage() {
             { id: 'roles'     as AdminTab, label: 'Roles & Permissions', Icon: Shield,        accent: 'violet'  as const },
             { id: 'workspace' as AdminTab, label: 'Workspace',           Icon: Save,          accent: 'indigo'  as const },
             { id: 'health'    as AdminTab, label: 'System Health',       Icon: Activity,      accent: 'cyan'    as const },
-            { id: 'danger'    as AdminTab, label: 'Danger Zone',         Icon: AlertTriangle, accent: 'rose'    as const },
+            { id: 'danger'    as AdminTab, label: 'Reset & Maintenance',  Icon: AlertTriangle, accent: 'rose'    as const },
           ]).map(t => {
             const active  = activeTab === t.id
             const palette = SECTION_ACCENT[t.accent]
@@ -1530,10 +1530,11 @@ export default function AdminPage() {
           </div>
         </div>
       </div>
+      </>)}
 
-      {/* ── Danger Zone ──────────────────────────────────────────────── */}
+      {activeTab === 'danger' && (<>
       <div className="mt-2">
-        <SectionHeader icon={<AlertTriangle size={14} />} label="Danger zone" accent="rose" />
+        <SectionHeader icon={<AlertTriangle size={14} />} label="Reset &amp; maintenance" accent="rose" />
         <div
           className="rounded-2xl p-5"
           style={{
