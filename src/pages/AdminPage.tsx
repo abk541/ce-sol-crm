@@ -28,6 +28,10 @@ const ROLE_BADGE: Record<Role, string> = {
   OPS_MANAGER:     'bg-cyan-500/15 text-cyan-300 border-cyan-500/25',
 }
 
+// Top-level admin tabs. Each tab maps to one of the existing SectionHeader
+// accents below so the visual identity is preserved.
+type AdminTab = 'people' | 'roles' | 'workspace' | 'health' | 'danger'
+
 // Returns the team a user lives in on the org chart. Managers are implicit;
 // non-managers default to 'BD' for legacy users with no `team` set.
 function teamOf(u: User): EmployeeTeam | null {
@@ -493,6 +497,7 @@ export default function AdminPage() {
   const [createRole, setCreateRole] = useState<Role | null>(null)
   const [createTeam, setCreateTeam] = useState<EmployeeTeam | null>(null)
   const [createManagerId, setCreateManagerId] = useState<string | null>(null)
+  const [activeTab, setActiveTab] = useState<AdminTab>('people')
   const [view, setView] = useState<'hierarchy' | 'table'>('hierarchy')
   const [dragId, setDragId] = useState<string | null>(null)
   const [dragOverKey, setDragOverKey] = useState<string | null>(null)
@@ -665,18 +670,62 @@ export default function AdminPage() {
 
   return (
     <div className="p-6 page-enter">
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-white tracking-tight flex items-center gap-2">
-            <Shield size={20} className="text-indigo-400" /> User Management
-          </h1>
-          <p className="text-slate-500 text-sm mt-0.5">{users.length} users · {users.filter(u => u.status === 'active').length} active</p>
+      <div className="mb-6">
+        <div className="flex items-start justify-between gap-4 mb-4">
+          <div>
+            <h1 className="text-2xl font-bold text-white tracking-tight flex items-center gap-2">
+              <Shield size={20} className="text-indigo-400" /> Admin
+            </h1>
+            <p className="text-slate-500 text-sm mt-0.5">
+              {activeTab === 'people'    && <>{users.length} users · {users.filter(u => u.status === 'active').length} active</>}
+              {activeTab === 'roles'     && 'Edit role permissions and per-user overrides'}
+              {activeTab === 'workspace' && 'Settings, snapshots, and import / export'}
+              {activeTab === 'health'    && 'Local vs Supabase drift across every business table'}
+              {activeTab === 'danger'    && 'Reset and wipe operations — irreversible'}
+            </p>
+          </div>
+          {activeTab === 'people' && (
+            <button onClick={() => openCreate()} className="btn-primary">
+              <Plus size={14} /> Create User
+            </button>
+          )}
         </div>
-        <button onClick={() => openCreate()} className="btn-primary">
-          <Plus size={14} /> Create User
-        </button>
+
+        {/* Top tab navigation. Underline style with the section accent colour
+           so each tab keeps the visual identity it had as a SectionHeader. */}
+        <div
+          role="tablist"
+          aria-label="Admin sections"
+          className="flex items-center gap-1 overflow-x-auto -mx-1 px-1"
+          style={{ borderBottom: '1px solid rgba(99,102,241,0.18)' }}
+        >
+          {([
+            { id: 'people'    as AdminTab, label: 'People',              Icon: Users,         accent: 'emerald' as const },
+            { id: 'roles'     as AdminTab, label: 'Roles & Permissions', Icon: Shield,        accent: 'violet'  as const },
+            { id: 'workspace' as AdminTab, label: 'Workspace',           Icon: Save,          accent: 'indigo'  as const },
+            { id: 'health'    as AdminTab, label: 'System Health',       Icon: Activity,      accent: 'cyan'    as const },
+            { id: 'danger'    as AdminTab, label: 'Danger Zone',         Icon: AlertTriangle, accent: 'rose'    as const },
+          ]).map(t => {
+            const active  = activeTab === t.id
+            const palette = SECTION_ACCENT[t.accent]
+            return (
+              <button
+                key={t.id}
+                role="tab"
+                aria-selected={active}
+                onClick={() => setActiveTab(t.id)}
+                className={`relative flex items-center gap-2 px-4 py-2.5 text-sm font-semibold whitespace-nowrap transition-colors -mb-px border-b-2 ${active ? '' : 'border-transparent text-slate-400 hover:text-slate-200'}`}
+                style={active ? { color: palette.fg, borderColor: palette.fg } : undefined}
+              >
+                <t.Icon size={14} />
+                {t.label}
+              </button>
+            )
+          })}
+        </div>
       </div>
 
+      {activeTab === 'workspace' && (<>
       <SectionHeader icon={<Save size={14} />} label="Workspace settings" accent="indigo" />
 
       <div className="glass rounded-2xl p-4 mb-6">
@@ -761,8 +810,9 @@ export default function AdminPage() {
           </div>
         </div>
       </div>
+      </>)}
 
-      {/* ── System Health ────────────────────────────────────────────── */}
+      {activeTab === 'health' && (<>
       <SectionHeader icon={<Activity size={14} />} label="System health" accent="cyan" />
       <div className="glass rounded-2xl p-4 mb-6">
         <div className="flex items-start justify-between gap-3 mb-3">
@@ -883,8 +933,9 @@ export default function AdminPage() {
           </>
         )}
       </div>
+      </>)}
 
-      {/* Stats row */}
+      {activeTab === 'people' && (<>
       <SectionHeader icon={<Users size={14} />} label="People &amp; roles" accent="emerald" />
 
       <div className="grid grid-cols-3 sm:grid-cols-6 gap-3 mb-6">
@@ -1056,9 +1107,10 @@ export default function AdminPage() {
         </table>
       </div>
       )}
+      </>)}
 
-      {/* ── Permissions matrix ───────────────────────────────────────── */}
-      <div className="mt-8">
+      {activeTab === 'roles' && (<>
+      <div className="mt-2">
         <SectionHeader icon={<Shield size={14} />} label="Permissions matrix" accent="violet" />
         <div className="glass rounded-2xl p-4 mb-6">
           <div className="flex items-start justify-between gap-3 flex-wrap">
@@ -1391,9 +1443,10 @@ export default function AdminPage() {
           })()}
         </div>
       </div>
+      </>)}
 
-      {/* ── Workspace snapshot ───────────────────────────────────────── */}
-      <div className="mt-8">
+      {activeTab === 'workspace' && (<>
+      <div className="mt-2">
         <SectionHeader icon={<HardDrive size={14} />} label="Workspace snapshot" accent="amber" />
         <div className="glass rounded-2xl p-4 mb-6">
           <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
@@ -1479,7 +1532,7 @@ export default function AdminPage() {
       </div>
 
       {/* ── Danger Zone ──────────────────────────────────────────────── */}
-      <div className="mt-10">
+      <div className="mt-2">
         <SectionHeader icon={<AlertTriangle size={14} />} label="Danger zone" accent="rose" />
         <div
           className="rounded-2xl p-5"
@@ -1684,6 +1737,7 @@ export default function AdminPage() {
           </button>
         </div>
       </div>
+      </>)}
 
       <AnimatePresence>
         {modal && (
