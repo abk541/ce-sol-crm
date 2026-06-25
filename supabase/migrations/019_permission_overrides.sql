@@ -32,19 +32,37 @@ CREATE TABLE IF NOT EXISTS public.user_permission_overrides (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Same permissive RLS pattern the rest of the schema uses.
+-- Same permissive RLS pattern the rest of the schema uses. Postgres does NOT
+-- support CREATE POLICY IF NOT EXISTS, so each policy is guarded by a
+-- pg_policies lookup (same pattern as 012 / 014 / 20260611000100).
 ALTER TABLE public.role_permission_overrides ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.user_permission_overrides ENABLE ROW LEVEL SECURITY;
 
-DO $$ DECLARE tbl TEXT;
+DO $$
 BEGIN
-  FOREACH tbl IN ARRAY ARRAY[
-    'role_permission_overrides',
-    'user_permission_overrides'
-  ] LOOP
-    EXECUTE format('
-      CREATE POLICY IF NOT EXISTS "allow_all_%s" ON public.%I
-      FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
-    ', tbl, tbl);
-  END LOOP;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public'
+      AND tablename  = 'role_permission_overrides'
+      AND policyname = 'allow_all_role_permission_overrides'
+  ) THEN
+    CREATE POLICY "allow_all_role_permission_overrides"
+      ON public.role_permission_overrides
+      FOR ALL TO anon, authenticated
+      USING (true) WITH CHECK (true);
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public'
+      AND tablename  = 'user_permission_overrides'
+      AND policyname = 'allow_all_user_permission_overrides'
+  ) THEN
+    CREATE POLICY "allow_all_user_permission_overrides"
+      ON public.user_permission_overrides
+      FOR ALL TO anon, authenticated
+      USING (true) WITH CHECK (true);
+  END IF;
 END $$;
+
+NOTIFY pgrst, 'reload schema';
