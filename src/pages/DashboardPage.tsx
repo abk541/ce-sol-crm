@@ -6,7 +6,7 @@ import {
   Clock, AlertTriangle, Flame, Trophy, Activity,
   TrendingUp, TrendingDown, BarChart2, Percent,
   X, ExternalLink, ChevronRight, Users, Zap,
-  MoreHorizontal, Building2,
+  MoreHorizontal, Building2, CheckCircle2,
 } from 'lucide-react'
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -23,7 +23,7 @@ import { getAssignmentChain } from '../lib/team'
 import { hasAnyPermission, hasPermission, ROLE_LABELS } from '../lib/permissions'
 import { chartColorsForTheme, useAppearance } from '../lib/appearance'
 import { NAICS_CODES } from '../data/naics'
-import type { BDSubmission, Contract, Employee, EmployeeTeam, Opportunity, User } from '../types'
+import type { BDSubmission, Contract, Employee, EmployeeTeam, HierarchyRole, NonSubmissionReport, Opportunity, User } from '../types'
 
 const stagger = { animate: { transition: { staggerChildren: 0.05 } } }
 const fadeUp = {
@@ -1777,6 +1777,322 @@ function MemberDetailView({
   )
 }
 
+const BD_GOAL_BY_ROLE: Record<HierarchyRole, number> = {
+  BD_MANAGER: 20,
+  TEAM_LEAD: 15,
+  ASSOCIATE: 10,
+}
+
+type PiePersonMetric = 'status' | 'type' | 'setAside' | 'subsVsNon' | 'winsVsLosses'
+
+const PIE_METRIC_OPTIONS: Array<{ id: PiePersonMetric; label: string }> = [
+  { id: 'status', label: 'Status' },
+  { id: 'type', label: 'Type' },
+  { id: 'setAside', label: 'Set-aside' },
+  { id: 'subsVsNon', label: 'Sub vs Non-sub' },
+  { id: 'winsVsLosses', label: 'Wins vs Losses' },
+]
+
+function BdPeopleGrid({
+  bdEmployees,
+  users,
+  submissions,
+  nonSubs,
+  visibleOpps,
+  employees,
+  chartColors,
+  accent,
+  secondaryAccent,
+  tertiaryAccent,
+  onPickMember,
+}: {
+  bdEmployees: Employee[]
+  users: User[]
+  submissions: BDSubmission[]
+  nonSubs: NonSubmissionReport[]
+  visibleOpps: Opportunity[]
+  employees: Employee[]
+  chartColors: string[]
+  accent: string
+  secondaryAccent: string
+  tertiaryAccent: string
+  onPickMember: (employeeId: string) => void
+}) {
+  const sorted = useMemo(() => {
+    const order: Record<HierarchyRole, number> = { BD_MANAGER: 0, TEAM_LEAD: 1, ASSOCIATE: 2 }
+    return [...bdEmployees].sort((a, b) => (order[a.role] - order[b.role]) || a.name.localeCompare(b.name))
+  }, [bdEmployees])
+
+  return (
+    <DashboardPanel
+      title="Business Development Team"
+      subtitle="Per-person stats plus a switchable pie chart per card. Click the avatar to drill down."
+    >
+      {sorted.length === 0 ? (
+        <EmptyDashboardState label="No Business Development people yet." />
+      ) : (
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+          {sorted.map(employee => (
+            <BdPersonCard
+              key={employee.id}
+              employee={employee}
+              users={users}
+              submissions={submissions}
+              nonSubs={nonSubs}
+              visibleOpps={visibleOpps}
+              employees={employees}
+              chartColors={chartColors}
+              accent={accent}
+              secondaryAccent={secondaryAccent}
+              tertiaryAccent={tertiaryAccent}
+              onPick={() => onPickMember(employee.id)}
+            />
+          ))}
+        </div>
+      )}
+    </DashboardPanel>
+  )
+}
+
+function BdPersonCard({
+  employee,
+  users,
+  submissions,
+  nonSubs,
+  visibleOpps,
+  employees,
+  chartColors,
+  accent,
+  secondaryAccent,
+  tertiaryAccent,
+  onPick,
+}: {
+  employee: Employee
+  users: User[]
+  submissions: BDSubmission[]
+  nonSubs: NonSubmissionReport[]
+  visibleOpps: Opportunity[]
+  employees: Employee[]
+  chartColors: string[]
+  accent: string
+  secondaryAccent: string
+  tertiaryAccent: string
+  onPick: () => void
+}) {
+  const [metric, setMetric] = useState<PiePersonMetric>('status')
+
+  const userRecord = users.find(u => (u.email || '').toLowerCase() === (employee.email || '').toLowerCase())
+  const userName = (userRecord?.username || '').trim().toLowerCase()
+
+  const personalSubs = useMemo(
+    () => submissions.filter(sub => matchesEmployee(employee, sub, visibleOpps, employees)),
+    [submissions, employee, visibleOpps, employees],
+  )
+  const personalNonSubs = useMemo(
+    () => nonSubs.filter(report => report.status !== 'DECLINED' && report.agentUsername.toLowerCase() === userName),
+    [nonSubs, userName],
+  )
+
+  const wins = personalSubs.filter(s => s.status === 'AWARDED').length
+  const losses = personalSubs.filter(s => ['LOST', 'DROPPED', 'CANCELED'].includes(s.status)).length
+  const submissionsCount = personalSubs.length
+  const nonSubsCount = personalNonSubs.length
+  const total = submissionsCount + nonSubsCount
+  const successRate = total ? Math.round((submissionsCount / total) * 100) : 0
+  const winRate = submissionsCount ? Math.round((wins / submissionsCount) * 100) : 0
+  const goal = BD_GOAL_BY_ROLE[employee.role]
+  const goalPct = goal ? Math.min(100, Math.round((submissionsCount / goal) * 100)) : 0
+  const goalAchieved = submissionsCount >= goal && goal > 0
+
+  const pieData = useMemo(() => {
+    if (metric === 'status') return groupRows(personalSubs, s => s.status || 'Unspecified')
+    if (metric === 'type') return groupRows(personalSubs, s => s.type || 'Unspecified')
+    if (metric === 'setAside') return groupRows(personalSubs, s => submissionOpportunity(s, visibleOpps)?.setAside || 'Unspecified')
+    if (metric === 'subsVsNon') return [
+      { name: 'Submissions', value: submissionsCount, count: submissionsCount },
+      { name: 'Non-Submissions', value: nonSubsCount, count: nonSubsCount },
+    ]
+    if (metric === 'winsVsLosses') return [
+      { name: 'Wins', value: wins, count: wins },
+      { name: 'Losses', value: losses, count: losses },
+      { name: 'Pending', value: Math.max(0, submissionsCount - wins - losses), count: Math.max(0, submissionsCount - wins - losses) },
+    ]
+    return []
+  }, [metric, personalSubs, visibleOpps, submissionsCount, nonSubsCount, wins, losses])
+
+  const pieColorFor = (name: string, idx: number): string => {
+    if (metric === 'status') return STATUS_COLORS[name] || chartColors[idx % chartColors.length]
+    if (metric === 'subsVsNon') return name === 'Submissions' ? secondaryAccent : '#F87171'
+    if (metric === 'winsVsLosses') {
+      if (name === 'Wins') return accent
+      if (name === 'Losses') return '#F87171'
+      return chartColors[5] || tertiaryAccent
+    }
+    return chartColors[idx % chartColors.length]
+  }
+
+  const hasPieData = pieData.some(row => (row.count ?? 0) > 0)
+  const statusColor = goalAchieved ? '#10B981' : tertiaryAccent
+  const StatusIcon = goalAchieved ? CheckCircle2 : Clock
+
+  return (
+    <motion.div
+      whileHover={{ y: -2 }}
+      className="rounded-2xl border overflow-hidden flex flex-col"
+      style={{ background: 'var(--exec-panel-soft)', borderColor: 'var(--exec-border)' }}
+    >
+      {/* Header */}
+      <div className="px-3.5 pt-3.5 pb-2.5">
+        <div className="flex items-start justify-between gap-2">
+          <button
+            type="button"
+            onClick={onPick}
+            className="flex items-center gap-2.5 min-w-0 flex-1 text-left transition-opacity hover:opacity-80"
+          >
+            <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-[10px] font-black text-white bg-gradient-to-br ${avatarColor(employee.avatar)} flex-shrink-0`}>
+              {employee.avatar.slice(0, 2)}
+            </div>
+            <div className="min-w-0">
+              <p className="truncate text-[13px] font-black" style={{ color: 'var(--text-primary)' }}>{employee.name}</p>
+              <div className="mt-0.5 flex items-center gap-1">
+                <span
+                  className="rounded px-1.5 py-0.5 text-[9px] font-black tracking-wider"
+                  style={{ background: `${accent}1A`, color: accent }}
+                >
+                  {ROLE_BADGE_LABEL(employee.role)}
+                </span>
+                <span
+                  className="rounded px-1.5 py-0.5 text-[9px] font-black tracking-wider"
+                  style={{ background: 'rgba(99,102,241,0.10)', color: '#A5B4FC' }}
+                >
+                  BD
+                </span>
+              </div>
+            </div>
+          </button>
+          <div className="flex-shrink-0 text-right">
+            <p className="text-2xl font-black leading-none" style={{ color: 'var(--text-primary)' }}>
+              <AnimatedNumber value={total} />
+            </p>
+            <p className="mt-0.5 text-[9px] font-bold tracking-wider" style={{ color: 'var(--text-tertiary)' }}>TOTAL</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Stats rows */}
+      <div className="px-3.5 pb-2 space-y-1.5">
+        <BdStatRow label="Submissions" value={submissionsCount} color={secondaryAccent} />
+        <BdStatRow label="Non-Submissions" value={nonSubsCount} color="#F87171" />
+        <BdStatRow label="Success Rate" value={`${successRate}%`} color={successRate >= 60 ? '#10B981' : successRate >= 40 ? '#F59E0B' : '#F87171'} />
+        {wins > 0 && <BdStatRow label="Win Rate" value={`${winRate}%`} color="#10B981" sub={`${wins} wins`} />}
+      </div>
+
+      {/* Goal progress */}
+      <div className="px-3.5 pb-3">
+        <div className="mb-1 flex items-center justify-between">
+          <div className="flex items-center gap-1">
+            <Target size={9} style={{ color: 'var(--text-tertiary)' }} />
+            <span className="text-[9px] font-bold tracking-wider" style={{ color: 'var(--text-tertiary)' }}>GOAL</span>
+          </div>
+          <span className="text-[10px] font-black" style={{ color: statusColor }}>{submissionsCount}/{goal}</span>
+        </div>
+        <div className="h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+          <motion.div
+            className="h-full rounded-full"
+            style={{ background: statusColor, boxShadow: `0 0 6px ${statusColor}80` }}
+            initial={{ width: 0 }}
+            animate={{ width: `${goalPct}%` }}
+            transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
+          />
+        </div>
+      </div>
+
+      {/* Metric selector pills */}
+      <div className="px-3.5 pb-2">
+        <div className="flex flex-wrap gap-1">
+          {PIE_METRIC_OPTIONS.map(opt => {
+            const active = metric === opt.id
+            return (
+              <button
+                key={opt.id}
+                type="button"
+                onClick={() => setMetric(opt.id)}
+                className="rounded-full border px-2 py-0.5 text-[9px] font-black uppercase tracking-wide transition-colors"
+                style={{
+                  borderColor: active ? accent : 'var(--exec-border)',
+                  background: active ? `${accent}22` : 'transparent',
+                  color: active ? accent : 'var(--text-tertiary)',
+                }}
+              >
+                {opt.label}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* Pie chart */}
+      <div className="px-2 pb-3">
+        {!hasPieData ? (
+          <div className="flex h-[140px] items-center justify-center text-[11px]" style={{ color: 'var(--text-muted)' }}>
+            No data for this metric
+          </div>
+        ) : (
+          <div className="flex h-[140px] items-center gap-2">
+            <ResponsiveContainer width="55%" height="100%">
+              <PieChart>
+                <Pie data={pieData} dataKey="count" nameKey="name" innerRadius={28} outerRadius={50} paddingAngle={2} stroke="transparent" isAnimationActive={false}>
+                  {pieData.map((row, idx) => (
+                    <Cell key={row.name} fill={pieColorFor(row.name, idx)} />
+                  ))}
+                </Pie>
+                <Tooltip content={<ExecutiveTooltip />} />
+              </PieChart>
+            </ResponsiveContainer>
+            <div className="flex-1 space-y-1 pr-1">
+              {pieData.map((row, idx) => {
+                const color = pieColorFor(row.name, idx)
+                return (
+                  <div key={row.name} className="flex items-center justify-between gap-2 text-[10px]">
+                    <span className="flex min-w-0 items-center gap-1.5 truncate font-bold" style={{ color: 'var(--text-secondary)' }}>
+                      <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full" style={{ background: color }} />
+                      <span className="truncate">{row.name}</span>
+                    </span>
+                    <span className="flex-shrink-0 font-black" style={{ color: 'var(--text-primary)' }}>{row.count}</span>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Status badge */}
+      <div
+        className="flex items-center justify-center gap-1.5 border-t px-3.5 py-1.5"
+        style={{ background: `${statusColor}14`, borderColor: `${statusColor}28` }}
+      >
+        <StatusIcon size={12} style={{ color: statusColor }} />
+        <span className="text-[10px] font-black tracking-wider" style={{ color: statusColor }}>
+          {goalAchieved ? 'GOAL ACHIEVED' : 'IN PROGRESS'}
+        </span>
+      </div>
+    </motion.div>
+  )
+}
+
+function BdStatRow({ label, value, color, sub }: { label: string; value: number | string; color: string; sub?: string }) {
+  return (
+    <div className="flex items-center justify-between">
+      <span className="text-[11px]" style={{ color: 'var(--text-tertiary)' }}>{label}</span>
+      <div className="flex items-baseline gap-1.5">
+        {sub && <span className="text-[9px]" style={{ color: 'var(--text-tertiary)' }}>{sub}</span>}
+        <span className="text-[12px] font-black" style={{ color }}>{value}</span>
+      </div>
+    </div>
+  )
+}
+
 function ExecutiveDashboard() {
   const { opportunities, nonSubReports, activityLogs, currentUser, bdSubmissions, contracts, employees, users } = useStore()
   const { prefs } = useAppearance()
@@ -1851,6 +2167,15 @@ function ExecutiveDashboard() {
   const opsPeriodSubs = useMemo(
     () => periodSubmissions.filter(submission => submissionTeam(submission) === 'OPS'),
     [periodSubmissions, submissionTeam],
+  )
+
+  const bdEmployees = useMemo(
+    () => employees.filter(e => (e.team ?? 'BD') === 'BD'),
+    [employees],
+  )
+  const periodNonSubs = useMemo(
+    () => nonSubReports.filter(r => r.status !== 'DECLINED' && filterByPeriod(r.submittedAt, period)),
+    [nonSubReports, period],
   )
 
   const activeOpportunities = bdPeriodOpps.filter(opp => ['ACTIVE', 'DISCUSSION'].includes(opp.status))
@@ -2206,8 +2531,6 @@ function ExecutiveDashboard() {
         })}
       </motion.div>
 
-      <TeamStatisticsPanel defaultPeriod={period} />
-
       {tab === 'bd' && (
         <motion.div variants={stagger} initial="initial" animate="animate" className="space-y-5">
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">
@@ -2222,7 +2545,7 @@ function ExecutiveDashboard() {
               subtitle="Pipeline distribution across statuses"
               data={oppsByStatus}
               chartColors={chartColors}
-              total={periodOpps.length}
+              total={bdPeriodOpps.length}
               onSlice={() => goToPipeline()}
               colorOverride={(name) => STATUS_COLORS[name]}
             />
@@ -2231,7 +2554,7 @@ function ExecutiveDashboard() {
               subtitle="Active socio-economic designations"
               data={oppsBySetAside}
               chartColors={chartColors}
-              total={periodOpps.length}
+              total={bdPeriodOpps.length}
               onSlice={() => goToPipeline()}
             />
             <BdPiePanel
@@ -2239,7 +2562,7 @@ function ExecutiveDashboard() {
               subtitle="Priority mix in the current period"
               data={oppsByPriority}
               chartColors={chartColors}
-              total={periodOpps.length}
+              total={bdPeriodOpps.length}
               onSlice={() => goToPipeline()}
             />
             <BdPiePanel
@@ -2247,10 +2570,24 @@ function ExecutiveDashboard() {
               subtitle="OTJ, recurring and other vehicles"
               data={oppsByType}
               chartColors={chartColors}
-              total={periodOpps.length}
+              total={bdPeriodOpps.length}
               onSlice={() => goToPipeline()}
             />
           </div>
+
+          <BdPeopleGrid
+            bdEmployees={bdEmployees}
+            users={users}
+            submissions={bdPeriodSubs}
+            nonSubs={periodNonSubs}
+            visibleOpps={visibleOpps}
+            employees={employees}
+            chartColors={chartColors}
+            accent={accent}
+            secondaryAccent={secondaryAccent}
+            tertiaryAccent={tertiaryAccent}
+            onPickMember={(employeeId) => { setTab('team'); setBdTeamView({ mode: 'member', employeeId }) }}
+          />
 
           <div className="exec-section-grid">
             <DashboardPanel title="Submission Trend" subtitle="Submissions, awards and dollar value by month">
