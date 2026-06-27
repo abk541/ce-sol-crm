@@ -22,6 +22,7 @@ export type Permission =
   | 'contract:comment'
   | 'contract:allCommChannels'
   | 'operations:manage'
+  | 'pastPerformance:manage'
   | 'hr:manageCertifications'
   | 'hr:viewCertifications'
   | 'hr:reviewRequests'
@@ -57,6 +58,7 @@ const ALL_PERMISSIONS: Permission[] = [
   'contract:comment',
   'contract:allCommChannels',
   'operations:manage',
+  'pastPerformance:manage',
   'hr:manageCertifications',
   'hr:viewCertifications',
   'hr:reviewRequests',
@@ -87,6 +89,7 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   'contract:comment':            'Post on contract Comm Progress',
   'contract:allCommChannels':    'Post on all Comm Progress channels (KO, COR, End User, Other)',
   'operations:manage':           'Manage operations workflow',
+  'pastPerformance:manage':      'Edit / delete past performance records',
   'hr:manageCertifications':     'Manage company certifications',
   'hr:viewCertifications':       'View company certifications',
   'hr:reviewRequests':           'Review HR / employee requests',
@@ -100,6 +103,7 @@ export const PERMISSION_GROUP_LABELS: Record<string, string> = {
   nonSubmission: 'Non-submission reporting',
   contract:      'Contracts',
   operations:    'Operations',
+  pastPerformance: 'Past Performance',
   hr:            'HR',
   comment:       'Comments',
 }
@@ -148,6 +152,7 @@ export const PERMISSIONS_BY_ROLE: Record<Role, Permission[]> = {
     'contract:comment',
     'contract:allCommChannels',
     'operations:manage',
+    'pastPerformance:manage',
     'hr:viewCertifications',
   ],
 }

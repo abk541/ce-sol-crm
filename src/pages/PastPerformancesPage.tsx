@@ -13,6 +13,7 @@ import type { Contract, ContractPoC, PastPerformance, ContractType, ContractFina
 import { formatCurrency, useEscapeKey } from '../lib/utils'
 import { generatePastPerformancePdf } from '../lib/pastPerformancePdf'
 import FloatingActionMenu from '../components/shared/FloatingActionMenu'
+import { hasPermission } from '../lib/permissions'
 import toast from 'react-hot-toast'
 
 type PocDraft = { name: string; email: string; phone: string }
@@ -594,7 +595,7 @@ function EditPPModal({ pp, onClose }: { pp: PastPerformance; onClose: () => void
   )
 }
 
-function DetailDrawerPP({ pp, onClose, onExport, onEdit }: { pp: PastPerformance; onClose: () => void; onExport: (pp: PastPerformance) => void; onEdit: (pp: PastPerformance) => void }) {
+function DetailDrawerPP({ pp, onClose, onExport, onEdit, canManage }: { pp: PastPerformance; onClose: () => void; onExport: (pp: PastPerformance) => void; onEdit: (pp: PastPerformance) => void; canManage: boolean }) {
   useEscapeKey(onClose)
   const { contracts } = useStore()
   const linkedContract = useMemo(
@@ -630,11 +631,13 @@ function DetailDrawerPP({ pp, onClose, onExport, onEdit }: { pp: PastPerformance
           <h2 className="text-sm font-bold text-slate-800 truncate">{pp.title}</h2>
           <p className="text-xs text-slate-400">{pp.contractNumber}</p>
         </div>
-        <button
-          onClick={() => onEdit(pp)}
-          className="flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-600 transition-colors hover:bg-slate-50 hover:text-slate-900">
-          <Pencil size={12} /> Edit
-        </button>
+        {canManage && (
+          <button
+            onClick={() => onEdit(pp)}
+            className="flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-600 transition-colors hover:bg-slate-50 hover:text-slate-900">
+            <Pencil size={12} /> Edit
+          </button>
+        )}
         <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X size={16} /></button>
       </div>
 
@@ -769,7 +772,8 @@ function DetailDrawerPP({ pp, onClose, onExport, onEdit }: { pp: PastPerformance
 }
 
 export default function PastPerformancesPage() {
-  const { contracts, opportunities, employees } = useStore()
+  const { contracts, opportunities, employees, currentUser } = useStore()
+  const canManagePP = hasPermission(currentUser, 'pastPerformance:manage')
   const [searchParams] = useSearchParams()
   const globalRecordId = searchParams.get('record')
   const [search, setSearch] = useState('')
@@ -975,16 +979,20 @@ export default function PastPerformancesPage() {
                             >
                               Export to PDF
                             </button>
-                            <div className="my-1 border-t" style={{ borderColor: 'var(--border-default)' }} />
-                            <button
-                              onClick={() => { toast.error('Delete not yet implemented'); setMenuOpen(null) }}
-                              className="block w-full text-left px-3 py-2 text-xs font-medium transition-colors"
-                              style={{ color: '#DC2626' }}
-                              onMouseEnter={e => { e.currentTarget.style.background = 'rgba(220,38,38,0.06)' }}
-                              onMouseLeave={e => { e.currentTarget.style.background = ''; e.currentTarget.style.color = '#DC2626' }}
-                            >
-                              Delete Record
-                            </button>
+                            {canManagePP && (
+                              <>
+                                <div className="my-1 border-t" style={{ borderColor: 'var(--border-default)' }} />
+                                <button
+                                  onClick={() => { toast.error('Delete not yet implemented'); setMenuOpen(null) }}
+                                  className="block w-full text-left px-3 py-2 text-xs font-medium transition-colors"
+                                  style={{ color: '#DC2626' }}
+                                  onMouseEnter={e => { e.currentTarget.style.background = 'rgba(220,38,38,0.06)' }}
+                                  onMouseLeave={e => { e.currentTarget.style.background = ''; e.currentTarget.style.color = '#DC2626' }}
+                                >
+                                  Delete Record
+                                </button>
+                              </>
+                            )}
                     </FloatingActionMenu>
                   </td>
                 </motion.tr>
@@ -1001,6 +1009,7 @@ export default function PastPerformancesPage() {
           onClose={() => setSelected(null)}
           onExport={(pp) => { setSelected(null); setExportTarget(pp) }}
           onEdit={(pp) => { setSelected(null); setEditTarget(pp) }}
+          canManage={canManagePP}
         />
       )}
 
@@ -1010,7 +1019,7 @@ export default function PastPerformancesPage() {
       )}
 
       {/* Edit modal */}
-      {editTarget && (
+      {editTarget && canManagePP && (
         <EditPPModal pp={editTarget} onClose={() => setEditTarget(null)} />
       )}
     </div>
