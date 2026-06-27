@@ -7,7 +7,7 @@ import { useStore } from '../store/useStore'
 import type { Opportunity } from '../types'
 import toast from 'react-hot-toast'
 import HierarchyAssignPicker from '../components/shared/HierarchyAssignPicker'
-import { assignableEmployeesForUser, getAssignmentChain, isAssignedToAssociate } from '../lib/team'
+import { assignableEmployeesForUser, findEmployeeForUser, getAssignmentChain, isAssignedToAssociate } from '../lib/team'
 import { hasPermission } from '../lib/permissions'
 import SamGovListingButton from '../components/shared/SamGovListingButton'
 
@@ -15,11 +15,21 @@ const ASSIGNABLE_STATUSES = ['ACTIVE', 'NEW_ASSIGNMENT', 'DISCUSSION'] as const
 
 function AssignModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) {
   const { assignOpportunityToEmployee, employees, currentUser } = useStore()
-  const [selectedEmpId, setSelectedEmpId] = useState<string | undefined>(opp.assignedTo)
+  // Team Leads can't reassign themselves out of the chain. Pre-select their own
+  // row in the picker so the cascade lands directly in the associate column.
+  const tlEmployee = useMemo(
+    () => currentUser?.role === 'TEAM_LEAD' ? findEmployeeForUser(employees, currentUser) : undefined,
+    [employees, currentUser],
+  )
+  const [selectedEmpId, setSelectedEmpId] = useState<string | undefined>(opp.assignedTo ?? tlEmployee?.id)
   const assignable = useMemo(() => assignableEmployeesForUser(employees, currentUser, 'BD'), [employees, currentUser])
 
   const handleAssign = () => {
     if (!selectedEmpId) { toast.error('Please select an assignee'); return }
+    if (tlEmployee && selectedEmpId === tlEmployee.id) {
+      toast.error('Please pick an associate on your team, not yourself.')
+      return
+    }
     const emp = employees.find(e => e.id === selectedEmpId)
     if (!emp || !assignable.some(item => item.id === emp.id)) {
       toast.error('You can only assign inside your team.')

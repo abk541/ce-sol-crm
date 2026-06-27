@@ -19,7 +19,7 @@ import PeriodFilter, { type Period, filterByPeriod } from '../components/shared/
 import TeamStatisticsPanel from '../components/shared/TeamStatisticsPanel'
 import { formatCurrency, avatarColor } from '../lib/utils'
 import { useNavigate } from 'react-router-dom'
-import { getAssignmentChain } from '../lib/team'
+import { getAssignmentChain, isOpsAgent } from '../lib/team'
 import { hasAnyPermission, hasPermission, ROLE_LABELS } from '../lib/permissions'
 import { chartColorsForTheme, useAppearance } from '../lib/appearance'
 import { NAICS_CODES } from '../data/naics'
@@ -539,8 +539,8 @@ function AgentDashboard() {
           <div className="grid grid-cols-2 gap-2">
             {([
               { label: 'ACTIVE',    value: myStats.active,      color: '#6366F1', icon: Target, nav: '/pipeline' },
-              { label: 'SUBMITTED', value: myStats.submissions,  color: '#06B6D4', icon: Send,   nav: '/tracker' },
-              { label: 'WINS',      value: myStats.wins,         color: '#22C55E', icon: Trophy, nav: '/tracker' },
+              { label: 'SUBMITTED', value: myStats.submissions,  color: '#06B6D4', icon: Send,   nav: '/bd-tracker' },
+              { label: 'WINS',      value: myStats.wins,         color: '#22C55E', icon: Trophy, nav: '/bd-tracker' },
               { label: 'NON-SUBS',  value: myStats.nonSubs,      color: myStats.nonSubs > 5 ? '#EF4444' : '#F97316', icon: AlertTriangle, nav: '/non-submissions' },
             ] as const).map(stat => (
               <motion.div key={stat.label}
@@ -2101,6 +2101,16 @@ function ExecutiveDashboard() {
   const [tab, setTab] = useState<ExecutiveDashboardTab>('bd')
   const [bdTeamView, setBdTeamView] = useState<TeamView>({ mode: 'teams' })
   const [opsTeamView, setOpsTeamView] = useState<TeamView>({ mode: 'teams' })
+  // BD Team Leads don't see the Operations tab.
+  const visibleTabs = useMemo(
+    () => currentUser?.role === 'TEAM_LEAD' && (currentUser?.team ?? 'BD') === 'BD'
+      ? EXECUTIVE_TABS.filter(t => t.id !== 'ops')
+      : EXECUTIVE_TABS,
+    [currentUser],
+  )
+  useEffect(() => {
+    if (!visibleTabs.some(t => t.id === tab)) setTab(visibleTabs[0]?.id ?? 'bd')
+  }, [visibleTabs, tab])
   const chartColors = chartColorsForTheme(prefs.theme)
   const accent = chartColors[0]
   const secondaryAccent = chartColors[1]
@@ -2506,7 +2516,7 @@ function ExecutiveDashboard() {
       </motion.div>
 
       <motion.div variants={stagger} initial="initial" animate="animate" className="grid grid-cols-1 gap-3 xl:grid-cols-4">
-        {EXECUTIVE_TABS.map(item => {
+        {visibleTabs.map(item => {
           const Icon = item.icon
           const active = tab === item.id
           return (
@@ -3567,6 +3577,11 @@ function AdminDashboard() {
 
 export default function DashboardPage() {
   const { currentUser } = useStore()
+  const navigate = useNavigate()
+  useEffect(() => {
+    if (isOpsAgent(currentUser)) navigate('/contracts', { replace: true })
+  }, [currentUser, navigate])
+  if (isOpsAgent(currentUser)) return null
   const seesCompanyDashboard = hasAnyPermission(currentUser, ['admin:manageUsers', 'opportunity:assign', 'operations:manage'])
   return seesCompanyDashboard ? <ExecutiveDashboard /> : <AgentDashboard />
 }

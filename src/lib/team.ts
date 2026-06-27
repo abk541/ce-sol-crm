@@ -104,6 +104,14 @@ export function findEmployeeForUser(employees: Employee[], user?: User | null): 
   )
 }
 
+// True for users on the OPS team below manager (i.e. Ops Team Lead / Ops Associate).
+// These users get the trimmed ops-only navigation and are bounced from the BD dashboard.
+export function isOpsAgent(user?: User | null): boolean {
+  if (!user) return false
+  if (user.team !== 'OPS') return false
+  return user.role === 'TEAM_LEAD' || user.role === 'ASSOCIATE'
+}
+
 export function assignableEmployeesForUser(employees: Employee[], user?: User | null, team?: EmployeeTeam): Employee[] {
   if (!user) return []
   const pool = team ? employees.filter(employee => (employee.team ?? 'BD') === team) : employees

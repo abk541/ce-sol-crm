@@ -8,9 +8,20 @@ import { cn } from '../../lib/utils'
 import CompanyLogo from '../shared/CompanyLogo'
 import { DEFAULT_EXPANDED_NAV_GROUPS, NAV_GROUPS } from '../../config/navigation'
 import { hasAnyPermission, hasPermission, ROLE_LABELS } from '../../lib/permissions'
+import { isOpsAgent } from '../../lib/team'
 import { useAppearance } from '../../lib/appearance'
 
 function canSeeNavItem(user: ReturnType<typeof useStore.getState>['currentUser'], to: string) {
+  // OPS Team Lead / Associate only see Contract Admin + Databases + HR.
+  if (isOpsAgent(user)) {
+    if (to === '/dashboard') return false
+    if (to === '/pipeline' || to === '/proposals' || to === '/bd-tracker' || to === '/tracker' || to === '/non-submissions') return false
+    if (to === '/finance-projections' || to === '/fresh-award') return false
+    if (to === '/contracts') return true
+    if (to === '/subk-database' || to === '/past-performances' || to === '/certifications') return true
+    if (to === '/hr' || to === '/notifications' || to === '/settings') return true
+    return false
+  }
   if (to === '/pipeline') return hasPermission(user, 'opportunity:read')
   if (to === '/proposals') return hasPermission(user, 'opportunity:assign')
   if (to === '/bd-tracker') return hasAnyPermission(user, ['admin:manageUsers', 'opportunity:assign', 'opportunity:submitProposal'])
