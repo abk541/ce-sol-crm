@@ -317,8 +317,10 @@ function subcontractorToDb(sub: Subcontractor, opts: { includeContacts?: boolean
     website: sub.website ?? null,
     naics_code: sub.naicsCode || null,
     set_aside: sub.setAside || null,
+    location: sub.location ?? null,
     notes: notesWithSourcingContacts(sub.notes, contacts),
     quote_file: sub.quoteFile ?? null,
+    quote_files: sub.quoteFiles ?? null,
     created_at: sub.createdAt,
     created_by: sub.createdBy,
   }
@@ -331,6 +333,18 @@ function dbToSubcontractor(row: Record<string, unknown>): Subcontractor {
   const contacts = normalizeSubcontractorContacts(row.contacts).length
     ? normalizeSubcontractorContacts(row.contacts)
     : normalizeSubcontractorContacts(meta?.contacts)
+  const quoteFilesRaw = row.quote_files
+  const quoteFiles = Array.isArray(quoteFilesRaw)
+    ? (quoteFilesRaw as Array<Record<string, unknown>>).map(q => ({
+        id: (q.id as string) ?? crypto.randomUUID(),
+        name: (q.name as string) ?? '',
+        attachedAt: (q.attachedAt as string) ?? new Date().toISOString(),
+        uploadedBy: (q.uploadedBy as string) ?? '',
+        dataUrl: (q.dataUrl as string | undefined) ?? undefined,
+        mimeType: (q.mimeType as string | undefined) ?? undefined,
+        size: typeof q.size === 'number' ? (q.size as number) : undefined,
+      }))
+    : undefined
   return {
     id: row.id as string,
     opportunityId: row.opportunity_id as string,
@@ -341,8 +355,10 @@ function dbToSubcontractor(row: Record<string, unknown>): Subcontractor {
     website: (row.website as string | null) ?? undefined,
     naicsCode: (row.naics_code as string | null) ?? '',
     setAside: (row.set_aside as string | null) ?? '',
+    location: (row.location as string | null) ?? undefined,
     notes: meta ? JSON.stringify(meta.comments ?? []) : (row.notes as string | null) ?? '',
     quoteFile: row.quote_file as string | undefined,
+    quoteFiles,
     contacts,
     createdAt: row.created_at as string,
     createdBy: row.created_by as string,

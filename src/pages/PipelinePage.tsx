@@ -1831,15 +1831,17 @@ type SourcingDraft = {
   email: string
   phone: string
   website: string
+  location: string
   quoteFile: string
+  quoteFiles: FileAttachment[]
   setAside: string
   contacts: SubcontractorContact[]
   newComment: string
 }
 
 const EMPTY_DRAFT: SourcingDraft = {
-  companyName: '', contactName: '', email: '', phone: '', website: '',
-  quoteFile: '', setAside: 'SB', contacts: [], newComment: '',
+  companyName: '', contactName: '', email: '', phone: '', website: '', location: '',
+  quoteFile: '', quoteFiles: [], setAside: 'SB', contacts: [], newComment: '',
 }
 
 function normalizeSourcingContacts(contacts?: SubcontractorContact[]) {
@@ -1997,7 +1999,9 @@ export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () 
         email:       contacts[0]?.email ?? selected.email ?? '',
         phone:       contacts[0]?.phone ?? selected.phone ?? '',
         website:     selected.website ?? '',
+        location:    selected.location ?? '',
         quoteFile:   selected.quoteFile ?? '',
+        quoteFiles:  selected.quoteFiles ?? [],
         setAside:    selected.setAside || 'SB',
         contacts,
         newComment:  '',
@@ -2009,18 +2013,19 @@ export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () 
   const filtered = useMemo(() => {
     const needle = search.trim().toLowerCase()
     return oppSubs.filter(s => {
-      if (filter === 'quote'   && !s.quoteFile) return false
+      const hasAnyQuote = !!s.quoteFile || (s.quoteFiles && s.quoteFiles.length > 0)
+      if (filter === 'quote'   && !hasAnyQuote) return false
       if (filter === 'comment' && parseSourcingComments(s.notes).length === 0) return false
       if (!needle) return true
       const contactValues = normalizeSourcingContacts(s.contacts).flatMap(c => [c.name, c.email, c.phone, c.title])
-      return [s.companyName, s.contactName, s.email, s.phone, ...contactValues].some(v =>
+      return [s.companyName, s.contactName, s.email, s.phone, s.location, ...contactValues].some(v =>
         (v || '').toLowerCase().includes(needle))
     })
   }, [oppSubs, search, filter])
 
   const counts = useMemo(() => ({
     all:     oppSubs.length,
-    quote:   oppSubs.filter(s => !!s.quoteFile).length,
+    quote:   oppSubs.filter(s => !!s.quoteFile || (s.quoteFiles && s.quoteFiles.length > 0)).length,
     comment: oppSubs.filter(s => parseSourcingComments(s.notes).length > 0).length,
   }), [oppSubs])
 
@@ -2079,9 +2084,30 @@ export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () 
   }
 
   const onPickFile = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (file) setD('quoteFile', file.name)
+    const files = Array.from(e.target.files ?? [])
+    if (files.length) {
+      const additions: FileAttachment[] = files.map(file => ({
+        id: crypto.randomUUID?.() ?? `quote-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        name: file.name,
+        attachedAt: new Date().toISOString(),
+        uploadedBy: currentUser?.username ?? '',
+        mimeType: file.type || undefined,
+        size: file.size,
+      }))
+      setDraft(p => ({ ...p, quoteFiles: [...(p.quoteFiles ?? []), ...additions] }))
+      setDirty(true)
+    }
     if (fileInputRef.current) fileInputRef.current.value = ''
+  }
+
+  const removeDraftQuote = (id: string) => {
+    setDraft(p => ({ ...p, quoteFiles: (p.quoteFiles ?? []).filter(q => q.id !== id) }))
+    setDirty(true)
+  }
+
+  const removeLegacyQuote = () => {
+    setDraft(p => ({ ...p, quoteFile: '' }))
+    setDirty(true)
   }
 
   const copyToClipboard = (text: string, label: string) => {
@@ -2103,7 +2129,9 @@ export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () 
       email:       draft.email.trim(),
       phone:       draft.phone.trim(),
       website:     draft.website.trim() || undefined,
+      location:    draft.location.trim() || undefined,
       quoteFile:   draft.quoteFile,
+      quoteFiles:  draft.quoteFiles.length ? draft.quoteFiles : undefined,
       contacts:    contactsFromSourcingDraft(draft),
       notes: draft.newComment.trim()
         ? serializeSourcingComments([{
@@ -2153,7 +2181,9 @@ export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () 
       email:       draft.email.trim(),
       phone:       draft.phone.trim(),
       website:     draft.website.trim() || undefined,
+      location:    draft.location.trim() || undefined,
       quoteFile:   draft.quoteFile,
+      quoteFiles:  draft.quoteFiles.length ? draft.quoteFiles : undefined,
       setAside:    draft.setAside,
       contacts:    contactsFromSourcingDraft(draft),
       notes: serializeSourcingComments(nextComments),
@@ -2275,9 +2305,12 @@ export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () 
                     <span className="block text-[10px] text-slate-500 truncate">
                       {s.contactName || s.email || s.phone || '—'}
                     </span>
+                    {s.location && (
+                      <span className="block text-[10px] text-slate-400 truncate">{s.location}</span>
+                    )}
                   </span>
                   <span className="flex-shrink-0 flex items-center gap-1 mt-0.5">
-                    {s.quoteFile && (
+                    {(s.quoteFile || (s.quoteFiles && s.quoteFiles.length > 0)) && (
                       <span title="Has quote file" className="w-4 h-4 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center">
                         <Paperclip size={9} />
                       </span>
@@ -2383,6 +2416,10 @@ export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () 
                         {SET_ASIDE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                       </select>
                     </div>
+                    <div>
+                      <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Location</label>
+                      <input value={draft.location} onChange={e => setD('location', e.target.value)} className="input-field" placeholder="City, State" />
+                    </div>
                     <div className="col-span-2">
                       <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Website</label>
                       <input value={draft.website} onChange={e => setD('website', e.target.value)} className="input-field" placeholder="example.com" />
@@ -2399,32 +2436,47 @@ export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () 
                 </div>
 
                 <div>
-                  <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400 mb-2">Quote file</p>
-                  <input ref={fileInputRef} type="file" className="hidden" onChange={onPickFile} />
-                  {draft.quoteFile ? (
-                    <div className="flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl border border-emerald-200 bg-emerald-50">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span className="w-7 h-7 rounded-md bg-white border border-emerald-200 flex items-center justify-center flex-shrink-0">
-                          <FileText size={13} className="text-emerald-600" />
-                        </span>
-                        <span className="text-xs font-bold text-emerald-900 truncate">{draft.quoteFile}</span>
-                      </div>
-                      <div className="flex items-center gap-1 flex-shrink-0">
-                        <button type="button" onClick={() => fileInputRef.current?.click()} className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-emerald-700 hover:bg-emerald-100 rounded">Replace</button>
-                        <button type="button" onClick={() => setD('quoteFile', '')} className="w-6 h-6 rounded flex items-center justify-center text-emerald-700 hover:bg-emerald-100">
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
+                      Quote files <span className="text-slate-300">·</span> {(draft.quoteFiles?.length ?? 0) + (draft.quoteFile ? 1 : 0)}
+                    </p>
+                  </div>
+                  <input ref={fileInputRef} type="file" multiple className="hidden" onChange={onPickFile} />
+                  <div className="space-y-1.5">
+                    {draft.quoteFile && (
+                      <div className="flex items-center justify-between gap-3 px-3 py-2 rounded-xl border border-emerald-200 bg-emerald-50">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="w-7 h-7 rounded-md bg-white border border-emerald-200 flex items-center justify-center flex-shrink-0">
+                            <FileText size={13} className="text-emerald-600" />
+                          </span>
+                          <span className="text-xs font-bold text-emerald-900 truncate">{draft.quoteFile}</span>
+                        </div>
+                        <button type="button" onClick={removeLegacyQuote} className="w-6 h-6 rounded flex items-center justify-center text-emerald-700 hover:bg-emerald-100">
                           <X size={12} />
                         </button>
                       </div>
-                    </div>
-                  ) : (
+                    )}
+                    {(draft.quoteFiles ?? []).map(q => (
+                      <div key={q.id} className="flex items-center justify-between gap-3 px-3 py-2 rounded-xl border border-emerald-200 bg-emerald-50">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="w-7 h-7 rounded-md bg-white border border-emerald-200 flex items-center justify-center flex-shrink-0">
+                            <FileText size={13} className="text-emerald-600" />
+                          </span>
+                          <span className="text-xs font-bold text-emerald-900 truncate">{q.name}</span>
+                        </div>
+                        <button type="button" onClick={() => removeDraftQuote(q.id)} className="w-6 h-6 rounded flex items-center justify-center text-emerald-700 hover:bg-emerald-100">
+                          <X size={12} />
+                        </button>
+                      </div>
+                    ))}
                     <button
                       type="button"
                       onClick={() => fileInputRef.current?.click()}
-                      className="w-full flex items-center justify-center gap-2 px-3 py-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 text-slate-500 text-xs font-semibold hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-600 transition-all"
+                      className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-dashed border-slate-300 bg-slate-50 text-slate-500 text-xs font-semibold hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-600 transition-all"
                     >
-                      <Upload size={13} /> Attach quote file
+                      <Upload size={13} /> Attach quote files
                     </button>
-                  )}
+                  </div>
                 </div>
 
                 <div>
@@ -2526,6 +2578,10 @@ export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () 
                         {SET_ASIDE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                       </select>
                     </div>
+                    <div>
+                      <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Location</label>
+                      <input value={draft.location} onChange={e => setD('location', e.target.value)} className="input-field" placeholder="City, State" />
+                    </div>
                     <div className="col-span-2">
                       <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Website</label>
                       <input value={draft.website} onChange={e => setD('website', e.target.value)} className="input-field" placeholder="example.com" />
@@ -2542,32 +2598,47 @@ export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () 
                 </div>
 
                 <div>
-                  <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400 mb-2">Quote file</p>
-                  <input ref={fileInputRef} type="file" className="hidden" onChange={onPickFile} />
-                  {draft.quoteFile ? (
-                    <div className="flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl border border-emerald-200 bg-emerald-50">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span className="w-7 h-7 rounded-md bg-white border border-emerald-200 flex items-center justify-center flex-shrink-0">
-                          <FileText size={13} className="text-emerald-600" />
-                        </span>
-                        <span className="text-xs font-bold text-emerald-900 truncate">{draft.quoteFile}</span>
-                      </div>
-                      <div className="flex items-center gap-1 flex-shrink-0">
-                        <button type="button" onClick={() => fileInputRef.current?.click()} className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-emerald-700 hover:bg-emerald-100 rounded">Replace</button>
-                        <button type="button" onClick={() => setD('quoteFile', '')} className="w-6 h-6 rounded flex items-center justify-center text-emerald-700 hover:bg-emerald-100">
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
+                      Quote files <span className="text-slate-300">·</span> {(draft.quoteFiles?.length ?? 0) + (draft.quoteFile ? 1 : 0)}
+                    </p>
+                  </div>
+                  <input ref={fileInputRef} type="file" multiple className="hidden" onChange={onPickFile} />
+                  <div className="space-y-1.5">
+                    {draft.quoteFile && (
+                      <div className="flex items-center justify-between gap-3 px-3 py-2 rounded-xl border border-emerald-200 bg-emerald-50">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="w-7 h-7 rounded-md bg-white border border-emerald-200 flex items-center justify-center flex-shrink-0">
+                            <FileText size={13} className="text-emerald-600" />
+                          </span>
+                          <span className="text-xs font-bold text-emerald-900 truncate">{draft.quoteFile}</span>
+                        </div>
+                        <button type="button" onClick={removeLegacyQuote} className="w-6 h-6 rounded flex items-center justify-center text-emerald-700 hover:bg-emerald-100">
                           <X size={12} />
                         </button>
                       </div>
-                    </div>
-                  ) : (
+                    )}
+                    {(draft.quoteFiles ?? []).map(q => (
+                      <div key={q.id} className="flex items-center justify-between gap-3 px-3 py-2 rounded-xl border border-emerald-200 bg-emerald-50">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="w-7 h-7 rounded-md bg-white border border-emerald-200 flex items-center justify-center flex-shrink-0">
+                            <FileText size={13} className="text-emerald-600" />
+                          </span>
+                          <span className="text-xs font-bold text-emerald-900 truncate">{q.name}</span>
+                        </div>
+                        <button type="button" onClick={() => removeDraftQuote(q.id)} className="w-6 h-6 rounded flex items-center justify-center text-emerald-700 hover:bg-emerald-100">
+                          <X size={12} />
+                        </button>
+                      </div>
+                    ))}
                     <button
                       type="button"
                       onClick={() => fileInputRef.current?.click()}
-                      className="w-full flex items-center justify-center gap-2 px-3 py-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 text-slate-500 text-xs font-semibold hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-600 transition-all"
+                      className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-dashed border-slate-300 bg-slate-50 text-slate-500 text-xs font-semibold hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-600 transition-all"
                     >
-                      <Upload size={13} /> Attach quote file
+                      <Upload size={13} /> Attach quote files
                     </button>
-                  )}
+                  </div>
                 </div>
 
                 <div>
@@ -4201,6 +4272,11 @@ export default function PipelinePage() {
                               <FileText size={9} /> {s.quoteFile}
                             </p>
                           )}
+                          {(s.quoteFiles ?? []).map(q => (
+                            <p key={q.id} className="mt-1 flex items-center gap-1 text-[10px] font-semibold text-[#7DD3FC]">
+                              <FileText size={9} /> {q.name}
+                            </p>
+                          ))}
                         </div>
                         {canWriteSourcing && (
                           <button

@@ -109,8 +109,10 @@ export interface Subcontractor {
   website?: string
   naicsCode: string
   setAside: string
+  location?: string
   notes: string
-  quoteFile?: string        // PDF filename / reference
+  quoteFile?: string        // legacy: single PDF filename / reference
+  quoteFiles?: FileAttachment[]  // multiple quotes
   contacts?: SubcontractorContact[]
   createdAt: string
   createdBy: string
@@ -157,6 +159,7 @@ export interface SubkDatabaseEntry {
   phone: string
   naicsCodes: string[]
   setAside: string
+  location?: string
   pastProjects: PastProjectRef[]
   quoteFile?: string
   notes: string

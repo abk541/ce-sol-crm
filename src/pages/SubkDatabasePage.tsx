@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { createPortal } from 'react-dom'
 import {
-  Building2, Plus, Search, Phone, Mail, FileUp,
+  Building2, Plus, Search, Phone, Mail, FileUp, MapPin,
   Tag, Briefcase, X, Save, Eye, Pencil, Trash2, MoreHorizontal,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
@@ -84,6 +84,11 @@ function EntryDrawer({ entry, onClose, onEdit }: { entry: SubkDatabaseEntry; onC
           <div className="flex items-center gap-2 text-sm text-slate-600">
             <Phone size={13} className="text-slate-400" />{entry.phone}
           </div>
+          {entry.location && (
+            <div className="flex items-center gap-2 text-sm text-slate-600">
+              <MapPin size={13} className="text-slate-400" />{entry.location}
+            </div>
+          )}
         </div>
 
         {/* NAICS codes */}
@@ -152,7 +157,7 @@ function CreateModal({ onClose, onSave }: { onClose: () => void; onSave: (e: Omi
   const { currentUser } = useStore()
   const [form, setForm] = useState({
     companyName: '', contactName: '', email: '', phone: '',
-    naicsCodes: '', setAside: 'SB' as SetAside, notes: '',
+    naicsCodes: '', setAside: 'SB' as SetAside, location: '', notes: '',
   })
   const set = (k: string, v: string) => setForm(p => ({ ...p, [k]: v }))
   const valid = form.companyName && form.contactName
@@ -242,6 +247,7 @@ function CreateModal({ onClose, onSave }: { onClose: () => void; onSave: (e: Omi
                 phone: form.phone,
                 naicsCodes: form.naicsCodes.split(',').map(n => n.trim()).filter(Boolean),
                 setAside: form.setAside,
+                location: form.location.trim() || undefined,
                 pastProjects: [],
                 notes: form.notes,
                 totalContractsWorked: 0,
@@ -270,6 +276,7 @@ function EditModal({ entry, onClose }: { entry: SubkDatabaseEntry; onClose: () =
     phone: entry.phone,
     naicsCodes: entry.naicsCodes.join(', '),
     setAside: entry.setAside as SetAside,
+    location: entry.location ?? '',
     notes: entry.notes,
   })
   const set = (k: string, v: string) => setForm(p => ({ ...p, [k]: v }))
@@ -287,6 +294,7 @@ function EditModal({ entry, onClose }: { entry: SubkDatabaseEntry; onClose: () =
       phone: form.phone.trim(),
       naicsCodes: form.naicsCodes.split(',').map(n => n.trim()).filter(Boolean),
       setAside: form.setAside,
+      location: form.location.trim() || undefined,
       notes: form.notes.trim(),
     })
     toast.success('Entry updated')
@@ -363,6 +371,12 @@ function EditModal({ entry, onClose }: { entry: SubkDatabaseEntry; onClose: () =
           </div>
 
           <div>
+            <label className="block text-xs font-semibold text-slate-600 mb-1">Location</label>
+            <input value={form.location} onChange={e => set('location', e.target.value)}
+              className="input-field text-xs py-2 w-full" placeholder="City, State" />
+          </div>
+
+          <div>
             <label className="block text-xs font-semibold text-slate-600 mb-1">Notes</label>
             <textarea rows={3} value={form.notes} onChange={e => set('notes', e.target.value)}
               className="input-field text-xs py-2 w-full resize-none" />
@@ -391,24 +405,35 @@ export default function SubkDatabasePage() {
   const canEdit = hasPermission(currentUser, 'opportunity:edit')
   const [search, setSearch] = useState('')
   const [filterSA, setFilterSA] = useState<string>('ALL')
+  const [filterLocation, setFilterLocation] = useState<string>('ALL')
   const [selected, setSelected] = useState<SubkDatabaseEntry | null>(null)
   const [editTarget, setEditTarget] = useState<SubkDatabaseEntry | null>(null)
   const [showCreate, setShowCreate] = useState(false)
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
 
+  const locationOptions = useMemo(() => {
+    const set = new Set<string>()
+    subkDatabase.forEach(e => {
+      if (e.location && e.location.trim()) set.add(e.location.trim())
+    })
+    return Array.from(set).sort((a, b) => a.localeCompare(b))
+  }, [subkDatabase])
+
   const filtered = useMemo(() => {
     let list = subkDatabase
     if (filterSA !== 'ALL') list = list.filter(e => e.setAside === filterSA)
+    if (filterLocation !== 'ALL') list = list.filter(e => (e.location ?? '') === filterLocation)
     if (search) {
       const q = search.toLowerCase()
       list = list.filter(e =>
         e.companyName.toLowerCase().includes(q) ||
         e.contactName.toLowerCase().includes(q) ||
-        e.naicsCodes.some(n => n.includes(q))
+        e.naicsCodes.some(n => n.includes(q)) ||
+        (e.location ?? '').toLowerCase().includes(q)
       )
     }
     return list
-  }, [subkDatabase, search, filterSA])
+  }, [subkDatabase, search, filterSA, filterLocation])
 
   return (
     <div className="p-6 page-enter">
@@ -456,6 +481,17 @@ export default function SubkDatabasePage() {
             </button>
           ))}
         </div>
+        {locationOptions.length > 0 && (
+          <select
+            value={filterLocation}
+            onChange={e => setFilterLocation(e.target.value)}
+            className="input-field text-xs py-1.5 px-2.5">
+            <option value="ALL">All Locations</option>
+            {locationOptions.map(loc => (
+              <option key={loc} value={loc}>{loc}</option>
+            ))}
+          </select>
+        )}
       </div>
 
       {/* Cards grid */}
@@ -483,6 +519,11 @@ export default function SubkDatabasePage() {
                 <div className="flex-1 min-w-0">
                   <h3 className="text-sm font-bold text-slate-800 truncate">{entry.companyName}</h3>
                   <p className="text-xs text-slate-500 truncate">{entry.contactName}</p>
+                  {entry.location && (
+                    <p className="mt-0.5 flex items-center gap-1 text-[10px] text-slate-400 truncate">
+                      <MapPin size={9} /> {entry.location}
+                    </p>
+                  )}
                 </div>
                 <span className="flex-shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full"
                   style={{ background: saStyle.bg, color: saStyle.color }}>
