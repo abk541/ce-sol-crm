@@ -510,6 +510,8 @@ export interface PastPerformance {
   challenges?: string
   bdm: string
   bds: string
+  bdAssociate?: string  // ERP-only contributor display (not in PDF)
+  opsAssociate?: string // ERP-only contributor display (not in PDF)
   createdAt: string
   createdBy: string
 }

@@ -730,6 +730,30 @@ function DetailDrawerPP({ pp, onClose, onExport, onEdit }: { pp: PastPerformance
           </div>
         </div>
 
+        {/* Contributors (ERP-only — never exported to PDF) */}
+        {(pp.bdAssociate || pp.opsAssociate) && (
+          <div className="rounded-xl border border-dashed border-indigo-200 bg-indigo-50/40 p-3">
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <p className="text-[10px] font-bold text-indigo-700 uppercase tracking-wider">Contributors</p>
+              <span className="text-[9px] font-semibold text-indigo-500/80">ERP only · not in PDF</span>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              {pp.bdAssociate && (
+                <div className="rounded-lg bg-white border border-indigo-100 p-2">
+                  <p className="text-[10px] text-slate-400 uppercase tracking-wider mb-0.5">BD Associate</p>
+                  <p className="text-xs font-semibold text-slate-700">{pp.bdAssociate}</p>
+                </div>
+              )}
+              {pp.opsAssociate && (
+                <div className="rounded-lg bg-white border border-indigo-100 p-2">
+                  <p className="text-[10px] text-slate-400 uppercase tracking-wider mb-0.5">OPS Associate</p>
+                  <p className="text-xs font-semibold text-slate-700">{pp.opsAssociate}</p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Export button */}
         <button
           onClick={() => onExport(pp)}
@@ -745,7 +769,7 @@ function DetailDrawerPP({ pp, onClose, onExport, onEdit }: { pp: PastPerformance
 }
 
 export default function PastPerformancesPage() {
-  const { contracts } = useStore()
+  const { contracts, opportunities, employees } = useStore()
   const [searchParams] = useSearchParams()
   const globalRecordId = searchParams.get('record')
   const [search, setSearch] = useState('')
@@ -761,29 +785,43 @@ export default function PastPerformancesPage() {
         ? c.status !== 'ARCHIVED'
         : c.status === 'ARCHIVED'
     )
-    return visibleContracts.map(c => ({
-      id: `${source.toLowerCase()}-${c.id}`,
-      contractId: c.id,
-      opportunityId: c.opportunityId,
-      contractNumber: c.contractId,
-      title: c.title,
-      client: c.client || '',
-      type: c.type,
-      financeType: c.financeType,
-      naicsCode: c.naicsCode,
-      setAside: c.setAside || 'UNRES',
-      value: c.value,
-      popStart: c.popStart,
-      popEnd: c.popEnd,
-      location: c.location,
-      description: '',
-      relevance: '',
-      bdm: c.bdm || '',
-      bds: c.bds || '',
-      createdAt: c.popStart,
-      createdBy: 'System',
-    }))
-  }, [source, contracts])
+    const employeeName = (id?: string) => {
+      if (!id) return ''
+      const e = employees.find(emp => emp.id === id)
+      return e?.name ?? ''
+    }
+    return visibleContracts.map(c => {
+      const opp = c.opportunityId
+        ? opportunities.find(o => o.id === c.opportunityId)
+        : undefined
+      const bdAssociate = employeeName(opp?.assignedTo)
+      const opsAssociate = employeeName(c.assignedTo)
+      return {
+        id: `${source.toLowerCase()}-${c.id}`,
+        contractId: c.id,
+        opportunityId: c.opportunityId,
+        contractNumber: c.contractId,
+        title: c.title,
+        client: c.client || '',
+        type: c.type,
+        financeType: c.financeType,
+        naicsCode: c.naicsCode,
+        setAside: c.setAside || 'UNRES',
+        value: c.value,
+        popStart: c.popStart,
+        popEnd: c.popEnd,
+        location: c.location,
+        description: '',
+        relevance: '',
+        bdm: c.bdm || '',
+        bds: c.bds || '',
+        bdAssociate: bdAssociate || undefined,
+        opsAssociate: opsAssociate || undefined,
+        createdAt: c.popStart,
+        createdBy: 'System',
+      }
+    })
+  }, [source, contracts, opportunities, employees])
 
   const filtered = useMemo(() => {
     if (!search) return sourceRows
