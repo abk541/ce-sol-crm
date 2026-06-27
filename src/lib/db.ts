@@ -15,6 +15,7 @@ import type {
   GovernmentWarning,
   LockedSubcontractor,
   LockedSubkDocuments,
+  MandatoryEvent,
   NonSubmissionReport,
   PastPerformance,
   Role,
@@ -170,6 +171,10 @@ function oppToDb(o: Opportunity, opts: { includeSamGovContacts?: boolean } = {})
     period: o.period,
     captured_on: o.capturedOn,
     mandatory_events: o.mandatoryEvents ?? null,
+    mandatory_events_list: Array.isArray(o.mandatoryEventsList) && o.mandatoryEventsList.length
+      ? o.mandatoryEventsList
+      : null,
+    quoted: o.quoted ?? false,
     link: o.link ?? null,
     is_deleted: o.isDeleted ?? null,
     deletion_requested: o.deletionRequested ?? null,
@@ -254,6 +259,10 @@ function dbToOpp(row: Record<string, unknown>): Partial<Opportunity> {
     period: row.period as string,
     capturedOn: row.captured_on as string,
     mandatoryEvents: row.mandatory_events as string | undefined,
+    mandatoryEventsList: Array.isArray(row.mandatory_events_list)
+      ? (row.mandatory_events_list as MandatoryEvent[])
+      : undefined,
+    quoted: row.quoted === true,
     link: row.link as string | undefined,
     isDeleted: row.is_deleted as boolean | undefined,
     deletionRequested: row.deletion_requested as boolean | undefined,

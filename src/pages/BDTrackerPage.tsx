@@ -13,6 +13,7 @@ import FloatingActionMenu from '../components/shared/FloatingActionMenu'
 import { hasPermission } from '../lib/permissions'
 import DetailDrawer, { DrawerField, DrawerSection } from '../components/shared/DetailDrawer'
 import SamGovListingButton from '../components/shared/SamGovListingButton'
+import { MandatoryEventsEditor, MandatoryEventsList } from '../components/shared/MandatoryEvents'
 import {
   formatOpportunityMoroccoDueDateTime,
   formatOpportunitySourceDueDateTime,
@@ -166,6 +167,7 @@ function trackerEditInitial(row: BDSubmission, opp?: Opportunity | null) {
     value: String(row.value ?? 0),
     comment: row.comment ?? '',
     mandatoryEvents: opp?.mandatoryEvents ?? '',
+    mandatoryEventsList: opp?.mandatoryEventsList ?? [],
     proposalAttachments: opp?.proposalAttachments ?? [],
   }
 }
@@ -288,10 +290,16 @@ function BDTrackerEditModal({
             <textarea className="input-field min-h-[90px] w-full resize-none" value={form.comment} onChange={e => update('comment', e.target.value)} />
           </label>
           {opportunity && (
-            <label className="md:col-span-2">
+            <div className="md:col-span-2">
               <span className="mb-1 block text-[10px] font-black uppercase tracking-wide text-slate-400">Mandatory Events</span>
-              <textarea className="input-field min-h-[90px] w-full resize-none" value={form.mandatoryEvents} onChange={e => update('mandatoryEvents', e.target.value)} />
-            </label>
+              <MandatoryEventsEditor
+                value={form.mandatoryEventsList}
+                onChange={list => setForm(prev => ({ ...prev, mandatoryEventsList: list }))}
+              />
+              {!form.mandatoryEventsList.length && form.mandatoryEvents && (
+                <p className="mt-2 text-xs italic text-slate-400">Legacy notes: {form.mandatoryEvents}</p>
+              )}
+            </div>
           )}
         </div>
 
@@ -553,6 +561,7 @@ export default function BDTrackerPage() {
         contractAmount: value,
         value,
         mandatoryEvents: form.mandatoryEvents,
+        mandatoryEventsList: form.mandatoryEventsList,
         proposalAttachments: form.proposalAttachments,
         proposals: form.proposalAttachments.map(att => att.name).filter(Boolean),
       })
@@ -977,9 +986,12 @@ export default function BDTrackerPage() {
                     </DrawerSection>
                   )}
 
-                  {selectedOpportunity?.mandatoryEvents && (
+                  {(selectedOpportunity?.mandatoryEventsList?.length || selectedOpportunity?.mandatoryEvents) && (
                     <DrawerSection title="Mandatory Events" variant="premium">
-                      <p className="py-3 text-sm leading-6 text-slate-200">{selectedOpportunity.mandatoryEvents}</p>
+                      <MandatoryEventsList
+                        events={selectedOpportunity?.mandatoryEventsList}
+                        legacy={selectedOpportunity?.mandatoryEvents}
+                      />
                     </DrawerSection>
                   )}
 

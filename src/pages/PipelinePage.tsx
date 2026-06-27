@@ -10,7 +10,7 @@ import {
   Ban, ChevronLeft, ChevronRight,
   Mail, Phone, User as UserIcon,
   Search, Globe, MessageSquare, Copy, Building2, CheckCircle2, Paperclip,
-  Calendar, DollarSign,
+  Calendar, DollarSign, BadgeCheck,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import type { Opportunity, Priority, OppStatus, Comment, FileAttachment, SamGovContact, SubcontractorContact } from '../types'
@@ -22,6 +22,7 @@ import toast from 'react-hot-toast'
 import DetailDrawer, { DrawerSection, DrawerField } from '../components/shared/DetailDrawer'
 import PeriodFilter, { type Period, filterByPeriod } from '../components/shared/PeriodFilter'
 import HierarchyAssignPicker from '../components/shared/HierarchyAssignPicker'
+import { MandatoryEventsEditor, MandatoryEventsList } from '../components/shared/MandatoryEvents'
 import FloatingActionMenu from '../components/shared/FloatingActionMenu'
 import SamGovListingButton from '../components/shared/SamGovListingButton'
 import {
@@ -1124,15 +1125,17 @@ export function SamGovContactsPanel({
   )
 }
 
-function OppModalShell({ title, subtitle, tab, setTab, onClose, extraHeader, footer, children }: {
+function OppModalShell({ title, subtitle, tab, setTab, onClose, extraHeader, footer, children, tabs }: {
   title: string; subtitle?: string
   tab: OppFormTab; setTab: (t: OppFormTab) => void
   onClose: () => void
   extraHeader?: React.ReactNode
   footer: React.ReactNode
   children: React.ReactNode
+  tabs?: typeof OPP_FORM_TABS
 }) {
   useEscapeKey(onClose)
+  const visibleTabs = tabs ?? OPP_FORM_TABS
   return createPortal((
     <motion.div className="fixed inset-0 z-50 flex items-center justify-center p-4"
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
@@ -1169,7 +1172,7 @@ function OppModalShell({ title, subtitle, tab, setTab, onClose, extraHeader, foo
 
           {/* Tab bar */}
           <div className="flex px-7 gap-0.5">
-            {OPP_FORM_TABS.map((t, i) => (
+            {visibleTabs.map((t, i) => (
               <button key={t.id} onClick={() => setTab(t.id)}
                 className={[
                   'px-4 py-2.5 text-[12px] font-semibold border-b-2 transition-all whitespace-nowrap flex items-center gap-1.5',
@@ -1217,6 +1220,9 @@ export function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => v
   const [saving, setSaving] = useState(false)
 
   const canEditDetails = hasPermission(currentUser, 'opportunity:edit')
+  const canEditSchedule = !canEditDetails
+    && hasPermission(currentUser, 'opportunity:editSchedule')
+    && isOpportunityOwnedByUser(employees, currentUser, opp.assignedTo)
   const canComment = hasPermission(currentUser, 'opportunity:comment')
   const canRequestDelete = hasPermission(currentUser, 'opportunity:deleteRequest')
     && isOpportunityOwnedByUser(employees, currentUser, opp.assignedTo)
@@ -1229,12 +1235,54 @@ export function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => v
   const set = (k: keyof Opportunity, v: any) => setForm(p => ({ ...p, [k]: v }))
   const lbl = 'block text-xs font-semibold text-slate-500 mb-1.5'
 
+  const visibleTabs = useMemo(() => {
+    if (canEditDetails) return OPP_FORM_TABS
+    if (canEditSchedule) return OPP_FORM_TABS.filter(t => t.id === 'schedule' || t.id === 'comments')
+    if (canComment) return OPP_FORM_TABS.filter(t => t.id === 'comments')
+    return OPP_FORM_TABS.filter(t => t.id === 'comments')
+  }, [canEditDetails, canEditSchedule, canComment])
+
   useEffect(() => {
-    if (!canEditDetails && canComment) setTab('comments')
-  }, [canComment, canEditDetails])
+    if (!canEditDetails && !canEditSchedule && canComment) setTab('comments')
+    else if (!canEditDetails && canEditSchedule) setTab('schedule')
+  }, [canComment, canEditDetails, canEditSchedule])
 
   const handleSave = async () => {
     if (!canEditDetails) {
+      if (canEditSchedule) {
+        if (!form.dueDate) {
+          toast.error('Due date is required')
+          setTab('schedule')
+          return
+        }
+        const updatedComments = [...(opp.comments ?? [])]
+        if (newComment.trim()) {
+          updatedComments.push({
+            id: crypto.randomUUID(),
+            text: newComment.trim(),
+            author: currentUser?.username ?? 'unknown',
+            authorId: currentUser?.id,
+            createdAt: new Date().toISOString(),
+            attachments: newCommentAttachments,
+          })
+        }
+        setSaving(true)
+        const saved = await updateOpportunity(opp.id, {
+          dueDate: form.dueDate,
+          localTime: form.localTime,
+          timezone: form.timezone,
+          moroccoTime: form.moroccoTime,
+          moroccoDate: form.moroccoDate,
+          mandatoryEventsList: form.mandatoryEventsList,
+          comments: updatedComments,
+        })
+        setSaving(false)
+        if (saved) {
+          toast.success('Schedule updated')
+          onClose()
+        }
+        return
+      }
       if (!canComment) {
         toast.error('You do not have permission to edit this opportunity.')
         return
@@ -1305,6 +1353,7 @@ export function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => v
       title="Edit Opportunity"
       subtitle={opp.solicitation}
       tab={tab} setTab={setTab}
+      tabs={visibleTabs}
       onClose={onClose}
       footer={
         <div className="flex items-center gap-3">
@@ -1480,7 +1529,16 @@ export function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => v
         <div className="space-y-4">
           <div>
             <label className={lbl}>Mandatory Events</label>
-            <textarea value={form.mandatoryEvents ?? ''} onChange={e => set('mandatoryEvents', e.target.value)} rows={3} className="input-field w-full resize-none" placeholder="Site visit, pre-bid meeting, Q&A deadline..." />
+            <MandatoryEventsEditor
+              value={form.mandatoryEventsList}
+              onChange={list => set('mandatoryEventsList', list)}
+              disabled={!canEditDetails && !canEditSchedule}
+            />
+            {!form.mandatoryEventsList?.length && form.mandatoryEvents && (
+              <p className="mt-2 text-xs italic text-slate-400">
+                Legacy notes: {form.mandatoryEvents}
+              </p>
+            )}
           </div>
           <p className="text-sm font-semibold text-slate-700">Comments</p>
           {(form.comments ?? []).length === 0 && (
@@ -3225,12 +3283,9 @@ function CreateModal({ onClose }: { onClose: () => void }) {
         <div className="space-y-4">
           <div>
             <label className={lbl}>Mandatory Events</label>
-            <textarea
-              value={form.mandatoryEvents ?? ''}
-              onChange={e => set('mandatoryEvents', e.target.value)}
-              rows={3}
-              className="input-field w-full resize-none"
-              placeholder="Site visit, pre-bid meeting, Q&A deadline..."
+            <MandatoryEventsEditor
+              value={form.mandatoryEventsList}
+              onChange={list => set('mandatoryEventsList', list)}
             />
           </div>
           <p className="text-sm font-semibold text-slate-700">Initial Comment</p>
@@ -3258,10 +3313,12 @@ function RowMenu({
   o,
   canSubmit,
   canSource,
+  canToggleQuoted,
   onViewDetails,
   onEdit,
   onSourcing,
   onSubmit,
+  onToggleQuoted,
   onRequestDeletion,
   onCancel,
   canEdit,
@@ -3272,6 +3329,7 @@ function RowMenu({
   o: Opportunity
   canSubmit: boolean
   canSource: boolean
+  canToggleQuoted: boolean
   canEdit: boolean
   canCancel: boolean
   canRequestDeletion: boolean
@@ -3279,6 +3337,7 @@ function RowMenu({
   onEdit: () => void
   onSourcing: () => void
   onSubmit: () => void
+  onToggleQuoted: () => void
   onRequestDeletion: () => void
   onCancel: () => void
   deletionPending: boolean
@@ -3324,6 +3383,16 @@ function RowMenu({
                 onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(0,0,0,0.04)'; (e.currentTarget as HTMLButtonElement).style.color = '#0F172A' }}
                 onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = ''; (e.currentTarget as HTMLButtonElement).style.color = '#475569' }}>
                 <Users2 size={12} /> Sourcing
+              </button>
+            )}
+            {canToggleQuoted && (
+              <button
+                onClick={e => { e.stopPropagation(); setMenuOpen(false); onToggleQuoted() }}
+                className="w-full text-left px-3 py-2 text-xs font-semibold flex items-center gap-2 transition-colors"
+                style={{ color: o.quoted ? '#92400E' : '#475569' }}
+                onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(217,119,6,0.08)' }}
+                onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = '' }}>
+                <BadgeCheck size={12} /> {o.quoted ? 'Mark Not Quoted' : 'Mark Quoted'}
               </button>
             )}
             {canSubmit && submittable && (
@@ -3643,7 +3712,7 @@ function DueDateTimeCell({ opp }: { opp: Opportunity }) {
 }
 
 export default function PipelinePage() {
-  const { opportunities, employees, currentUser, deletionRequests, moveOpportunityToBDTracker, deleteSubcontractor, requireAssociateForActivePipeline } = useStore()
+  const { opportunities, employees, currentUser, deletionRequests, moveOpportunityToBDTracker, deleteSubcontractor, requireAssociateForActivePipeline, updateOpportunity } = useStore()
   const [searchParams] = useSearchParams()
   const globalRecordId = searchParams.get('record')
 
@@ -3899,7 +3968,7 @@ export default function PipelinePage() {
                     exit={{ opacity: 0 }}
                     transition={{ delay: i * 0.015, duration: 0.2 }}
                     onClick={() => setSelectedOpp(o)}
-                    className={`cursor-pointer ${o.deletionRequested ? 'opacity-50' : ''}`}>
+                    className={`cursor-pointer ${o.deletionRequested ? 'opacity-50' : ''} ${o.quoted ? 'bg-amber-50/60' : ''}`}>
                     <td><PriorityBadge p={o.priority} /></td>
                     <td className="text-slate-500 text-xs">{o.period}</td>
                     <td className="text-slate-500 text-xs whitespace-nowrap">{o.capturedOn}</td>
@@ -3909,7 +3978,14 @@ export default function PipelinePage() {
                     <td><span className="text-slate-500 text-xs font-mono">{o.naicsCode}</span></td>
                     <td><span className="text-indigo-600 text-xs font-mono font-semibold">{o.solicitationId}</span></td>
                     <td className="max-w-[200px]">
-                      <p className="truncate text-xs text-slate-800 font-medium" title={o.solicitation}>{o.solicitation}</p>
+                      <div className="flex items-center gap-1.5">
+                        <p className="truncate text-xs text-slate-800 font-medium" title={o.solicitation}>{o.solicitation}</p>
+                        {o.quoted && (
+                          <span className="flex-shrink-0 inline-flex items-center gap-1 text-[9px] font-black uppercase tracking-wide text-amber-700 bg-amber-100 border border-amber-200 px-1.5 py-0.5 rounded">
+                            <BadgeCheck size={9} /> Quoted
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td>
                       <span className="text-[10px] font-semibold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">{o.setAside}</span>
@@ -3940,10 +4016,15 @@ export default function PipelinePage() {
                               o={o}
                               canSubmit={canSubmit && owned}
                               canSource={canWriteSourcing && owned}
+                              canToggleQuoted={canWriteSourcing && owned}
                               onViewDetails={() => setSelectedOpp(o)}
                               onEdit={() => setEditOpp(o)}
                               onSourcing={() => setSourcingOpp(o)}
                               onSubmit={() => setSubmitOpp(o)}
+                              onToggleQuoted={() => {
+                                void updateOpportunity(o.id, { quoted: !o.quoted })
+                                toast.success(o.quoted ? 'Marked as not quoted' : 'Marked as quoted')
+                              }}
                               onCancel={() => handleCancel(o)}
                               onRequestDeletion={() => handleDelete(o)}
                               canEdit={canOpenEditModal}
@@ -4057,9 +4138,12 @@ export default function PipelinePage() {
               </DrawerSection>
             )}
 
-            {selectedOpp.mandatoryEvents && (
+            {(selectedOpp.mandatoryEventsList?.length || selectedOpp.mandatoryEvents) && (
               <DrawerSection title="Mandatory Events" variant="premium">
-                <p className="py-3 text-sm leading-6 text-slate-200">{selectedOpp.mandatoryEvents}</p>
+                <MandatoryEventsList
+                  events={selectedOpp.mandatoryEventsList}
+                  legacy={selectedOpp.mandatoryEvents}
+                />
               </DrawerSection>
             )}
 

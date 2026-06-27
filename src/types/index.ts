@@ -279,6 +279,8 @@ export interface Opportunity {
   period: string
   capturedOn: string
   mandatoryEvents?: string
+  mandatoryEventsList?: MandatoryEvent[]
+  quoted?: boolean
   link?: string
   isDeleted?: boolean
   deletionRequested?: boolean
@@ -286,6 +288,15 @@ export interface Opportunity {
   nonSubmissionReportId?: string
   assignedTo?: string        // employee id
   samGovContacts?: SamGovContact[]   // SAM.gov pointOfContact snapshot, captured at import time
+}
+
+export interface MandatoryEvent {
+  id: string
+  label: string
+  date: string   // ISO YYYY-MM-DD
+  time?: string  // HH:MM (24h, local to opp)
+  notified4h?: boolean
+  notified24h?: boolean
 }
 
 // ── Contract ──────────────────────────────────────────────────────────

@@ -5,6 +5,7 @@ export type Permission =
   | 'opportunity:create'
   | 'opportunity:read'
   | 'opportunity:edit'
+  | 'opportunity:editSchedule'
   | 'opportunity:comment'
   | 'opportunity:submitProposal'
   | 'opportunity:assign'
@@ -37,6 +38,7 @@ const ALL_PERMISSIONS: Permission[] = [
   'opportunity:create',
   'opportunity:read',
   'opportunity:edit',
+  'opportunity:editSchedule',
   'opportunity:comment',
   'opportunity:submitProposal',
   'opportunity:assign',
@@ -64,6 +66,7 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   'opportunity:create':          'Create opportunities',
   'opportunity:read':            'View opportunities',
   'opportunity:edit':            'Edit opportunities',
+  'opportunity:editSchedule':    'Edit opportunity schedule (due date, time, timezone)',
   'opportunity:comment':         'Comment on opportunities',
   'opportunity:submitProposal':  'Submit proposals',
   'opportunity:assign':          'Assign opportunities',
@@ -113,6 +116,7 @@ export const PERMISSIONS_BY_ROLE: Record<Role, Permission[]> = {
   ],
   TEAM_LEAD: [
     'opportunity:read',
+    'opportunity:editSchedule',
     'opportunity:comment',
     'opportunity:submitProposal',
     'opportunity:assign',
@@ -124,6 +128,7 @@ export const PERMISSIONS_BY_ROLE: Record<Role, Permission[]> = {
   ],
   ASSOCIATE: [
     'opportunity:read',
+    'opportunity:editSchedule',
     'opportunity:submitProposal',
     'opportunity:deleteRequest',
     'sourcing:read',
