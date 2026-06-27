@@ -13,9 +13,9 @@ import { useAppearance } from '../../lib/appearance'
 function canSeeNavItem(user: ReturnType<typeof useStore.getState>['currentUser'], to: string) {
   if (to === '/pipeline') return hasPermission(user, 'opportunity:read')
   if (to === '/proposals') return hasPermission(user, 'opportunity:assign')
-  if (to === '/bd-tracker') return hasAnyPermission(user, ['admin:manageUsers', 'opportunity:assign'])
+  if (to === '/bd-tracker') return hasAnyPermission(user, ['admin:manageUsers', 'opportunity:assign', 'opportunity:submitProposal'])
   if (to === '/tracker') return hasPermission(user, 'opportunity:deleteApprove')
-  if (to === '/non-submissions') return hasPermission(user, 'nonSubmission:viewAll')
+  if (to === '/non-submissions') return hasAnyPermission(user, ['nonSubmission:viewAll', 'nonSubmission:submit'])
   if (to === '/contracts') return hasPermission(user, 'contract:read')
   if (to === '/fresh-award' || to === '/finance-projections') return hasPermission(user, 'operations:manage')
   if (to === '/subk-database') return hasAnyPermission(user, ['sourcing:read', 'operations:manage'])

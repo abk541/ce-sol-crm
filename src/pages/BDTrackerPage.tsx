@@ -7,7 +7,7 @@ import type { BDSubmission, ContractType, FileAttachment, Opportunity, SetAside 
 import { useStore } from '../store/useStore'
 import toast from 'react-hot-toast'
 import PeriodFilter, { type Period, filterByPeriod } from '../components/shared/PeriodFilter'
-import { getAssignmentChain } from '../lib/team'
+import { getAssignmentChain, isOpportunityOwnedByUser } from '../lib/team'
 import { formatCurrency } from '../lib/utils'
 import FloatingActionMenu from '../components/shared/FloatingActionMenu'
 import { hasPermission } from '../lib/permissions'
@@ -466,6 +466,10 @@ export default function BDTrackerPage() {
 
   const baseFiltered = useMemo(() => {
     let list = [...bdSubmissions]
+    list = list.filter(row => {
+      const opp = rowOpportunity(row, opportunities)
+      return isOpportunityOwnedByUser(employees, currentUser, opp?.assignedTo)
+    })
     if (period) list = list.filter(s => filterByPeriod(s.dueDate || s.submittedOn, period))
     if (search.trim()) {
       const q = search.trim().toLowerCase()
@@ -481,7 +485,7 @@ export default function BDTrackerPage() {
       list = list.filter(s => filterValue(s, filter.key, opportunities, employees).toLowerCase().includes(q))
     })
     return list
-  }, [bdSubmissions, period, search, filters, opportunities, employees])
+  }, [bdSubmissions, period, search, filters, opportunities, employees, currentUser])
 
   const filtered = useMemo(() => baseFiltered.filter(s => s.status === tab), [baseFiltered, tab])
 

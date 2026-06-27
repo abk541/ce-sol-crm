@@ -9,6 +9,7 @@ import {
 import { useStore } from '../store/useStore'
 import toast from 'react-hot-toast'
 import { hasPermission } from '../lib/permissions'
+import { isOpportunityOwnedByUser } from '../lib/team'
 import SamGovListingButton from '../components/shared/SamGovListingButton'
 import type { Opportunity } from '../types'
 
@@ -390,12 +391,13 @@ function ReportCard({
 
 // ── Dropped Opportunities Table ────────────────────────────────────────
 function DroppedOpportunitiesTab({ targetId, onViewReport }: { targetId?: string | null; onViewReport: (reportId: string) => void }) {
-  const { opportunities, nonSubReports } = useStore()
+  const { opportunities, nonSubReports, employees, currentUser } = useStore()
   const dropped = useMemo(
     () => opportunities
       .filter(o => o.status === 'DROPPED' && !o.isDeleted)
+      .filter(o => isOpportunityOwnedByUser(employees, currentUser, o.assignedTo))
       .filter(o => !targetId || o.id === targetId || o.solicitationId === targetId),
-    [opportunities, targetId]
+    [opportunities, targetId, employees, currentUser]
   )
 
   return (

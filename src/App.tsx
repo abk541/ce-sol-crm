@@ -113,13 +113,13 @@ export default function App() {
           <Route path="dashboard"     element={<DashboardPage />} />
           <Route path="pipeline"      element={<PermissionGuard permission="opportunity:read"><PipelinePage /></PermissionGuard>} />
           <Route path="proposals"     element={<PermissionGuard permission="opportunity:assign"><ProposalsPage /></PermissionGuard>} />
-          <Route path="bd-tracker"    element={<PermissionGuard anyOf={['admin:manageUsers', 'opportunity:assign']}><BDTrackerPage /></PermissionGuard>} />
+          <Route path="bd-tracker"    element={<PermissionGuard anyOf={['admin:manageUsers', 'opportunity:assign', 'opportunity:submitProposal']}><BDTrackerPage /></PermissionGuard>} />
           <Route path="contracts"     element={<PermissionGuard permission="contract:read"><ContractsPage /></PermissionGuard>} />
           <Route path="finance-projections" element={<PermissionGuard permission="operations:manage"><FinanceProjectionsPage /></PermissionGuard>} />
           <Route path="idiq"          element={<Navigate to="/contracts" replace />} />
           <Route path="bpas"          element={<Navigate to="/contracts" replace />} />
           <Route path="tracker"             element={<PermissionGuard permission="opportunity:deleteApprove"><TrackerPage /></PermissionGuard>} />
-          <Route path="non-submissions"   element={<PermissionGuard permission="nonSubmission:viewAll"><NonSubmissionsPage /></PermissionGuard>} />
+          <Route path="non-submissions"   element={<PermissionGuard anyOf={['nonSubmission:viewAll', 'nonSubmission:submit']}><NonSubmissionsPage /></PermissionGuard>} />
           <Route path="past-performances" element={<PermissionGuard permission="contract:read"><PastPerformancesPage /></PermissionGuard>} />
           <Route path="fresh-award"       element={<PermissionGuard permission="operations:manage"><FreshAwardPage /></PermissionGuard>} />
           <Route path="subk-database"     element={<PermissionGuard anyOf={['sourcing:read', 'operations:manage']}><SubkDatabasePage /></PermissionGuard>} />

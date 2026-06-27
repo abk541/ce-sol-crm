@@ -16,7 +16,7 @@ import { useStore } from '../store/useStore'
 import type { Opportunity, Priority, OppStatus, Comment, FileAttachment, SamGovContact, SubcontractorContact } from '../types'
 import { TIMEZONES } from '../data/mock'
 import { formatCurrency, useEscapeKey } from '../lib/utils'
-import { assignableEmployeesForUser, getAssignmentChain, isAssignedToAssociate, ROLE_DISPLAY_LABELS } from '../lib/team'
+import { assignableEmployeesForUser, getAssignmentChain, isAssignedToAssociate, isOpportunityOwnedByUser, ROLE_DISPLAY_LABELS } from '../lib/team'
 import { NAICS_CODES } from '../data/naics'
 import toast from 'react-hot-toast'
 import DetailDrawer, { DrawerSection, DrawerField } from '../components/shared/DetailDrawer'
@@ -1219,6 +1219,7 @@ export function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => v
   const canEditDetails = hasPermission(currentUser, 'opportunity:edit')
   const canComment = hasPermission(currentUser, 'opportunity:comment')
   const canRequestDelete = hasPermission(currentUser, 'opportunity:deleteRequest')
+    && isOpportunityOwnedByUser(employees, currentUser, opp.assignedTo)
   const hasPendingDelete = deletionRequests.some(r => r.opportunityId === opp.id && r.status === 'PENDING')
   const allowedAssignees = useMemo(() => {
     const ids = assignableEmployeesForUser(employees, currentUser, 'BD').map(employee => employee.id)
@@ -3256,6 +3257,7 @@ function CreateModal({ onClose }: { onClose: () => void }) {
 function RowMenu({
   o,
   canSubmit,
+  canSource,
   onViewDetails,
   onEdit,
   onSourcing,
@@ -3269,6 +3271,7 @@ function RowMenu({
 }: {
   o: Opportunity
   canSubmit: boolean
+  canSource: boolean
   canEdit: boolean
   canCancel: boolean
   canRequestDeletion: boolean
@@ -3313,14 +3316,16 @@ function RowMenu({
                 <Edit2 size={12} /> Edit / Comment
               </button>
             )}
-            <button
-              onClick={e => { e.stopPropagation(); setMenuOpen(false); onSourcing() }}
-              className="w-full text-left px-3 py-2 text-xs font-semibold flex items-center gap-2 transition-colors"
-              style={{ color: '#475569' }}
-              onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(0,0,0,0.04)'; (e.currentTarget as HTMLButtonElement).style.color = '#0F172A' }}
-              onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = ''; (e.currentTarget as HTMLButtonElement).style.color = '#475569' }}>
-              <Users2 size={12} /> Sourcing
-            </button>
+            {canSource && (
+              <button
+                onClick={e => { e.stopPropagation(); setMenuOpen(false); onSourcing() }}
+                className="w-full text-left px-3 py-2 text-xs font-semibold flex items-center gap-2 transition-colors"
+                style={{ color: '#475569' }}
+                onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(0,0,0,0.04)'; (e.currentTarget as HTMLButtonElement).style.color = '#0F172A' }}
+                onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = ''; (e.currentTarget as HTMLButtonElement).style.color = '#475569' }}>
+                <Users2 size={12} /> Sourcing
+              </button>
+            )}
             {canSubmit && submittable && (
               <button
                 onClick={e => { e.stopPropagation(); setMenuOpen(false); onSubmit() }}
@@ -3928,20 +3933,26 @@ export default function PipelinePage() {
                     <td onClick={e => e.stopPropagation()}>
                       <div className="flex items-center justify-end gap-1.5">
                         <SamGovListingButton opportunity={o} compact />
-                        <RowMenu
-                          o={o}
-                          canSubmit={canSubmit}
-                          onViewDetails={() => setSelectedOpp(o)}
-                          onEdit={() => setEditOpp(o)}
-                          onSourcing={() => setSourcingOpp(o)}
-                          onSubmit={() => setSubmitOpp(o)}
-                          onCancel={() => handleCancel(o)}
-                          onRequestDeletion={() => handleDelete(o)}
-                          canEdit={canOpenEditModal}
-                          canCancel={canCancelOpportunities}
-                          canRequestDeletion={canRequestDeletion}
-                          deletionPending={pendingDeletionIds.has(o.id)}
-                        />
+                        {(() => {
+                          const owned = isOpportunityOwnedByUser(employees, currentUser, o.assignedTo)
+                          return (
+                            <RowMenu
+                              o={o}
+                              canSubmit={canSubmit && owned}
+                              canSource={canWriteSourcing && owned}
+                              onViewDetails={() => setSelectedOpp(o)}
+                              onEdit={() => setEditOpp(o)}
+                              onSourcing={() => setSourcingOpp(o)}
+                              onSubmit={() => setSubmitOpp(o)}
+                              onCancel={() => handleCancel(o)}
+                              onRequestDeletion={() => handleDelete(o)}
+                              canEdit={canOpenEditModal}
+                              canCancel={canCancelOpportunities}
+                              canRequestDeletion={canRequestDeletion && owned}
+                              deletionPending={pendingDeletionIds.has(o.id)}
+                            />
+                          )
+                        })()}
                       </div>
                     </td>
                   </motion.tr>
@@ -4126,37 +4137,46 @@ export default function PipelinePage() {
 
             <div className="sticky bottom-0 -mx-6 -mb-5 mt-4 flex flex-wrap gap-2 border-t border-[#D7BE7A]/15 bg-[#07131F]/95 px-6 py-4 backdrop-blur">
               <SamGovListingButton opportunity={selectedOpp} label="Open SAM.gov" variant="premium" />
-              {canOpenEditModal && (
-                <button className="btn-secondary text-xs gap-1.5" onClick={() => { setSelectedOpp(null); setEditOpp(selectedOpp) }}>
-                  <Edit2 size={12} /> {canEditOpportunities ? 'Edit' : 'Comment'}
-                </button>
-              )}
-              <button className="btn-secondary text-xs gap-1.5" onClick={() => { setSelectedOpp(null); setSourcingOpp(selectedOpp) }}>
-                <Users2 size={12} /> Sourcing
-              </button>
-              {canSubmit && OPP_VIEW_STATUSES.includes(selectedOpp.status as any) && (
-                <button className="btn-primary text-xs gap-1.5" onClick={() => { setSelectedOpp(null); setSubmitOpp(selectedOpp) }}>
-                  <Send size={12} /> Submit Proposal
-                </button>
-              )}
-              {(canCancelOpportunities || canRequestDeletion) && (
-                <>
-                  {canCancelOpportunities && (
-                    <button className="btn-secondary text-xs gap-1.5 text-red-600 border-red-200 hover:bg-red-50" onClick={() => { setSelectedOpp(null); handleCancel(selectedOpp) }}>
-                      <Ban size={12} /> Cancel
-                    </button>
-                  )}
-                  {canRequestDeletion && (
-                  <button
-                    className="btn-secondary text-xs gap-1.5 text-red-600 border-red-200 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
-                    disabled={pendingDeletionIds.has(selectedOpp.id)}
-                    onClick={() => { setSelectedOpp(null); handleDelete(selectedOpp) }}
-                  >
-                    <Trash2 size={12} /> Delete
-                  </button>
-                  )}
-                </>
-              )}
+              {(() => {
+                const ownedSelected = isOpportunityOwnedByUser(employees, currentUser, selectedOpp.assignedTo)
+                return (
+                  <>
+                    {canOpenEditModal && (
+                      <button className="btn-secondary text-xs gap-1.5" onClick={() => { setSelectedOpp(null); setEditOpp(selectedOpp) }}>
+                        <Edit2 size={12} /> {canEditOpportunities ? 'Edit' : 'Comment'}
+                      </button>
+                    )}
+                    {canWriteSourcing && ownedSelected && (
+                      <button className="btn-secondary text-xs gap-1.5" onClick={() => { setSelectedOpp(null); setSourcingOpp(selectedOpp) }}>
+                        <Users2 size={12} /> Sourcing
+                      </button>
+                    )}
+                    {canSubmit && ownedSelected && OPP_VIEW_STATUSES.includes(selectedOpp.status as any) && (
+                      <button className="btn-primary text-xs gap-1.5" onClick={() => { setSelectedOpp(null); setSubmitOpp(selectedOpp) }}>
+                        <Send size={12} /> Submit Proposal
+                      </button>
+                    )}
+                    {(canCancelOpportunities || (canRequestDeletion && ownedSelected)) && (
+                      <>
+                        {canCancelOpportunities && (
+                          <button className="btn-secondary text-xs gap-1.5 text-red-600 border-red-200 hover:bg-red-50" onClick={() => { setSelectedOpp(null); handleCancel(selectedOpp) }}>
+                            <Ban size={12} /> Cancel
+                          </button>
+                        )}
+                        {canRequestDeletion && ownedSelected && (
+                        <button
+                          className="btn-secondary text-xs gap-1.5 text-red-600 border-red-200 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
+                          disabled={pendingDeletionIds.has(selectedOpp.id)}
+                          onClick={() => { setSelectedOpp(null); handleDelete(selectedOpp) }}
+                        >
+                          <Trash2 size={12} /> Delete
+                        </button>
+                        )}
+                      </>
+                    )}
+                  </>
+                )
+              })()}
             </div>
           </>
         )}

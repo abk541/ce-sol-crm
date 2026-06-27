@@ -78,17 +78,18 @@ describe('role permissions', () => {
     expect(hasPermission(teamLead, 'hr:reviewRequests')).toBe(false)
   })
 
-  it('keeps Associates limited to proposal submission and sourcing', () => {
+  it('keeps Associates limited to proposal submission, sourcing, deletion requests and non-submission reporting', () => {
     const associate = user('ASSOCIATE')
 
     expect(hasPermission(associate, 'opportunity:read')).toBe(true)
     expect(hasPermission(associate, 'opportunity:submitProposal')).toBe(true)
     expect(hasPermission(associate, 'sourcing:read')).toBe(true)
     expect(hasPermission(associate, 'sourcing:write')).toBe(true)
+    expect(hasPermission(associate, 'opportunity:deleteRequest')).toBe(true)
+    expect(hasPermission(associate, 'nonSubmission:submit')).toBe(true)
     expect(hasPermission(associate, 'opportunity:comment')).toBe(false)
     expect(hasPermission(associate, 'opportunity:assign')).toBe(false)
-    expect(hasPermission(associate, 'opportunity:deleteRequest')).toBe(false)
-    expect(hasPermission(associate, 'nonSubmission:submit')).toBe(false)
+    expect(hasPermission(associate, 'nonSubmission:review')).toBe(false)
     expect(hasPermission(associate, 'hr:viewCertifications')).toBe(true)
     expect(hasPermission(associate, 'hr:manageCertifications')).toBe(false)
     expect(hasPermission(associate, 'hr:reviewRequests')).toBe(false)
@@ -135,9 +136,9 @@ describe('permission overrides', () => {
   it('grants an extra permission to one user without affecting peers', () => {
     const alice = { ...user('ASSOCIATE'), id: 'alice' }
     const bob   = { ...user('ASSOCIATE'), id: 'bob'   }
-    applyPermissionOverrides({}, { alice: ['nonSubmission:submit'] }, {})
-    expect(hasPermission(alice, 'nonSubmission:submit')).toBe(true)
-    expect(hasPermission(bob,   'nonSubmission:submit')).toBe(false)
+    applyPermissionOverrides({}, { alice: ['opportunity:assign'] }, {})
+    expect(hasPermission(alice, 'opportunity:assign')).toBe(true)
+    expect(hasPermission(bob,   'opportunity:assign')).toBe(false)
   })
 
   it('revokes a role-granted permission for one user without affecting peers', () => {

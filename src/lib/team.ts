@@ -154,6 +154,34 @@ export function teamMemberIdsForWorkload(employees: Employee[], employeeId: stri
   return Array.from(ids)
 }
 
+// True when the opportunity's bottom-of-chain assignee is the user themselves
+// or someone the user supervises directly/transitively. Capture/BD Managers
+// always pass; Ops Manager too (they may need to act on cross-team items).
+// Associates only pass when assignedTo === their own employee id.
+export function isOpportunityOwnedByUser(
+  employees: Employee[],
+  user: User | null | undefined,
+  assignedTo: string | undefined,
+): boolean {
+  if (!user) return false
+  if (user.role === 'CAPTURE_MANAGER') return true
+  if (user.role === 'BD_MANAGER')      return true
+  if (user.role === 'OPS_MANAGER')     return true
+  if (!assignedTo) return false
+
+  const me = findEmployeeForUser(employees, user)
+  if (!me) return false
+  if (me.id === assignedTo) return true
+
+  // Team Lead → owns every employee in their downline.
+  if (me.role === 'TEAM_LEAD' || me.role === 'BD_MANAGER') {
+    const downline = teamMemberIdsForWorkload(employees, me.id)
+    return downline.includes(assignedTo)
+  }
+
+  return false
+}
+
 export function assignmentWorkloadByEmployee({
   employees,
   opportunities,

@@ -125,8 +125,10 @@ export const PERMISSIONS_BY_ROLE: Record<Role, Permission[]> = {
   ASSOCIATE: [
     'opportunity:read',
     'opportunity:submitProposal',
+    'opportunity:deleteRequest',
     'sourcing:read',
     'sourcing:write',
+    'nonSubmission:submit',
     'hr:viewCertifications',
   ],
   OPS_MANAGER: [
