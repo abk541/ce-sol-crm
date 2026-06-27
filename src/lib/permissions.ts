@@ -19,6 +19,8 @@ export type Permission =
   | 'nonSubmission:review'
   | 'contract:read'
   | 'contract:edit'
+  | 'contract:comment'
+  | 'contract:allCommChannels'
   | 'operations:manage'
   | 'hr:manageCertifications'
   | 'hr:viewCertifications'
@@ -52,6 +54,8 @@ const ALL_PERMISSIONS: Permission[] = [
   'nonSubmission:review',
   'contract:read',
   'contract:edit',
+  'contract:comment',
+  'contract:allCommChannels',
   'operations:manage',
   'hr:manageCertifications',
   'hr:viewCertifications',
@@ -80,6 +84,8 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   'nonSubmission:review':        'Review non-submission reports',
   'contract:read':               'View contracts',
   'contract:edit':               'Edit contracts',
+  'contract:comment':            'Post on contract Comm Progress',
+  'contract:allCommChannels':    'Post on all Comm Progress channels (KO, COR, End User, Other)',
   'operations:manage':           'Manage operations workflow',
   'hr:manageCertifications':     'Manage company certifications',
   'hr:viewCertifications':       'View company certifications',
@@ -139,6 +145,8 @@ export const PERMISSIONS_BY_ROLE: Record<Role, Permission[]> = {
   OPS_MANAGER: [
     'contract:read',
     'contract:edit',
+    'contract:comment',
+    'contract:allCommChannels',
     'operations:manage',
     'hr:viewCertifications',
   ],

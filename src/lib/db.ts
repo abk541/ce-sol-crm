@@ -404,6 +404,7 @@ function contractToDb(c: Contract): Record<string, unknown> {
     billing_period_end: c.billingPeriodEnd ?? null,
     current_pop_year: c.currentPopYear ?? null,
     gov_billing_status: c.governmentBillingStatus ?? null,
+    comms_log: c.commsLog ?? null,
   }
 }
 
@@ -446,6 +447,7 @@ function dbToContract(row: Record<string, unknown>): Partial<Contract> {
     billingPeriodEnd: row.billing_period_end as string | undefined,
     currentPopYear: row.current_pop_year as Contract['currentPopYear'],
     governmentBillingStatus: (row.gov_billing_status as Contract['governmentBillingStatus']) ?? undefined,
+    commsLog: Array.isArray(row.comms_log) ? (row.comms_log as Contract['commsLog']) : undefined,
     // Initialize nested arrays — loaded separately if needed
     pocs: [],
     lockedSubcontractors: [],

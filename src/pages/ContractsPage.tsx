@@ -8,7 +8,7 @@ import {
   ArrowRight, CheckCircle2, Info, MapPin, Calendar,
   Phone, Mail, Clock, Shield, FileText, Trash2, AlertCircle,
   ChevronUp, ChevronDown, ChevronsUpDown, Pencil, Receipt, Eye, Paperclip, Download,
-  UserCog, Layers, Minus,
+  UserCog, Layers, Minus, MessageSquare,
 } from 'lucide-react'
 import PeriodFilter, { type Period, filterByPeriod } from '../components/shared/PeriodFilter'
 import toast from 'react-hot-toast'
@@ -19,8 +19,10 @@ import type {
   GovernmentWarning, GovWarningType, FileAttachment, Comment, ContractDeliverable,
   LockedSubkDocuments, Subcontractor, Opportunity,
   ContractInvoice, ContractLineItem, ContractLineYear, ContractVehicleOrder,
+  ContractCommEntry, ContractCommChannel,
 } from '../types'
 import { formatCurrency, useEscapeKey } from '../lib/utils'
+import { hasPermission } from '../lib/permissions'
 import FloatingActionMenu from '../components/shared/FloatingActionMenu'
 import {
   canGenerateContractInvoice,
@@ -429,7 +431,7 @@ function uniqueSourcingEntries(entries: Subcontractor[]) {
   return Array.from(byId.values())
 }
 
-type ContractDrawerTab = 'overview' | 'pop' | 'poc' | 'subk' | 'lockSubk' | 'warnings' | 'deliverables' | 'lineItems' | 'vehicleOrders' | 'billing' | 'assignment'
+type ContractDrawerTab = 'overview' | 'pop' | 'poc' | 'subk' | 'lockSubk' | 'warnings' | 'deliverables' | 'comms' | 'lineItems' | 'vehicleOrders' | 'billing' | 'assignment'
 
 const LINE_YEAR_LABELS: Record<ContractLineYear, string> = {
   base: 'Base year',
@@ -1695,6 +1697,11 @@ function ContractDetailDrawer({
   })
   const [confirmDeleteWarningId, setConfirmDeleteWarningId] = useState<string | null>(null)
 
+  // Comm Progress (Batch E)
+  const [commChannel, setCommChannel] = useState<ContractCommChannel>('LOCKED_SUBK')
+  const [commDraft, setCommDraft] = useState('')
+  const [commFilter, setCommFilter] = useState<'ALL' | ContractCommChannel>('ALL')
+
   // Edit status
   const [editingStatus, setEditingStatus] = useState(false)
 
@@ -2000,6 +2007,7 @@ function ContractDetailDrawer({
           { key: 'lockSubk', label: `Locked Subk (${(contract.lockedSubcontractors || []).length})`, icon: Shield },
           { key: 'warnings', label: `Warnings (${(contract.governmentWarnings || []).filter(w => !w.resolvedAt).length})`, icon: AlertTriangle },
           { key: 'deliverables', label: `Deliverables`, icon: ListChecks },
+          { key: 'comms', label: `Comm Progress (${(contract.commsLog || []).length})`, icon: MessageSquare },
           { key: 'lineItems', label: `Line Items (${(contract.lineItems || []).length})`, icon: Layers },
           ...(vehicleSettings ? [{ key: 'vehicleOrders', label: `${vehicleSettings.plural} (${vehicleOrders.length})`, icon: FileText }] : []),
           { key: 'billing', label: 'Billing Period', icon: Receipt },
@@ -2140,6 +2148,7 @@ function ContractDetailDrawer({
                 const activeWarnings = (contract.governmentWarnings || []).filter(w => !w.resolvedAt)
                 const now = Date.now()
                 const deliverablesOverdue = deliverables.filter(d => d.deadline && new Date(`${d.deadline}T23:59:59`).getTime() < now).length
+                const commsCount = (contract.commsLog || []).length
                 const tiles: {
                   key: ContractDrawerTab
                   label: string
@@ -2160,9 +2169,10 @@ function ContractDetailDrawer({
                     ? { bg: 'rgba(248,113,113,0.16)', border: 'rgba(248,113,113,0.42)', color: '#FCA5A5' }
                     : { bg: 'rgba(167,139,250,0.10)', border: 'rgba(167,139,250,0.30)', color: '#C4B5FD' },
                     alert: deliverablesOverdue > 0, hint: deliverablesOverdue > 0 ? `${deliverablesOverdue} overdue` : `${deliverables.length} total` },
+                  { key: 'comms',        label: 'Comm Progress',     count: commsCount,                                      icon: MessageSquare, accent: { bg: 'rgba(94,234,212,0.10)', border: 'rgba(94,234,212,0.30)', color: '#5EEAD4' }, hint: commsCount > 0 ? `${commsCount} entr${commsCount === 1 ? 'y' : 'ies'}` : 'No entries yet' },
                 ]
                 return (
-                  <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 md:grid-cols-5">
+                  <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 md:grid-cols-6">
                     {tiles.map(t => (
                       <button
                         key={t.key}
@@ -3727,6 +3737,173 @@ function ContractDetailDrawer({
             </div>
           </div>
         )}
+
+        {/* COMM PROGRESS — channel-scoped log (Subk, KO, COR, End User, Other) */}
+        {tab === 'comms' && (() => {
+          const allowAllChannels = hasPermission(currentUser, 'contract:allCommChannels')
+          const canPostComm = hasPermission(currentUser, 'contract:comment') || hasPermission(currentUser, 'contract:allCommChannels')
+          const availableChannels: ContractCommChannel[] = allowAllChannels
+            ? ['LOCKED_SUBK', 'KO', 'COR', 'END_USER', 'OTHER']
+            : ['LOCKED_SUBK']
+          const channelLabels: Record<ContractCommChannel, string> = {
+            LOCKED_SUBK: 'Locked Subk',
+            KO: 'Contracting Officer',
+            COR: 'COR',
+            END_USER: 'End User',
+            OTHER: 'Other',
+          }
+          const channelTone: Record<ContractCommChannel, { bg: string; color: string; border: string }> = {
+            LOCKED_SUBK: { bg: 'rgba(110,231,183,0.12)', color: '#34D399', border: 'rgba(110,231,183,0.35)' },
+            KO:          { bg: 'rgba(125,211,252,0.12)', color: '#38BDF8', border: 'rgba(125,211,252,0.35)' },
+            COR:         { bg: 'rgba(252,211,77,0.12)',  color: '#F59E0B', border: 'rgba(252,211,77,0.35)'  },
+            END_USER:    { bg: 'rgba(167,139,250,0.12)', color: '#A78BFA', border: 'rgba(167,139,250,0.35)' },
+            OTHER:       { bg: 'rgba(148,163,184,0.12)', color: '#94A3B8', border: 'rgba(148,163,184,0.35)' },
+          }
+          const allEntries = (contract.commsLog || []).slice().sort(
+            (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+          )
+          const filtered = commFilter === 'ALL' ? allEntries : allEntries.filter(e => e.channel === commFilter)
+          const selectedChannel = availableChannels.includes(commChannel) ? commChannel : availableChannels[0]
+          const counts: Record<ContractCommChannel | 'ALL', number> = {
+            ALL: allEntries.length,
+            LOCKED_SUBK: allEntries.filter(e => e.channel === 'LOCKED_SUBK').length,
+            KO: allEntries.filter(e => e.channel === 'KO').length,
+            COR: allEntries.filter(e => e.channel === 'COR').length,
+            END_USER: allEntries.filter(e => e.channel === 'END_USER').length,
+            OTHER: allEntries.filter(e => e.channel === 'OTHER').length,
+          }
+          const canEditEntry = (entry: ContractCommEntry) => (
+            hasPermission(currentUser, 'comment:editAny') ||
+            entry.authorId === currentUser?.id ||
+            (entry.author && entry.author === currentUser?.username)
+          )
+          return (
+            <div className="space-y-4">
+              {/* Filter pills */}
+              <div className="flex flex-wrap items-center gap-1.5">
+                {(['ALL', ...availableChannels] as Array<'ALL' | ContractCommChannel>).map(ch => {
+                  const active = commFilter === ch
+                  const label = ch === 'ALL' ? 'All' : channelLabels[ch]
+                  return (
+                    <button
+                      key={ch}
+                      onClick={() => setCommFilter(ch)}
+                      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-bold transition-all ${
+                        active
+                          ? 'border-slate-300 bg-white text-slate-800 shadow-sm'
+                          : 'border-transparent bg-slate-100 text-slate-500 hover:bg-slate-200'
+                      }`}
+                    >
+                      {label}
+                      <span className="text-[9px] opacity-70">{counts[ch]}</span>
+                    </button>
+                  )
+                })}
+              </div>
+
+              {/* Entries list */}
+              <div className="space-y-2.5">
+                {filtered.length === 0 && (
+                  <p className="text-xs text-slate-400 text-center py-6">
+                    {allEntries.length === 0
+                      ? 'No communications logged yet.'
+                      : 'No entries for this channel.'}
+                  </p>
+                )}
+                {filtered.map(entry => {
+                  const tone = channelTone[entry.channel]
+                  return (
+                    <div key={entry.id} className="rounded-xl border bg-white p-3" style={{ borderColor: 'var(--border-default)' }}>
+                      <div className="mb-2 flex items-center gap-2">
+                        <span
+                          className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold"
+                          style={{ background: tone.bg, color: tone.color, borderColor: tone.border }}
+                        >
+                          <MessageSquare size={9} /> {channelLabels[entry.channel]}
+                        </span>
+                        <span className="text-[10px] font-semibold text-slate-600">{entry.author}</span>
+                        <span className="text-[10px] text-slate-400">{formatDateTime(entry.createdAt)}</span>
+                        {entry.editedAt && (
+                          <span className="text-[9px] italic text-slate-400">(edited {formatDateTime(entry.editedAt)})</span>
+                        )}
+                        {canEditEntry(entry) && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (!confirm('Delete this entry?')) return
+                              const next = (contract.commsLog || []).filter(e => e.id !== entry.id)
+                              updateContract(contract.id, { commsLog: next })
+                            }}
+                            className="ml-auto text-[10px] font-semibold text-rose-600 hover:underline"
+                          >
+                            Delete
+                          </button>
+                        )}
+                      </div>
+                      <p className="whitespace-pre-wrap text-xs text-slate-700">{entry.text}</p>
+                      {(entry.attachments ?? []).map(att => (
+                        <p key={att.id} className="mt-1 flex items-center gap-1 text-[10px] font-semibold text-indigo-600">
+                          <FileText size={9} /> {att.name}
+                        </p>
+                      ))}
+                    </div>
+                  )
+                })}
+              </div>
+
+              {/* Composer */}
+              {canPostComm && (
+                <div className="rounded-xl border bg-slate-50 p-3" style={{ borderColor: 'var(--border-default)' }}>
+                  <div className="mb-2 flex items-center gap-2">
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Log entry on</label>
+                    <select
+                      value={selectedChannel}
+                      onChange={e => setCommChannel(e.target.value as ContractCommChannel)}
+                      className="input-field text-xs py-1.5"
+                    >
+                      {availableChannels.map(ch => (
+                        <option key={ch} value={ch}>{channelLabels[ch]}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <textarea
+                    value={commDraft}
+                    onChange={e => setCommDraft(e.target.value)}
+                    rows={3}
+                    placeholder="What happened? Add a timestamped note for the team..."
+                    className="input-field w-full resize-none text-xs"
+                  />
+                  <div className="mt-2 flex justify-end">
+                    <button
+                      type="button"
+                      disabled={!commDraft.trim()}
+                      onClick={() => {
+                        const text = commDraft.trim()
+                        if (!text) return
+                        const entry: ContractCommEntry = {
+                          id: crypto.randomUUID(),
+                          channel: selectedChannel,
+                          text,
+                          author: currentUser?.username ?? currentUser?.name ?? 'unknown',
+                          authorId: currentUser?.id,
+                          createdAt: new Date().toISOString(),
+                        }
+                        updateContract(contract.id, {
+                          commsLog: [...(contract.commsLog || []), entry],
+                        })
+                        setCommDraft('')
+                        toast.success('Entry logged')
+                      }}
+                      className="btn-primary text-xs gap-1.5 disabled:opacity-40"
+                    >
+                      <Plus size={11} /> Log entry
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )
+        })()}
 
         {/* LINE ITEMS — CLIN-numbered scope of work for base + option years */}
         {tab === 'lineItems' && (

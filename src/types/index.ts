@@ -348,6 +348,26 @@ export interface Contract {
   vehicleOrders?: ContractVehicleOrder[] // IDIQ task orders / BPA calls under this parent contract
   governmentBillingStatus?: GovBillingStatus  // gov-invoice payment status shown in Finance Projections
   invoices?: ContractInvoice[]      // tracked invoices feeding the Finance Projections grid
+  commsLog?: ContractCommEntry[]    // Comm Progress section: channel-scoped log entries
+}
+
+// ── Contract Comms (Comm Progress section) ────────────────────────────
+export type ContractCommChannel =
+  | 'LOCKED_SUBK'
+  | 'KO'
+  | 'COR'
+  | 'END_USER'
+  | 'OTHER'
+
+export interface ContractCommEntry {
+  id: string
+  channel: ContractCommChannel
+  text: string
+  author: string
+  authorId?: string
+  createdAt: string
+  editedAt?: string
+  attachments?: FileAttachment[]
 }
 
 // ── Government Billing Status (Finance Projections) ─────────────
