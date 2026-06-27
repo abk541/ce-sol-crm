@@ -41,7 +41,7 @@ import {
   buildSamGovOpportunityEndpoint,
   mapSamGovOpportunityToForm,
 } from '../lib/samGov'
-import { hasPermission } from '../lib/permissions'
+import { canDeleteComment, canEditComment, hasPermission } from '../lib/permissions'
 
 // ── Constants ─────────────────────────────────────────────────────────
 const TYPES_DISPLAY: { value: string; label: string }[] = [
@@ -1212,6 +1212,8 @@ export function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => v
   const [deleteReason, setDeleteReason] = useState('')
   const [newComment, setNewComment] = useState('')
   const [newCommentAttachments, setNewCommentAttachments] = useState<FileAttachment[]>([])
+  const [editingCommentId, setEditingCommentId] = useState<string | null>(null)
+  const [editingCommentText, setEditingCommentText] = useState('')
   const [saving, setSaving] = useState(false)
 
   const canEditDetails = hasPermission(currentUser, 'opportunity:edit')
@@ -1247,6 +1249,7 @@ export function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => v
           id: crypto.randomUUID(),
           text: newComment.trim(),
           author: currentUser?.username ?? 'unknown',
+          authorId: currentUser?.id,
           createdAt: new Date().toISOString(),
           attachments: newCommentAttachments,
         },
@@ -1275,6 +1278,7 @@ export function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => v
         id: crypto.randomUUID(),
         text: newComment.trim(),
         author: currentUser?.username ?? 'unknown',
+        authorId: currentUser?.id,
         createdAt: new Date().toISOString(),
         attachments: newCommentAttachments,
       })
@@ -1482,16 +1486,85 @@ export function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => v
             <p className="text-xs text-slate-400">No comments yet.</p>
           )}
           <div className="space-y-3">
-            {(form.comments ?? []).map((c: Comment) => (
-              <div key={c.id} className="p-3 rounded-xl bg-slate-50 border border-slate-100">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-xs font-semibold text-slate-700">{c.author}</span>
-                  <span className="text-[10px] text-slate-400">{formatDateTime(c.createdAt)}</span>
+            {(form.comments ?? []).map((c: Comment) => {
+              const editing = editingCommentId === c.id
+              const mayEdit   = canEditComment(currentUser, c)
+              const mayDelete = canDeleteComment(currentUser, c)
+              return (
+                <div key={c.id} className="p-3 rounded-xl bg-slate-50 border border-slate-100">
+                  <div className="flex items-center justify-between mb-1 gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="text-xs font-semibold text-slate-700 truncate">{c.author}</span>
+                      {c.editedAt && !editing && (
+                        <span className="text-[10px] italic text-slate-400" title={`Last edited ${formatDateTime(c.editedAt)}`}>(edited)</span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] text-slate-400">{formatDateTime(c.createdAt)}</span>
+                      {!editing && mayEdit && (
+                        <button
+                          type="button"
+                          onClick={() => { setEditingCommentId(c.id); setEditingCommentText(c.text) }}
+                          className="text-slate-400 hover:text-indigo-500 p-1 rounded"
+                          title="Edit comment"
+                        >
+                          <Edit2 size={11} />
+                        </button>
+                      )}
+                      {!editing && mayDelete && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (!confirm('Delete this comment? This cannot be undone after saving.')) return
+                            set('comments', (form.comments ?? []).filter(x => x.id !== c.id))
+                          }}
+                          className="text-slate-400 hover:text-rose-500 p-1 rounded"
+                          title="Delete comment"
+                        >
+                          <Trash2 size={11} />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  {editing ? (
+                    <div className="space-y-2">
+                      <textarea
+                        value={editingCommentText}
+                        onChange={e => setEditingCommentText(e.target.value)}
+                        rows={3}
+                        className="input-field w-full resize-none text-xs"
+                      />
+                      <div className="flex justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => { setEditingCommentId(null); setEditingCommentText('') }}
+                          className="btn-secondary text-[11px] py-1 px-2"
+                        >Cancel</button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const trimmed = editingCommentText.trim()
+                            if (!trimmed) { toast.error('Comment cannot be empty'); return }
+                            if (trimmed === c.text) { setEditingCommentId(null); return }
+                            set('comments', (form.comments ?? []).map(x =>
+                              x.id === c.id ? { ...x, text: trimmed, editedAt: new Date().toISOString() } : x,
+                            ))
+                            setEditingCommentId(null)
+                            setEditingCommentText('')
+                          }}
+                          className="btn-primary text-[11px] py-1 px-2"
+                        >Save</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <p className="text-xs text-slate-600 whitespace-pre-wrap">{c.text}</p>
+                      <CommentAttachments attachments={c.attachments} />
+                    </>
+                  )}
                 </div>
-                <p className="text-xs text-slate-600">{c.text}</p>
-                <CommentAttachments attachments={c.attachments} />
-              </div>
-            ))}
+              )
+            })}
           </div>
           <div className="border-t border-slate-100 pt-4">
             <label className={lbl}>Add a Comment</label>
@@ -1978,6 +2051,7 @@ export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () 
             id: crypto.randomUUID(),
             text: draft.newComment.trim(),
             author: currentUser?.username ?? '',
+            authorId: currentUser?.id,
             createdAt: new Date().toISOString(),
           }])
         : '',
@@ -2010,6 +2084,7 @@ export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () 
         id: crypto.randomUUID(),
         text: draft.newComment.trim(),
         author: currentUser?.username ?? '',
+        authorId: currentUser?.id,
         createdAt: new Date().toISOString(),
       })
     }
@@ -2941,6 +3016,7 @@ function CreateModal({ onClose }: { onClose: () => void }) {
         id: crypto.randomUUID(),
         text: initialComment.trim(),
         author: currentUser?.username ?? 'unknown',
+        authorId: currentUser?.id,
         createdAt: new Date().toISOString(),
         attachments: initialCommentAttachments,
       })
@@ -3980,11 +4056,16 @@ export default function PipelinePage() {
               <DrawerSection title={`Comments (${selectedOpp.comments.length})`} variant="premium">
                 {selectedOpp.comments.map((c: Comment) => (
                   <div key={c.id} className="border-b border-[#D7BE7A]/15 py-3 last:border-0">
-                    <div className="flex items-center justify-between mb-0.5">
-                      <span className="text-xs font-bold text-[#F8FBF7]">{c.author}</span>
+                    <div className="flex items-center justify-between mb-0.5 gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="text-xs font-bold text-[#F8FBF7] truncate">{c.author}</span>
+                        {c.editedAt && (
+                          <span className="text-[10px] italic text-slate-500" title={`Last edited ${formatDateTime(c.editedAt)}`}>(edited)</span>
+                        )}
+                      </div>
                       <span className="text-[10px] font-medium text-slate-400">{formatDateTime(c.createdAt)}</span>
                     </div>
-                    <p className="text-xs leading-5 text-slate-300">{c.text}</p>
+                    <p className="text-xs leading-5 text-slate-300 whitespace-pre-wrap">{c.text}</p>
                     <CommentAttachments attachments={c.attachments} />
                   </div>
                 ))}

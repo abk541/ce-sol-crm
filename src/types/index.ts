@@ -81,8 +81,10 @@ export interface LockedSubkDocuments {
 export interface Comment {
   id: string
   text: string
-  author: string
+  author: string         // legacy: username at write time; kept for display
+  authorId?: string      // employee id for ownership checks (added Batch A)
   createdAt: string
+  editedAt?: string      // ISO timestamp set when the body is changed
   attachments?: FileAttachment[]
 }
 

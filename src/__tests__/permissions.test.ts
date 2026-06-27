@@ -1,7 +1,7 @@
 import { describe, expect, it, afterEach } from 'vitest'
 import { MOCK_USERS } from '../data/mock'
-import { applyPermissionOverrides, getEffectiveRolePermissions, getEffectiveUserPermissions, hasPermission } from '../lib/permissions'
-import type { Role, User } from '../types'
+import { applyPermissionOverrides, canDeleteComment, canEditComment, getEffectiveRolePermissions, getEffectiveUserPermissions, hasPermission } from '../lib/permissions'
+import type { Comment, Role, User } from '../types'
 
 function user(role: Role): User {
   return {
@@ -168,5 +168,73 @@ describe('permission overrides', () => {
     expect(getEffectiveRolePermissions('BD_MANAGER')).toEqual(['opportunity:create'])
     // Untouched roles still return their built-in defaults.
     expect(getEffectiveRolePermissions('CAPTURE_MANAGER').length).toBeGreaterThan(10)
+  })
+})
+
+describe('comment ownership', () => {
+  afterEach(() => {
+    applyPermissionOverrides({}, {}, {})
+  })
+
+  function comment(overrides: Partial<Comment> = {}): Comment {
+    return {
+      id: 'c1',
+      text: 'hello',
+      author: 'alice',
+      authorId: 'u-alice',
+      createdAt: '2026-01-01',
+      ...overrides,
+    }
+  }
+
+  it('lets a user edit their own comment by authorId match', () => {
+    const alice = { ...user('ASSOCIATE'), id: 'u-alice', username: 'alice' }
+    expect(canEditComment(alice, comment())).toBe(true)
+    expect(canDeleteComment(alice, comment())).toBe(true)
+  })
+
+  it('falls back to username when authorId is missing (legacy rows)', () => {
+    const alice = { ...user('ASSOCIATE'), id: 'u-alice', username: 'alice' }
+    const legacy = comment({ authorId: undefined, author: 'alice' })
+    expect(canEditComment(alice, legacy)).toBe(true)
+    expect(canDeleteComment(alice, legacy)).toBe(true)
+  })
+
+  it('falls back to name when authorId is missing and username does not match', () => {
+    const alice = { ...user('ASSOCIATE'), id: 'u-alice', username: 'a.koshy', name: 'Alice K' }
+    const legacy = comment({ authorId: undefined, author: 'Alice K' })
+    expect(canEditComment(alice, legacy)).toBe(true)
+  })
+
+  it('denies users who are not the author and lack comment:editAny', () => {
+    const bob = { ...user('ASSOCIATE'), id: 'u-bob', username: 'bob' }
+    expect(canEditComment(bob, comment())).toBe(false)
+    expect(canDeleteComment(bob, comment())).toBe(false)
+  })
+
+  it('Capture Manager gets comment:editAny by default', () => {
+    const cm = user('CAPTURE_MANAGER')
+    expect(hasPermission(cm, 'comment:editAny')).toBe(true)
+    expect(canEditComment(cm, comment())).toBe(true)
+    expect(canDeleteComment(cm, comment())).toBe(true)
+  })
+
+  it('does NOT grant comment:editAny to default roles besides Capture Manager', () => {
+    expect(hasPermission(user('BD_MANAGER'),  'comment:editAny')).toBe(false)
+    expect(hasPermission(user('TEAM_LEAD'),   'comment:editAny')).toBe(false)
+    expect(hasPermission(user('ASSOCIATE'),   'comment:editAny')).toBe(false)
+    expect(hasPermission(user('OPS_MANAGER'), 'comment:editAny')).toBe(false)
+  })
+
+  it('Admin can grant comment:editAny to another user via per-user override', () => {
+    const bob = { ...user('ASSOCIATE'), id: 'u-bob', username: 'bob' }
+    applyPermissionOverrides({}, { 'u-bob': ['comment:editAny'] }, {})
+    expect(canEditComment(bob, comment())).toBe(true)
+    expect(canDeleteComment(bob, comment())).toBe(true)
+  })
+
+  it('returns false when there is no user', () => {
+    expect(canEditComment(null, comment())).toBe(false)
+    expect(canDeleteComment(null, comment())).toBe(false)
   })
 })

@@ -3406,6 +3406,7 @@ function ContractDetailDrawer({
                                 id: crypto.randomUUID(),
                                 text,
                                 author: currentUser?.username ?? currentUser?.name ?? 'unknown',
+                                authorId: currentUser?.id,
                                 createdAt: new Date().toISOString(),
                               },
                             ],
@@ -3496,6 +3497,7 @@ function ContractDetailDrawer({
                               id: crypto.randomUUID(),
                               text: warnForm.comment.trim(),
                               author: currentUser?.username ?? currentUser?.name ?? 'unknown',
+                              authorId: currentUser?.id,
                               createdAt: new Date().toISOString(),
                             }]
                           : [],

@@ -278,7 +278,9 @@ function commentToDb(opportunityId: string, comment: Comment): Record<string, un
     opportunity_id: opportunityId,
     text: comment.text,
     author: comment.author,
+    author_id: comment.authorId ?? null,
     created_at: comment.createdAt,
+    edited_at: comment.editedAt ?? null,
   }
 }
 
@@ -287,7 +289,9 @@ function dbToComment(row: Record<string, unknown>): Comment {
     id: row.id as string,
     text: row.text as string,
     author: row.author as string,
+    authorId: (row.author_id as string | null) ?? undefined,
     createdAt: row.created_at as string,
+    editedAt: (row.edited_at as string | null) ?? undefined,
   }
 }
 

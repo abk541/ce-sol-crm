@@ -1,4 +1,4 @@
-import type { Role, User } from '../types'
+import type { Comment, Role, User } from '../types'
 
 export type Permission =
   | 'admin:manageUsers'
@@ -22,6 +22,7 @@ export type Permission =
   | 'hr:manageCertifications'
   | 'hr:viewCertifications'
   | 'hr:reviewRequests'
+  | 'comment:editAny'
 
 export const ROLE_LABELS: Record<Role, string> = {
   CAPTURE_MANAGER: 'Capture Manager',
@@ -53,6 +54,7 @@ const ALL_PERMISSIONS: Permission[] = [
   'hr:manageCertifications',
   'hr:viewCertifications',
   'hr:reviewRequests',
+  'comment:editAny',
 ]
 
 export const PERMISSION_REGISTRY: ReadonlyArray<Permission> = ALL_PERMISSIONS
@@ -79,6 +81,7 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   'hr:manageCertifications':     'Manage company certifications',
   'hr:viewCertifications':       'View company certifications',
   'hr:reviewRequests':           'Review HR / employee requests',
+  'comment:editAny':             "Edit / delete any user's comment",
 }
 
 export const PERMISSION_GROUP_LABELS: Record<string, string> = {
@@ -89,6 +92,7 @@ export const PERMISSION_GROUP_LABELS: Record<string, string> = {
   contract:      'Contracts',
   operations:    'Operations',
   hr:            'HR',
+  comment:       'Comments',
 }
 
 export function getPermissionGroup(perm: Permission): string {
@@ -200,4 +204,27 @@ export function userHasCustomOverrides(userId: string): boolean {
   const g = activeUserGrants[userId]
   const r = activeUserRevokes[userId]
   return (Array.isArray(g) && g.length > 0) || (Array.isArray(r) && r.length > 0)
+}
+
+// ── Comment ownership ────────────────────────────────────────────────────────
+// A user can edit / delete a comment when they wrote it, or when they hold the
+// elevated `comment:editAny` permission (which defaults to CAPTURE_MANAGER and
+// can be granted to anyone via the Admin → Permissions matrix).
+//
+// Older comments persisted before authorId existed are matched by username so
+// the rule still works on legacy data.
+function isOwnComment(user: User, comment: Pick<Comment, 'author' | 'authorId'>): boolean {
+  if (comment.authorId) return comment.authorId === user.id
+  return comment.author === user.username || comment.author === user.name
+}
+
+export function canEditComment(user: User | null | undefined, comment: Pick<Comment, 'author' | 'authorId'>): boolean {
+  if (!user) return false
+  if (hasPermission(user, 'comment:editAny')) return true
+  return isOwnComment(user, comment)
+}
+
+export function canDeleteComment(user: User | null | undefined, comment: Pick<Comment, 'author' | 'authorId'>): boolean {
+  // Same rule as edit — keep the two helpers so callers stay readable.
+  return canEditComment(user, comment)
 }

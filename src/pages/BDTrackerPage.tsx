@@ -984,10 +984,15 @@ export default function BDTrackerPage() {
                       {selectedOpportunity.comments.map(comment => (
                         <div key={comment.id} className="border-b border-[#D7BE7A]/15 py-3 last:border-0">
                           <div className="mb-1 flex items-center justify-between gap-3">
-                            <span className="text-xs font-bold text-[#F8FBF7]">{comment.author}</span>
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="text-xs font-bold text-[#F8FBF7] truncate">{comment.author}</span>
+                              {comment.editedAt && (
+                                <span className="text-[10px] italic text-slate-500" title={`Last edited ${formatSubmittedOn(comment.editedAt)}`}>(edited)</span>
+                              )}
+                            </div>
                             <span className="text-[10px] font-medium text-slate-400">{formatSubmittedOn(comment.createdAt)}</span>
                           </div>
-                          <p className="text-xs leading-5 text-slate-300">{comment.text}</p>
+                          <p className="text-xs leading-5 text-slate-300 whitespace-pre-wrap">{comment.text}</p>
                         </div>
                       ))}
                     </DrawerSection>
