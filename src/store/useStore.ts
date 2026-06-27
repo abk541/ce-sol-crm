@@ -120,6 +120,8 @@ interface AppState {
   requireAssociateForActivePipeline: boolean
   nextInvoiceNumber: number   // global running sequence for generated contract invoices
   prefs: UserPreferences
+  // Watermark for once-per-day goal progress notifications (YYYY-MM-DD).
+  goalProgressLastNotifiedAt?: string
 
   // ── Auth actions ───────────────────────────────────────────────────
   login: (email: string, password: string) => { ok: boolean; error?: string; needsFirst?: boolean }
@@ -149,6 +151,9 @@ interface AppState {
   markOpportunityWon: (id: string) => void
   moveOpportunityToBDTracker: (id: string, status: BDSubmission['status'], comment?: string) => void
   syncDueOpportunities: () => void
+  scanDeadlineReminders: () => void
+  scanNonSubReminders: () => void
+  scanGoalProgress: () => void
   terminateContract: (id: string, type: 'T4C' | 'T4D' | 'CANCELED', reason: string) => void
 
   // ── Contract management ────────────────────────────────────────────
@@ -1256,6 +1261,141 @@ export const useStore = create<AppState>()(
             targetRole: 'CAPTURE_MANAGER',
           })
         })
+      },
+
+      scanDeadlineReminders: () => {
+        const now = Date.now()
+        const FOUR_H = 4 * 60 * 60 * 1000
+        const TWENTY_FOUR_H = 24 * 60 * 60 * 1000
+        const candidates = get().opportunities.filter(opp => {
+          if (opp.isDeleted) return false
+          if (!PRE_SUBMISSION_STATUSES.includes(opp.status)) return false
+          if (opp.nonSubmissionReportId) return false
+          const deadline = deadlineTimeMs(opp)
+          if (deadline === null) return false
+          const remaining = deadline - now
+          if (remaining <= 0) return false
+          const need24h = remaining <= TWENTY_FOUR_H && !opp.notifiedDue24h
+          const need4h = remaining <= FOUR_H && !opp.notifiedDue4h
+          return need24h || need4h
+        })
+        if (candidates.length === 0) return
+        const updates = new Map<string, { due24h: boolean; due4h: boolean }>()
+        candidates.forEach(opp => {
+          const deadline = deadlineTimeMs(opp)!
+          const remaining = deadline - now
+          const fire24h = remaining <= TWENTY_FOUR_H && !opp.notifiedDue24h
+          const fire4h = remaining <= FOUR_H && !opp.notifiedDue4h
+          updates.set(opp.id, { due24h: fire24h, due4h: fire4h })
+          if (fire4h) {
+            get().addNotification({
+              type: 'DEADLINE',
+              title: 'Opportunity due in 4 hours',
+              message: `${opp.solicitation} is due at ${new Date(deadline).toLocaleString()}.`,
+              read: false,
+              relatedId: opp.id,
+            })
+          } else if (fire24h) {
+            get().addNotification({
+              type: 'DEADLINE',
+              title: 'Opportunity due in 24 hours',
+              message: `${opp.solicitation} is due at ${new Date(deadline).toLocaleString()}.`,
+              read: false,
+              relatedId: opp.id,
+            })
+          }
+        })
+        set(s => ({
+          opportunities: s.opportunities.map(o => {
+            const u = updates.get(o.id)
+            if (!u) return o
+            return {
+              ...o,
+              notifiedDue24h: o.notifiedDue24h || u.due24h || u.due4h,
+              notifiedDue4h: o.notifiedDue4h || u.due4h,
+            }
+          })
+        }))
+        updates.forEach((_, id) => {
+          const updated = get().opportunities.find(o => o.id === id)
+          if (updated) upsertOpportunity(updated)
+        })
+      },
+
+      scanNonSubReminders: () => {
+        const now = Date.now()
+        const DAY_MS = 24 * 60 * 60 * 1000
+        const dueReports = get().nonSubReports.filter(r => {
+          if (r.status !== 'PENDING') return false
+          const last = r.lastReminderAt ? new Date(r.lastReminderAt).getTime() : new Date(r.submittedAt).getTime()
+          return now - last >= DAY_MS
+        })
+        if (dueReports.length === 0) return
+        const stampIso = new Date(now).toISOString()
+        const refreshed = dueReports.map(r => ({ ...r, lastReminderAt: stampIso }))
+        set(s => ({
+          nonSubReports: s.nonSubReports.map(r => {
+            const match = refreshed.find(x => x.id === r.id)
+            return match ?? r
+          })
+        }))
+        refreshed.forEach(report => {
+          upsertNonSubReport(report)
+          const opp = get().opportunities.find(o => o.id === report.opportunityId)
+          get().addNotification({
+            type: 'REPORT_REMINDER',
+            title: 'Non-submission report still pending',
+            message: `${opp?.solicitation ?? 'A non-submission report'} is still awaiting review.`,
+            read: false,
+            relatedId: report.opportunityId,
+            targetRole: 'CAPTURE_MANAGER',
+          })
+        })
+      },
+
+      scanGoalProgress: () => {
+        const state = get()
+        const user = state.currentUser
+        if (!user) return
+        const todayKey = todayLabel()
+        if (state.goalProgressLastNotifiedAt === todayKey) return
+        const emp = state.employees.find(e => e.email === user.email)
+        const BD_GOALS: Record<string, number> = { BD_MANAGER: 20, TEAM_LEAD: 15, ASSOCIATE: 10 }
+        const goal = emp ? (BD_GOALS[emp.role] ?? 0) : 0
+        if (goal <= 0) {
+          set({ goalProgressLastNotifiedAt: todayKey })
+          return
+        }
+        const monthStart = new Date()
+        monthStart.setDate(1)
+        monthStart.setHours(0, 0, 0, 0)
+        const monthEnd = new Date(monthStart)
+        monthEnd.setMonth(monthEnd.getMonth() + 1)
+        const submitted = state.opportunities.filter(o =>
+          o.assignedTo === emp?.id
+          && o.submittedAt
+          && new Date(o.submittedAt) >= monthStart
+          && new Date(o.submittedAt) < monthEnd
+        ).length
+        const pct = Math.min(100, Math.round((submitted / goal) * 100))
+        const now = new Date()
+        const remainingDays = Math.max(0, Math.ceil((monthEnd.getTime() - now.getTime()) / (24 * 60 * 60 * 1000)))
+        if (submitted >= goal) {
+          get().addNotification({
+            type: 'SYSTEM',
+            title: 'Monthly goal achieved',
+            message: `You hit ${submitted}/${goal} submissions this month. Nice work.`,
+            read: false,
+          })
+        } else if (remainingDays <= 5 && pct < 80) {
+          get().addNotification({
+            type: 'SYSTEM',
+            title: 'Monthly goal at risk',
+            message: `You are at ${submitted}/${goal} submissions with ${remainingDays} day${remainingDays === 1 ? '' : 's'} remaining (${pct}%).`,
+            read: false,
+          })
+        }
+        set({ goalProgressLastNotifiedAt: todayKey })
       },
 
       createContract: async (data) => {

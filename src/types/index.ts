@@ -234,6 +234,7 @@ export interface NonSubmissionReport {
   reviewedBy?: string
   reviewedAt?: string
   reviewNote?: string
+  lastReminderAt?: string
 }
 
 // ── Deletion Request ─────────────────────────────────────────────────
@@ -289,6 +290,8 @@ export interface Opportunity {
   deletionRequested?: boolean
   submittedAt?: string
   nonSubmissionReportId?: string
+  notifiedDue24h?: boolean
+  notifiedDue4h?: boolean
   assignedTo?: string        // employee id
   samGovContacts?: SamGovContact[]   // SAM.gov pointOfContact snapshot, captured at import time
 }

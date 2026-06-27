@@ -180,6 +180,8 @@ function oppToDb(o: Opportunity, opts: { includeSamGovContacts?: boolean } = {})
     deletion_requested: o.deletionRequested ?? null,
     submitted_at: o.submittedAt ?? null,
     non_submission_report_id: o.nonSubmissionReportId ?? null,
+    notified_due_24h: o.notifiedDue24h ?? null,
+    notified_due_4h: o.notifiedDue4h ?? null,
     assigned_to: o.assignedTo ?? null,
     proposals: proposalNames,
     assigned_opportunities: assignedOpportunityNames,
@@ -268,6 +270,8 @@ function dbToOpp(row: Record<string, unknown>): Partial<Opportunity> {
     deletionRequested: row.deletion_requested as boolean | undefined,
     submittedAt: row.submitted_at as string | undefined,
     nonSubmissionReportId: row.non_submission_report_id as string | undefined,
+    notifiedDue24h: row.notified_due_24h === true ? true : undefined,
+    notifiedDue4h: row.notified_due_4h === true ? true : undefined,
     assignedTo: row.assigned_to as string | undefined,
     proposals: Array.isArray(row.proposals) ? row.proposals as string[] : [],
     assignedOpportunities: Array.isArray(row.assigned_opportunities) ? row.assigned_opportunities as string[] : [],
@@ -1109,6 +1113,7 @@ function nonSubReportToDb(report: NonSubmissionReport): Record<string, unknown> 
     reviewed_by: report.reviewedBy ?? null,
     reviewed_at: report.reviewedAt ?? null,
     review_note: report.reviewNote ?? null,
+    last_reminder_at: report.lastReminderAt ?? null,
   }
 }
 
@@ -1123,6 +1128,7 @@ function dbToNonSubReport(row: Record<string, unknown>): NonSubmissionReport {
     reviewedBy: row.reviewed_by as string | undefined,
     reviewedAt: row.reviewed_at as string | undefined,
     reviewNote: row.review_note as string | undefined,
+    lastReminderAt: row.last_reminder_at as string | undefined,
   }
 }
 
