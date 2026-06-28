@@ -23,6 +23,7 @@ import type {
 } from '../types'
 import { formatCurrency, useEscapeKey } from '../lib/utils'
 import { hasPermission } from '../lib/permissions'
+import { isOpsAgent } from '../lib/team'
 import FloatingActionMenu from '../components/shared/FloatingActionMenu'
 import {
   canGenerateContractInvoice,
@@ -1928,9 +1929,15 @@ function ContractDetailDrawer({
   const vehicleOrders = vehicleSettings
     ? (contract.vehicleOrders || []).filter(order => order.type === vehicleSettings.type)
     : []
+  const hidePricing = isOpsAgent(currentUser) && currentUser?.role === 'ASSOCIATE'
   useEffect(() => {
     if (tab === 'vehicleOrders' && !vehicleSettings) setTab('overview')
   }, [tab, vehicleSettings])
+  useEffect(() => {
+    if (hidePricing && (tab === 'lineItems' || tab === 'vehicleOrders' || tab === 'billing')) {
+      setTab('overview')
+    }
+  }, [hidePricing, tab])
   const createTrackedInvoiceAndPdf = async () => {
     if (!invoiceReady) {
       toast.error(contract.type === 'OTJ'
@@ -2008,9 +2015,9 @@ function ContractDetailDrawer({
           { key: 'warnings', label: `Warnings (${(contract.governmentWarnings || []).filter(w => !w.resolvedAt).length})`, icon: AlertTriangle },
           { key: 'deliverables', label: `Deliverables`, icon: ListChecks },
           { key: 'comms', label: `Comm Progress (${(contract.commsLog || []).length})`, icon: MessageSquare },
-          { key: 'lineItems', label: `Line Items (${(contract.lineItems || []).length})`, icon: Layers },
-          ...(vehicleSettings ? [{ key: 'vehicleOrders', label: `${vehicleSettings.plural} (${vehicleOrders.length})`, icon: FileText }] : []),
-          { key: 'billing', label: 'Billing Period', icon: Receipt },
+          ...(hidePricing ? [] : [{ key: 'lineItems', label: `Line Items (${(contract.lineItems || []).length})`, icon: Layers }]),
+          ...(vehicleSettings && !hidePricing ? [{ key: 'vehicleOrders', label: `${vehicleSettings.plural} (${vehicleOrders.length})`, icon: FileText }] : []),
+          ...(hidePricing ? [] : [{ key: 'billing', label: 'Billing Period', icon: Receipt }]),
           { key: 'assignment', label: 'Assignment', icon: UserCog },
         ].map(t => (
           <button key={t.key} onClick={() => setTab(t.key as any)}
@@ -2061,40 +2068,44 @@ function ContractDetailDrawer({
                 />
                 <div className="relative grid gap-4 sm:grid-cols-2 md:grid-cols-4">
                   {/* Contract Value */}
-                  <div className="flex items-start gap-3">
-                    <div
-                      className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl border"
-                      style={{ background: 'rgba(215,190,122,0.12)', borderColor: 'rgba(215,190,122,0.32)', color: '#F8E8B8' }}
-                    >
-                      <Receipt size={16} />
+                  {!hidePricing && (
+                    <div className="flex items-start gap-3">
+                      <div
+                        className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl border"
+                        style={{ background: 'rgba(215,190,122,0.12)', borderColor: 'rgba(215,190,122,0.32)', color: '#F8E8B8' }}
+                      >
+                        <Receipt size={16} />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">Contract Value</p>
+                        <p className="mt-0.5 text-xl font-black text-[#F8E8B8]">{formatCurrency(contract.value)}</p>
+                        {contract.financeType && (
+                          <p className="text-[10px] text-slate-400">{contract.financeType}</p>
+                        )}
+                      </div>
                     </div>
-                    <div className="min-w-0">
-                      <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">Contract Value</p>
-                      <p className="mt-0.5 text-xl font-black text-[#F8E8B8]">{formatCurrency(contract.value)}</p>
-                      {contract.financeType && (
-                        <p className="text-[10px] text-slate-400">{contract.financeType}</p>
-                      )}
-                    </div>
-                  </div>
+                  )}
 
                   {/* Base + Monthly */}
-                  <div className="flex items-start gap-3 sm:border-l sm:pl-4" style={{ borderColor: 'rgba(215,190,122,0.16)' }}>
-                    <div
-                      className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl border"
-                      style={{ background: 'rgba(255,255,255,0.04)', borderColor: 'rgba(255,255,255,0.10)', color: '#A5F3FC' }}
-                    >
-                      <FileText size={16} />
+                  {!hidePricing && (
+                    <div className="flex items-start gap-3 sm:border-l sm:pl-4" style={{ borderColor: 'rgba(215,190,122,0.16)' }}>
+                      <div
+                        className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl border"
+                        style={{ background: 'rgba(255,255,255,0.04)', borderColor: 'rgba(255,255,255,0.10)', color: '#A5F3FC' }}
+                      >
+                        <FileText size={16} />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">Base Amount</p>
+                        <p className="mt-0.5 text-sm font-bold text-slate-100">
+                          {contract.baseAmount != null ? formatCurrency(contract.baseAmount) : '—'}
+                        </p>
+                        <p className="text-[10px] text-slate-400">
+                          {contract.monthlyPayment != null ? `${formatCurrency(contract.monthlyPayment)} / mo` : 'No monthly set'}
+                        </p>
+                      </div>
                     </div>
-                    <div className="min-w-0">
-                      <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">Base Amount</p>
-                      <p className="mt-0.5 text-sm font-bold text-slate-100">
-                        {contract.baseAmount != null ? formatCurrency(contract.baseAmount) : '—'}
-                      </p>
-                      <p className="text-[10px] text-slate-400">
-                        {contract.monthlyPayment != null ? `${formatCurrency(contract.monthlyPayment)} / mo` : 'No monthly set'}
-                      </p>
-                    </div>
-                  </div>
+                  )}
 
                   {/* POP */}
                   <div className="flex items-start gap-3 md:border-l md:pl-4" style={{ borderColor: 'rgba(215,190,122,0.16)' }}>
@@ -3004,23 +3015,25 @@ function ContractDetailDrawer({
                   ))}
                 </div>
 
-                <div className="mt-4 rounded-2xl border border-white/10 bg-black/10 p-3">
-                  <label className="block text-[10px] font-bold uppercase tracking-wider text-[#D7BE7A] mb-1.5">
-                    {contract.type === 'RECURRING' ? 'Subcontractor pay rate ($ / month)' : 'Subcontractor pay rate ($)'}
-                  </label>
-                  <input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={subkPaymentRateDraft}
-                    onChange={e => setSubkPaymentRateDraft(e.target.value)}
-                    placeholder="0.00"
-                    className="input-field w-full no-spin"
-                  />
-                  <p className="mt-1 text-[11px] text-slate-400">
-                    Manual amount paid to this subcontractor. Appears in the contract invoice and finance projections.
-                  </p>
-                </div>
+                {!hidePricing && (
+                  <div className="mt-4 rounded-2xl border border-white/10 bg-black/10 p-3">
+                    <label className="block text-[10px] font-bold uppercase tracking-wider text-[#D7BE7A] mb-1.5">
+                      {contract.type === 'RECURRING' ? 'Subcontractor pay rate ($ / month)' : 'Subcontractor pay rate ($)'}
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={subkPaymentRateDraft}
+                      onChange={e => setSubkPaymentRateDraft(e.target.value)}
+                      placeholder="0.00"
+                      className="input-field w-full no-spin"
+                    />
+                    <p className="mt-1 text-[11px] text-slate-400">
+                      Manual amount paid to this subcontractor. Appears in the contract invoice and finance projections.
+                    </p>
+                  </div>
+                )}
 
                 <button
                   type="button"
@@ -3081,7 +3094,7 @@ function ContractDetailDrawer({
                               Paid
                             </span>
                           )}
-                          {typeof sub.paymentRate === 'number' && Number.isFinite(sub.paymentRate) && sub.paymentRate > 0 && (
+                          {!hidePricing && typeof sub.paymentRate === 'number' && Number.isFinite(sub.paymentRate) && sub.paymentRate > 0 && (
                             <span className="rounded-full border border-[#D7BE7A]/35 bg-[rgba(184,145,78,0.14)] px-3 py-1 text-[10px] font-bold text-[#F8E8B8]">
                               {formatCurrency(sub.paymentRate)}{contract.type === 'RECURRING' ? ' / mo' : ''}
                             </span>
@@ -3128,37 +3141,39 @@ function ContractDetailDrawer({
                         </div>
                       </div>
 
-                      <div className="mt-4 rounded-2xl border border-white/10 bg-black/10 p-3">
-                        <label className="block text-[10px] font-bold uppercase tracking-wider text-[#D7BE7A] mb-1.5">{rateLabel}</label>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <input
-                            type="number"
-                            min={0}
-                            step="0.01"
-                            value={rateDraft}
-                            onChange={e => setLockedSubRateDrafts(prev => ({ ...prev, [sub.id]: e.target.value }))}
-                            placeholder="0.00"
-                            className="input-field flex-1 min-w-[160px] no-spin"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const trimmed = rateDraft.trim()
-                              const parsed = Number(trimmed)
-                              const nextRate = trimmed === '' ? undefined : (Number.isFinite(parsed) && parsed > 0 ? parsed : undefined)
-                              updateLockedSubcontractor(contract.id, sub.id, { paymentRate: nextRate })
-                              setLockedSubRateDrafts(prev => ({ ...prev, [sub.id]: trimmed === '' ? '' : (nextRate != null ? String(nextRate) : '') }))
-                              toast.success(nextRate != null ? 'Pay rate saved' : 'Pay rate cleared')
-                            }}
-                            className="btn-secondary text-xs"
-                          >
-                            <Save size={12} /> Save rate
-                          </button>
+                      {!hidePricing && (
+                        <div className="mt-4 rounded-2xl border border-white/10 bg-black/10 p-3">
+                          <label className="block text-[10px] font-bold uppercase tracking-wider text-[#D7BE7A] mb-1.5">{rateLabel}</label>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <input
+                              type="number"
+                              min={0}
+                              step="0.01"
+                              value={rateDraft}
+                              onChange={e => setLockedSubRateDrafts(prev => ({ ...prev, [sub.id]: e.target.value }))}
+                              placeholder="0.00"
+                              className="input-field flex-1 min-w-[160px] no-spin"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const trimmed = rateDraft.trim()
+                                const parsed = Number(trimmed)
+                                const nextRate = trimmed === '' ? undefined : (Number.isFinite(parsed) && parsed > 0 ? parsed : undefined)
+                                updateLockedSubcontractor(contract.id, sub.id, { paymentRate: nextRate })
+                                setLockedSubRateDrafts(prev => ({ ...prev, [sub.id]: trimmed === '' ? '' : (nextRate != null ? String(nextRate) : '') }))
+                                toast.success(nextRate != null ? 'Pay rate saved' : 'Pay rate cleared')
+                              }}
+                              className="btn-secondary text-xs"
+                            >
+                              <Save size={12} /> Save rate
+                            </button>
+                          </div>
+                          <p className="mt-1 text-[11px] text-slate-400">
+                            Shown on the contract invoice (Quote / Subk's) and finance projections.
+                          </p>
                         </div>
-                        <p className="mt-1 text-[11px] text-slate-400">
-                          Shown on the contract invoice (Quote / Subk's) and finance projections.
-                        </p>
-                      </div>
+                      )}
 
                       <div className="mt-4 grid gap-3 lg:grid-cols-2">
                         {SUBK_DOCUMENT_SECTIONS.map(section => (
@@ -4379,7 +4394,8 @@ function SortHeader({ col, label, currentKey, dir, onSort }: {
 
 // ─────────────────────────────────────────────────────────────────────────
 export default function ContractsPage() {
-  const { contracts, employees } = useStore()
+  const { contracts, employees, currentUser } = useStore()
+  const hidePricing = isOpsAgent(currentUser) && currentUser?.role === 'ASSOCIATE'
   const [searchParams] = useSearchParams()
   const globalRecordId = searchParams.get('record')
   const [tab, setTab] = useState<CTab>('ACTIVE_GROUP')
@@ -4532,7 +4548,7 @@ export default function ContractsPage() {
       {/* KPI cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
         {[
-          { label: 'Portfolio Value', value: formatCurrency(totalValue), sub: `${contracts.length} contracts`, color: '#34D399', bg: 'rgba(16,185,129,0.10)' },
+          ...(hidePricing ? [] : [{ label: 'Portfolio Value', value: formatCurrency(totalValue), sub: `${contracts.length} contracts`, color: '#34D399', bg: 'rgba(16,185,129,0.10)' }]),
           { label: 'Active/In-Progress', value: activeCount.toString(), sub: 'Currently executing', color: '#818CF8', bg: 'rgba(99,102,241,0.10)' },
           { label: 'Pending Payment', value: contracts.filter(c => c.status === 'PENDING_PAYMENT').length.toString(), sub: 'Awaiting payment', color: '#FDA47A', bg: 'rgba(249,115,22,0.10)' },
           { label: 'Gov. Warnings', value: warningCount.toString(), sub: 'Active unresolved', color: warningCount > 0 ? '#FCA5A5' : '#94A3B8', bg: warningCount > 0 ? 'rgba(239,68,68,0.10)' : 'rgba(100,116,139,0.10)' },
@@ -4647,7 +4663,7 @@ export default function ContractsPage() {
                 <SortHeader col="status" label="Status" currentKey={sortKey} dir={sortDir} onSort={handleSort} />
                 <SortHeader col="location" label="Location" currentKey={sortKey} dir={sortDir} onSort={handleSort} />
                 <th>POP</th>
-                <SortHeader col="value" label="Value" currentKey={sortKey} dir={sortDir} onSort={handleSort} />
+                {!hidePricing && <SortHeader col="value" label="Value" currentKey={sortKey} dir={sortDir} onSort={handleSort} />}
                 <th>Assigned To</th>
                 <th>Flags</th>
                 <th></th>
@@ -4656,7 +4672,7 @@ export default function ContractsPage() {
             <tbody>
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="text-center py-12 text-slate-400 text-sm">
+                  <td colSpan={hidePricing ? 9 : 10} className="text-center py-12 text-slate-400 text-sm">
                     No contracts in this category.
                   </td>
                 </tr>
@@ -4693,7 +4709,7 @@ export default function ContractsPage() {
                         {c.popStart}<br /><span className="text-[10px]">→ {c.popEnd}</span>
                       </span>
                     </td>
-                    <td className="text-xs font-semibold text-emerald-600 whitespace-nowrap">{formatCurrency(c.value)}</td>
+                    {!hidePricing && <td className="text-xs font-semibold text-emerald-600 whitespace-nowrap">{formatCurrency(c.value)}</td>}
                     <td className="text-xs">
                       {(() => {
                         const assignment = assignmentFor(c)
