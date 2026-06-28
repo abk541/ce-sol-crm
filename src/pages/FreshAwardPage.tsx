@@ -10,7 +10,7 @@ import {
 import { useStore } from '../store/useStore'
 import { hasPermission } from '../lib/permissions'
 import type { FreshAward, ContractType, SetAside, FileAttachment } from '../types'
-import { formatCurrency, useEscapeKey } from '../lib/utils'
+import { formatCurrency, formatDate, useEscapeKey } from '../lib/utils'
 import toast from 'react-hot-toast'
 import FloatingActionMenu from '../components/shared/FloatingActionMenu'
 import HierarchyAssignPicker from '../components/shared/HierarchyAssignPicker'
@@ -247,7 +247,7 @@ function AssignModal({ award, onClose, onMove }: AssignModalProps) {
             </div>
             <div className="min-w-0">
               <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">Awarded Date</p>
-              <p className="truncate text-[#F8FBF7]">{award.awardedDate ? new Date(award.awardedDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '-'}</p>
+              <p className="truncate text-[#F8FBF7]">{award.awardedDate ? formatDate(award.awardedDate) : '-'}</p>
             </div>
             <div className="min-w-0">
               <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">Value</p>

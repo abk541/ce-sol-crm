@@ -25,17 +25,30 @@ export function formatCurrency(value: number): string {
   return `$${value.toLocaleString()}`
 }
 
-export function formatDate(dateStr: string): string {
-  const d = new Date(dateStr)
-  return d.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' })
+// Parse YYYY-MM-DD as local midnight so toLocaleDateString does not roll back
+// a day in west-of-UTC timezones (e.g. "2026-12-31" displaying as Dec 30 in EST).
+export function parseDateLocal(dateStr: string): Date {
+  const ymd = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr)
+  if (ymd) return new Date(Number(ymd[1]), Number(ymd[2]) - 1, Number(ymd[3]))
+  return new Date(dateStr)
+}
+
+export function formatDate(
+  dateStr: string,
+  options: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric', year: 'numeric' },
+): string {
+  if (!dateStr) return '-'
+  const d = parseDateLocal(dateStr)
+  if (Number.isNaN(d.getTime())) return dateStr
+  return d.toLocaleDateString('en-US', options)
 }
 
 export function isOverdue(dateStr: string): boolean {
-  return new Date(dateStr) < new Date()
+  return parseDateLocal(dateStr) < new Date()
 }
 
 export function isDueSoon(dateStr: string, hours = 48): boolean {
-  const due = new Date(dateStr)
+  const due = parseDateLocal(dateStr)
   const now = new Date()
   const diff = due.getTime() - now.getTime()
   return diff > 0 && diff < hours * 3600 * 1000

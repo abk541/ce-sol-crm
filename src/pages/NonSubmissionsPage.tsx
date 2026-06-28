@@ -10,6 +10,7 @@ import { useStore } from '../store/useStore'
 import toast from 'react-hot-toast'
 import { hasPermission } from '../lib/permissions'
 import { isOpportunityOwnedByUser } from '../lib/team'
+import { formatDate } from '../lib/utils'
 import SamGovListingButton from '../components/shared/SamGovListingButton'
 import type { Opportunity } from '../types'
 
@@ -164,7 +165,7 @@ function ReviewModal({ reportId, onClose }: { reportId: string; onClose: () => v
               </div>
               <div>
                 <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Due Date</p>
-                <p className="text-slate-700 mt-0.5">{opp?.dueDate ? new Date(opp.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}</p>
+                <p className="text-slate-700 mt-0.5">{opp?.dueDate ? formatDate(opp.dueDate) : '—'}</p>
               </div>
               <div>
                 <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Value</p>
@@ -463,7 +464,7 @@ function DroppedOpportunitiesTab({ targetId, onViewReport }: { targetId?: string
                       </td>
                       <td className="text-xs text-slate-500">{o.client || '—'}</td>
                       <td className="text-xs text-slate-500 whitespace-nowrap">
-                        {new Date(o.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                        {formatDate(o.dueDate)}
                       </td>
                       <td className="text-xs text-slate-500 max-w-[100px]">
                         <p className="truncate">{o.location || '—'}</p>
@@ -630,7 +631,7 @@ export default function NonSubmissionsPage() {
                     className="px-5 py-3 flex items-center gap-3 hover:bg-slate-50 transition-colors">
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-semibold text-slate-800 truncate">{o.solicitation}</p>
-                      <p className="text-[10px] text-slate-500">{o.solicitationId} · Due: {new Date(o.dueDate).toLocaleDateString()}</p>
+                      <p className="text-[10px] text-slate-500">{o.solicitationId} · Due: {formatDate(o.dueDate, { year: 'numeric', month: 'numeric', day: 'numeric' })}</p>
                     </div>
                     <button
                       onClick={() => setSubmitFor({ id: o.id, name: o.solicitation })}

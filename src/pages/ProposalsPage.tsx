@@ -9,6 +9,7 @@ import toast from 'react-hot-toast'
 import HierarchyAssignPicker from '../components/shared/HierarchyAssignPicker'
 import { assignableEmployeesForUser, findEmployeeForUser, getAssignmentChain, isAssignedToAssociate } from '../lib/team'
 import { hasPermission } from '../lib/permissions'
+import { formatDate } from '../lib/utils'
 import SamGovListingButton from '../components/shared/SamGovListingButton'
 
 const ASSIGNABLE_STATUSES = ['ACTIVE', 'NEW_ASSIGNMENT', 'DISCUSSION'] as const
@@ -80,7 +81,7 @@ function AssignModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }
             </div>
             <div className="min-w-0">
               <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">Due Date</p>
-              <p className="truncate text-[#F8FBF7]">{opp.dueDate ? new Date(opp.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '-'}</p>
+              <p className="truncate text-[#F8FBF7]">{opp.dueDate ? formatDate(opp.dueDate) : '-'}</p>
             </div>
             <div className="min-w-0">
               <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">Location</p>
@@ -197,7 +198,7 @@ export default function ProposalsPage() {
                   <td className="text-xs text-slate-500">{o.setAside}</td>
                   <td className="text-xs font-mono text-slate-500">{o.naicsCode}</td>
                   <td className="whitespace-nowrap text-xs text-slate-600">
-                    {o.dueDate ? new Date(o.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '-'}
+                    {o.dueDate ? formatDate(o.dueDate) : '-'}
                   </td>
                   <td className="max-w-[150px] text-xs text-slate-500"><p className="truncate">{o.location}</p></td>
                   <td className="max-w-[150px] text-xs text-slate-600">

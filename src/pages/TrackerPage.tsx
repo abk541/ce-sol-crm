@@ -8,7 +8,7 @@ import {
   ChevronLeft, ChevronRight, X,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
-import { formatCurrency } from '../lib/utils'
+import { formatCurrency, formatDate } from '../lib/utils'
 import type { OppStatus } from '../types'
 import toast from 'react-hot-toast'
 import DetailDrawer, { DrawerSection, DrawerField } from '../components/shared/DetailDrawer'
@@ -308,7 +308,7 @@ export default function TrackerPage() {
                       <td className="text-slate-500 text-xs">
                         {o.submittedAt
                           ? new Date(o.submittedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-                          : new Date(o.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                          : formatDate(o.dueDate, { month: 'short', day: 'numeric' })}
                       </td>
                       <td onClick={e => e.stopPropagation()}>
                         <StatusDropdown oppId={o.id} current={o.status} canEdit={isManager} />
@@ -513,7 +513,7 @@ export default function TrackerPage() {
               <DrawerField label="Period of Perf."  value={selected.pop ?? '-'} />
             </DrawerSection>
             <DrawerSection title="Dates">
-              <DrawerField label="Due Date"      value={new Date(selected.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} />
+              <DrawerField label="Due Date"      value={formatDate(selected.dueDate)} />
               <DrawerField label="Submitted"     value={selected.submittedAt ? new Date(selected.submittedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '-'} />
               <DrawerField label="Captured On"   value={selected.capturedOn ?? '-'} />
             </DrawerSection>

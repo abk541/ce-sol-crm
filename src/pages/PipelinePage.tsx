@@ -15,7 +15,7 @@ import {
 import { useStore } from '../store/useStore'
 import type { Opportunity, Priority, OppStatus, Comment, FileAttachment, SamGovContact, SubcontractorContact } from '../types'
 import { TIMEZONES } from '../data/mock'
-import { formatCurrency, useEscapeKey } from '../lib/utils'
+import { formatCurrency, formatDate, useEscapeKey } from '../lib/utils'
 import { assignableEmployeesForUser, getAssignmentChain, isAssignedToAssociate, isOpportunityOwnedByUser, ROLE_DISPLAY_LABELS } from '../lib/team'
 import { NAICS_CODES } from '../data/naics'
 import toast from 'react-hot-toast'
@@ -2389,7 +2389,7 @@ export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () 
                   </a>
                   <a
                     href={selected.website ? normalizeWebsite(selected.website) : undefined}
-                    target="_blank" rel="noreferrer"
+                    target="_blank" rel="noopener noreferrer"
                     onClick={e => { if (!selected.website) e.preventDefault() }}
                     className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold border transition-all ${
                       selected.website
@@ -2827,7 +2827,7 @@ function SubmitModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }
   const previewYearly  = parseFloat(yearlyValue)
   const previewMonthly = parseFloat(monthlyValue)
   const dueDateLabel = opp.dueDate
-    ? new Date(opp.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+    ? formatDate(opp.dueDate)
     : '—'
   const dueTimeLabel = opp.localTime ? formatLocalDueTimeShared(opp.localTime, opp.timezone) : ''
 
@@ -3685,7 +3685,7 @@ function ColumnFilterInput({
 
 function dueDateLabel(dueDate: string | undefined): string {
   if (!dueDate) return '-'
-  return new Date(dueDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+  return formatDate(dueDate, { month: 'long', day: 'numeric', year: 'numeric' })
 }
 
 function dueDateReference(opp: Pick<Opportunity, 'dueDate' | 'localTime' | 'timezone'>): Date {
@@ -4189,7 +4189,7 @@ export default function PipelinePage() {
               </DrawerSection>
 
               <DrawerSection title="Schedule" variant="premium">
-                <DrawerField label="Due Date"  value={new Date(selectedOpp.dueDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })} variant="premium" />
+                <DrawerField label="Due Date"  value={formatDate(selectedOpp.dueDate, { month: 'long', day: 'numeric', year: 'numeric' })} variant="premium" />
                 <DrawerField label="Source Time" value={formatOpportunitySourceDueDateTime(selectedOpp)} variant="premium" />
                 {formatOpportunityMoroccoDueDateTime(selectedOpp) && (
                   <DrawerField label="Morocco (GMT+1)" value={
