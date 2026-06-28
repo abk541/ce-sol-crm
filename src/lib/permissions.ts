@@ -143,6 +143,7 @@ export const PERMISSIONS_BY_ROLE: Record<Role, Permission[]> = {
     'opportunity:deleteRequest',
     'sourcing:read',
     'sourcing:write',
+    'contract:comment',
     'nonSubmission:submit',
     'hr:viewCertifications',
   ],

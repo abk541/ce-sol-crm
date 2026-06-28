@@ -29,7 +29,7 @@ import {
 } from 'lucide-react'
 import { useStore } from '../../store/useStore'
 import { avatarColor, formatCurrency, useEscapeKey } from '../../lib/utils'
-import { getAssignmentChain, ROLE_DISPLAY_LABELS } from '../../lib/team'
+import { getAssignmentChain, isOpsAgent, ROLE_DISPLAY_LABELS } from '../../lib/team'
 import type { Contract, Employee, NotifType, Notification as AppNotification, Opportunity } from '../../types'
 import { ROUTE_LABELS } from '../../config/navigation'
 import { buildGlobalSearchResults, type GlobalSearchResult } from '../../lib/globalSearch'
@@ -517,7 +517,9 @@ export default function TopBar() {
                         <DetailRow label="Client" value={selectedContext.contract.client} />
                         <DetailRow label="Type" value={selectedContext.contract.type === 'S&D' || selectedContext.contract.type === 'SUPPLY' ? 'S&D' : selectedContext.contract.type} />
                         <DetailRow label="Status" value={selectedContext.contract.status.replace(/_/g, ' ')} />
-                        <DetailRow label="Value" value={formatCurrency(selectedContext.contract.value || 0)} />
+                        {!(isOpsAgent(currentUser) && currentUser?.role === 'ASSOCIATE') && (
+                          <DetailRow label="Value" value={formatCurrency(selectedContext.contract.value || 0)} />
+                        )}
                       </>
                     ) : (
                       <p className="text-xs leading-5 text-slate-400">No active contract is linked to this notification yet.</p>

@@ -921,9 +921,15 @@ export const useStore = create<AppState>()(
         }
 
         const changeKeys = Object.keys(data)
+        const SCHEDULE_FIELDS = ['dueDate', 'localTime', 'timezone', 'moroccoTime', 'moroccoDate', 'mandatoryEventsList']
         const isCommentOnlyUpdate = changeKeys.length > 0 && changeKeys.every(key => key === 'comments')
+        const isScheduleOrCommentUpdate = changeKeys.length > 0 && changeKeys.every(key =>
+          SCHEDULE_FIELDS.includes(key) || key === 'comments'
+        )
         if (!hasPermission(get().currentUser, 'opportunity:edit')) {
-          if (!(isCommentOnlyUpdate && hasPermission(get().currentUser, 'opportunity:comment'))) {
+          const canCommentOnly = isCommentOnlyUpdate && hasPermission(get().currentUser, 'opportunity:comment')
+          const canScheduleEdit = isScheduleOrCommentUpdate && hasPermission(get().currentUser, 'opportunity:editSchedule')
+          if (!canCommentOnly && !canScheduleEdit) {
             toast.error('You do not have permission to edit opportunity details.')
             return false
           }

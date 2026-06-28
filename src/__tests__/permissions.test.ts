@@ -94,6 +94,8 @@ describe('role permissions', () => {
     expect(hasPermission(associate, 'opportunity:comment')).toBe(false)
     expect(hasPermission(associate, 'opportunity:assign')).toBe(false)
     expect(hasPermission(associate, 'nonSubmission:review')).toBe(false)
+    expect(hasPermission(associate, 'contract:comment')).toBe(true)
+    expect(hasPermission(associate, 'contract:allCommChannels')).toBe(false)
     expect(hasPermission(associate, 'hr:viewCertifications')).toBe(true)
     expect(hasPermission(associate, 'hr:manageCertifications')).toBe(false)
     expect(hasPermission(associate, 'hr:reviewRequests')).toBe(false)
