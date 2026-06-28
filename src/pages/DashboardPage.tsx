@@ -23,7 +23,14 @@ import { getAssignmentChain, isOpsAgent } from '../lib/team'
 import { hasAnyPermission, hasPermission, ROLE_LABELS } from '../lib/permissions'
 import { chartColorsForTheme, useAppearance } from '../lib/appearance'
 import { NAICS_CODES } from '../data/naics'
-import type { BDSubmission, Contract, Employee, EmployeeTeam, HierarchyRole, NonSubmissionReport, Opportunity, User } from '../types'
+import type { BDSubmission, Contract, Employee, EmployeeTeam, FreshAward, Goal, HierarchyRole, NonSubmissionReport, Opportunity, User } from '../types'
+import {
+  GOAL_METRIC_LABELS,
+  computeGoalProgress,
+  currentMonthKey,
+  formatGoalValue,
+  goalsForEmployee,
+} from '../lib/goals'
 
 const stagger = { animate: { transition: { staggerChildren: 0.05 } } }
 const fadeUp = {
@@ -363,10 +370,106 @@ function KpiDetailDrawer({
   )
 }
 
+const GOAL_WIDGET_STATUS: Record<'achieved' | 'ahead' | 'on-track' | 'behind', { label: string; bg: string; fg: string; bar: string }> = {
+  achieved: { label: 'Achieved',     bg: 'rgba(16,185,129,0.10)', fg: '#10B981', bar: '#10B981' },
+  ahead:    { label: 'Ahead',        bg: 'rgba(6,182,212,0.10)',  fg: '#06B6D4', bar: '#06B6D4' },
+  'on-track':{ label: 'On track',    bg: 'rgba(245,158,11,0.10)', fg: '#F59E0B', bar: '#F59E0B' },
+  behind:   { label: 'Behind',       bg: 'rgba(239,68,68,0.10)',  fg: '#EF4444', bar: '#EF4444' },
+}
+
+function MyGoalsWidget({
+  goals,
+  employees,
+  opportunities,
+  freshAwards,
+  myEmployeeId,
+}: {
+  goals: Goal[]
+  employees: Employee[]
+  opportunities: Opportunity[]
+  freshAwards: FreshAward[]
+  myEmployeeId: string | undefined
+}) {
+  if (!goals.length) return null
+  return (
+    <motion.div variants={fadeUp} initial="initial" animate="animate"
+      className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <Target size={14} className="text-amber-500" />
+          <h3 className="text-sm font-bold text-slate-800">My Goals</h3>
+        </div>
+        <span className="text-[10px] font-bold text-slate-400 tracking-wider">
+          {goals.length} ACTIVE THIS MONTH
+        </span>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {goals.map(g => {
+          const progress = computeGoalProgress(g, opportunities, freshAwards, employees)
+          const palette = GOAL_WIDGET_STATUS[progress.status]
+          const barPct = Math.min(100, progress.pct)
+          const isPersonal = g.scope === 'employee' && g.targetId === myEmployeeId
+          return (
+            <div
+              key={g.id}
+              className="rounded-xl border p-3"
+              style={{ borderColor: 'rgba(148,163,184,0.20)', background: 'rgba(248,250,252,0.7)' }}
+            >
+              <div className="flex items-center justify-between gap-2 mb-1.5">
+                <div className="min-w-0">
+                  <p className="text-[11px] font-bold text-slate-700 truncate">
+                    {GOAL_METRIC_LABELS[g.metric]}
+                  </p>
+                  <p className="text-[10px] text-slate-500 truncate">
+                    {isPersonal ? 'Personal' : 'Team goal'}
+                  </p>
+                </div>
+                <span
+                  className="text-[10px] font-black px-1.5 py-0.5 rounded uppercase tracking-wide"
+                  style={{ background: palette.bg, color: palette.fg }}
+                >
+                  {palette.label}
+                </span>
+              </div>
+              <div className="h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(148,163,184,0.15)' }}>
+                <motion.div
+                  className="h-full rounded-full"
+                  style={{ background: palette.bar }}
+                  initial={{ width: 0 }}
+                  animate={{ width: `${barPct}%` }}
+                  transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
+                />
+              </div>
+              <div className="flex items-center justify-between mt-1.5">
+                <span className="text-[10px] text-slate-500 tabular-nums">
+                  {formatGoalValue(g.metric, progress.current)} / {formatGoalValue(g.metric, g.targetValue)}
+                </span>
+                <span className="text-[10px] font-bold tabular-nums" style={{ color: palette.fg }}>
+                  {Math.round(progress.pct)}%
+                </span>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </motion.div>
+  )
+}
+
 // Agent Dashboard
 function AgentDashboard() {
-  const { currentUser, opportunities, nonSubReports, bdSubmissions, employees } = useStore()
+  const { currentUser, opportunities, nonSubReports, bdSubmissions, employees, goals, freshAwards } = useStore()
   const navigate = useNavigate()
+
+  const monthKey = currentMonthKey()
+  const myEmployee = useMemo(
+    () => employees.find(e => e.email === currentUser?.email || e.name === currentUser?.name),
+    [employees, currentUser],
+  )
+  const myGoals = useMemo(
+    () => goalsForEmployee(goals, myEmployee?.id, employees, monthKey),
+    [goals, myEmployee, employees, monthKey],
+  )
 
   const myOpps = useMemo(() => {
     const me = employees.find(e => e.email === currentUser?.email || e.name === currentUser?.name)
@@ -401,7 +504,7 @@ function AgentDashboard() {
     submissionRate: myOpps.length ? Math.round((mySubmissionRows.length / myOpps.length) * 100) : 0,
     score: Math.min(100, Math.round((mySubmissionRows.length * 10) + (mySubmissionRows.filter(s => s.status === 'AWARDED').length * 18) - (nonSubReports.filter(r => r.agentUsername === currentUser?.username).length * 6))),
     rank: 1,
-    goal: 5,
+    goal: myGoals.find(g => g.scope === 'employee' && g.targetId === myEmployee?.id && g.metric === 'submissions_count')?.targetValue ?? 5,
     streak: mySubmissionRows.length ? 1 : 0,
   }
   const tier = getTier(myStats.score)
@@ -569,6 +672,14 @@ function AgentDashboard() {
           )}
         </motion.div>
       </motion.div>
+
+      <MyGoalsWidget
+        goals={myGoals}
+        employees={employees}
+        opportunities={opportunities}
+        freshAwards={freshAwards}
+        myEmployeeId={myEmployee?.id}
+      />
 
       {/* Personal trend chart */}
       <motion.div variants={fadeUp} initial="initial" animate="animate"

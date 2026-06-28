@@ -10,6 +10,7 @@ import type {
   CompanyCertificationStatus, EmployeeRequestStatus,
   ContractLineItem, ContractInvoice, ContractVehicleOrder, UserPreferences, EmployeeTeam,
   ContractStatus, Role,
+  Goal,
 } from '../types'
 import {
   MOCK_USERS, MOCK_OPPORTUNITIES, MOCK_NOTIFICATIONS,
@@ -85,6 +86,7 @@ interface AppState {
   bdSubmissions: BDSubmission[]
   companyCertifications: CompanyCertification[]
   employeeRequests: EmployeeRequest[]
+  goals: Goal[]
 
   // Per-user session metadata (browser-local; not synced to Supabase).
   // Tracks last login per user account so admins can spot dormant accounts.
@@ -142,6 +144,11 @@ interface AppState {
   submitEmployeeRequest: (data: Omit<EmployeeRequest, 'id' | 'requesterId' | 'requesterName' | 'requesterEmail' | 'status' | 'submittedAt'>) => void
   reviewEmployeeRequest: (id: string, status: EmployeeRequestStatus, reviewNote?: string) => void
   updateEmployeeRequest: (id: string, data: Partial<EmployeeRequest>) => void
+
+  // ── Goals (Capture Manager) ────────────────────────────────────────
+  createGoal: (data: Omit<Goal, 'id' | 'createdAt' | 'createdBy'>) => void
+  updateGoal: (id: string, data: Partial<Omit<Goal, 'id' | 'createdAt' | 'createdBy'>>) => void
+  deleteGoal: (id: string) => void
 
   // ── Opportunity management ─────────────────────────────────────────
   createOpportunity: (o: Omit<Opportunity, 'id'>) => Promise<boolean>
@@ -572,6 +579,7 @@ export const useStore = create<AppState>()(
       bdSubmissions: MOCK_BD_SUBMISSIONS,
       companyCertifications: MOCK_COMPANY_CERTIFICATIONS,
       employeeRequests: MOCK_EMPLOYEE_REQUESTS,
+      goals: [],
       sidebarCollapsed: false,
       nonSubGraceHours: 0,
       nonSubGraceMinutes: 5,
@@ -802,6 +810,69 @@ export const useStore = create<AppState>()(
             entityType: 'hr',
             entityId: cert.id,
             entityName: cert.name,
+          })
+        }
+      },
+
+      // ── Goals (Capture Manager) ──────────────────────────────────────
+      createGoal: (data) => {
+        const user = get().currentUser
+        if (!hasPermission(user, 'goals:manage')) {
+          toast.error('Only the Capture Manager can set goals.')
+          return
+        }
+        if (!data.targetId) {
+          toast.error('Pick a team or employee for this goal.')
+          return
+        }
+        if (!Number.isFinite(data.targetValue) || data.targetValue <= 0) {
+          toast.error('Target value must be greater than zero.')
+          return
+        }
+        const goal: Goal = {
+          ...data,
+          id: `goal_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          createdAt: new Date().toISOString(),
+          createdBy: user?.name ?? 'System',
+        }
+        set(s => ({ goals: [goal, ...s.goals] }))
+        get().logActivity({
+          action: `Set ${goal.scope} goal · ${goal.metric} → ${goal.targetValue} (${goal.monthKey})`,
+          user: user?.name || 'System',
+          userRole: user?.role || 'CAPTURE_MANAGER',
+          entityType: 'goal',
+          entityId: goal.id,
+        })
+      },
+
+      updateGoal: (id, data) => {
+        const user = get().currentUser
+        if (!hasPermission(user, 'goals:manage')) {
+          toast.error('Only the Capture Manager can edit goals.')
+          return
+        }
+        set(s => ({
+          goals: s.goals.map(g => (g.id === id
+            ? { ...g, ...data, updatedAt: new Date().toISOString(), updatedBy: user?.name ?? 'System' }
+            : g)),
+        }))
+      },
+
+      deleteGoal: (id) => {
+        const user = get().currentUser
+        if (!hasPermission(user, 'goals:manage')) {
+          toast.error('Only the Capture Manager can delete goals.')
+          return
+        }
+        const goal = get().goals.find(g => g.id === id)
+        set(s => ({ goals: s.goals.filter(g => g.id !== id) }))
+        if (goal) {
+          get().logActivity({
+            action: `Removed ${goal.scope} goal · ${goal.metric}`,
+            user: user?.name || 'System',
+            userRole: user?.role || 'CAPTURE_MANAGER',
+            entityType: 'goal',
+            entityId: goal.id,
           })
         }
       },
@@ -3270,6 +3341,7 @@ export const useStore = create<AppState>()(
           nextInvoiceNumber: Math.max(1, Math.trunc(Number(s.nextInvoiceNumber) || 1)),
           companyCertifications: Array.isArray(s.companyCertifications) ? s.companyCertifications : [],
           employeeRequests: Array.isArray(s.employeeRequests) ? s.employeeRequests : [],
+          goals: Array.isArray(s.goals) ? s.goals as Goal[] : [],
           prefs: {
             notificationSound: (s.prefs as Record<string, unknown> | undefined)?.notificationSound !== false,
           },
@@ -3308,6 +3380,7 @@ export const useStore = create<AppState>()(
         subkDatabase:      s.subkDatabase,
         companyCertifications: s.companyCertifications,
         employeeRequests:  s.employeeRequests,
+        goals:             s.goals,
         notifications:     s.notifications,
         prefs:             s.prefs,
         userSessions:      s.userSessions,

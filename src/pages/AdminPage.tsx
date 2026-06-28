@@ -1,10 +1,18 @@
 import { useState, useMemo, useEffect, useCallback, Fragment } from 'react'
 import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Plus, Pencil, Trash2, X, Check, Shield, Search, Clock, Save, Network, List, GripVertical, Eye, EyeOff, KeyRound, RotateCcw, Users, GitBranch, AlertTriangle, Bomb, Database, FileText, Award, Bell, Activity, Briefcase, FolderTree, UserCog, Wifi, WifiOff, Download, Upload, ChevronDown, ChevronUp, RefreshCw, HardDrive, Lock } from 'lucide-react'
+import { Plus, Pencil, Trash2, X, Check, Shield, Search, Clock, Save, Network, List, GripVertical, Eye, EyeOff, KeyRound, RotateCcw, Users, GitBranch, AlertTriangle, Bomb, Database, FileText, Award, Bell, Activity, Briefcase, FolderTree, UserCog, Wifi, WifiOff, Download, Upload, ChevronDown, ChevronUp, RefreshCw, HardDrive, Lock, Target } from 'lucide-react'
 import { useStore } from '../store/useStore'
-import type { User, Role, EmployeeTeam } from '../types'
+import type { User, Role, EmployeeTeam, Goal, GoalMetric, GoalScope, Employee, Opportunity, FreshAward } from '../types'
 import { avatarColor, useEscapeKey } from '../lib/utils'
+import {
+  GOAL_METRIC_LABELS,
+  computeGoalProgress,
+  currentMonthKey,
+  formatGoalValue,
+  formatMonthKey,
+  goalsForEmployee,
+} from '../lib/goals'
 import {
   hasPermission,
   ROLE_LABELS,
@@ -30,7 +38,7 @@ const ROLE_BADGE: Record<Role, string> = {
 
 // Top-level admin tabs. Each tab maps to one of the existing SectionHeader
 // accents below so the visual identity is preserved.
-type AdminTab = 'people' | 'roles' | 'workspace' | 'health' | 'danger'
+type AdminTab = 'people' | 'roles' | 'goals' | 'workspace' | 'health' | 'danger'
 
 // Returns the team a user lives in on the org chart. Managers are implicit;
 // non-managers default to 'BD' for legacy users with no `team` set.
@@ -491,6 +499,11 @@ export default function AdminPage() {
     setUserPermissionRevoke,
     resetUserPermissions,
     resetAllPermissionOverrides,
+    employees,
+    goals,
+    createGoal,
+    updateGoal,
+    deleteGoal,
   } = useStore()
   const [search, setSearch] = useState('')
   const [modal, setModal] = useState<'create' | User | null>(null)
@@ -498,6 +511,8 @@ export default function AdminPage() {
   const [createTeam, setCreateTeam] = useState<EmployeeTeam | null>(null)
   const [createManagerId, setCreateManagerId] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<AdminTab>('people')
+  const [goalModal, setGoalModal] = useState<'create' | Goal | null>(null)
+  const [goalMonthKey, setGoalMonthKey] = useState<string>(() => currentMonthKey())
   const [view, setView] = useState<'hierarchy' | 'table'>('hierarchy')
   const [dragId, setDragId] = useState<string | null>(null)
   const [dragOverKey, setDragOverKey] = useState<string | null>(null)
@@ -679,6 +694,7 @@ export default function AdminPage() {
             <p className="text-slate-500 text-sm mt-0.5">
               {activeTab === 'people'    && <>{users.length} users · {users.filter(u => u.status === 'active').length} active</>}
               {activeTab === 'roles'     && 'Edit role permissions and per-user overrides'}
+              {activeTab === 'goals'     && 'Set monthly submission, win, and win-rate targets per team or employee'}
               {activeTab === 'workspace' && 'Settings, snapshots, and import / export'}
               {activeTab === 'health'    && 'Local vs Supabase drift across every business table'}
               {activeTab === 'danger'    && 'Reset and wipe operations — irreversible'}
@@ -702,6 +718,7 @@ export default function AdminPage() {
           {([
             { id: 'people'    as AdminTab, label: 'People',              Icon: Users,         accent: 'emerald' as const },
             { id: 'roles'     as AdminTab, label: 'Roles & Permissions', Icon: Shield,        accent: 'violet'  as const },
+            { id: 'goals'     as AdminTab, label: 'Goals',               Icon: Target,        accent: 'amber'   as const },
             { id: 'workspace' as AdminTab, label: 'Workspace',           Icon: Save,          accent: 'indigo'  as const },
             { id: 'health'    as AdminTab, label: 'System Health',       Icon: Activity,      accent: 'cyan'    as const },
             { id: 'danger'    as AdminTab, label: 'Reset & Maintenance',  Icon: AlertTriangle, accent: 'rose'    as const },
@@ -1445,6 +1462,22 @@ export default function AdminPage() {
       </div>
       </>)}
 
+      {activeTab === 'goals' && (<>
+      <GoalsAdminPanel
+        goals={goals}
+        employees={employees}
+        opportunities={opportunities}
+        freshAwards={freshAwards}
+        monthKey={goalMonthKey}
+        onMonthKeyChange={setGoalMonthKey}
+        onCreate={() => setGoalModal('create')}
+        onEdit={g => setGoalModal(g)}
+        onDelete={id => {
+          if (confirm('Delete this goal? This cannot be undone.')) deleteGoal(id)
+        }}
+      />
+      </>)}
+
       {activeTab === 'workspace' && (<>
       <div className="mt-2">
         <SectionHeader icon={<HardDrive size={14} />} label="Workspace snapshot" accent="amber" />
@@ -1752,6 +1785,23 @@ export default function AdminPage() {
         )}
       </AnimatePresence>
 
+      <AnimatePresence>
+        {goalModal && (
+          <GoalModal
+            key={goalModal === 'create' ? 'create' : goalModal.id}
+            goal={goalModal === 'create' ? null : goalModal}
+            employees={employees}
+            defaultMonthKey={goalMonthKey}
+            onSave={data => {
+              if (goalModal === 'create') createGoal(data)
+              else updateGoal(goalModal.id, data)
+              setGoalModal(null)
+            }}
+            onClose={() => setGoalModal(null)}
+          />
+        )}
+      </AnimatePresence>
+
       {createPortal(
         <AnimatePresence>
           {danger && (
@@ -2051,6 +2101,40 @@ function TeamPanel({
   )
 }
 
+// Compact target-icon dot rendered inline in PersonRow. Renders nothing when
+// the user has no active goals for the current month.
+function PersonRowGoalDot({ user }: { user: User }) {
+  const goals = useStore(s => s.goals)
+  const employees = useStore(s => s.employees)
+  const opportunities = useStore(s => s.opportunities)
+  const freshAwards = useStore(s => s.freshAwards)
+  const monthKey = currentMonthKey()
+  const userGoals = useMemo(() => {
+    const emp = employees.find(e =>
+      e.email?.toLowerCase() === user.email.toLowerCase() ||
+      e.name.toLowerCase() === user.name.toLowerCase(),
+    )
+    return goalsForEmployee(goals, emp?.id, employees, monthKey)
+  }, [goals, employees, user, monthKey])
+  if (!userGoals.length) return null
+  const primary = userGoals[0]
+  const progress = computeGoalProgress(primary, opportunities, freshAwards, employees)
+  const palette = GOAL_STATUS_PALETTE[progress.status]
+  const title =
+    `${GOAL_METRIC_LABELS[primary.metric]} \u00b7 ` +
+    `${formatGoalValue(primary.metric, progress.current)} / ${formatGoalValue(primary.metric, primary.targetValue)} ` +
+    `(${Math.round(progress.pct)}%) \u00b7 ${userGoals.length === 1 ? '1 active goal' : `${userGoals.length} active goals`}`
+  return (
+    <span
+      className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full flex-shrink-0"
+      title={title}
+      style={{ background: palette.bg, color: palette.fg, border: `1px solid ${palette.border}` }}
+    >
+      <Target size={8} />
+    </span>
+  )
+}
+
 // ─── PersonRow — the single row component used at every level of the tree.
 // Level 0 = Manager (or orphan), 1 = Team Lead, 2 = Associate.
 // dropTargetForChild makes the row a drop zone that re-parents the dragged
@@ -2141,6 +2225,7 @@ function PersonRow({
           )}
           {user.status === 'inactive' && <span className="w-1.5 h-1.5 rounded-full bg-rose-400 flex-shrink-0" title="Inactive" />}
           {user.firstLogin && <span className="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0" title="Pending first login" />}
+          <PersonRowGoalDot user={user} />
         </div>
         <span className="text-[10px] truncate hidden md:block max-w-[140px]" style={{ color: 'rgba(248,251,247,0.35)' }}>@{user.username}</span>
 
@@ -2348,6 +2433,462 @@ function DangerConfirmModal({ action, busy, onClose, onConfirm }: {
         </div>
       </motion.div>
     </motion.div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Goals — admin CRUD + per-target progress bars
+// ─────────────────────────────────────────────────────────────────────────
+
+const GOAL_STATUS_PALETTE: Record<'achieved' | 'ahead' | 'on-track' | 'behind', { fg: string; bg: string; border: string; bar: string }> = {
+  achieved: { fg: '#6ee7b7', bg: 'rgba(16,185,129,0.16)', border: 'rgba(16,185,129,0.45)', bar: '#10b981' },
+  ahead:    { fg: '#67e8f9', bg: 'rgba(6,182,212,0.14)',  border: 'rgba(6,182,212,0.40)',  bar: '#06b6d4' },
+  'on-track':{ fg: '#fcd34d', bg: 'rgba(245,158,11,0.14)', border: 'rgba(245,158,11,0.40)', bar: '#f59e0b' },
+  behind:   { fg: '#fda4af', bg: 'rgba(244,63,94,0.14)',  border: 'rgba(244,63,94,0.40)',  bar: '#f43f5e' },
+}
+
+const GOAL_STATUS_LABEL: Record<'achieved' | 'ahead' | 'on-track' | 'behind', string> = {
+  achieved: 'Achieved',
+  ahead: 'Ahead of pace',
+  'on-track': 'On track',
+  behind: 'Behind pace',
+}
+
+function GoalsAdminPanel({
+  goals,
+  employees,
+  opportunities,
+  freshAwards,
+  monthKey,
+  onMonthKeyChange,
+  onCreate,
+  onEdit,
+  onDelete,
+}: {
+  goals: Goal[]
+  employees: Employee[]
+  opportunities: Opportunity[]
+  freshAwards: FreshAward[]
+  monthKey: string
+  onMonthKeyChange: (v: string) => void
+  onCreate: () => void
+  onEdit: (g: Goal) => void
+  onDelete: (id: string) => void
+}) {
+  const visible = useMemo(() => goals.filter(g => g.monthKey === monthKey), [goals, monthKey])
+  const teamGoals = visible.filter(g => g.scope === 'team')
+  const employeeGoals = visible.filter(g => g.scope === 'employee')
+  const employeeById = useMemo(() => {
+    const m = new Map<string, Employee>()
+    for (const e of employees) m.set(e.id, e)
+    return m
+  }, [employees])
+
+  const monthOptions = useMemo(() => {
+    const now = new Date()
+    const opts: string[] = []
+    for (let i = -3; i <= 6; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() + i, 1)
+      opts.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`)
+    }
+    return opts
+  }, [])
+
+  return (
+    <div className="mt-2">
+      <SectionHeader icon={<Target size={14} />} label="Performance goals" accent="amber" />
+      <div className="glass rounded-2xl p-4 mb-4">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+          <div className="max-w-xl">
+            <p className="text-xs text-slate-300 leading-relaxed">
+              Set monthly targets for submissions, wins, and win rate. Goals can be assigned to an
+              individual employee or to a manager so the whole team rolls up against the same number.
+              Progress updates live as opportunities are submitted and contracts are awarded.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-[10px] uppercase tracking-wide text-slate-500">Month</label>
+            <select
+              value={monthKey}
+              onChange={e => onMonthKeyChange(e.target.value)}
+              className="select-field"
+              style={{ minWidth: 160 }}
+            >
+              {monthOptions.map(m => (
+                <option key={m} value={m}>{formatMonthKey(m)}</option>
+              ))}
+            </select>
+            <button type="button" onClick={onCreate} className="btn-primary">
+              <Plus size={12} /> Add goal
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <GoalGroup
+        title="Team goals"
+        empty="No team goals for this month. Add one to set a target for a manager and everyone reporting to them."
+        goals={teamGoals}
+        employees={employees}
+        employeeById={employeeById}
+        opportunities={opportunities}
+        freshAwards={freshAwards}
+        onEdit={onEdit}
+        onDelete={onDelete}
+      />
+
+      <div className="h-3" />
+
+      <GoalGroup
+        title="Individual goals"
+        empty="No individual goals for this month. Add one to set a personal target for a specific employee."
+        goals={employeeGoals}
+        employees={employees}
+        employeeById={employeeById}
+        opportunities={opportunities}
+        freshAwards={freshAwards}
+        onEdit={onEdit}
+        onDelete={onDelete}
+      />
+    </div>
+  )
+}
+
+function GoalGroup({
+  title,
+  empty,
+  goals,
+  employees,
+  employeeById,
+  opportunities,
+  freshAwards,
+  onEdit,
+  onDelete,
+}: {
+  title: string
+  empty: string
+  goals: Goal[]
+  employees: Employee[]
+  employeeById: Map<string, Employee>
+  opportunities: Opportunity[]
+  freshAwards: FreshAward[]
+  onEdit: (g: Goal) => void
+  onDelete: (id: string) => void
+}) {
+  return (
+    <div className="glass rounded-2xl p-4">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-[11px] font-semibold uppercase tracking-wide text-slate-300">{title}</h3>
+        <span className="text-[10px] text-slate-500">{goals.length} {goals.length === 1 ? 'goal' : 'goals'}</span>
+      </div>
+      {goals.length === 0 ? (
+        <p className="text-[11px] text-slate-500 leading-relaxed">{empty}</p>
+      ) : (
+        <ul className="space-y-2">
+          {goals.map(g => (
+            <GoalRow
+              key={g.id}
+              goal={g}
+              targetName={employeeById.get(g.targetId)?.name ?? 'Unknown'}
+              employees={employees}
+              opportunities={opportunities}
+              freshAwards={freshAwards}
+              onEdit={() => onEdit(g)}
+              onDelete={() => onDelete(g.id)}
+            />
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+function GoalRow({
+  goal,
+  targetName,
+  employees,
+  opportunities,
+  freshAwards,
+  onEdit,
+  onDelete,
+}: {
+  goal: Goal
+  targetName: string
+  employees: Employee[]
+  opportunities: Opportunity[]
+  freshAwards: FreshAward[]
+  onEdit: () => void
+  onDelete: () => void
+}) {
+  const progress = useMemo(
+    () => computeGoalProgress(goal, opportunities, freshAwards, employees),
+    [goal, opportunities, freshAwards, employees],
+  )
+  const palette = GOAL_STATUS_PALETTE[progress.status]
+  const barPct = Math.min(100, progress.pct)
+  return (
+    <li
+      className="rounded-xl p-3"
+      style={{ background: 'var(--bg-raised, rgba(15,23,42,0.55))', border: '1px solid var(--border-default)' }}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 flex-wrap mb-1">
+            <span className="text-sm font-semibold text-slate-100 truncate">{targetName}</span>
+            <span
+              className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded"
+              style={{ background: 'rgba(99,102,241,0.12)', color: '#a5b4fc' }}
+            >
+              {goal.scope === 'team' ? 'Team' : 'Individual'}
+            </span>
+            <span
+              className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded"
+              style={{ background: palette.bg, color: palette.fg, border: `1px solid ${palette.border}` }}
+            >
+              {GOAL_STATUS_LABEL[progress.status]}
+            </span>
+          </div>
+          <div className="text-[11px] text-slate-400">
+            {GOAL_METRIC_LABELS[goal.metric]}
+            {' · '}
+            Target {formatGoalValue(goal.metric, goal.targetValue)}
+            {' · '}
+            {progress.submissions} submission{progress.submissions === 1 ? '' : 's'}, {progress.wins} win{progress.wins === 1 ? '' : 's'}
+          </div>
+          <div className="mt-2 flex items-center gap-2">
+            <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(148,163,184,0.12)' }}>
+              <div
+                className="h-full rounded-full transition-all"
+                style={{ width: `${barPct}%`, background: palette.bar }}
+              />
+            </div>
+            <span className="text-[11px] font-semibold tabular-nums" style={{ color: palette.fg, minWidth: 56, textAlign: 'right' }}>
+              {formatGoalValue(goal.metric, progress.current)} / {formatGoalValue(goal.metric, goal.targetValue)}
+            </span>
+          </div>
+          {goal.notes && (
+            <p className="mt-2 text-[10px] text-slate-500 leading-relaxed">{goal.notes}</p>
+          )}
+        </div>
+        <div className="flex items-center gap-1 flex-shrink-0">
+          <button type="button" onClick={onEdit} className="btn-ghost p-1.5" title="Edit goal">
+            <Pencil size={12} />
+          </button>
+          <button type="button" onClick={onDelete} className="btn-ghost p-1.5" title="Delete goal" style={{ color: 'rgba(248,113,113,0.85)' }}>
+            <Trash2 size={12} />
+          </button>
+        </div>
+      </div>
+    </li>
+  )
+}
+
+function GoalModal({
+  goal,
+  employees,
+  defaultMonthKey,
+  onSave,
+  onClose,
+}: {
+  goal: Goal | null
+  employees: Employee[]
+  defaultMonthKey: string
+  onSave: (data: {
+    scope: GoalScope
+    targetId: string
+    metric: GoalMetric
+    targetValue: number
+    period: 'monthly'
+    monthKey: string
+    notes?: string
+  }) => void
+  onClose: () => void
+}) {
+  const isEdit = !!goal
+  const [scope, setScope] = useState<GoalScope>(goal?.scope ?? 'employee')
+  const [targetId, setTargetId] = useState<string>(goal?.targetId ?? '')
+  const [metric, setMetric] = useState<GoalMetric>(goal?.metric ?? 'submissions_count')
+  const [targetValue, setTargetValue] = useState<string>(goal ? String(goal.targetValue) : '')
+  const [monthKey, setMonthKey] = useState<string>(goal?.monthKey ?? defaultMonthKey)
+  const [notes, setNotes] = useState<string>(goal?.notes ?? '')
+
+  useEscapeKey(onClose)
+
+  // Filter target options: team scope = managers/team leads (anyone with reports);
+  // employee scope = every employee.
+  const targetOptions = useMemo(() => {
+    if (scope === 'team') {
+      const reportsByManager = new Map<string, number>()
+      for (const e of employees) {
+        if (e.managerId) reportsByManager.set(e.managerId, (reportsByManager.get(e.managerId) ?? 0) + 1)
+      }
+      return employees
+        .filter(e => reportsByManager.has(e.id))
+        .map(e => ({ id: e.id, label: `${e.name} — ${e.role}`, reports: reportsByManager.get(e.id) ?? 0 }))
+        .sort((a, b) => a.label.localeCompare(b.label))
+    }
+    return employees
+      .map(e => ({ id: e.id, label: `${e.name} — ${e.role}`, reports: 0 }))
+      .sort((a, b) => a.label.localeCompare(b.label))
+  }, [employees, scope])
+
+  const monthOptions = useMemo(() => {
+    const now = new Date()
+    const opts: string[] = []
+    for (let i = -3; i <= 6; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() + i, 1)
+      opts.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`)
+    }
+    if (goal && !opts.includes(goal.monthKey)) opts.unshift(goal.monthKey)
+    return opts
+  }, [goal])
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    const n = Number(targetValue)
+    if (!targetId) return
+    if (!Number.isFinite(n) || n <= 0) return
+    if (metric === 'win_rate_pct' && n > 100) return
+    onSave({
+      scope,
+      targetId,
+      metric,
+      targetValue: n,
+      period: 'monthly',
+      monthKey,
+      notes: notes.trim() || undefined,
+    })
+  }
+
+  return createPortal(
+    <motion.div className="fixed inset-0 z-[80] flex items-center justify-center p-4"
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+      <motion.div
+        initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
+        exit={{ scale: 0.95, opacity: 0 }}
+        className="relative z-10 w-full max-w-md flex flex-col max-h-[min(92vh,860px)] overflow-hidden rounded-2xl"
+        style={{ background: 'rgba(7,14,34,0.98)', border: '1px solid rgba(245,158,11,0.22)', boxShadow: '0 24px 80px rgba(0,0,0,0.7)' }}>
+        <div className="flex items-center justify-between p-6 pb-4 flex-shrink-0">
+          <h2 className="font-semibold text-white flex items-center gap-2">
+            <Target size={14} className="text-amber-300" />
+            {isEdit ? 'Edit Goal' : 'New Goal'}
+          </h2>
+          <button onClick={onClose} className="btn-ghost p-1.5" type="button"><X size={13} /></button>
+        </div>
+        <form onSubmit={handleSubmit} className="px-6 pb-6 overflow-y-auto flex-1 space-y-3">
+          <div>
+            <label className="text-xs text-slate-500 block mb-1">Scope *</label>
+            <div className="grid grid-cols-2 gap-2">
+              {(['team', 'employee'] as GoalScope[]).map(s => {
+                const selected = scope === s
+                return (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => { setScope(s); setTargetId('') }}
+                    className="px-3 py-2 rounded-lg text-xs font-semibold transition-all"
+                    style={{
+                      background: selected ? 'rgba(245,158,11,0.16)' : 'rgba(255,255,255,0.02)',
+                      border: `1px solid ${selected ? 'rgba(245,158,11,0.45)' : 'var(--border-default)'}`,
+                      color: selected ? '#fcd34d' : 'rgb(148 163 184)',
+                    }}
+                  >
+                    {s === 'team' ? 'Team (manager + reports)' : 'Individual'}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
+          <div>
+            <label className="text-xs text-slate-500 block mb-1">
+              {scope === 'team' ? 'Team lead / manager *' : 'Employee *'}
+            </label>
+            <select
+              value={targetId}
+              onChange={e => setTargetId(e.target.value)}
+              className="select-field"
+              required
+            >
+              <option value="">{scope === 'team' ? 'Select a manager…' : 'Select an employee…'}</option>
+              {targetOptions.map(o => (
+                <option key={o.id} value={o.id}>
+                  {o.label}{scope === 'team' && o.reports ? ` (${o.reports} report${o.reports === 1 ? '' : 's'})` : ''}
+                </option>
+              ))}
+            </select>
+            {scope === 'team' && targetOptions.length === 0 && (
+              <p className="text-[10px] text-rose-300 mt-1">No employees currently have direct reports.</p>
+            )}
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs text-slate-500 block mb-1">Metric *</label>
+              <select
+                value={metric}
+                onChange={e => setMetric(e.target.value as GoalMetric)}
+                className="select-field"
+              >
+                <option value="submissions_count">{GOAL_METRIC_LABELS.submissions_count}</option>
+                <option value="wins_count">{GOAL_METRIC_LABELS.wins_count}</option>
+                <option value="win_rate_pct">{GOAL_METRIC_LABELS.win_rate_pct}</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-xs text-slate-500 block mb-1">
+                Target * {metric === 'win_rate_pct' ? '(%)' : ''}
+              </label>
+              <input
+                type="number"
+                inputMode="numeric"
+                min={metric === 'win_rate_pct' ? 1 : 1}
+                max={metric === 'win_rate_pct' ? 100 : undefined}
+                step={metric === 'win_rate_pct' ? 1 : 1}
+                value={targetValue}
+                onChange={e => setTargetValue(e.target.value)}
+                className="input-field"
+                placeholder={metric === 'win_rate_pct' ? 'e.g. 25' : 'e.g. 10'}
+                required
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="text-xs text-slate-500 block mb-1">Month *</label>
+            <select
+              value={monthKey}
+              onChange={e => setMonthKey(e.target.value)}
+              className="select-field"
+            >
+              {monthOptions.map(m => (
+                <option key={m} value={m}>{formatMonthKey(m)}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="text-xs text-slate-500 block mb-1">Notes</label>
+            <textarea
+              value={notes}
+              onChange={e => setNotes(e.target.value)}
+              className="input-field min-h-[64px]"
+              placeholder="Optional context, stretch criteria, or coaching notes…"
+              rows={3}
+            />
+          </div>
+
+          <div className="flex gap-2 pt-2">
+            <button type="button" onClick={onClose} className="btn-secondary flex-1 justify-center">Cancel</button>
+            <button type="submit" className="btn-primary flex-1 justify-center">
+              <Check size={12} /> {isEdit ? 'Save changes' : 'Create goal'}
+            </button>
+          </div>
+        </form>
+      </motion.div>
+    </motion.div>,
+    document.body,
   )
 }
 

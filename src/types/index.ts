@@ -563,10 +563,37 @@ export interface ActivityLog {
   action: string
   user: string
   userRole: Role
-  entityType: 'opportunity' | 'contract' | 'subcontractor' | 'user' | 'report' | 'fresh_award' | 'past_performance' | 'hr' | 'admin'
+  entityType: 'opportunity' | 'contract' | 'subcontractor' | 'user' | 'report' | 'fresh_award' | 'past_performance' | 'hr' | 'admin' | 'goal'
   entityId?: string
   entityName?: string
   createdAt: string
+}
+
+// ── Goals ────────────────────────────────────────────────────────────
+// Capture-Manager-set targets for individual employees or whole teams.
+// Tracked per calendar month (YYYY-MM). Progress is derived live from
+// opportunities + fresh awards — no snapshot/aggregation table.
+export type GoalMetric = 'submissions_count' | 'wins_count' | 'win_rate_pct'
+export type GoalScope  = 'team' | 'employee'
+export type GoalPeriod = 'monthly'
+
+export interface Goal {
+  id: string
+  scope: GoalScope
+  // For 'team' scope: the manager's employee id (top of the sub-tree).
+  // For 'employee' scope: that employee's id.
+  targetId: string
+  metric: GoalMetric
+  // For submissions/wins: integer count. For win_rate_pct: 0-100 percent.
+  targetValue: number
+  period: GoalPeriod
+  // Calendar month this goal applies to (YYYY-MM). Required for v1.
+  monthKey: string
+  notes?: string
+  createdAt: string
+  createdBy: string
+  updatedAt?: string
+  updatedBy?: string
 }
 
 // ── Notifications ─────────────────────────────────────────────────────

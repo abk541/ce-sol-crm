@@ -1,7 +1,7 @@
 import { motion, AnimatePresence } from 'framer-motion'
 import { NavLink, useLocation } from 'react-router-dom'
-import { ChevronDown, ChevronLeft, ChevronRight, LogOut } from 'lucide-react'
-import { useState } from 'react'
+import { ChevronDown, ChevronLeft, ChevronRight, LogOut, Target } from 'lucide-react'
+import { useMemo, useState } from 'react'
 import { useStore } from '../../store/useStore'
 import { avatarColor } from '../../lib/utils'
 import { cn } from '../../lib/utils'
@@ -10,6 +10,13 @@ import { DEFAULT_EXPANDED_NAV_GROUPS, NAV_GROUPS } from '../../config/navigation
 import { hasAnyPermission, hasPermission, ROLE_LABELS } from '../../lib/permissions'
 import { isOpsAgent } from '../../lib/team'
 import { useAppearance } from '../../lib/appearance'
+import {
+  GOAL_METRIC_LABELS,
+  computeGoalProgress,
+  currentMonthKey,
+  formatGoalValue,
+  goalsForEmployee,
+} from '../../lib/goals'
 
 function canSeeNavItem(user: ReturnType<typeof useStore.getState>['currentUser'], to: string) {
   // OPS Team Lead / Associate only see Contract Admin + Databases + HR.
@@ -37,7 +44,7 @@ function canSeeNavItem(user: ReturnType<typeof useStore.getState>['currentUser']
 }
 
 export default function Sidebar() {
-  const { sidebarCollapsed, toggleSidebar, currentUser, logout, notifications } = useStore()
+  const { sidebarCollapsed, toggleSidebar, currentUser, logout, notifications, employees, goals, opportunities, freshAwards } = useStore()
   const { prefs } = useAppearance()
   const location = useLocation()
   const [expanded, setExpanded] = useState<Record<string, boolean>>(DEFAULT_EXPANDED_NAV_GROUPS)
@@ -162,6 +169,17 @@ export default function Sidebar() {
         })}
       </nav>
 
+      {currentUser && (
+        <SidebarGoalBadge
+          collapsed={sidebarCollapsed}
+          currentUser={currentUser}
+          employees={employees}
+          goals={goals}
+          opportunities={opportunities}
+          freshAwards={freshAwards}
+        />
+      )}
+
       {/* User profile */}
       {currentUser && (
         <div
@@ -188,11 +206,95 @@ export default function Sidebar() {
             title="Logout"
             className="flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center transition-all"
             style={{ background: 'var(--sidebar-control-bg)', color: 'var(--sidebar-muted)' }}
-          >
-            <LogOut size={13} />
-          </button>
+          ><LogOut size={13} /></button>
         </div>
       )}
     </motion.aside>
+  )
+}
+
+// Picks the highest-priority goal for the current user (personal first, then team)
+// and renders a compact progress badge. Returns nothing when no goals exist.
+function SidebarGoalBadge({
+  collapsed,
+  currentUser,
+  employees,
+  goals,
+  opportunities,
+  freshAwards,
+}: {
+  collapsed: boolean
+  currentUser: NonNullable<ReturnType<typeof useStore.getState>['currentUser']>
+  employees: ReturnType<typeof useStore.getState>['employees']
+  goals: ReturnType<typeof useStore.getState>['goals']
+  opportunities: ReturnType<typeof useStore.getState>['opportunities']
+  freshAwards: ReturnType<typeof useStore.getState>['freshAwards']
+}) {
+  const monthKey = currentMonthKey()
+  const myEmployee = useMemo(
+    () => employees.find(e => e.email === currentUser.email || e.name === currentUser.name),
+    [employees, currentUser],
+  )
+  const myGoals = useMemo(
+    () => goalsForEmployee(goals, myEmployee?.id, employees, monthKey),
+    [goals, myEmployee, employees, monthKey],
+  )
+  const primary = useMemo(() => {
+    if (!myGoals.length) return null
+    const personal = myGoals.find(g => g.scope === 'employee' && g.targetId === myEmployee?.id)
+    return personal ?? myGoals[0]
+  }, [myGoals, myEmployee])
+  if (!primary) return null
+  const progress = computeGoalProgress(primary, opportunities, freshAwards, employees)
+  const barPct = Math.min(100, progress.pct)
+  const color = progress.status === 'achieved'
+    ? '#10B981'
+    : progress.status === 'ahead'
+      ? '#06B6D4'
+      : progress.status === 'on-track'
+        ? '#F59E0B'
+        : '#EF4444'
+
+  if (collapsed) {
+    return (
+      <div
+        className="mx-auto my-2 w-7 h-7 rounded-lg flex items-center justify-center"
+        title={`${GOAL_METRIC_LABELS[primary.metric]} — ${formatGoalValue(primary.metric, progress.current)} / ${formatGoalValue(primary.metric, primary.targetValue)}`}
+        style={{ background: 'var(--sidebar-control-bg)', color, border: `1px solid ${color}33` }}
+      >
+        <Target size={13} />
+      </div>
+    )
+  }
+
+  return (
+    <div
+      className="mx-3 mt-2 mb-1 p-2.5 rounded-lg"
+      style={{ background: 'var(--sidebar-control-bg)', border: '1px solid var(--sidebar-border)' }}
+      title={`${GOAL_METRIC_LABELS[primary.metric]} — ${formatGoalValue(primary.metric, progress.current)} / ${formatGoalValue(primary.metric, primary.targetValue)}`}
+    >
+      <div className="flex items-center justify-between gap-2 mb-1.5">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <Target size={11} style={{ color }} />
+          <span className="text-[10px] font-bold uppercase tracking-wider truncate" style={{ color: 'var(--sidebar-muted)' }}>
+            {primary.scope === 'team' ? 'Team goal' : 'My goal'}
+          </span>
+        </div>
+        <span className="text-[10px] font-black tabular-nums" style={{ color }}>
+          {Math.round(progress.pct)}%
+        </span>
+      </div>
+      <div className="h-1 rounded-full overflow-hidden" style={{ background: 'rgba(148,163,184,0.15)' }}>
+        <div
+          className="h-full rounded-full transition-all"
+          style={{ width: `${barPct}%`, background: color }}
+        />
+      </div>
+      <div className="mt-1 text-[10px] tabular-nums truncate" style={{ color: 'var(--sidebar-muted)' }}>
+        {formatGoalValue(primary.metric, progress.current)} / {formatGoalValue(primary.metric, primary.targetValue)}
+        {' · '}
+        {GOAL_METRIC_LABELS[primary.metric].toLowerCase()}
+      </div>
+    </div>
   )
 }

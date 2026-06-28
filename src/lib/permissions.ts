@@ -26,6 +26,7 @@ export type Permission =
   | 'hr:manageCertifications'
   | 'hr:viewCertifications'
   | 'hr:reviewRequests'
+  | 'goals:manage'
   | 'comment:editAny'
 
 export const ROLE_LABELS: Record<Role, string> = {
@@ -62,6 +63,7 @@ const ALL_PERMISSIONS: Permission[] = [
   'hr:manageCertifications',
   'hr:viewCertifications',
   'hr:reviewRequests',
+  'goals:manage',
   'comment:editAny',
 ]
 
@@ -93,6 +95,7 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   'hr:manageCertifications':     'Manage company certifications',
   'hr:viewCertifications':       'View company certifications',
   'hr:reviewRequests':           'Review HR / employee requests',
+  'goals:manage':                'Set and edit performance goals',
   'comment:editAny':             "Edit / delete any user's comment",
 }
 
@@ -105,6 +108,7 @@ export const PERMISSION_GROUP_LABELS: Record<string, string> = {
   operations:    'Operations',
   pastPerformance: 'Past Performance',
   hr:            'HR',
+  goals:         'Goals',
   comment:       'Comments',
 }
 
