@@ -111,11 +111,6 @@ export default function LoginPage() {
                   {loading ? 'Signing in...' : 'Sign in'}
                 </button>
               </form>
-
-              <div className="mt-6 p-3 rounded-xl" style={{ border: '1px solid rgba(184,145,78,0.24)', background: 'rgba(184,145,78,0.08)' }}>
-                <p className="text-[11px] text-slate-500 font-medium mb-1">Demo credentials</p>
-                <p className="text-[11px]" style={{ color: '#D7BE7A' }}>abk@cesolutionplus.com - abk123</p>
-              </div>
             </motion.div>
           </div>
         </div>
