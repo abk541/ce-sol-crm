@@ -38,7 +38,7 @@ const ROLE_BADGE: Record<Role, string> = {
 
 // Top-level admin tabs. Each tab maps to one of the existing SectionHeader
 // accents below so the visual identity is preserved.
-type AdminTab = 'people' | 'roles' | 'goals' | 'workspace' | 'health' | 'danger'
+type AdminTab = 'people' | 'roles' | 'goals' | 'integrations' | 'workspace' | 'health' | 'danger'
 
 // Returns the team a user lives in on the org chart. Managers are implicit;
 // non-managers default to 'BD' for legacy users with no `team` set.
@@ -504,6 +504,9 @@ export default function AdminPage() {
     createGoal,
     updateGoal,
     deleteGoal,
+    appSettings,
+    appSettingsSyncStatus,
+    setAppSetting,
   } = useStore()
   const [search, setSearch] = useState('')
   const [modal, setModal] = useState<'create' | User | null>(null)
@@ -539,6 +542,13 @@ export default function AdminPage() {
 
   // Workspace snapshot
   const [snapshotBusy, setSnapshotBusy] = useState(false)
+
+  // Integrations tab
+  const storedSamKey = appSettings?.['sam_gov_api_key'] ?? ''
+  const [samKeyDraft, setSamKeyDraft] = useState(storedSamKey)
+  const [showSamKey, setShowSamKey] = useState(false)
+  const [savingSamKey, setSavingSamKey] = useState(false)
+  useEffect(() => { setSamKeyDraft(storedSamKey) }, [storedSamKey])
 
   const refreshRemoteCounts = useCallback(async () => {
     if (!isSupabaseConnected) {
@@ -695,6 +705,7 @@ export default function AdminPage() {
               {activeTab === 'people'    && <>{users.length} users · {users.filter(u => u.status === 'active').length} active</>}
               {activeTab === 'roles'     && 'Edit role permissions and per-user overrides'}
               {activeTab === 'goals'     && 'Set monthly submission, win, and win-rate targets per team or employee'}
+              {activeTab === 'integrations' && 'Runtime API keys and third-party integration settings'}
               {activeTab === 'workspace' && 'Settings, snapshots, and import / export'}
               {activeTab === 'health'    && 'Local vs Supabase drift across every business table'}
               {activeTab === 'danger'    && 'Reset and wipe operations — irreversible'}
@@ -719,6 +730,7 @@ export default function AdminPage() {
             { id: 'people'    as AdminTab, label: 'People',              Icon: Users,         accent: 'emerald' as const },
             { id: 'roles'     as AdminTab, label: 'Roles & Permissions', Icon: Shield,        accent: 'violet'  as const },
             { id: 'goals'     as AdminTab, label: 'Goals',               Icon: Target,        accent: 'amber'   as const },
+            { id: 'integrations' as AdminTab, label: 'Integrations',     Icon: KeyRound,      accent: 'sky'     as const },
             { id: 'workspace' as AdminTab, label: 'Workspace',           Icon: Save,          accent: 'indigo'  as const },
             { id: 'health'    as AdminTab, label: 'System Health',       Icon: Activity,      accent: 'cyan'    as const },
             { id: 'danger'    as AdminTab, label: 'Reset & Maintenance',  Icon: AlertTriangle, accent: 'rose'    as const },
@@ -1476,6 +1488,126 @@ export default function AdminPage() {
           if (confirm('Delete this goal? This cannot be undone.')) deleteGoal(id)
         }}
       />
+      </>)}
+
+      {activeTab === 'integrations' && (<>
+      <div className="mt-2">
+        <SectionHeader icon={<KeyRound size={14} />} label="Integration keys" accent="sky" />
+
+        <div
+          className="rounded-2xl p-4 mb-4"
+          style={{
+            background: 'rgba(245,158,11,0.06)',
+            border: '1px solid rgba(245,158,11,0.28)',
+          }}
+        >
+          <div className="flex items-start gap-2">
+            <AlertTriangle size={14} className="text-amber-300 mt-0.5 flex-shrink-0" />
+            <p className="text-[11px] text-amber-100 leading-relaxed">
+              These keys are fetched by the browser and used in outbound requests. They are
+              <span className="font-semibold"> not end-to-end secret</span>: any signed-in user with DevTools open
+              can read them. Storing them here is still safer than baking them into the JavaScript bundle
+              via <code className="px-1 rounded bg-black/30">VITE_*</code> env vars (which are visible to every
+              anonymous visitor) and lets you rotate keys without a redeploy.
+            </p>
+          </div>
+        </div>
+
+        <div className="glass rounded-2xl p-4 mb-6">
+          <div className="flex items-start justify-between gap-3 mb-3">
+            <div>
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <KeyRound size={14} className="text-sky-300" /> SAM.gov API key
+              </h3>
+              <p className="text-[11px] text-slate-400 mt-1">
+                Used by the Pipeline → Create → Import from SAM.gov URL flow. Get a key from{' '}
+                <a
+                  href="https://open.gsa.gov/api/get-opportunities-public-api/"
+                  target="_blank" rel="noopener noreferrer"
+                  className="text-sky-300 underline hover:text-sky-200"
+                >
+                  open.gsa.gov
+                </a>.
+              </p>
+            </div>
+            <span
+              className="text-[10px] font-semibold uppercase tracking-wide px-2 py-1 rounded-md whitespace-nowrap"
+              style={
+                appSettingsSyncStatus === 'synced'
+                  ? { background: 'rgba(16,185,129,0.14)', color: '#6ee7b7', border: '1px solid rgba(16,185,129,0.28)' }
+                  : appSettingsSyncStatus === 'local'
+                    ? { background: 'rgba(245,158,11,0.14)', color: '#fcd34d', border: '1px solid rgba(245,158,11,0.28)' }
+                    : { background: 'rgba(148,163,184,0.14)', color: '#cbd5e1', border: '1px solid rgba(148,163,184,0.28)' }
+              }
+            >
+              {appSettingsSyncStatus === 'synced' && (isSupabaseConnected ? <>Synced <Wifi size={10} className="inline ml-1" /></> : 'Synced')}
+              {appSettingsSyncStatus === 'local'  && <>Local only <WifiOff size={10} className="inline ml-1" /></>}
+              {appSettingsSyncStatus === 'unknown' && 'Not fetched'}
+            </span>
+          </div>
+
+          {appSettingsSyncStatus === 'local' && (
+            <p className="text-[11px] text-amber-300 mb-3">
+              The <code className="px-1 rounded bg-black/30">app_settings</code> table doesn't exist yet.
+              Apply migration <code className="px-1 rounded bg-black/30">025_add_app_settings.sql</code> so
+              saves reach the database.
+            </p>
+          )}
+
+          <div className="flex flex-col sm:flex-row gap-2">
+            <div className="relative flex-1">
+              <input
+                type={showSamKey ? 'text' : 'password'}
+                value={samKeyDraft}
+                onChange={e => setSamKeyDraft(e.target.value)}
+                placeholder={storedSamKey ? '••••••••' : 'Paste SAM.gov API key'}
+                autoComplete="off"
+                spellCheck={false}
+                className="w-full text-xs px-3 py-2 pr-9 rounded-lg bg-slate-900/60 border border-slate-700/60 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-sky-500/60"
+              />
+              <button
+                type="button"
+                onClick={() => setShowSamKey(v => !v)}
+                aria-label={showSamKey ? 'Hide key' : 'Show key'}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200"
+              >
+                {showSamKey ? <EyeOff size={14} /> : <Eye size={14} />}
+              </button>
+            </div>
+            <button
+              type="button"
+              disabled={savingSamKey || samKeyDraft === storedSamKey}
+              onClick={async () => {
+                setSavingSamKey(true)
+                try {
+                  const r = await setAppSetting('sam_gov_api_key', samKeyDraft)
+                  if (r.ok) {
+                    toast.success(isSupabaseConnected ? 'SAM.gov key saved to database' : 'SAM.gov key saved locally')
+                  } else if (r.missingTable) {
+                    toast.error('Database table missing — apply migration 025 first. Value kept locally.')
+                  } else {
+                    toast.error('Could not save SAM.gov key')
+                  }
+                } finally {
+                  setSavingSamKey(false)
+                }
+              }}
+              className="btn-primary text-xs px-3 py-2 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Save size={12} /> {savingSamKey ? 'Saving…' : 'Save'}
+            </button>
+            {samKeyDraft !== storedSamKey && (
+              <button
+                type="button"
+                onClick={() => setSamKeyDraft(storedSamKey)}
+                className="text-xs px-3 py-2 rounded-lg border border-slate-700/60 text-slate-300 hover:bg-slate-800/60"
+              >
+                Revert
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
       </>)}
 
       {activeTab === 'workspace' && (<>
@@ -2269,16 +2401,17 @@ function PersonRow({
 // Admin layout helpers — section headers + Danger Zone modal
 // ─────────────────────────────────────────────────────────────────────────────
 
-const SECTION_ACCENT: Record<'indigo' | 'emerald' | 'rose' | 'cyan' | 'violet' | 'amber', { fg: string; bg: string; line: string }> = {
+const SECTION_ACCENT: Record<'indigo' | 'emerald' | 'rose' | 'cyan' | 'violet' | 'amber' | 'sky', { fg: string; bg: string; line: string }> = {
   indigo:  { fg: '#a5b4fc', bg: 'rgba(99,102,241,0.12)',  line: 'rgba(99,102,241,0.25)' },
   emerald: { fg: '#6ee7b7', bg: 'rgba(16,185,129,0.12)',  line: 'rgba(16,185,129,0.25)' },
   rose:    { fg: '#fda4af', bg: 'rgba(244,63,94,0.14)',   line: 'rgba(244,63,94,0.30)' },
   cyan:    { fg: '#67e8f9', bg: 'rgba(6,182,212,0.12)',   line: 'rgba(6,182,212,0.25)'  },
   violet:  { fg: '#c4b5fd', bg: 'rgba(139,92,246,0.12)',  line: 'rgba(139,92,246,0.25)' },
   amber:   { fg: '#fcd34d', bg: 'rgba(245,158,11,0.12)',  line: 'rgba(245,158,11,0.25)' },
+  sky:     { fg: '#7dd3fc', bg: 'rgba(14,165,233,0.12)',  line: 'rgba(14,165,233,0.25)' },
 }
 
-function SectionHeader({ icon, label, accent }: { icon: React.ReactNode; label: string; accent: 'indigo' | 'emerald' | 'rose' | 'cyan' | 'violet' | 'amber' }) {
+function SectionHeader({ icon, label, accent }: { icon: React.ReactNode; label: string; accent: 'indigo' | 'emerald' | 'rose' | 'cyan' | 'violet' | 'amber' | 'sky' }) {
   const palette = SECTION_ACCENT[accent]
   return (
     <div className="flex items-center gap-3 mb-3">

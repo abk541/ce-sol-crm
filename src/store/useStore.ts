@@ -57,6 +57,8 @@ import {
   saveRolePermissionOverride,
   saveUserPermissionOverride,
   clearAllPermissionOverrides,
+  fetchAppSettings,
+  saveAppSetting,
 } from '../lib/db'
 import { getAssignmentChain, isAssignedToAssociate } from '../lib/team'
 import { hasPermission, applyPermissionOverrides, type Permission } from '../lib/permissions'
@@ -112,6 +114,12 @@ interface AppState {
   // 'synced' = pushed to Supabase, 'local' = only in localStorage,
   // 'unknown' = haven't tried yet this session.
   permissionOverridesSyncStatus: 'synced' | 'local' | 'unknown'
+
+  // App settings (integration keys, etc.) stored in the app_settings table
+  // when migration 025 is applied. Falls back to Vite env vars for the
+  // baked-in defaults. Edited from Admin → Integrations.
+  appSettings: Record<string, string>
+  appSettingsSyncStatus: 'synced' | 'local' | 'unknown'
 
   // UI
   sidebarCollapsed: boolean
@@ -239,6 +247,7 @@ interface AppState {
   toggleSidebar: () => void
   updateNonSubGracePeriod: (hours: number, minutes: number) => void
   setRequireAssociateForActivePipeline: (value: boolean) => void
+  setAppSetting: (key: string, value: string) => Promise<{ ok: boolean; missingTable: boolean }>
   consumeInvoiceNumber: () => number
   setPref: <K extends keyof UserPreferences>(key: K, value: UserPreferences[K]) => void
 
@@ -594,6 +603,8 @@ export const useStore = create<AppState>()(
       userPermissionGrants: {},
       userPermissionRevokes: {},
       permissionOverridesSyncStatus: 'unknown',
+      appSettings: {},
+      appSettingsSyncStatus: 'unknown',
 
       // ── Auth ────────────────────────────────────────────────────────
       login: (email, password) => {
@@ -2716,6 +2727,18 @@ export const useStore = create<AppState>()(
           } catch (err) {
             console.error('[Store] fetchPermissionOverrides failed', err)
           }
+
+          // Pull runtime app settings (integration keys) from Supabase.
+          try {
+            const s = await fetchAppSettings()
+            if (s.ok && s.payload) {
+              set({ appSettings: s.payload, appSettingsSyncStatus: 'synced' })
+            } else if (s.missingTable) {
+              set({ appSettingsSyncStatus: 'local' })
+            }
+          } catch (err) {
+            console.error('[Store] fetchAppSettings failed', err)
+          }
         } catch (err) {
           console.error('[Store] Supabase init failed, using local data', err)
           set({ dbReady: true })
@@ -2728,6 +2751,19 @@ export const useStore = create<AppState>()(
         nonSubGraceHours: Math.max(0, Math.trunc(Number(hours) || 0)),
         nonSubGraceMinutes: Math.max(0, Math.trunc(Number(minutes) || 0)),
       }),
+      setAppSetting: async (key, value) => {
+        const trimmedKey = String(key ?? '').trim()
+        const nextValue  = String(value ?? '')
+        if (!trimmedKey) return { ok: false, missingTable: false }
+        set(s => ({ appSettings: { ...s.appSettings, [trimmedKey]: nextValue } }))
+        const r = await saveAppSetting(trimmedKey, nextValue)
+        if (r.missingTable) {
+          set({ appSettingsSyncStatus: 'local' })
+        } else if (r.ok) {
+          set({ appSettingsSyncStatus: 'synced' })
+        }
+        return { ok: r.ok, missingTable: r.missingTable }
+      },
       setRequireAssociateForActivePipeline: (value) => {
         const next = !!value
         const prev = get().requireAssociateForActivePipeline

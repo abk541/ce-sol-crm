@@ -71,8 +71,14 @@ const TIMEZONE_CODE_OPTIONS = Array.from(new Set([
 ])).filter(code => code && (TIMEZONES[code] || fixedOffsetMinutes(code) !== null))
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100, 0] // 0 = All
+// SAM.gov API key is stored in Supabase (app_settings.sam_gov_api_key) and
+// managed at runtime from Admin → Integrations. No env / build-time
+// fallback: production must set the row in the database so keys can be
+// rotated without a redeploy and never end up baked into the JS bundle.
+// The store is read imperatively via getState() so this stays a plain
+// function callable from anywhere (e.g. handlers) without hook wiring.
 function getBuildSamGovApiKey() {
-  return ((import.meta.env.VITE_SAM_GOV_API_KEY as string | undefined) ?? '').trim()
+  return (useStore.getState().appSettings?.['sam_gov_api_key'] ?? '').trim()
 }
 
 async function readSamGovError(res: Response) {
@@ -3065,7 +3071,7 @@ function CreateModal({ onClose }: { onClose: () => void }) {
     if (!url || importing) return
 
     if (!samApiKey) {
-      toast.error('SAM.gov API key is not configured. Check VITE_SAM_GOV_API_KEY in your deployment secrets.')
+      toast.error('SAM.gov API key is not configured. An admin must set it in Admin → Integrations.')
       return
     }
 

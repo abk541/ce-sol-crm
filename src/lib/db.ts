@@ -1891,6 +1891,67 @@ export async function clearAllPermissionOverrides(): Promise<PermissionOverrides
   }
 }
 
+// ── App settings (key/value) ─────────────────────────────────────────────────
+//
+// Backed by the `app_settings` table created in migration
+// 025_add_app_settings.sql. Follows the same missing-table-tolerant pattern
+// as fetchPermissionOverrides above: if the migration hasn't been applied,
+// callers get { ok: false, missingTable: true } and the store keeps whatever
+// was rehydrated from localStorage / env fallback.
+
+export type AppSettings = Record<string, string>
+
+export interface AppSettingsResult {
+  ok: boolean
+  missingTable: boolean
+  payload?: AppSettings
+}
+
+export async function fetchAppSettings(): Promise<AppSettingsResult> {
+  if (!isSupabaseConnected || !supabase) {
+    return { ok: false, missingTable: false }
+  }
+  try {
+    const { data, error } = await supabase.from('app_settings').select('key, value')
+    if (error) {
+      if (isMissingTableError(error)) return { ok: false, missingTable: true }
+      console.error('[db] fetchAppSettings error', error)
+      return { ok: false, missingTable: false }
+    }
+    const payload: AppSettings = {}
+    for (const row of data ?? []) {
+      const r = row as { key: unknown; value: unknown }
+      if (typeof r.key === 'string' && typeof r.value === 'string') {
+        payload[r.key] = r.value
+      }
+    }
+    return { ok: true, missingTable: false, payload }
+  } catch (err) {
+    if (isMissingTableError(err)) return { ok: false, missingTable: true }
+    console.error('[db] fetchAppSettings failed', err)
+    return { ok: false, missingTable: false }
+  }
+}
+
+export async function saveAppSetting(key: string, value: string): Promise<AppSettingsResult> {
+  if (!isSupabaseConnected || !supabase) return { ok: false, missingTable: false }
+  try {
+    const { error } = await supabase
+      .from('app_settings')
+      .upsert({ key, value, updated_at: new Date().toISOString() }, { onConflict: 'key' })
+    if (error) {
+      if (isMissingTableError(error)) return { ok: false, missingTable: true }
+      console.error('[db] saveAppSetting upsert error', error)
+      return { ok: false, missingTable: false }
+    }
+    return { ok: true, missingTable: false }
+  } catch (err) {
+    if (isMissingTableError(err)) return { ok: false, missingTable: true }
+    console.error('[db] saveAppSetting failed', err)
+    return { ok: false, missingTable: false }
+  }
+}
+
 // ── Seed if empty ────────────────────────────────────────────────────────────
 
 export async function seedEmployeesIfEmpty(employees: Employee[]): Promise<boolean> {
