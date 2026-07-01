@@ -170,7 +170,7 @@ function UserModal({ user, defaultRole, defaultTeam, defaultManagerId, onClose }
   defaultManagerId?: string | null
   onClose: () => void
 }) {
-  const { createUser, updateUser, users } = useStore()
+  const { createUser, updateUser, users, adminResetMfa } = useStore()
   const isEdit = !!user
   const initialRole: Role = user?.role ?? defaultRole ?? 'ASSOCIATE'
   const initialTeam: EmployeeTeam | null = user
@@ -189,6 +189,21 @@ function UserModal({ user, defaultRole, defaultTeam, defaultManagerId, onClose }
     forceFirstLogin: user ? false : true,
   })
   const [showPassword, setShowPassword] = useState(false)
+  const [mfaBusy, setMfaBusy] = useState(false)
+
+  // Live user reference so the 2FA panel reflects state after admin actions.
+  const liveUser = user ? users.find(u => u.id === user.id) ?? user : null
+  const mfaEnabled = !!liveUser?.mfaEnabled
+
+  const handleResetMfa = async () => {
+    if (!user) return
+    if (!window.confirm(`Disable 2FA for ${user.name}? They will have to enroll a new authenticator on their next sign-in.`)) return
+    setMfaBusy(true)
+    const ok = await adminResetMfa(user.id)
+    setMfaBusy(false)
+    if (ok) toast.success(`2FA disabled for ${user.name}.`)
+    else toast.error('Could not reset 2FA. Try again.')
+  }
 
   // When role changes, snap team and clear an invalid parent.
   const handleRoleChange = (r: Role) => {
@@ -429,6 +444,36 @@ function UserModal({ user, defaultRole, defaultTeam, defaultManagerId, onClose }
                 </span>
               </label>
             </div>
+
+            {isEdit && (
+              <div className="rounded-xl border border-indigo-500/15 bg-indigo-500/5 p-3 space-y-2">
+                <div className="flex items-center gap-1.5">
+                  <Shield size={12} className="text-indigo-300" />
+                  <h3 className="text-[11px] font-bold uppercase tracking-wide text-indigo-300">Two-Factor Authentication</h3>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-xs">
+                    {mfaEnabled ? (
+                      <span className="text-emerald-300 font-semibold">Enrolled — authenticator active</span>
+                    ) : (
+                      <span className="text-slate-400">Not enrolled — user will be prompted on next sign-in</span>
+                    )}
+                  </div>
+                  {mfaEnabled && (
+                    <button
+                      type="button"
+                      onClick={handleResetMfa}
+                      disabled={mfaBusy}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold border border-amber-500/30 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 disabled:opacity-50">
+                      <ShieldOff size={11} /> {mfaBusy ? 'Resetting…' : 'Reset 2FA'}
+                    </button>
+                  )}
+                </div>
+                <p className="text-[10px] text-slate-500">
+                  Use this when a user loses their phone, drops it, or switches devices. Their authenticator secret and recovery codes are cleared, and they must re-enroll from scratch on their next sign-in.
+                </p>
+              </div>
+            )}
 
             <div className="flex gap-2 pt-2">
               <button type="button" onClick={onClose} className="btn-secondary flex-1 justify-center">Cancel</button>
