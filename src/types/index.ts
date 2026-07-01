@@ -41,6 +41,13 @@ export interface User {
   // For TEAM_LEAD: points to a BD_MANAGER or OPS_MANAGER user id.
   // For ASSOCIATE: points to a TEAM_LEAD user id.
   managerId?: string | null
+  // TOTP-based two-factor auth. mfaEnabled is the source of truth for
+  // whether verification is required at login; mfaSecret is the base32
+  // shared secret; mfaRecoveryCodes is a list of SHA-256 hashes of the
+  // one-time recovery codes shown to the user at enrollment time.
+  mfaEnabled?: boolean
+  mfaSecret?: string | null
+  mfaRecoveryCodes?: string[]
 }
 
 export type Priority = 'VERY_HIGH' | 'HIGH' | 'MEDIUM'

@@ -63,6 +63,7 @@ import {
 import { getAssignmentChain, isAssignedToAssociate } from '../lib/team'
 import { hasPermission, applyPermissionOverrides, type Permission } from '../lib/permissions'
 import { nextInvoiceSequenceFromContracts } from '../lib/invoiceNumbers'
+import { verifyTotpCode, consumeRecoveryCode, hashRecoveryCodes } from '../lib/mfa'
 
 interface AppState {
   // Auth
@@ -71,6 +72,12 @@ interface AppState {
   needsFirstLogin: boolean
   loginTimestamp: number | null
   accessNoticeAccepted: boolean
+  // MFA gate state — populated after password check, cleared once the user
+  // verifies a TOTP / recovery code (or when they cancel back to the login
+  // screen). While set, `isAuthenticated` is still false and route guards
+  // redirect to /mfa-verify or /mfa-enroll based on `pendingMfaMode`.
+  pendingMfaUserId: string | null
+  pendingMfaMode: 'verify' | 'enroll' | null
 
   // Data
   users: User[]
@@ -134,13 +141,39 @@ interface AppState {
   goalProgressLastNotifiedAt?: string
 
   // ── Auth actions ───────────────────────────────────────────────────
-  login: (email: string, password: string) => { ok: boolean; error?: string; needsFirst?: boolean }
+  login: (email: string, password: string) => {
+    ok: boolean
+    error?: string
+    needsFirst?: boolean
+    needsMfaEnroll?: boolean
+    needsMfaVerify?: boolean
+  }
   logout: () => void
   acceptAccessNotice: () => void
   // Returns false when the Supabase write fails so callers can stay on
   // the page and let the user retry instead of advancing with unsaved auth
   // progress. Local-only / offline mode resolves true immediately.
-  completeFirstLogin: (password: string) => Promise<boolean>
+  // The returned flag tells the caller whether it should now navigate to
+  // /mfa-enroll (true when the user has no TOTP secret yet) or straight to
+  // /access-notice (false).
+  completeFirstLogin: (password: string) => Promise<{ ok: boolean; needsMfaEnroll?: boolean }>
+
+  // ── MFA actions ────────────────────────────────────────────────────
+  // Verify a 6-digit TOTP code against the pending user's stored secret.
+  // On success, clears the pending gate and marks the session authenticated.
+  verifyMfaCode: (code: string) => { ok: boolean; error?: string }
+  // Consume a one-time recovery code. On success the code is removed from
+  // the user's list, persisted, and the session becomes authenticated.
+  useRecoveryCode: (code: string) => Promise<{ ok: boolean; error?: string }>
+  // Commit a fresh enrollment. The page has already generated + verified the
+  // secret and shown the plaintext recovery codes to the user; the store
+  // hashes the codes before persisting and marks the session authenticated.
+  completeMfaEnrollment: (secret: string, plaintextRecoveryCodes: string[]) => Promise<{ ok: boolean; error?: string }>
+  // Abandon the pending gate and return to a clean logged-out state.
+  cancelPendingMfa: () => void
+  // Admin action (requires admin:manageUsers): disable MFA on a user so
+  // they'll be routed to /mfa-enroll on their next login.
+  adminResetMfa: (userId: string) => Promise<boolean>
 
   // ── User management ────────────────────────────────────────────────
   createUser: (u: Omit<User, 'id' | 'createdAt'>) => void
@@ -565,6 +598,29 @@ async function canUseSolicitationId(solicitationId: string, opportunities: Oppor
   return true
 }
 
+// Finalize a session after credentials + MFA both succeed. Clears the
+// pending-MFA gate, marks the store authenticated, and stamps the
+// per-user lastLoginAt watermark used by the Admin People screen.
+function finalizeAuthenticatedSession(
+  set: (partial: (state: AppState) => Partial<AppState>) => void,
+  user: User,
+): void {
+  const nowIso = new Date().toISOString()
+  set(s => ({
+    currentUser: user,
+    isAuthenticated: true,
+    needsFirstLogin: false,
+    loginTimestamp: Date.now(),
+    accessNoticeAccepted: false,
+    pendingMfaUserId: null,
+    pendingMfaMode: null,
+    userSessions: {
+      ...s.userSessions,
+      [user.id]: { ...(s.userSessions[user.id] ?? {}), lastLoginAt: nowIso },
+    },
+  }))
+}
+
 export const useStore = create<AppState>()(
   persist(
     (set, get) => ({
@@ -573,6 +629,8 @@ export const useStore = create<AppState>()(
       needsFirstLogin: false,
       loginTimestamp: null,
       accessNoticeAccepted: false,
+      pendingMfaUserId: null,
+      pendingMfaMode: null,
       users: MOCK_USERS,
       opportunities: MOCK_OPPORTUNITIES,
       contracts: MOCK_CONTRACTS,
@@ -613,28 +671,59 @@ export const useStore = create<AppState>()(
         if (user.status === 'inactive') return { ok: false, error: 'Account is deactivated.' }
         if (user.password && user.password !== password)
           return { ok: false, error: 'Incorrect password.' }
+        // First-login password change still runs first — MFA enrollment
+        // happens after the user has set their real password.
         if (user.firstLogin) {
-          set({ currentUser: user, needsFirstLogin: true, accessNoticeAccepted: false })
+          set({
+            currentUser: user,
+            needsFirstLogin: true,
+            isAuthenticated: false,
+            accessNoticeAccepted: false,
+            pendingMfaUserId: null,
+            pendingMfaMode: null,
+          })
           return { ok: true, needsFirst: true }
         }
-        const nowIso = new Date().toISOString()
-        set(s => ({
+        // 2FA gate: everyone needs a TOTP secret on file. Users without one
+        // are pushed through enrollment before their session is authenticated.
+        if (!user.mfaEnabled || !user.mfaSecret) {
+          set({
+            currentUser: user,
+            isAuthenticated: false,
+            needsFirstLogin: false,
+            accessNoticeAccepted: false,
+            pendingMfaUserId: user.id,
+            pendingMfaMode: 'enroll',
+          })
+          return { ok: true, needsMfaEnroll: true }
+        }
+        set({
           currentUser: user,
-          isAuthenticated: true,
-          loginTimestamp: Date.now(),
+          isAuthenticated: false,
+          needsFirstLogin: false,
           accessNoticeAccepted: false,
-          userSessions: { ...s.userSessions, [user.id]: { ...(s.userSessions[user.id] ?? {}), lastLoginAt: nowIso } },
-        }))
-        return { ok: true }
+          pendingMfaUserId: user.id,
+          pendingMfaMode: 'verify',
+        })
+        return { ok: true, needsMfaVerify: true }
       },
 
-      logout: () => set({ currentUser: null, isAuthenticated: false, needsFirstLogin: false, loginTimestamp: null, dbReady: false, accessNoticeAccepted: false }),
+      logout: () => set({
+        currentUser: null,
+        isAuthenticated: false,
+        needsFirstLogin: false,
+        loginTimestamp: null,
+        dbReady: false,
+        accessNoticeAccepted: false,
+        pendingMfaUserId: null,
+        pendingMfaMode: null,
+      }),
 
       acceptAccessNotice: () => set({ accessNoticeAccepted: true }),
 
       completeFirstLogin: async (password) => {
         const u = get().currentUser
-        if (!u) return false
+        if (!u) return { ok: false }
         const updated = { ...u, firstLogin: false, password: password || u.password }
         // Persist to Supabase BEFORE flipping local state so a tab close can't
         // leave the DB stuck at the pre-completion state and bounce the user
@@ -643,17 +732,124 @@ export const useStore = create<AppState>()(
           const ok = await upsertUser(updated)
           if (!ok) {
             toast.error('Could not save your new password. Please try again.')
-            return false
+            return { ok: false }
           }
         }
+        // Route into MFA enrollment before authenticating — first-login users
+        // never have a TOTP secret yet.
         set(s => ({
           users: s.users.map(x => x.id === u.id ? updated : x),
           currentUser: updated,
           needsFirstLogin: false,
-          isAuthenticated: true,
-          loginTimestamp: Date.now(),
-          userSessions: { ...s.userSessions, [updated.id]: { ...(s.userSessions[updated.id] ?? {}), lastLoginAt: new Date().toISOString() } },
+          isAuthenticated: false,
+          pendingMfaUserId: updated.id,
+          pendingMfaMode: 'enroll',
         }))
+        return { ok: true, needsMfaEnroll: true }
+      },
+
+      // ── MFA ─────────────────────────────────────────────────────────
+      verifyMfaCode: (code) => {
+        const s = get()
+        if (!s.pendingMfaUserId || s.pendingMfaMode !== 'verify') {
+          return { ok: false, error: 'No pending 2FA verification.' }
+        }
+        const user = s.users.find(u => u.id === s.pendingMfaUserId)
+        if (!user || !user.mfaSecret) return { ok: false, error: '2FA is not configured for this account.' }
+        if (!verifyTotpCode(user.mfaSecret, code)) {
+          return { ok: false, error: 'That code is invalid or expired. Try again.' }
+        }
+        finalizeAuthenticatedSession(set, user)
+        return { ok: true }
+      },
+
+      useRecoveryCode: async (code) => {
+        const s = get()
+        if (!s.pendingMfaUserId || s.pendingMfaMode !== 'verify') {
+          return { ok: false, error: 'No pending 2FA verification.' }
+        }
+        const user = s.users.find(u => u.id === s.pendingMfaUserId)
+        if (!user) return { ok: false, error: 'Account not found.' }
+        const { ok, remaining } = await consumeRecoveryCode(user.mfaRecoveryCodes, code)
+        if (!ok) return { ok: false, error: 'That recovery code is invalid or already used.' }
+        const updated: User = { ...user, mfaRecoveryCodes: remaining }
+        if (isSupabaseConnected) {
+          const saved = await upsertUser(updated)
+          if (!saved) {
+            toast.error('Could not update your recovery codes. Please try again.')
+            return { ok: false, error: 'Sync failed. Please try again.' }
+          }
+        }
+        set(state => ({
+          users: state.users.map(u => u.id === updated.id ? updated : u),
+        }))
+        finalizeAuthenticatedSession(set, updated)
+        return { ok: true }
+      },
+
+      completeMfaEnrollment: async (secret, plaintextRecoveryCodes) => {
+        const s = get()
+        if (!s.pendingMfaUserId || s.pendingMfaMode !== 'enroll') {
+          return { ok: false, error: 'No pending 2FA enrollment.' }
+        }
+        const user = s.users.find(u => u.id === s.pendingMfaUserId)
+        if (!user) return { ok: false, error: 'Account not found.' }
+        const hashed = await hashRecoveryCodes(plaintextRecoveryCodes)
+        const updated: User = {
+          ...user,
+          mfaEnabled: true,
+          mfaSecret: secret,
+          mfaRecoveryCodes: hashed,
+        }
+        if (isSupabaseConnected) {
+          const ok = await upsertUser(updated)
+          if (!ok) {
+            toast.error('Could not save your 2FA setup. Please try again.')
+            return { ok: false, error: 'Sync failed. Please try again.' }
+          }
+        }
+        set(state => ({
+          users: state.users.map(u => u.id === updated.id ? updated : u),
+        }))
+        finalizeAuthenticatedSession(set, updated)
+        return { ok: true }
+      },
+
+      cancelPendingMfa: () => set({
+        currentUser: null,
+        isAuthenticated: false,
+        needsFirstLogin: false,
+        loginTimestamp: null,
+        accessNoticeAccepted: false,
+        pendingMfaUserId: null,
+        pendingMfaMode: null,
+      }),
+
+      adminResetMfa: async (userId) => {
+        const actor = get().currentUser
+        if (!hasPermission(actor, 'admin:manageUsers')) {
+          toast.error('You do not have permission to reset 2FA.')
+          return false
+        }
+        const target = get().users.find(u => u.id === userId)
+        if (!target) return false
+        const updated: User = { ...target, mfaEnabled: false, mfaSecret: null, mfaRecoveryCodes: [] }
+        if (isSupabaseConnected) {
+          const ok = await upsertUser(updated)
+          if (!ok) {
+            toast.error('Could not reset 2FA in the database. Please try again.')
+            return false
+          }
+        }
+        set(s => ({ users: s.users.map(u => u.id === userId ? updated : u) }))
+        get().logActivity({
+          action: `Reset 2FA for user: ${target.name} (${target.email})`,
+          user: actor?.name || 'System',
+          userRole: actor?.role || 'CAPTURE_MANAGER',
+          entityType: 'user',
+          entityId: target.id,
+          entityName: target.name,
+        })
         return true
       },
 
@@ -3306,6 +3502,9 @@ export const useStore = create<AppState>()(
     }),
     {
       name: 'ces-crm-store',
+      // v21: reintroduce MFA (TOTP) gate — new pendingMfa* fields are cleared
+      // on rehydrate so a persisted mid-flow state can never bypass the login
+      // screen; existing users are re-enrolled on next login (mfaEnabled=false).
       // v20: persist role / per-user permission overrides edited from Admin.
       // v19: track per-user lastLoginAt in a browser-local userSessions slice.
       // v18: introduce requireAssociateForActivePipeline toggle; defaults to true
@@ -3317,10 +3516,14 @@ export const useStore = create<AppState>()(
       // v14: first forced refresh of seeded department users.
       // v13: assignment employees are derived strictly from active users so
       // deleted/inactive users disappear from assignment pickers.
-      version: 20,
+      version: 21,
       migrate: (persistedState: unknown, fromVersion: number) => {
         const s = persistedState as Record<string, unknown>
         delete s.needsMFASetup
+        // Never let a persisted mid-flow 2FA gate survive a rehydrate. These
+        // fields are not in partialize either, so they always start null.
+        delete s.pendingMfaUserId
+        delete s.pendingMfaMode
         if (fromVersion < 17) {
           return {
             ...s,

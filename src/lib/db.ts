@@ -1065,12 +1065,19 @@ function userToDb(u: User): Record<string, unknown> {
     team: u.team ?? null,
     manager_id: u.managerId ?? null,
     created_at: u.createdAt ?? new Date().toISOString().split('T')[0],
+    mfa_enabled: u.mfaEnabled ?? false,
+    mfa_secret: u.mfaSecret ?? null,
+    mfa_recovery_codes: u.mfaRecoveryCodes ?? [],
   }
 }
 
 function dbToUser(row: Record<string, unknown>): User {
   const createdAtRaw = row.created_at as string | null | undefined
   const createdAt = (createdAtRaw ?? '').split('T')[0] || new Date().toISOString().split('T')[0]
+  const recoveryRaw = row.mfa_recovery_codes
+  const mfaRecoveryCodes = Array.isArray(recoveryRaw)
+    ? (recoveryRaw as unknown[]).filter((x): x is string => typeof x === 'string')
+    : []
   return {
     id: row.id as string,
     name: row.name as string,
@@ -1084,6 +1091,9 @@ function dbToUser(row: Record<string, unknown>): User {
     password: ((row.password as string | null) ?? undefined) as string | undefined,
     team: ((row.team as string | null | undefined) ?? undefined) as User['team'],
     managerId: ((row.manager_id as string | null | undefined) ?? null) as User['managerId'],
+    mfaEnabled: Boolean(row.mfa_enabled),
+    mfaSecret: ((row.mfa_secret as string | null) ?? null),
+    mfaRecoveryCodes,
   }
 }
 

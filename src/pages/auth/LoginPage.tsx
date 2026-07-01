@@ -25,6 +25,13 @@ export default function LoginPage() {
     setLoading(false)
 
     if (!result.ok) { setError(result.error!); return }
+    // Route based on which gate the user still needs to pass. First-login
+    // users see the access notice first (legacy flow); anyone else with a
+    // pending 2FA gate goes straight to the enroll / verify screen and hits
+    // the access notice after MFA succeeds.
+    if (result.needsFirst) { navigate('/access-notice'); return }
+    if (result.needsMfaVerify) { navigate('/mfa-verify'); return }
+    if (result.needsMfaEnroll) { navigate('/mfa-enroll'); return }
     navigate('/access-notice')
   }
 

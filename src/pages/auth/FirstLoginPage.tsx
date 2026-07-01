@@ -27,11 +27,14 @@ export default function FirstLoginPage() {
     e.preventDefault()
     if (!allPassed || !matches) return
     setLoading(true)
-    const ok = await completeFirstLogin(password)
+    const result = await completeFirstLogin(password)
     setLoading(false)
-    if (!ok) return
-    toast.success('Password set! Welcome aboard.')
-    navigate('/dashboard')
+    if (!result.ok) return
+    toast.success('Password set! Now let\u2019s secure your account.')
+    // First-login users never have a TOTP secret yet, so they always land
+    // on the enrollment screen next. When 2FA is later made optional this
+    // branch should fall back to /dashboard.
+    navigate(result.needsMfaEnroll ? '/mfa-enroll' : '/dashboard')
   }
 
   return (

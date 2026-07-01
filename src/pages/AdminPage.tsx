@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useCallback, Fragment } from 'react'
 import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Plus, Pencil, Trash2, X, Check, Shield, Search, Clock, Save, Network, List, GripVertical, Eye, EyeOff, KeyRound, RotateCcw, Users, GitBranch, AlertTriangle, Bomb, Database, FileText, Award, Bell, Activity, Briefcase, FolderTree, UserCog, Wifi, WifiOff, Download, Upload, ChevronDown, ChevronUp, RefreshCw, HardDrive, Lock, Target } from 'lucide-react'
+import { Plus, Pencil, Trash2, X, Check, Shield, ShieldOff, Search, Clock, Save, Network, List, GripVertical, Eye, EyeOff, KeyRound, RotateCcw, Users, GitBranch, AlertTriangle, Bomb, Database, FileText, Award, Bell, Activity, Briefcase, FolderTree, UserCog, Wifi, WifiOff, Download, Upload, ChevronDown, ChevronUp, RefreshCw, HardDrive, Lock, Target } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import type { User, Role, EmployeeTeam, Goal, GoalMetric, GoalScope, Employee, Opportunity, FreshAward } from '../types'
 import { avatarColor, useEscapeKey } from '../lib/utils'
@@ -449,6 +449,7 @@ export default function AdminPage() {
     users,
     deleteUser,
     updateUser,
+    adminResetMfa,
     currentUser,
     nonSubGraceHours,
     nonSubGraceMinutes,
@@ -614,6 +615,12 @@ export default function AdminPage() {
     if (u.id === currentUser?.id) { toast.error("You can't delete your own account."); return }
     deleteUser(u.id)
     toast.success(`${u.name} removed.`)
+  }
+
+  const handleResetMfa = async (u: User) => {
+    if (!window.confirm(`Disable 2FA for ${u.name}? They will have to enroll a new authenticator on their next sign-in.`)) return
+    const ok = await adminResetMfa(u.id)
+    if (ok) toast.success(`2FA disabled for ${u.name}.`)
   }
 
   const openCreate = (role?: Role, team?: EmployeeTeam | null, managerId?: string | null) => {
@@ -1121,10 +1128,15 @@ export default function AdminPage() {
                   <td className="text-slate-600 text-xs">{u.createdAt}</td>
                   <td>
                     <div className="flex items-center gap-1">
-                      <button onClick={() => setModal(u)} className="btn-ghost p-1.5 rounded-lg text-slate-400 hover:text-indigo-400">
+                      <button onClick={() => setModal(u)} className="btn-ghost p-1.5 rounded-lg text-slate-400 hover:text-indigo-400" title="Edit user">
                         <Pencil size={12} />
                       </button>
-                      <button onClick={() => handleDelete(u)} className="btn-ghost p-1.5 rounded-lg text-slate-400 hover:text-rose-400">
+                      {u.mfaEnabled && (
+                        <button onClick={() => handleResetMfa(u)} className="btn-ghost p-1.5 rounded-lg text-slate-400 hover:text-amber-400" title="Reset 2FA (force re-enrollment)">
+                          <ShieldOff size={12} />
+                        </button>
+                      )}
+                      <button onClick={() => handleDelete(u)} className="btn-ghost p-1.5 rounded-lg text-slate-400 hover:text-rose-400" title="Delete user">
                         <Trash2 size={12} />
                       </button>
                     </div>
