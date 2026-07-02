@@ -56,7 +56,11 @@ jobs:
           local-dir: ./dist/
           protocol: ftps
           port: 21
+          # Verbose logs so we can see exactly where the connection hangs
+          # (Hostinger sometimes stalls on passive-mode TLS handshake).
+          log-level: verbose
+          # Fail fast if the connection is stalled instead of burning
+          # GitHub Actions minutes on a stuck job.
+          timeout: 60000
           state-name: .ftp-deploy-sync-state.json
-          # First deploy uploads everything; subsequent runs only re-upload
-          # changed files (tracked via the state file above).
           dangerous-clean-slate: false
