@@ -143,6 +143,21 @@ export default function TeamStatisticsPanel({ defaultPeriod = null as Period | n
     return { submissions, nonSubmissions, goalsAchieved, users: stats.length }
   }, [stats])
 
+  const teamSplit = useMemo(() => {
+    const map = new Map<EmployeeTeam, { submissions: number; nonSubmissions: number; count: number }>()
+    for (const s of stats) {
+      const team = (s.employee.team ?? 'BD') as EmployeeTeam
+      const cur = map.get(team) ?? { submissions: 0, nonSubmissions: 0, count: 0 }
+      cur.submissions += s.submissions
+      cur.nonSubmissions += s.nonSubmissions
+      cur.count += 1
+      map.set(team, cur)
+    }
+    return Array.from(map.entries())
+      .map(([team, v]) => ({ team, ...v }))
+      .sort((a, b) => a.team.localeCompare(b.team))
+  }, [stats])
+
   const periodLabel = period
     ? `${period.from} - ${period.to}`
     : 'All time'
@@ -240,6 +255,45 @@ export default function TeamStatisticsPanel({ defaultPeriod = null as Period | n
         />
       </div>
 
+      {/* Team split donuts (only when more than one team is represented) */}
+      {teamSplit.length > 1 && (
+        <div className="px-3 pt-1 pb-1">
+          <p className="px-2 pt-1 pb-1.5 text-[10px] font-black tracking-[0.18em]" style={{ color: 'var(--text-tertiary)' }}>
+            BY TEAM
+          </p>
+          <div className="grid grid-cols-2 gap-2">
+            {teamSplit.map(t => (
+              <div
+                key={t.team}
+                className="rounded-xl border px-3 py-2 flex items-center gap-3"
+                style={{
+                  background: 'var(--bg-raised)',
+                  borderColor: 'var(--border-default)',
+                }}
+              >
+                <MiniDonut submissions={t.submissions} nonSubmissions={t.nonSubmissions} size={56} strokeWidth={7} showLabel={false} />
+                <div className="min-w-0 flex-1">
+                  <p className="text-[11px] font-black tracking-wider" style={{ color: 'var(--text-primary)' }}>
+                    {t.team === 'BD' ? 'Business Dev' : 'Operations'}
+                    <span className="ml-1.5 text-[9px] font-bold" style={{ color: 'var(--text-tertiary)' }}>· {t.count}</span>
+                  </p>
+                  <div className="mt-1 flex items-center gap-2 text-[10px]">
+                    <span className="inline-flex items-center gap-1 font-bold" style={{ color: 'var(--text-secondary)' }}>
+                      <span className="h-1.5 w-1.5 rounded-full" style={{ background: '#22D3EE' }} />
+                      Sub <span className="font-black" style={{ color: 'var(--text-primary)' }}>{t.submissions}</span>
+                    </span>
+                    <span className="inline-flex items-center gap-1 font-bold" style={{ color: 'var(--text-secondary)' }}>
+                      <span className="h-1.5 w-1.5 rounded-full" style={{ background: '#F87171' }} />
+                      Non <span className="font-black" style={{ color: 'var(--text-primary)' }}>{t.nonSubmissions}</span>
+                    </span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Performance grid */}
       <div className="px-3 pb-3">
         <p className="px-2 pt-2 pb-1.5 text-[10px] font-black tracking-[0.18em]" style={{ color: 'var(--text-tertiary)' }}>
@@ -329,11 +383,8 @@ function EmployeeCard({ stat, index }: { stat: any; index: number }) {
               </div>
             </div>
           </div>
-          <div className="text-right flex-shrink-0">
-            <p className="text-2xl font-black leading-none" style={{ color: 'var(--text-primary)' }}>
-              <AnimatedNumber value={total} />
-            </p>
-            <p className="text-[9px] font-bold tracking-wider mt-0.5" style={{ color: 'var(--text-tertiary)' }}>TOTAL</p>
+          <div className="flex-shrink-0">
+            <MiniDonut submissions={submissions} nonSubmissions={nonSubmissions} size={64} strokeWidth={8} />
           </div>
         </div>
       </div>
@@ -392,6 +443,77 @@ function StatRow({ label, value, color, sub }: { label: string; value: number | 
       <div className="flex items-baseline gap-1.5">
         {sub && <span className="text-[9px]" style={{ color: 'var(--text-tertiary)' }}>{sub}</span>}
         <span className="text-[12px] font-black" style={{ color }}>{value}</span>
+      </div>
+    </div>
+  )
+}
+
+// Compact SVG donut: submissions (cyan) + non-submissions (rose) around a
+// muted ring, with the total in the center. Pure SVG so we don't have to pull
+// recharts into this shared panel.
+function MiniDonut({
+  submissions,
+  nonSubmissions,
+  size = 64,
+  strokeWidth = 8,
+  showLabel = true,
+}: {
+  submissions: number
+  nonSubmissions: number
+  size?: number
+  strokeWidth?: number
+  showLabel?: boolean
+}) {
+  const total = submissions + nonSubmissions
+  const radius = (size - strokeWidth) / 2
+  const circumference = 2 * Math.PI * radius
+  const subLen = total ? (submissions / total) * circumference : 0
+  const nonSubLen = total ? (nonSubmissions / total) * circumference : 0
+
+  return (
+    <div className="relative" style={{ width: size, height: size }}>
+      <svg width={size} height={size} className="-rotate-90">
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          fill="transparent"
+          stroke="rgba(148,163,184,0.18)"
+          strokeWidth={strokeWidth}
+        />
+        {submissions > 0 && (
+          <circle
+            cx={size / 2}
+            cy={size / 2}
+            r={radius}
+            fill="transparent"
+            stroke="#22D3EE"
+            strokeWidth={strokeWidth}
+            strokeDasharray={`${subLen} ${circumference}`}
+            strokeLinecap={submissions && nonSubmissions ? 'butt' : 'round'}
+          />
+        )}
+        {nonSubmissions > 0 && (
+          <circle
+            cx={size / 2}
+            cy={size / 2}
+            r={radius}
+            fill="transparent"
+            stroke="#F87171"
+            strokeWidth={strokeWidth}
+            strokeDasharray={`${nonSubLen} ${circumference}`}
+            strokeDashoffset={-subLen}
+            strokeLinecap={submissions && nonSubmissions ? 'butt' : 'round'}
+          />
+        )}
+      </svg>
+      <div className="absolute inset-0 flex flex-col items-center justify-center">
+        <span className="text-[13px] font-black leading-none" style={{ color: 'var(--text-primary)' }}>
+          <AnimatedNumber value={total} />
+        </span>
+        {showLabel && (
+          <span className="text-[8px] font-bold tracking-wider mt-0.5" style={{ color: 'var(--text-tertiary)' }}>TOTAL</span>
+        )}
       </div>
     </div>
   )

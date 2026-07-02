@@ -1123,7 +1123,7 @@ export default function AdminPage() {
           <thead>
             <tr>
               <th>User</th><th>Username</th><th>Email</th><th>Role</th><th>Team</th>
-              <th>Status</th><th>First Login</th><th>Last seen</th><th>Created</th><th>Actions</th>
+              <th>Status</th><th>First Login</th><th>2FA</th><th>Last seen</th><th>Created</th><th>Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -1166,6 +1166,17 @@ export default function AdminPage() {
                     <span className={`badge text-[10px] ${u.firstLogin ? 'badge-pending' : 'badge-active'}`}>
                       {u.firstLogin ? 'Pending' : 'Complete'}
                     </span>
+                  </td>
+                  <td>
+                    {u.mfaEnabled ? (
+                      <span className="badge border text-[10px] bg-emerald-500/15 text-emerald-400 border-emerald-500/25 inline-flex items-center gap-1">
+                        <Shield size={10} /> On
+                      </span>
+                    ) : (
+                      <span className="badge border text-[10px] bg-slate-500/10 text-slate-500 border-slate-500/20">
+                        Off
+                      </span>
+                    )}
                   </td>
                   <td className="text-slate-400 text-xs" title={userSessions[u.id]?.lastLoginAt ?? 'Never logged in on this browser'}>
                     {formatRelative(userSessions[u.id]?.lastLoginAt)}

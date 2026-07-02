@@ -7,12 +7,21 @@ import {
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { hasPermission } from '../lib/permissions'
-import type { SubkDatabaseEntry, SetAside } from '../types'
+import type { SubkDatabaseEntry, SetAside, Subcontractor } from '../types'
 import { formatCurrency, useEscapeKey } from '../lib/utils'
 import toast from 'react-hot-toast'
 import FloatingActionMenu from '../components/shared/FloatingActionMenu'
 
 const SETASIDE_OPTIONS: SetAside[] = ['SB', 'SDVOSB', 'WOSB', 'HUBZone', 'VOSB', '8(a)', 'UNRES']
+
+// Enriched entry used only in this page: the base SubkDatabaseEntry plus a
+// marker indicating whether it lives in the Subk Database table or was
+// derived from a Subcontractor that was submitted with a quote on an
+// opportunity. Derived rows are read-only in this view.
+type SubkView = SubkDatabaseEntry & {
+  _source: 'manual' | 'quote'
+  _opportunityId?: string
+}
 
 const SETASIDE_COLORS: Record<string, { bg: string; color: string }> = {
   SB:       { bg: '#EEF2FF', color: '#4338CA' },
@@ -401,26 +410,60 @@ function EditModal({ entry, onClose }: { entry: SubkDatabaseEntry; onClose: () =
 }
 
 export default function SubkDatabasePage() {
-  const { subkDatabase, addSubkDatabaseEntry, currentUser } = useStore()
+  const { subkDatabase, subcontractors, addSubkDatabaseEntry, currentUser } = useStore()
   const canEdit = hasPermission(currentUser, 'opportunity:edit')
   const [search, setSearch] = useState('')
   const [filterSA, setFilterSA] = useState<string>('ALL')
   const [filterLocation, setFilterLocation] = useState<string>('ALL')
-  const [selected, setSelected] = useState<SubkDatabaseEntry | null>(null)
-  const [editTarget, setEditTarget] = useState<SubkDatabaseEntry | null>(null)
+  const [selected, setSelected] = useState<SubkView | null>(null)
+  const [editTarget, setEditTarget] = useState<SubkView | null>(null)
   const [showCreate, setShowCreate] = useState(false)
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
 
+  const allEntries = useMemo<SubkView[]>(() => {
+    const manual: SubkView[] = subkDatabase.map(e => ({ ...e, _source: 'manual' }))
+    const seen = new Set(manual.map(e => e.companyName.trim().toLowerCase()))
+    const hasQuote = (s: Subcontractor) =>
+      Boolean(s.quoteFile) || (Array.isArray(s.quoteFiles) && s.quoteFiles.length > 0)
+
+    const derived: SubkView[] = []
+    for (const sub of subcontractors) {
+      if (!hasQuote(sub)) continue
+      const key = sub.companyName.trim().toLowerCase()
+      if (!key || seen.has(key)) continue
+      seen.add(key)
+      derived.push({
+        id: `derived-${sub.id}`,
+        companyName: sub.companyName,
+        contactName: sub.contactName,
+        email: sub.email,
+        phone: sub.phone,
+        naicsCodes: sub.naicsCode ? [sub.naicsCode] : [],
+        setAside: sub.setAside,
+        location: sub.location,
+        pastProjects: [],
+        quoteFile: sub.quoteFile || sub.quoteFiles?.[0]?.name,
+        notes: sub.notes,
+        totalContractsWorked: 0,
+        createdAt: sub.createdAt,
+        createdBy: sub.createdBy,
+        _source: 'quote',
+        _opportunityId: sub.opportunityId,
+      })
+    }
+    return [...manual, ...derived]
+  }, [subkDatabase, subcontractors])
+
   const locationOptions = useMemo(() => {
     const set = new Set<string>()
-    subkDatabase.forEach(e => {
+    allEntries.forEach(e => {
       if (e.location && e.location.trim()) set.add(e.location.trim())
     })
     return Array.from(set).sort((a, b) => a.localeCompare(b))
-  }, [subkDatabase])
+  }, [allEntries])
 
   const filtered = useMemo(() => {
-    let list = subkDatabase
+    let list = allEntries
     if (filterSA !== 'ALL') list = list.filter(e => e.setAside === filterSA)
     if (filterLocation !== 'ALL') list = list.filter(e => (e.location ?? '') === filterLocation)
     if (search) {
@@ -433,7 +476,7 @@ export default function SubkDatabasePage() {
       )
     }
     return list
-  }, [subkDatabase, search, filterSA, filterLocation])
+  }, [allEntries, search, filterSA, filterLocation])
 
   return (
     <div className="p-6 page-enter">
@@ -444,7 +487,7 @@ export default function SubkDatabasePage() {
           <h1 className="text-2xl font-black text-slate-900 flex items-center gap-3">
             <Building2 size={22} className="text-indigo-500" /> Sourcing Database
           </h1>
-          <p className="text-slate-500 text-sm mt-0.5">{subkDatabase.length} sourcing entries on record</p>
+          <p className="text-slate-500 text-sm mt-0.5">{allEntries.length} sourcing entries on record</p>
         </div>
         <button onClick={() => setShowCreate(true)} className="btn-primary gap-2">
           <Plus size={14} /> Add Sourcing
@@ -517,7 +560,18 @@ export default function SubkDatabasePage() {
                   {entry.companyName.slice(0, 2).toUpperCase()}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <h3 className="text-sm font-bold text-slate-800 truncate">{entry.companyName}</h3>
+                  <div className="flex items-center gap-1.5">
+                    <h3 className="text-sm font-bold text-slate-800 truncate">{entry.companyName}</h3>
+                    {entry._source === 'quote' && (
+                      <span
+                        className="flex-shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wide"
+                        style={{ background: '#EEF2FF', color: '#4338CA' }}
+                        title="Auto-added from an opportunity that was submitted with a quote"
+                      >
+                        From Quote
+                      </span>
+                    )}
+                  </div>
                   <p className="text-xs text-slate-500 truncate">{entry.contactName}</p>
                   {entry.location && (
                     <p className="mt-0.5 flex items-center gap-1 text-[10px] text-slate-400 truncate">
@@ -545,7 +599,7 @@ export default function SubkDatabasePage() {
                           >
                             View Profile
                           </button>
-                          {canEdit && (
+                          {canEdit && entry._source === 'manual' && (
                             <button
                               onClick={() => { setEditTarget(entry); setMenuOpen(null) }}
                               className="flex w-full items-center gap-2 px-3 py-2 text-xs font-medium transition-colors"
@@ -584,15 +638,21 @@ export default function SubkDatabasePage() {
                             Copy NAICS
                           </button>
                           <div className="my-1 border-t" style={{ borderColor: 'var(--border-default)' }} />
-                          <button
-                            onClick={() => { toast.error('Delete not yet implemented'); setMenuOpen(null) }}
-                            className="block w-full text-left px-3 py-2 text-xs font-medium transition-colors"
-                            style={{ color: '#DC2626' }}
-                            onMouseEnter={e => { e.currentTarget.style.background = 'rgba(220,38,38,0.06)' }}
-                            onMouseLeave={e => { e.currentTarget.style.background = ''; e.currentTarget.style.color = '#DC2626' }}
-                          >
-                            Remove Entry
-                          </button>
+                          {entry._source === 'manual' ? (
+                            <button
+                              onClick={() => { toast.error('Delete not yet implemented'); setMenuOpen(null) }}
+                              className="block w-full text-left px-3 py-2 text-xs font-medium transition-colors"
+                              style={{ color: '#DC2626' }}
+                              onMouseEnter={e => { e.currentTarget.style.background = 'rgba(220,38,38,0.06)' }}
+                              onMouseLeave={e => { e.currentTarget.style.background = ''; e.currentTarget.style.color = '#DC2626' }}
+                            >
+                              Remove Entry
+                            </button>
+                          ) : (
+                            <p className="px-3 py-2 text-[10px] text-slate-400 italic">
+                              Managed on the source opportunity
+                            </p>
+                          )}
                   </FloatingActionMenu>
                 </div>
               </div>
@@ -637,7 +697,7 @@ export default function SubkDatabasePage() {
         <EntryDrawer
           entry={selected}
           onClose={() => setSelected(null)}
-          onEdit={canEdit ? () => { const e = selected; setSelected(null); setEditTarget(e) } : undefined}
+          onEdit={canEdit && selected._source === 'manual' ? () => { const e = selected; setSelected(null); setEditTarget(e) } : undefined}
         />
       )}
 
