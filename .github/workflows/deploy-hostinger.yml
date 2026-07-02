@@ -12,6 +12,7 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -46,21 +47,30 @@ jobs:
           echo "::add-mask::$host"
           echo "server=$host" >> "$GITHUB_OUTPUT"
 
-      - name: Upload dist/ to Hostinger via FTPS
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
-        with:
-          server: ${{ steps.ftphost.outputs.server }}
-          username: ${{ secrets.HOSTINGER_FTP_USER }}
-          password: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
-          server-dir: ${{ secrets.HOSTINGER_FTP_PATH }}
-          local-dir: ./dist/
-          protocol: ftps
-          port: 21
-          # Verbose logs so we can see exactly where the connection hangs
-          # (Hostinger sometimes stalls on passive-mode TLS handshake).
-          log-level: verbose
-          # Fail fast if the connection is stalled instead of burning
-          # GitHub Actions minutes on a stuck job.
-          timeout: 60000
-          state-name: .ftp-deploy-sync-state.json
-          dangerous-clean-slate: false
+      - name: Install lftp
+        run: sudo apt-get update -qq && sudo apt-get install -y lftp
+
+      # SamKirkland/FTP-Deploy-Action hangs indefinitely against Hostinger
+      # (basic-ftp under the hood waits forever on the passive-mode data
+      # channel). lftp is proven, prints every transfer live, and dies fast
+      # on real failures.
+      - name: Deploy dist/ to Hostinger via lftp (FTPS)
+        env:
+          FTP_HOST: ${{ steps.ftphost.outputs.server }}
+          FTP_USER: ${{ secrets.HOSTINGER_FTP_USER }}
+          FTP_PASS: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
+          FTP_PATH: ${{ secrets.HOSTINGER_FTP_PATH }}
+        run: |
+          lftp -c "
+          set ftp:ssl-force true;
+          set ftp:ssl-protect-data true;
+          set ssl:verify-certificate false;
+          set ftp:passive-mode true;
+          set net:timeout 20;
+          set net:max-retries 3;
+          set net:reconnect-interval-base 5;
+          set cmd:fail-exit true;
+          open -u '$FTP_USER','$FTP_PASS' '$FTP_HOST';
+          mirror -R --verbose --parallel=4 --exclude-glob .ftp-deploy-sync-state.json ./dist/ '$FTP_PATH';
+          bye;
+          "
