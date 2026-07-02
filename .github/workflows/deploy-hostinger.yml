@@ -1,0 +1,62 @@
+name: Deploy to Hostinger
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: hostinger-deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL || secrets.SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY || secrets.VITE_SUPABASE_PUBLISHABLE_KEY || secrets.SUPABASE_PUBLISHABLE_KEY || secrets.SUPABASE_ANON_KEY }}
+
+      # Strip any ftp:// / ftps:// / sftp:// scheme from the host secret so the
+      # FTP action gets a bare hostname or IP (basic-ftp under the hood rejects
+      # URI-style values).
+      - name: Normalize FTP host
+        id: ftphost
+        shell: bash
+        run: |
+          host="${{ secrets.HOSTINGER_FTP_HOST }}"
+          host="${host#ftp://}"
+          host="${host#ftps://}"
+          host="${host#sftp://}"
+          host="${host%/}"
+          echo "::add-mask::$host"
+          echo "server=$host" >> "$GITHUB_OUTPUT"
+
+      - name: Upload dist/ to Hostinger via FTPS
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ steps.ftphost.outputs.server }}
+          username: ${{ secrets.HOSTINGER_FTP_USER }}
+          password: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
+          server-dir: ${{ secrets.HOSTINGER_FTP_PATH }}
+          local-dir: ./dist/
+          protocol: ftps
+          port: 21
+          state-name: .ftp-deploy-sync-state.json
+          # First deploy uploads everything; subsequent runs only re-upload
+          # changed files (tracked via the state file above).
+          dangerous-clean-slate: false
