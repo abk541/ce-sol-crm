@@ -1703,26 +1703,28 @@ function DeleteOpportunityModal({ opp, onClose }: { opp: Opportunity; onClose: (
 
   return createPortal(
     <motion.div
-      className="fixed inset-0 z-[10020] flex items-center justify-center bg-[#020617]/70 px-4 backdrop-blur-md"
+      className="fixed inset-0 z-[10020] flex items-center justify-center px-4 backdrop-blur-md"
+      style={{ background: 'var(--bg-overlay)' }}
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       onMouseDown={onClose}
     >
       <motion.div
-        className="w-full max-w-lg overflow-hidden rounded-3xl border border-red-400/20 bg-[#07131F] shadow-[0_24px_80px_rgba(0,0,0,0.45)]"
+        className="modal-panel w-full max-w-lg overflow-hidden rounded-3xl border border-red-400/20"
+        style={{ background: 'var(--bg-modal)', boxShadow: 'var(--shadow-modal)' }}
         initial={{ opacity: 0, y: 18, scale: 0.98 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         exit={{ opacity: 0, y: 12, scale: 0.98 }}
         onMouseDown={e => e.stopPropagation()}
       >
-        <div className="border-b border-red-400/15 bg-gradient-to-r from-red-950/35 via-[#102820]/80 to-[#0A1D2B]/80 px-6 py-5">
+        <div className="border-b border-red-400/15 px-6 py-5" style={{ background: 'linear-gradient(to right, color-mix(in srgb, var(--error-fg) 14%, var(--bg-card)), var(--bg-app))' }}>
           <div className="flex items-start gap-3">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-red-300/25 bg-red-400/10 text-red-200">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border" style={{ borderColor: 'color-mix(in srgb, var(--error-fg) 30%, transparent)', background: 'var(--error-bg)', color: 'var(--error-fg)' }}>
               <Trash2 size={18} />
             </div>
             <div className="min-w-0">
-              <p className="text-[10px] font-black uppercase tracking-[0.22em] text-red-200/80">Delete Opportunity</p>
+              <p className="text-[10px] font-black uppercase tracking-[0.22em]" style={{ color: 'var(--error-fg)' }}>Delete Opportunity</p>
               <h2 className="mt-1 truncate text-lg font-black text-[#F8FBF7]" title={opp.solicitation}>
                 {opp.solicitation}
               </h2>
@@ -1740,8 +1742,8 @@ function DeleteOpportunityModal({ opp, onClose }: { opp: Opportunity; onClose: (
         </div>
 
         <div className="space-y-4 px-6 py-5">
-          <div className="rounded-2xl border border-red-400/15 bg-red-400/[0.08] px-4 py-3">
-            <p className="text-sm font-semibold text-red-100">
+          <div className="rounded-2xl border px-4 py-3" style={{ borderColor: 'color-mix(in srgb, var(--error-fg) 25%, transparent)', background: 'var(--error-bg)' }}>
+            <p className="text-sm font-semibold" style={{ color: 'var(--error-fg)' }}>
               This creates an admin deletion request. The opportunity is only removed after approval.
             </p>
           </div>
@@ -1761,7 +1763,7 @@ function DeleteOpportunityModal({ opp, onClose }: { opp: Opportunity; onClose: (
           </div>
         </div>
 
-        <div className="flex items-center justify-end gap-3 border-t border-[#D7BE7A]/15 bg-[#06111D]/90 px-6 py-4">
+        <div className="flex items-center justify-end gap-3 border-t px-6 py-4" style={{ borderColor: 'var(--border-default)', background: 'color-mix(in srgb, var(--bg-app) 92%, transparent)' }}>
           <button type="button" onClick={onClose} className="btn-secondary">
             Cancel
           </button>
@@ -1769,7 +1771,8 @@ function DeleteOpportunityModal({ opp, onClose }: { opp: Opportunity; onClose: (
             type="button"
             onClick={submit}
             disabled={hasPendingDelete || !canDelete}
-            className="flex items-center gap-1.5 rounded-xl border border-red-300/30 bg-red-500/15 px-4 py-2 text-sm font-black text-red-100 transition-all hover:bg-red-500/25 disabled:cursor-not-allowed disabled:opacity-50"
+            className="flex items-center gap-1.5 rounded-xl border px-4 py-2 text-sm font-black transition-all hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50"
+            style={{ borderColor: 'color-mix(in srgb, var(--error-fg) 35%, transparent)', background: 'var(--error-bg)', color: 'var(--error-fg)' }}
           >
             <Trash2 size={14} /> Delete
           </button>
@@ -3751,27 +3754,30 @@ function DueDateTimeCell({ opp }: { opp: Opportunity }) {
       </div>
       {tooltip && createPortal(
         <div
-          className="pointer-events-none fixed z-[100] w-80 rounded-2xl border border-[#D7BE7A]/25 bg-[#06131F] p-3 text-left shadow-[0_18px_46px_rgba(0,0,0,0.42)]"
+          className="modal-panel pointer-events-none fixed z-[100] w-80 rounded-2xl border p-3 text-left"
           style={{
             left: tooltip.left,
             top: tooltip.top,
             transform: tooltip.placement === 'top' ? 'translateY(-100%)' : undefined,
+            borderColor: 'var(--border-strong)',
+            background: 'var(--bg-modal)',
+            boxShadow: 'var(--shadow-lg)',
           }}
         >
           <div className="mb-2 flex items-center justify-between gap-3 border-b border-white/10 pb-2">
-            <p className="text-[10px] font-black uppercase tracking-[0.18em] text-[#D7BE7A]">Local Time</p>
-            <Clock size={13} className="text-[#D7BE7A]" />
+            <p className="text-[10px] font-black uppercase tracking-[0.18em] text-[var(--accent)]">Local Time</p>
+            <Clock size={13} className="text-[var(--accent)]" />
           </div>
           <div className="space-y-2 text-xs">
             {localTime ? (
-              <div className="rounded-xl border border-emerald-300/20 bg-emerald-300/10 p-2">
-                <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-200">Morocco local time</p>
-                <p className="mt-0.5 text-sm font-black text-emerald-100">{localTime}</p>
+              <div className="rounded-xl border p-2" style={{ borderColor: 'color-mix(in srgb, var(--success-fg) 30%, transparent)', background: 'var(--success-bg)' }}>
+                <p className="text-[10px] font-bold uppercase tracking-wide" style={{ color: 'var(--success-fg)' }}>Morocco local time</p>
+                <p className="mt-0.5 text-sm font-black" style={{ color: 'var(--success-fg)' }}>{localTime}</p>
               </div>
             ) : (
-              <div className="rounded-xl border border-amber-300/20 bg-amber-300/10 p-2">
-                <p className="text-[10px] font-bold uppercase tracking-wide text-amber-200">Conversion unavailable</p>
-                <p className="mt-0.5 text-sm font-black text-amber-50">
+              <div className="rounded-xl border p-2" style={{ borderColor: 'color-mix(in srgb, var(--warning-fg) 30%, transparent)', background: 'var(--warning-bg)' }}>
+                <p className="text-[10px] font-bold uppercase tracking-wide" style={{ color: 'var(--warning-fg)' }}>Conversion unavailable</p>
+                <p className="mt-0.5 text-sm font-black" style={{ color: 'var(--warning-fg)' }}>
                   {hasSourceClock ? 'Check the source timezone.' : 'Add the source due time to calculate GMT+1.'}
                 </p>
               </div>
@@ -4155,11 +4161,17 @@ export default function PipelinePage() {
       >
         {selectedOpp && (
           <>
-            <div className="mb-6 rounded-3xl border border-[#D7BE7A]/20 bg-gradient-to-r from-[#102820]/90 via-[#0A2327]/90 to-[#0A1D2B]/90 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+            <div
+              className="mb-6 rounded-3xl border p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
+              style={{
+                background: 'linear-gradient(130deg, color-mix(in srgb, var(--accent) 10%, var(--bg-raised)), color-mix(in srgb, var(--accent-2) 10%, var(--bg-card)))',
+                borderColor: 'var(--border-strong)',
+              }}
+            >
               <div className="flex flex-wrap items-center gap-2">
                 <PriorityBadge p={selectedOpp.priority} />
-                <span className="rounded-lg border border-[#7DD3FC]/30 bg-[#7DD3FC]/10 px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-[#BAE6FD]">{typeLabel(selectedOpp.type)}</span>
-                <span className="rounded-lg border border-[#D7BE7A]/25 bg-[#D7BE7A]/10 px-2.5 py-1 font-mono text-[10px] font-bold text-[#F8FBF7]">{selectedOpp.solicitationId}</span>
+                <span className="rounded-lg border px-2.5 py-1 text-[10px] font-black uppercase tracking-wide" style={{ borderColor: 'color-mix(in srgb, var(--info-fg) 40%, transparent)', background: 'var(--info-bg)', color: 'var(--info-fg)' }}>{typeLabel(selectedOpp.type)}</span>
+                <span className="rounded-lg border px-2.5 py-1 font-mono text-[10px] font-bold text-[var(--text-primary)]" style={{ borderColor: 'color-mix(in srgb, var(--accent) 35%, transparent)', background: 'var(--accent-soft)' }}>{selectedOpp.solicitationId}</span>
               </div>
               <div className="mt-3 grid gap-3 text-xs text-slate-300 md:grid-cols-3">
                 <div className="min-w-0">
@@ -4207,7 +4219,7 @@ export default function PipelinePage() {
                 <DrawerField label="Source Time" value={formatOpportunitySourceDueDateTime(selectedOpp)} variant="premium" />
                 {formatOpportunityMoroccoDueDateTime(selectedOpp) && (
                   <DrawerField label="Morocco (GMT+1)" value={
-                    <span className="font-bold text-[#7DD3FC]">
+                    <span className="font-bold" style={{ color: 'var(--info-fg)' }}>
                       {formatOpportunityMoroccoDueDateTime(selectedOpp)}
                     </span>
                   } variant="premium" />
@@ -4235,7 +4247,7 @@ export default function PipelinePage() {
             {selectedOpp.comments && selectedOpp.comments.length > 0 && (
               <DrawerSection title={`Comments (${selectedOpp.comments.length})`} variant="premium">
                 {selectedOpp.comments.map((c: Comment) => (
-                  <div key={c.id} className="border-b border-[#D7BE7A]/15 py-3 last:border-0">
+                  <div key={c.id} className="border-b border-[var(--border-default)] py-3 last:border-0">
                     <div className="flex items-center justify-between mb-0.5 gap-2">
                       <div className="flex items-center gap-2 min-w-0">
                         <span className="text-xs font-bold text-[#F8FBF7] truncate">{c.author}</span>
@@ -4262,14 +4274,14 @@ export default function PipelinePage() {
                     phone: s.phone || undefined,
                   }])
                   return (
-                    <div key={s.id} className="border-b border-[#D7BE7A]/15 py-3 last:border-0">
+                    <div key={s.id} className="border-b border-[var(--border-default)] py-3 last:border-0">
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0 flex-1">
                           <p className="text-sm font-bold text-[#F8FBF7]">{s.companyName}</p>
                           {contacts.length > 0 ? (
                             <div className="mt-2 grid gap-2 md:grid-cols-2">
                               {contacts.map(contact => (
-                                <div key={contact.id} className="rounded-lg border border-[#D7BE7A]/15 bg-white/[0.04] px-3 py-2">
+                                <div key={contact.id} className="rounded-lg border border-[var(--border-default)] bg-white/[0.04] px-3 py-2">
                                   <p className="text-xs font-bold text-[#F8FBF7]">{contact.name || 'Unnamed POC'}</p>
                                   <div className="mt-1 space-y-1 text-[11px] text-slate-400">
                                     {contact.email && <p className="break-all">{contact.email}</p>}
@@ -4282,12 +4294,12 @@ export default function PipelinePage() {
                             <p className="text-xs text-slate-400">No POCs on file</p>
                           )}
                           {s.quoteFile && (
-                            <p className="mt-2 flex items-center gap-1 text-[10px] font-semibold text-[#7DD3FC]">
+                            <p className="mt-2 flex items-center gap-1 text-[10px] font-semibold" style={{ color: 'var(--info-fg)' }}>
                               <FileText size={9} /> {s.quoteFile}
                             </p>
                           )}
                           {(s.quoteFiles ?? []).map(q => (
-                            <p key={q.id} className="mt-1 flex items-center gap-1 text-[10px] font-semibold text-[#7DD3FC]">
+                            <p key={q.id} className="mt-1 flex items-center gap-1 text-[10px] font-semibold" style={{ color: 'var(--info-fg)' }}>
                               <FileText size={9} /> {q.name}
                             </p>
                           ))}
@@ -4296,7 +4308,8 @@ export default function PipelinePage() {
                           <button
                             type="button"
                             onClick={() => handleDeleteSourcing(s.id, s.companyName)}
-                            className="inline-flex flex-shrink-0 items-center gap-1.5 rounded-lg border border-rose-400/30 bg-rose-500/10 px-2.5 py-1.5 text-[11px] font-bold text-rose-200 transition-all hover:border-rose-300/60 hover:bg-rose-500/20 hover:text-rose-100"
+                            className="inline-flex flex-shrink-0 items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11px] font-bold transition-all hover:opacity-80"
+                            style={{ borderColor: 'color-mix(in srgb, var(--error-fg) 30%, transparent)', background: 'var(--error-bg)', color: 'var(--error-fg)' }}
                             title="Delete subcontractor"
                           >
                             <Trash2 size={11} /> Delete
@@ -4309,7 +4322,7 @@ export default function PipelinePage() {
               </DrawerSection>
             )}
 
-            <div className="sticky bottom-0 -mx-6 -mb-5 mt-4 flex flex-wrap gap-2 border-t border-[#D7BE7A]/15 bg-[#07131F]/95 px-6 py-4 backdrop-blur">
+            <div className="sticky bottom-0 -mx-6 -mb-5 mt-4 flex flex-wrap gap-2 border-t px-6 py-4 backdrop-blur" style={{ borderColor: 'var(--border-default)', background: 'color-mix(in srgb, var(--bg-app) 94%, transparent)' }}>
               <SamGovListingButton opportunity={selectedOpp} label="Open SAM.gov" variant="premium" />
               {(() => {
                 const ownedSelected = isOpportunityOwnedByUser(employees, currentUser, selectedOpp.assignedTo)
