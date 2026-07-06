@@ -22,10 +22,10 @@ export default function Layout() {
         toastOptions={{
           duration: 6000,
           style: {
-            background: '#0A1D2B',
-            color: '#F8FBF7',
-            border: '1px solid rgba(215,190,122,0.28)',
-            boxShadow: '0 22px 60px rgba(0,0,0,0.45), 0 2px 10px rgba(184,145,78,0.18)',
+            background: 'var(--bg-modal)',
+            color: 'var(--text-primary)',
+            border: '1px solid var(--border-strong)',
+            boxShadow: 'var(--shadow-modal)',
             borderRadius: '12px',
             fontSize: '15px',
             fontWeight: 500,
@@ -36,15 +36,15 @@ export default function Layout() {
           },
           success: {
             duration: 5000,
-            iconTheme: { primary: '#1F7A78', secondary: '#FFFFFF' },
+            iconTheme: { primary: 'var(--accent-2)', secondary: '#FFFFFF' },
           },
           error: {
             duration: 8000,
-            iconTheme: { primary: '#EF4444', secondary: '#FFFFFF' },
+            iconTheme: { primary: 'var(--error-fg)', secondary: '#FFFFFF' },
             style: {
-              background: '#3B0D0D',
-              color: '#FEE2E2',
-              border: '1px solid rgba(239,68,68,0.55)',
+              background: 'color-mix(in srgb, var(--error-fg) 16%, var(--bg-modal))',
+              color: 'var(--text-primary)',
+              border: '1px solid color-mix(in srgb, var(--error-fg) 50%, transparent)',
             },
           },
         }}

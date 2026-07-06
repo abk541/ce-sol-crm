@@ -4001,22 +4001,22 @@ function ContractDetailDrawer({
         <AnimatePresence>
           {showEditDetails && (
             <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-              <div className="absolute inset-0" style={{ background: 'rgba(15,23,42,0.55)', backdropFilter: 'blur(6px)' }} onClick={() => setShowEditDetails(false)} />
+              <div className="absolute inset-0" style={{ background: 'var(--bg-overlay)', backdropFilter: 'blur(6px)' }} onClick={() => setShowEditDetails(false)} />
             <motion.div
               key="edit-details-panel"
               initial={{ opacity: 0, scale: 0.96, y: 12 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.96, y: 12 }}
               transition={{ type: 'spring', stiffness: 340, damping: 28 }}
-              className="relative z-10 flex w-full max-w-4xl flex-col overflow-hidden rounded-2xl shadow-2xl border"
+              className="modal-panel relative z-10 flex w-full max-w-4xl flex-col overflow-hidden rounded-2xl shadow-2xl border"
               style={{
                 height: 'min(88vh, 760px)',
-                background: 'linear-gradient(180deg, rgba(16,40,32,0.98), rgba(10,29,43,0.98))',
-                borderColor: 'rgba(215,190,122,0.18)',
+                background: 'linear-gradient(180deg, var(--bg-raised), var(--bg-card))',
+                borderColor: 'var(--border-default)',
               }}
             >
               {/* Header */}
-              <div className="flex-shrink-0 border-b border-[#D7BE7A]/15">
+              <div className="flex-shrink-0 border-b border-[var(--border-default)]">
                 <div className="flex items-start justify-between px-7 pt-5 pb-3 gap-4">
                   <div className="min-w-0">
                     <h2 className="text-[15px] font-bold text-slate-100 leading-tight">Edit Contract</h2>
@@ -4124,7 +4124,7 @@ function ContractDetailDrawer({
                         </div>
                       </div>
                     </div>
-                    <div className="border-t border-[#D7BE7A]/15 pt-5">
+                    <div className="border-t border-[var(--border-default)] pt-5">
                       <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4">Option Years</p>
                       <div className="grid grid-cols-2 gap-4">
                         <div>
@@ -4159,7 +4159,7 @@ function ContractDetailDrawer({
               {/* Footer */}
               <div
                 className="flex-shrink-0 px-7 py-4 border-t flex items-center gap-3"
-                style={{ background: 'rgba(7,19,31,0.88)', borderColor: 'rgba(215,190,122,0.16)' }}
+                style={{ background: 'var(--bg-app)', borderColor: 'var(--border-default)' }}
               >
                 <div className="ml-auto flex gap-3">
                   <button onClick={() => setShowEditDetails(false)} className="btn-secondary">Cancel</button>
@@ -4222,7 +4222,7 @@ function ContractDetailDrawer({
         <AnimatePresence>
           {showTerminate && (
             <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-              <div className="absolute inset-0" style={{ background: 'rgba(15,23,42,0.55)', backdropFilter: 'blur(6px)' }} onClick={() => setShowTerminate(false)} />
+              <div className="absolute inset-0" style={{ background: 'var(--bg-overlay)', backdropFilter: 'blur(6px)' }} onClick={() => setShowTerminate(false)} />
             <motion.div
               initial={{ opacity: 0, scale: 0.96, y: 12 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -4281,20 +4281,20 @@ function ContractDetailDrawer({
         <AnimatePresence>
           {showReassign && (
             <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-              <div className="absolute inset-0" style={{ background: 'rgba(15,23,42,0.55)', backdropFilter: 'blur(6px)' }} onClick={() => setShowReassign(false)} />
+              <div className="absolute inset-0" style={{ background: 'var(--bg-overlay)', backdropFilter: 'blur(6px)' }} onClick={() => setShowReassign(false)} />
               <motion.div
                 key="reassign-panel"
                 initial={{ opacity: 0, scale: 0.96, y: 12 }}
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.96, y: 12 }}
                 transition={{ type: 'spring', stiffness: 340, damping: 28 }}
-                className="relative z-10 flex w-full max-w-4xl max-h-[min(88vh,720px)] flex-col overflow-hidden rounded-2xl shadow-2xl border"
+                className="modal-panel relative z-10 flex w-full max-w-4xl max-h-[min(88vh,720px)] flex-col overflow-hidden rounded-2xl shadow-2xl border"
                 style={{
-                  background: 'linear-gradient(180deg, rgba(16,40,32,0.98), rgba(10,29,43,0.98))',
-                  borderColor: 'rgba(215,190,122,0.18)',
+                  background: 'linear-gradient(180deg, var(--bg-raised), var(--bg-card))',
+                  borderColor: 'var(--border-default)',
                 }}
               >
-                <div className="flex-shrink-0 border-b border-[#D7BE7A]/15 px-7 pt-5 pb-4 flex items-start justify-between gap-4">
+                <div className="flex-shrink-0 border-b border-[var(--border-default)] px-7 pt-5 pb-4 flex items-start justify-between gap-4">
                   <div className="min-w-0">
                     <h2 className="text-[15px] font-bold text-slate-100 leading-tight">Reassign Contract</h2>
                     <p className="text-xs text-slate-400 mt-0.5 truncate">{contract.title} · {contract.contractId}</p>
@@ -4322,7 +4322,7 @@ function ContractDetailDrawer({
 
                 <div
                   className="flex-shrink-0 px-7 py-4 border-t flex items-center gap-3"
-                  style={{ background: 'rgba(7,19,31,0.88)', borderColor: 'rgba(215,190,122,0.16)' }}
+                  style={{ background: 'var(--bg-app)', borderColor: 'var(--border-default)' }}
                 >
                   {contract.assignedTo && (
                     <button
@@ -4791,7 +4791,7 @@ export default function ContractsPage() {
             <>
               <motion.div key="contract-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
                 className="fixed inset-0 z-50"
-                style={{ background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)' } as React.CSSProperties}
+                style={{ background: 'var(--bg-overlay)', backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)' } as React.CSSProperties}
                 onClick={() => setSelected(null)} />
               <ContractDetailDrawer
                 key={selected.id}

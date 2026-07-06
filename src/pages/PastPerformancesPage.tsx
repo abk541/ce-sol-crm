@@ -263,7 +263,7 @@ function ExportModal({ pp, onClose }: { pp: PastPerformance; onClose: () => void
         exit={{ opacity: 0 }}
         transition={{ duration: 0.16 }}
         className="fixed inset-0 z-[60]"
-        style={{ background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(8px)' }}
+        style={{ background: 'var(--bg-overlay)', backdropFilter: 'blur(8px)' }}
         onClick={onClose}
       />
       <div
@@ -449,7 +449,7 @@ function EditPPModal({ pp, onClose }: { pp: PastPerformance; onClose: () => void
         exit={{ opacity: 0 }}
         transition={{ duration: 0.16 }}
         className="fixed inset-0 z-[60]"
-        style={{ background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(8px)' }}
+        style={{ background: 'var(--bg-overlay)', backdropFilter: 'blur(8px)' }}
         onClick={onClose}
       />
       <div
@@ -613,7 +613,7 @@ function DetailDrawerPP({ pp, onClose, onExport, onEdit, canManage }: { pp: Past
         exit={{ opacity: 0 }}
         transition={{ duration: 0.16 }}
         className="fixed inset-0 z-[50]"
-        style={{ background: 'rgba(15,23,42,0.35)', backdropFilter: 'blur(3px)' }}
+        style={{ background: 'var(--bg-overlay)', backdropFilter: 'blur(3px)' }}
         onClick={onClose}
       />
       <motion.div

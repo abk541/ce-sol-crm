@@ -216,6 +216,26 @@
 .text-slate-400,
 .text-slate-300 { color: var(--text-tertiary) !important; }
 
+/* Pop-up interiors: slate text that was authored as "always light" (for the
+   old dark modal panels) must follow the active theme so labels stay legible
+   when a pop-up panel is light-themed. Scoped to .modal-panel so intentionally
+   dark panels elsewhere (e.g. admin console tables) are left untouched. */
+.modal-panel .text-slate-100,
+.modal-panel .text-slate-200 { color: var(--text-primary) !important; }
+
+/* Same rationale for the hardcoded near-white literal used by shared pickers
+   (e.g. HierarchyAssignPicker selected rows) inside themed pop-up panels. */
+.modal-panel .text-\[\#F8FBF7\] { color: var(--text-primary) !important; }
+
+/* The date-range popover authored its interior with the stone-* ramp as
+   "always light". Retone it to the active theme when inside a pop-up panel. */
+.modal-panel .text-stone-100,
+.modal-panel .text-stone-200 { color: var(--text-primary) !important; }
+.modal-panel .text-stone-300,
+.modal-panel .text-stone-400,
+.modal-panel .text-stone-500 { color: var(--text-tertiary) !important; }
+.modal-panel .text-stone-600 { color: var(--text-muted) !important; }
+
 .border-slate-50,
 .border-slate-100,
 .border-slate-200,

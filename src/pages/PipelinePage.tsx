@@ -735,19 +735,19 @@ function ModalWrap({ onClose, title, subtitle, children, maxW = 'max-w-2xl' }: {
   return createPortal((
     <motion.div className="fixed inset-0 z-50 flex items-center justify-center p-4"
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-      <div className="absolute inset-0" style={{ background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(6px)' }} onClick={onClose} />
+      <div className="absolute inset-0" style={{ background: 'var(--bg-overlay)', backdropFilter: 'blur(6px)' }} onClick={onClose} />
       <motion.div
-        className={`relative z-10 w-full ${maxW} max-h-[90vh] overflow-y-auto rounded-2xl`}
+        className={`modal-panel relative z-10 w-full ${maxW} max-h-[90vh] overflow-y-auto rounded-2xl`}
         style={{
-          background: 'linear-gradient(180deg, rgba(16,40,32,0.98), rgba(10,29,43,0.98))',
-          border: '1px solid rgba(215,190,122,0.18)',
-          boxShadow: '0 30px 90px rgba(0,0,0,0.46)',
+          background: 'linear-gradient(180deg, var(--bg-raised), var(--bg-card))',
+          border: '1px solid var(--border-default)',
+          boxShadow: 'var(--shadow-modal)',
         }}
         initial={{ opacity: 0, scale: 0.95, y: 12 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.95, y: 12 }}
         transition={{ type: 'spring', stiffness: 320, damping: 26 }}>
-        <div className="sticky top-0 flex items-center justify-between px-6 py-4 z-10" style={{ background: 'rgba(7,19,31,0.96)', borderBottom: '1px solid rgba(215,190,122,0.16)' }}>
+        <div className="sticky top-0 flex items-center justify-between px-6 py-4 z-10" style={{ background: 'var(--bg-app)', borderBottom: '1px solid var(--border-default)' }}>
           <div>
             <h2 className="text-base font-bold text-slate-900">{title}</h2>
             {subtitle && <p className="text-xs text-slate-500 mt-0.5 truncate max-w-xs">{subtitle}</p>}
@@ -1145,13 +1145,13 @@ function OppModalShell({ title, subtitle, tab, setTab, onClose, extraHeader, foo
   return createPortal((
     <motion.div className="fixed inset-0 z-50 flex items-center justify-center p-4"
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-      <div className="absolute inset-0" style={{ background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(6px)' }} onClick={onClose} />
+      <div className="absolute inset-0" style={{ background: 'var(--bg-overlay)', backdropFilter: 'blur(6px)' }} onClick={onClose} />
       <motion.div
-        className="relative z-10 w-full max-w-4xl rounded-2xl shadow-2xl border flex flex-col overflow-hidden"
+        className="modal-panel relative z-10 w-full max-w-4xl rounded-2xl shadow-2xl border flex flex-col overflow-hidden"
         style={{
           height: 'min(88vh, 760px)',
-          background: 'linear-gradient(180deg, rgba(16,40,32,0.98), rgba(10,29,43,0.98))',
-          borderColor: 'rgba(215,190,122,0.18)',
+          background: 'linear-gradient(180deg, var(--bg-raised), var(--bg-card))',
+          borderColor: 'var(--border-default)',
         }}
         initial={{ opacity: 0, scale: 0.96, y: 10 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -1203,7 +1203,7 @@ function OppModalShell({ title, subtitle, tab, setTab, onClose, extraHeader, foo
         {/* ── Footer ── */}
         <div
           className="flex-shrink-0 px-7 py-4 border-t"
-          style={{ background: 'rgba(7,19,31,0.88)', borderColor: 'rgba(215,190,122,0.16)' }}
+          style={{ background: 'var(--bg-app)', borderColor: 'var(--border-default)' }}
         >
           {footer}
         </div>
@@ -3842,7 +3842,13 @@ export default function PipelinePage() {
         .map(o => getColumnFilterValue(o, col.key, employees))
         .map(v => v.trim())
         .filter(Boolean)
-      acc[col.key] = Array.from(new Set(values)).sort((a, b) => a.localeCompare(b))
+      const unique = Array.from(new Set(values)).sort((a, b) => a.localeCompare(b))
+      if (col.key === 'teamLead' || col.key === 'associate') {
+        const counts = values.reduce((m, v) => m.set(v, (m.get(v) ?? 0) + 1), new Map<string, number>())
+        acc[col.key] = unique.map(name => `${name} (${counts.get(name) ?? 0})`)
+      } else {
+        acc[col.key] = unique
+      }
       return acc
     }, {} as Record<ColumnFilterKey, string[]>)
   }, [opportunities, employees, requireAssociateForActivePipeline])
@@ -3853,7 +3859,9 @@ export default function PipelinePage() {
     if (dueDateRange) list = list.filter(o => filterByPeriod(o.dueDate, dueDateRange))
 
     COLUMN_FILTERS.forEach(col => {
-      const q = columnFilters[col.key].trim().toLowerCase()
+      let q = columnFilters[col.key].trim().toLowerCase()
+      // Team Lead / Associate suggestions carry a trailing " (count)" badge — strip it before matching.
+      if (col.key === 'teamLead' || col.key === 'associate') q = q.replace(/\s*\(\d+\)\s*$/, '').trim()
       if (!q) return
       list = list.filter(o => getColumnFilterValue(o, col.key, employees).toLowerCase().includes(q))
     })

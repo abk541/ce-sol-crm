@@ -4,7 +4,7 @@ import { useSearchParams } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   ClipboardList, CheckCircle2, XCircle, Clock, AlertTriangle,
-  PenLine, Search, MoreHorizontal, Trash2, X,
+  PenLine, Search, MoreHorizontal, Trash2, X, Undo2,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import toast from 'react-hot-toast'
@@ -41,7 +41,7 @@ function SubmitReportModal({ oppId, oppName, onClose }: { oppId: string; oppName
   return createPortal(
     <motion.div className="fixed inset-0 z-[80] flex items-center justify-center p-4"
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-      <div className="absolute inset-0" style={{ background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(8px)' }} onClick={onClose} />
+      <div className="absolute inset-0" style={{ background: 'var(--bg-overlay)', backdropFilter: 'blur(8px)' }} onClick={onClose} />
       <motion.div
         className="relative flex w-full max-w-lg max-h-[calc(100vh-2rem)] flex-col overflow-hidden rounded-2xl shadow-2xl"
         style={{ background: 'var(--bg-card)', border: '1px solid var(--border-default)' }}
@@ -84,17 +84,24 @@ function SubmitReportModal({ oppId, oppName, onClose }: { oppId: string; oppName
 // ── Review / Details Modal ─────────────────────────────────────────────
 function ReviewModal({ reportId, onClose }: { reportId: string; onClose: () => void }) {
   const [note, setNote] = useState('')
-  const { reviewNonSubReport, nonSubReports, opportunities, currentUser } = useStore()
+  const { reviewNonSubReport, returnNonSubmissionToPipeline, nonSubReports, opportunities, currentUser } = useStore()
   const report = nonSubReports.find(r => r.id === reportId)
   const opp = opportunities.find(o => o.id === report?.opportunityId)
 
   const canReview = hasPermission(currentUser, 'nonSubmission:review')
+  const canReturn = hasPermission(currentUser, 'opportunity:edit')
   const isPending = report?.status === 'PENDING'
   const showActions = canReview && isPending
 
   const review = (action: 'APPROVED' | 'DECLINED') => {
     reviewNonSubReport(reportId, action, note, currentUser?.username ?? '')
     toast.success(action === 'APPROVED' ? 'Report approved → NOT_SUBMITTED' : 'Report declined → DROPPED')
+    onClose()
+  }
+
+  const handleReturn = () => {
+    returnNonSubmissionToPipeline(reportId)
+    toast.success('Opportunity moved back to Contract Opportunities')
     onClose()
   }
 
@@ -112,7 +119,7 @@ function ReviewModal({ reportId, onClose }: { reportId: string; onClose: () => v
   return createPortal(
     <motion.div className="fixed inset-0 z-[80] flex items-center justify-center p-4"
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-      <div className="absolute inset-0" style={{ background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(8px)' }} onClick={onClose} />
+      <div className="absolute inset-0" style={{ background: 'var(--bg-overlay)', backdropFilter: 'blur(8px)' }} onClick={onClose} />
       <motion.div
         className="relative flex w-full max-w-2xl max-h-[min(92vh,860px)] flex-col overflow-hidden rounded-2xl shadow-2xl"
         style={{ background: 'var(--bg-card)', border: '1px solid var(--border-default)' }}
@@ -216,6 +223,20 @@ function ReviewModal({ reportId, onClose }: { reportId: string; onClose: () => v
             </div>
           )}
 
+          {/* Admin: move back to the general pipeline (any status) */}
+          {canReturn && (
+            <div className="rounded-xl border border-indigo-200 bg-indigo-50/70 p-3 flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-xs font-semibold text-indigo-800">Move back to Contract Opportunities</p>
+                <p className="text-[11px] text-indigo-600/80 mt-0.5">Restores this opportunity to the active pipeline and removes the report.</p>
+              </div>
+              <button onClick={handleReturn}
+                className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-indigo-700 bg-white border border-indigo-200 hover:bg-indigo-100 transition-colors">
+                <Undo2 size={12} /> Move to Pipeline
+              </button>
+            </div>
+          )}
+
           {/* Action area (pending + reviewer only) */}
           {showActions ? (
             <>
@@ -262,6 +283,7 @@ function ReportCard({
   onReview,
   onApprove,
   onDecline,
+  onReturn,
 }: {
   r: { id: string; opportunityId: string; agentUsername: string; reason: string; status: 'PENDING' | 'APPROVED' | 'DECLINED'; submittedAt: string; reviewNote?: string; reviewedBy?: string }
   opp: Opportunity | undefined
@@ -269,6 +291,7 @@ function ReportCard({
   onReview: () => void
   onApprove: () => void
   onDecline: () => void
+  onReturn: () => void
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const meta = STATUS_META[r.status]
@@ -339,6 +362,19 @@ function ReportCard({
                 onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = ''; (e.currentTarget as HTMLButtonElement).style.color = '#475569' }}>
                 <ClipboardList size={12} /> View Details
               </button>
+              {isManager && (
+                <>
+                  <div className="my-1 border-t" style={{ borderColor: 'var(--border-default)' }} />
+                  <button
+                    onClick={e => { e.stopPropagation(); setMenuOpen(false); onReturn() }}
+                    className="w-full text-left px-3 py-2 text-xs font-semibold flex items-center gap-2 transition-colors"
+                    style={{ color: '#4F46E5' }}
+                    onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(79,70,229,0.08)'; (e.currentTarget as HTMLButtonElement).style.color = '#4338CA' }}
+                    onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = ''; (e.currentTarget as HTMLButtonElement).style.color = '#4F46E5' }}>
+                    <Undo2 size={12} /> Move to Pipeline
+                  </button>
+                </>
+              )}
             </motion.div>
           )}
         </AnimatePresence>
@@ -502,7 +538,7 @@ function DroppedOpportunitiesTab({ targetId, onViewReport }: { targetId?: string
 
 // ── Main Page ──────────────────────────────────────────────────────────
 export default function NonSubmissionsPage() {
-  const { nonSubReports, opportunities, currentUser, reviewNonSubReport } = useStore()
+  const { nonSubReports, opportunities, currentUser, reviewNonSubReport, returnNonSubmissionToPipeline, employees } = useStore()
   const [searchParams] = useSearchParams()
   const globalRecordId = searchParams.get('record')
   const globalTab = searchParams.get('tab')
@@ -547,16 +583,14 @@ export default function NonSubmissionsPage() {
 
   const agentOpps = useMemo(() => {
     if (!isAgent) return []
-    const un = currentUser?.username ?? ''
-    const fn = (currentUser?.name ?? '').split(' ')[0].toLowerCase()
+    if (!hasPermission(currentUser, 'nonSubmission:submit')) return []
     return opportunities.filter(o => {
-      if (o.isDeleted) return false
-      const b = `${o.bds} ${o.bdm}`.toLowerCase()
-      const hasReport = nonSubReports.some(r => r.opportunityId === o.id)
-      return (b.includes(un) || b.includes(fn)) && !hasReport &&
-        ['ACTIVE', 'DISCUSSION', 'NEW_ASSIGNMENT'].includes(o.status)
+      if (o.isDeleted || o.nonSubmissionReportId) return false
+      if (!['ACTIVE', 'DISCUSSION', 'NEW_ASSIGNMENT'].includes(o.status)) return false
+      if (nonSubReports.some(r => r.opportunityId === o.id)) return false
+      return isOpportunityOwnedByUser(employees, currentUser, o.assignedTo)
     })
-  }, [opportunities, nonSubReports, isAgent, currentUser])
+  }, [opportunities, nonSubReports, isAgent, currentUser, employees])
 
   const filterCounts = (['ALL', 'PENDING', 'APPROVED', 'DECLINED'] as const).map(f => ({
     id: f,
@@ -695,6 +729,7 @@ export default function NonSubmissionsPage() {
                     onReview={() => setReviewId(r.id)}
                     onApprove={() => { reviewNonSubReport(r.id, 'APPROVED', 'Approved', currentUser?.username ?? ''); toast.success('Report approved → NOT_SUBMITTED') }}
                     onDecline={() => { reviewNonSubReport(r.id, 'DECLINED', 'Declined', currentUser?.username ?? ''); toast.success('Report declined → DROPPED') }}
+                    onReturn={() => { returnNonSubmissionToPipeline(r.id); toast.success('Opportunity moved back to Contract Opportunities') }}
                   />
                 )
               })

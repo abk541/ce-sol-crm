@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
+import toast from 'react-hot-toast'
 import {
   AlertTriangle,
   BarChart3,
@@ -186,12 +187,40 @@ export default function TopBar() {
     const seen = seenNotificationIds.current
     const fresh = visibleNotifications.filter(n => !seen.has(n.id))
     if (fresh.length === 0) return
-    fresh.forEach(n => seen.add(n.id))
+    fresh.forEach(n => {
+      seen.add(n.id)
+      const cfg = TYPE_CONFIG[n.type]
+      const Icon = cfg?.icon ?? Bell
+      const accent = cfg?.color ?? '#94A3B8'
+      toast.custom((t) => (
+        <div
+          onClick={() => { navigate('/notifications'); toast.dismiss(t.id) }}
+          className={`pointer-events-auto flex w-[340px] max-w-[90vw] cursor-pointer items-start gap-3 rounded-xl p-3.5 transition-all duration-300 ${t.visible ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-2'}`}
+          style={{ background: 'var(--bg-card)', border: '1px solid var(--border-default)', boxShadow: '0 12px 32px rgba(0,0,0,0.18)' }}
+        >
+          <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg" style={{ background: `${accent}22` }}>
+            <Icon size={16} style={{ color: accent }} />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-bold text-slate-900 truncate">{n.title}</p>
+            <p className="text-xs text-slate-500 line-clamp-2">{n.message}</p>
+          </div>
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); toast.dismiss(t.id) }}
+            className="flex-shrink-0 text-slate-400 hover:text-slate-700"
+            aria-label="Dismiss notification"
+          >
+            <X size={14} />
+          </button>
+        </div>
+      ), { duration: 6000 })
+    })
     if (soundEnabled) playNotificationDing()
     setBellPulse(true)
     const timer = window.setTimeout(() => setBellPulse(false), 1400)
     return () => window.clearTimeout(timer)
-  }, [visibleNotifications, soundEnabled])
+  }, [visibleNotifications, soundEnabled, navigate])
 
   const openGlobalSearchResult = (result: GlobalSearchResult) => {
     navigate(result.route)
@@ -470,7 +499,7 @@ export default function TopBar() {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               className="absolute inset-0"
-              style={{ background: 'rgba(2,8,14,0.72)', backdropFilter: 'blur(8px)' }}
+              style={{ background: 'var(--bg-overlay)', backdropFilter: 'blur(8px)' }}
               onClick={() => setSelectedNotification(null)}
             />
             <motion.div
@@ -478,11 +507,11 @@ export default function TopBar() {
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 16, scale: 0.98 }}
               transition={{ duration: 0.18 }}
-              className="relative z-10 w-full max-w-2xl overflow-hidden rounded-2xl border"
+              className="modal-panel relative z-10 w-full max-w-2xl overflow-hidden rounded-2xl border"
               style={{
-                background: 'linear-gradient(180deg, rgba(16,40,32,0.98), rgba(7,19,31,0.98))',
-                borderColor: 'rgba(215,190,122,0.26)',
-                boxShadow: '0 32px 90px rgba(0,0,0,0.50)',
+                background: 'linear-gradient(180deg, var(--bg-raised), var(--bg-app))',
+                borderColor: 'var(--border-strong)',
+                boxShadow: 'var(--shadow-modal)',
               }}
             >
               <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-5 py-4">

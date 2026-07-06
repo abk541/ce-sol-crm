@@ -35,7 +35,7 @@ export default function DetailDrawer({ isOpen, onClose, title, subtitle, width =
               transition={{ duration: 0.2 }}
               className="fixed inset-0 z-40"
               style={{
-                background: premium ? 'rgba(2,11,18,0.74)' : 'rgba(15,23,42,0.18)',
+                background: premium ? 'var(--bg-overlay)' : 'rgba(15,23,42,0.18)',
                 backdropFilter: premium ? 'blur(5px)' : 'blur(1px)',
               }}
               onClick={onClose}
@@ -49,9 +49,9 @@ export default function DetailDrawer({ isOpen, onClose, title, subtitle, width =
             exit={placement === 'modal' ? { opacity: 0, scale: 0.96 } : { x: width, opacity: 0 }}
             transition={{ type: 'spring', stiffness: 340, damping: 30 }}
             className={[
-              'fixed z-50 flex flex-col overflow-hidden',
+              'fixed z-50 flex flex-col overflow-hidden modal-panel',
               premium
-                ? 'rounded-3xl border border-[#D7BE7A]/25 bg-[#07131F] shadow-[0_28px_90px_rgba(0,0,0,0.50),0_0_0_1px_rgba(255,255,255,0.04)]'
+                ? 'rounded-3xl border border-[var(--border-strong)] bg-[var(--bg-app)] shadow-[var(--shadow-modal)]'
                 : 'detail-drawer rounded-2xl',
               placement === 'modal'
                 ? 'left-1/2 top-1/2 max-h-[calc(100vh-3rem)]'
@@ -66,14 +66,14 @@ export default function DetailDrawer({ isOpen, onClose, title, subtitle, width =
             <div className={[
               'flex items-start justify-between flex-shrink-0',
               premium
-                ? 'border-b border-[#D7BE7A]/15 bg-gradient-to-r from-[#0B1B2A] via-[#0A2327] to-[#102820] px-6 py-5'
+                ? 'border-b border-[var(--border-default)] bg-gradient-to-r from-[var(--bg-card)] via-[var(--bg-app)] to-[var(--bg-raised)] px-6 py-5'
                 : 'px-6 py-5 border-b border-slate-100',
             ].join(' ')}>
               <div className="min-w-0 pr-4">
-                {premium && <p className="mb-1 text-[10px] font-black uppercase tracking-[0.22em] text-[#D7BE7A]">Opportunity Details</p>}
+                {premium && <p className="mb-1 text-[10px] font-black uppercase tracking-[0.22em] text-[var(--indigo-400)]">Opportunity Details</p>}
                 <h2 className={[
                   'leading-tight break-words',
-                  premium ? 'text-xl font-black tracking-tight text-[#F8FBF7]' : 'text-base font-bold text-slate-900',
+                  premium ? 'text-xl font-black tracking-tight text-[var(--text-primary)]' : 'text-base font-bold text-slate-900',
                 ].join(' ')} title={title}>{title}</h2>
                 {subtitle && <p className={premium ? 'mt-1 truncate text-sm text-slate-300' : 'text-xs text-slate-500 mt-0.5'}>{subtitle}</p>}
               </div>
@@ -82,7 +82,7 @@ export default function DetailDrawer({ isOpen, onClose, title, subtitle, width =
                 className={[
                   'flex-shrink-0 ml-3 flex items-center justify-center transition-all',
                   premium
-                    ? 'h-9 w-9 rounded-xl border border-white/10 bg-white/5 text-slate-300 hover:border-[#D7BE7A]/35 hover:bg-[#D7BE7A]/10 hover:text-white'
+                    ? 'h-9 w-9 rounded-xl border border-white/10 bg-white/5 text-slate-300 hover:border-[var(--border-strong)] hover:bg-[var(--accent-soft)] hover:text-[var(--text-primary)]'
                     : 'w-8 h-8 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100',
                 ].join(' ')}
               >
@@ -107,9 +107,9 @@ export default function DetailDrawer({ isOpen, onClose, title, subtitle, width =
 export function DrawerField({ label, value, className = '', variant = 'default' }: { label: string; value: React.ReactNode; className?: string; variant?: 'default' | 'premium' }) {
   const premium = variant === 'premium'
   return (
-    <div className={`flex items-start justify-between py-3 border-b last:border-0 ${premium ? 'border-[#D7BE7A]/15' : 'border-slate-50'} ${className}`}>
+    <div className={`flex items-start justify-between py-3 border-b last:border-0 ${premium ? 'border-[var(--border-default)]' : 'border-slate-50'} ${className}`}>
       <span className={`text-xs font-bold uppercase tracking-wide flex-shrink-0 mt-0.5 ${premium ? 'text-slate-400' : 'text-slate-400'}`}>{label}</span>
-      <div className={`text-right text-sm font-bold max-w-[68%] break-words ${premium ? 'text-[#F8FBF7]' : 'text-slate-700'}`}>{value ?? '-'}</div>
+      <div className={`text-right text-sm font-bold max-w-[68%] break-words ${premium ? 'text-[var(--text-primary)]' : 'text-slate-700'}`}>{value ?? '-'}</div>
     </div>
   )
 }
@@ -119,8 +119,8 @@ export function DrawerSection({ title, children, variant = 'default' }: { title:
   const premium = variant === 'premium'
   return (
     <div className="mb-5">
-      <p className={`text-[10px] font-black tracking-[0.18em] uppercase mb-3 ${premium ? 'text-[#D7BE7A]' : 'text-slate-400'}`}>{title}</p>
-      <div className={`rounded-2xl border px-4 py-1 ${premium ? 'border-[#D7BE7A]/20 bg-[#06131F]/90 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]' : 'bg-slate-50 border-slate-100'}`}>
+      <p className={`text-[10px] font-black tracking-[0.18em] uppercase mb-3 ${premium ? 'text-[var(--indigo-400)]' : 'text-slate-400'}`}>{title}</p>
+      <div className={`rounded-2xl border px-4 py-1 ${premium ? 'border-[var(--border-default)] bg-[var(--bg-app)] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]' : 'bg-slate-50 border-slate-100'}`}>
         {children}
       </div>
     </div>

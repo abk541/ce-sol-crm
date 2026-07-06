@@ -262,6 +262,7 @@ interface AppState {
   // ── Non-submission reports ─────────────────────────────────────────
   submitNonSubReport: (data: Omit<NonSubmissionReport, 'id' | 'submittedAt' | 'status'>) => void
   reviewNonSubReport: (id: string, action: 'APPROVED' | 'DECLINED', reviewNote: string, reviewedBy: string) => void
+  returnNonSubmissionToPipeline: (reportId: string) => void
 
   // ── Deletion requests ──────────────────────────────────────────────
   requestDeletion: (opportunityId: string, requestedBy: string, reason: string) => void
@@ -2606,6 +2607,51 @@ export const useStore = create<AppState>()(
             upsertOpportunity(updatedOpp)
           }
         }
+      },
+
+      returnNonSubmissionToPipeline: (reportId) => {
+        const actor = get().currentUser
+        if (!hasPermission(actor, 'opportunity:edit')) {
+          toast.error('Only the Capture Manager can move opportunities back to the pipeline.')
+          return
+        }
+        const report = get().nonSubReports.find(r => r.id === reportId)
+        if (!report) return
+        const linkedOpp = get().opportunities.find(o => o.id === report.opportunityId)
+        if (!linkedOpp) {
+          toast.error('The original opportunity could not be found.')
+          return
+        }
+
+        const restored = normalizeOpportunityAssignmentStatus({
+          ...linkedOpp,
+          status: 'ACTIVE',
+          submittedAt: undefined,
+          nonSubmissionReportId: undefined,
+        }, get().employees, get().requireAssociateForActivePipeline)
+
+        const relatedSubmission = get().bdSubmissions.find(b => b.solicitationId === linkedOpp.solicitationId)
+
+        set(s => ({
+          opportunities: s.opportunities.map(o => o.id === restored.id ? restored : o),
+          nonSubReports: s.nonSubReports.filter(r => r.id !== reportId),
+          bdSubmissions: relatedSubmission ? s.bdSubmissions.filter(b => b.id !== relatedSubmission.id) : s.bdSubmissions,
+        }))
+
+        upsertOpportunity(restored).then(saved => {
+          if (!saved) showDatabaseSaveError('Opportunity update')
+        })
+        void bulkDeleteFromTable('non_submission_reports', { column: 'id', value: reportId })
+        if (relatedSubmission) deleteBDSubmissionRecord(relatedSubmission.id)
+
+        get().logActivity({
+          action: `Moved opportunity back to Contract Opportunities from Non-Submission: ${linkedOpp.solicitation}`,
+          user: actor?.name || 'System',
+          userRole: actor?.role || 'CAPTURE_MANAGER',
+          entityType: 'opportunity',
+          entityId: restored.id,
+          entityName: linkedOpp.solicitation,
+        })
       },
 
       // ── Deletion requests ───────────────────────────────────────────

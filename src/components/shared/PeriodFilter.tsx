@@ -178,8 +178,8 @@ export default function PeriodFilter({
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.96, y: -6 }}
             transition={{ type: 'spring', stiffness: 380, damping: 28 }}
-            className="fixed z-[9999] w-[320px] rounded-2xl border p-4 shadow-xl"
-            style={{ top: panelPos.top, left: panelPos.left, background: '#0A1D2B', borderColor: 'rgba(215,190,122,0.22)', boxShadow: '0 18px 52px rgba(0,0,0,0.38)' }}
+            className="modal-panel fixed z-[9999] w-[320px] rounded-2xl border p-4 shadow-xl"
+            style={{ top: panelPos.top, left: panelPos.left, background: 'var(--bg-modal)', borderColor: 'var(--border-strong)', boxShadow: 'var(--shadow-lg)' }}
           >
             <div className="flex items-center justify-between mb-3">
               <button
@@ -237,7 +237,7 @@ export default function PeriodFilter({
               })}
             </div>
 
-            <div className="mt-4 flex items-center justify-between gap-3 border-t pt-3" style={{ borderColor: 'rgba(215,190,122,0.14)' }}>
+            <div className="mt-4 flex items-center justify-between gap-3 border-t pt-3" style={{ borderColor: 'var(--border-default)' }}>
               <div className="min-w-0">
                 <p className="text-[10px] font-bold uppercase tracking-wide text-stone-500">Selected range</p>
                 <p className="truncate text-xs font-semibold text-stone-200">
@@ -248,7 +248,7 @@ export default function PeriodFilter({
                 type="button"
                 onClick={clear}
                 className="flex-shrink-0 rounded-lg border px-3 py-1.5 text-xs font-semibold text-stone-400 hover:bg-white/10 hover:text-stone-100 transition-colors"
-                style={{ borderColor: 'rgba(215,190,122,0.18)' }}
+                style={{ borderColor: 'var(--border-default)' }}
               >
                 Clear
               </button>

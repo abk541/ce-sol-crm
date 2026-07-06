@@ -80,7 +80,7 @@ describe('role permissions', () => {
     expect(hasPermission(teamLead, 'hr:reviewRequests')).toBe(false)
   })
 
-  it('keeps Associates limited to proposal submission, sourcing, deletion requests and non-submission reporting', () => {
+  it('lets Associates comment, submit proposals, source, request deletion and file non-submission reports', () => {
     const associate = user('ASSOCIATE')
 
     expect(hasPermission(associate, 'opportunity:read')).toBe(true)
@@ -91,7 +91,7 @@ describe('role permissions', () => {
     expect(hasPermission(associate, 'opportunity:editSchedule')).toBe(true)
     expect(hasPermission(associate, 'opportunity:edit')).toBe(false)
     expect(hasPermission(associate, 'nonSubmission:submit')).toBe(true)
-    expect(hasPermission(associate, 'opportunity:comment')).toBe(false)
+    expect(hasPermission(associate, 'opportunity:comment')).toBe(true)
     expect(hasPermission(associate, 'opportunity:assign')).toBe(false)
     expect(hasPermission(associate, 'nonSubmission:review')).toBe(false)
     expect(hasPermission(associate, 'contract:comment')).toBe(true)

@@ -214,7 +214,7 @@ function DetailModal({
         >
           <div
             className="absolute inset-0"
-            style={{ background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(6px)', pointerEvents: 'all' }}
+            style={{ background: 'var(--bg-overlay)', backdropFilter: 'blur(6px)', pointerEvents: 'all' }}
             onClick={onClose}
           />
           <motion.div

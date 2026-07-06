@@ -121,6 +121,7 @@ export const PERMISSIONS_BY_ROLE: Record<Role, Permission[]> = {
   BD_MANAGER: [
     'opportunity:read',
     'opportunity:comment',
+    'opportunity:submitProposal',
     'opportunity:assign',
     'opportunity:deleteRequest',
     'sourcing:read',
@@ -143,6 +144,7 @@ export const PERMISSIONS_BY_ROLE: Record<Role, Permission[]> = {
   ASSOCIATE: [
     'opportunity:read',
     'opportunity:editSchedule',
+    'opportunity:comment',
     'opportunity:submitProposal',
     'opportunity:deleteRequest',
     'sourcing:read',
