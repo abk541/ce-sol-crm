@@ -4,6 +4,9 @@ import type {
   Comment,
   DeletionRequest,
   Employee,
+  EmployeeRequest,
+  EmployeeRequestStatus,
+  EmployeeRequestType,
   Opportunity,
   Contract,
   ContractInvoice,
@@ -17,6 +20,8 @@ import type {
   LockedSubkDocuments,
   MandatoryEvent,
   NonSubmissionReport,
+  Notification,
+  NotifType,
   PastPerformance,
   Role,
   SamGovContact,
@@ -1959,6 +1964,209 @@ export async function saveAppSetting(key: string, value: string): Promise<AppSet
     if (isMissingTableError(err)) return { ok: false, missingTable: true }
     console.error('[db] saveAppSetting failed', err)
     return { ok: false, missingTable: false }
+  }
+}
+
+// ── Notifications (shared, cross-user) ───────────────────────────────────────
+//
+// Backed by the `notifications` table created in migration
+// 20260707000000_add_notifications_and_employee_requests.sql. Follows the same
+// missing-table-tolerant pattern as fetchAppSettings above: when the migration
+// hasn't been applied, callers get { ok: false, missingTable: true } and the
+// store keeps whatever rehydrated from localStorage.
+
+function notificationToDb(n: Notification): Record<string, unknown> {
+  return {
+    id: n.id,
+    type: n.type,
+    title: n.title,
+    message: n.message,
+    read: n.read,
+    created_at: n.createdAt,
+    related_id: n.relatedId ?? null,
+    target_role: n.targetRole ?? null,
+    target_user_id: n.targetUserId ?? null,
+  }
+}
+
+function dbToNotification(row: Record<string, unknown>): Notification {
+  const n: Notification = {
+    id: row.id as string,
+    type: row.type as NotifType,
+    title: row.title as string,
+    message: (row.message as string) ?? '',
+    read: Boolean(row.read),
+    createdAt: (row.created_at as string) ?? new Date().toISOString(),
+  }
+  if (row.related_id != null) n.relatedId = row.related_id as string
+  if (row.target_role != null) n.targetRole = row.target_role as Notification['targetRole']
+  if (row.target_user_id != null) n.targetUserId = row.target_user_id as string
+  return n
+}
+
+export interface NotificationsResult {
+  ok: boolean
+  missingTable: boolean
+  payload?: Notification[]
+}
+
+export async function fetchNotifications(): Promise<NotificationsResult> {
+  if (!isSupabaseConnected || !supabase) return { ok: false, missingTable: false }
+  try {
+    const { data, error } = await supabase
+      .from('notifications')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(500)
+    if (error) {
+      if (isMissingTableError(error)) return { ok: false, missingTable: true }
+      console.error('[db] fetchNotifications error', error)
+      return { ok: false, missingTable: false }
+    }
+    const payload = (data ?? []).map(r => dbToNotification(r as Record<string, unknown>))
+    return { ok: true, missingTable: false, payload }
+  } catch (err) {
+    if (isMissingTableError(err)) return { ok: false, missingTable: true }
+    console.error('[db] fetchNotifications failed', err)
+    return { ok: false, missingTable: false }
+  }
+}
+
+export async function upsertNotification(n: Notification): Promise<void> {
+  if (!isSupabaseConnected || !supabase) return
+  try {
+    const { error } = await supabase.from('notifications').upsert(notificationToDb(n))
+    if (error && !isMissingTableError(error)) console.error('[db] upsertNotification error', error)
+  } catch (err) {
+    if (!isMissingTableError(err)) console.error('[db] upsertNotification failed', err)
+  }
+}
+
+// ── Employee (HR) requests (shared, cross-user) ──────────────────────────────
+
+function employeeRequestToDb(r: EmployeeRequest): Record<string, unknown> {
+  return {
+    id: r.id,
+    requester_id: r.requesterId,
+    requester_name: r.requesterName,
+    requester_email: r.requesterEmail,
+    type: r.type,
+    title: r.title,
+    details: r.details ?? '',
+    status: r.status,
+    priority: r.priority,
+    submitted_at: r.submittedAt,
+    reviewed_at: r.reviewedAt ?? null,
+    reviewed_by: r.reviewedBy ?? null,
+    review_note: r.reviewNote ?? null,
+    attachments: r.attachments ?? [],
+  }
+}
+
+function dbToEmployeeRequest(row: Record<string, unknown>): EmployeeRequest {
+  const r: EmployeeRequest = {
+    id: row.id as string,
+    requesterId: (row.requester_id as string) ?? '',
+    requesterName: (row.requester_name as string) ?? '',
+    requesterEmail: (row.requester_email as string) ?? '',
+    type: (row.type as EmployeeRequestType) ?? 'OTHER',
+    title: (row.title as string) ?? '',
+    details: (row.details as string) ?? '',
+    status: (row.status as EmployeeRequestStatus) ?? 'PENDING',
+    priority: (row.priority as EmployeeRequest['priority']) ?? 'MEDIUM',
+    submittedAt: (row.submitted_at as string) ?? new Date().toISOString(),
+  }
+  if (row.reviewed_at != null) r.reviewedAt = row.reviewed_at as string
+  if (row.reviewed_by != null) r.reviewedBy = row.reviewed_by as string
+  if (row.review_note != null) r.reviewNote = row.review_note as string
+  if (Array.isArray(row.attachments)) r.attachments = row.attachments as FileAttachment[]
+  return r
+}
+
+export interface EmployeeRequestsResult {
+  ok: boolean
+  missingTable: boolean
+  payload?: EmployeeRequest[]
+}
+
+export async function fetchEmployeeRequests(): Promise<EmployeeRequestsResult> {
+  if (!isSupabaseConnected || !supabase) return { ok: false, missingTable: false }
+  try {
+    const { data, error } = await supabase
+      .from('employee_requests')
+      .select('*')
+      .order('submitted_at', { ascending: false })
+    if (error) {
+      if (isMissingTableError(error)) return { ok: false, missingTable: true }
+      console.error('[db] fetchEmployeeRequests error', error)
+      return { ok: false, missingTable: false }
+    }
+    const payload = (data ?? []).map(r => dbToEmployeeRequest(r as Record<string, unknown>))
+    return { ok: true, missingTable: false, payload }
+  } catch (err) {
+    if (isMissingTableError(err)) return { ok: false, missingTable: true }
+    console.error('[db] fetchEmployeeRequests failed', err)
+    return { ok: false, missingTable: false }
+  }
+}
+
+export async function upsertEmployeeRequest(r: EmployeeRequest): Promise<void> {
+  if (!isSupabaseConnected || !supabase) return
+  try {
+    const { error } = await supabase.from('employee_requests').upsert(employeeRequestToDb(r))
+    if (error && !isMissingTableError(error)) console.error('[db] upsertEmployeeRequest error', error)
+  } catch (err) {
+    if (!isMissingTableError(err)) console.error('[db] upsertEmployeeRequest failed', err)
+  }
+}
+
+// ── Realtime ─────────────────────────────────────────────────────────────────
+//
+// Best-effort live-change signal. Subscribes to Postgres changes on the shared
+// business tables and invokes `onChange` whenever any row is inserted, updated
+// or deleted by another session. The caller debounces and reacts by re-pulling
+// data (see the store's refreshFromDb). If Realtime is not enabled on the
+// project the subscription simply never fires and the client-side poll remains
+// the source of freshness. Returns an unsubscribe function.
+
+const REALTIME_TABLES = [
+  'notifications',
+  'employee_requests',
+  'opportunities',
+  'contracts',
+  'fresh_awards',
+  'past_performances',
+  'non_submission_reports',
+  'deletion_requests',
+  'bd_submissions',
+  'comments',
+  'subcontractors',
+  'activity_logs',
+] as const
+
+export function subscribeToDataChanges(onChange: () => void): () => void {
+  if (!isSupabaseConnected || !supabase) return () => {}
+  try {
+    const client = supabase
+    const channel = client.channel('workspace-data-changes')
+    for (const table of REALTIME_TABLES) {
+      channel.on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table },
+        () => onChange(),
+      )
+    }
+    channel.subscribe()
+    return () => {
+      try {
+        void client.removeChannel(channel)
+      } catch (err) {
+        console.error('[db] removeChannel failed', err)
+      }
+    }
+  } catch (err) {
+    console.error('[db] subscribeToDataChanges failed', err)
+    return () => {}
   }
 }
 

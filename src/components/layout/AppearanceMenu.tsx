@@ -800,6 +800,8 @@ function SizeSection({
   onPreview: (v: number) => void
   fontFamily: string | null
 }) {
+  const [dragValue, setDragValue] = useState<number | null>(null)
+  const displayValue = dragValue ?? value
   const presets: Array<{ size: number; label: string }> = [
     { size: 13, label: 'Small' },
     { size: 15, label: 'Default' },
@@ -813,7 +815,7 @@ function SizeSection({
           <Type size={10} />
           Text size
         </p>
-        <span className="text-[10px] font-black text-[var(--text-primary)]">{value}px</span>
+        <span className="text-[10px] font-black text-[var(--text-primary)]">{displayValue}px</span>
       </div>
 
       <div className="overflow-hidden rounded-xl border border-[var(--border-default)] bg-[var(--bg-input)]">
@@ -827,13 +829,13 @@ function SizeSection({
         >
           <div
             className="font-bold text-[var(--text-primary)]"
-            style={{ fontSize: `${value}px`, lineHeight: 1.35, letterSpacing: '-0.01em' }}
+            style={{ fontSize: `${displayValue}px`, lineHeight: 1.35, letterSpacing: '-0.01em' }}
           >
             The quick brown fox
           </div>
           <div
             className="mt-0.5 text-[var(--text-tertiary)]"
-            style={{ fontSize: `${Math.max(11, value - 3)}px`, lineHeight: 1.4 }}
+            style={{ fontSize: `${Math.max(11, displayValue - 3)}px`, lineHeight: 1.4 }}
           >
             jumps over the lazy dog — 0123456789
           </div>
@@ -841,7 +843,7 @@ function SizeSection({
 
         <div className="grid grid-cols-4 gap-1 p-1.5">
           {presets.map(p => {
-            const active = value === p.size
+            const active = displayValue === p.size
             return (
               <button
                 key={p.size}
@@ -867,11 +869,27 @@ function SizeSection({
             type="range"
             min={FONT_SIZE_MIN}
             max={FONT_SIZE_MAX}
-            value={value}
-            onChange={e => onPreview(Number(e.target.value))}
-            onMouseUp={e => onChange(Number((e.target as HTMLInputElement).value))}
-            onTouchEnd={e => onChange(Number((e.target as HTMLInputElement).value))}
-            onKeyUp={e => onChange(Number((e.target as HTMLInputElement).value))}
+            value={displayValue}
+            onChange={e => {
+              const v = Number(e.target.value)
+              setDragValue(v)
+              onPreview(v)
+            }}
+            onMouseUp={e => {
+              const v = Number((e.target as HTMLInputElement).value)
+              onChange(v)
+              setDragValue(null)
+            }}
+            onTouchEnd={e => {
+              const v = Number((e.target as HTMLInputElement).value)
+              onChange(v)
+              setDragValue(null)
+            }}
+            onKeyUp={e => {
+              const v = Number((e.target as HTMLInputElement).value)
+              onChange(v)
+              setDragValue(null)
+            }}
             className="appearance-slider"
           />
           <div className="mt-1 flex justify-between text-[9px] uppercase tracking-[0.14em] text-[var(--text-tertiary)]">

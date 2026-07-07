@@ -140,9 +140,12 @@ export default function TopBar() {
 
   const label = ROUTE_LABELS[location.pathname] ?? 'NEXUS ERP'
   const visibleNotifications = useMemo(() => notifications.filter(n => {
+    // A per-user target is the most specific: only that person sees it.
+    if (n.targetUserId) return n.targetUserId === currentUser?.id
+    // Otherwise fall back to role targeting ('ALL' or an exact role match).
     if (n.targetRole && n.targetRole !== 'ALL' && n.targetRole !== currentUser?.role) return false
     return true
-  }), [notifications, currentUser?.role])
+  }), [notifications, currentUser?.id, currentUser?.role])
 
   const unread = visibleNotifications.filter(n => !n.read).length
   const previewNotifications = visibleNotifications.slice(0, 8)
@@ -195,7 +198,7 @@ export default function TopBar() {
       toast.custom((t) => (
         <div
           onClick={() => { navigate('/notifications'); toast.dismiss(t.id) }}
-          className={`pointer-events-auto flex w-[340px] max-w-[90vw] cursor-pointer items-start gap-3 rounded-xl p-3.5 transition-all duration-300 ${t.visible ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-2'}`}
+          className={`pointer-events-auto flex w-[340px] max-w-[90vw] cursor-pointer items-start gap-3 rounded-xl p-3.5 transition-all duration-300 ${t.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2'}`}
           style={{ background: 'var(--bg-card)', border: '1px solid var(--border-default)', boxShadow: '0 12px 32px rgba(0,0,0,0.18)' }}
         >
           <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg" style={{ background: `${accent}22` }}>
@@ -214,7 +217,7 @@ export default function TopBar() {
             <X size={14} />
           </button>
         </div>
-      ), { duration: 6000 })
+      ), { duration: 6000, position: 'bottom-right' })
     })
     if (soundEnabled) playNotificationDing()
     setBellPulse(true)

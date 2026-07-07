@@ -3742,14 +3742,14 @@ function DueDateTimeCell({ opp }: { opp: Opportunity }) {
   return (
     <div className="inline-flex">
       <div
-        className="inline-flex max-w-[250px] cursor-help items-center gap-1.5 text-xs font-semibold text-[#F8FBF7] transition-colors hover:text-[#D7BE7A]"
+        className="inline-flex max-w-[250px] cursor-help items-center gap-1.5 text-xs font-semibold text-[var(--text-primary)] transition-colors hover:text-[var(--accent)]"
         onMouseEnter={e => showTooltip(e.currentTarget)}
         onMouseLeave={() => setTooltip(null)}
         onFocus={e => showTooltip(e.currentTarget)}
         onBlur={() => setTooltip(null)}
         tabIndex={0}
       >
-        <Clock size={12} className="flex-shrink-0 text-[#D7BE7A]" />
+        <Clock size={12} className="flex-shrink-0 text-[var(--accent)]" />
         <span className="truncate" title={sourceDateTime}>{sourceDateTime}</span>
       </div>
       {tooltip && createPortal(

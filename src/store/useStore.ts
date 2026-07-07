@@ -59,6 +59,10 @@ import {
   clearAllPermissionOverrides,
   fetchAppSettings,
   saveAppSetting,
+  fetchNotifications,
+  upsertNotification,
+  fetchEmployeeRequests,
+  upsertEmployeeRequest,
 } from '../lib/db'
 import { getAssignmentChain, isAssignedToAssociate } from '../lib/team'
 import { hasPermission, applyPermissionOverrides, type Permission } from '../lib/permissions'
@@ -298,6 +302,7 @@ interface AppState {
   needsPurge: boolean
   initializeStore: () => Promise<void>
   syncUsersFromDb: () => Promise<void>
+  refreshFromDb: () => Promise<void>
 
   // ── Admin bulk operations (destructive) ────────────────────────────
   wipeOpportunities: () => Promise<number>
@@ -553,6 +558,10 @@ function userToEmployee(user: User): Employee | null {
     team,
   }
 }
+
+// Guards against overlapping refreshFromDb runs (poll + focus + realtime can all
+// fire near-simultaneously). Overlaps are harmless but wasteful.
+let refreshInFlight = false
 
 // Admin users are the source of truth for assignment. We intentionally do not
 // preserve standalone employee records here: if a user is inactive/deleted, they
@@ -1128,6 +1137,9 @@ export const useStore = create<AppState>()(
           submittedAt: new Date().toISOString(),
         }
         set(s => ({ employeeRequests: [request, ...s.employeeRequests] }))
+        // Promote to the shared table so the Capture Manager receives it in
+        // their own session instead of it living only in this browser.
+        if (isSupabaseConnected) void upsertEmployeeRequest(request)
         get().addNotification({
           type: 'SYSTEM',
           title: 'HR request submitted',
@@ -1144,19 +1156,37 @@ export const useStore = create<AppState>()(
           toast.error('Only the Capture Manager can review HR requests.')
           return
         }
+        const existing = get().employeeRequests.find(r => r.id === id)
+        if (!existing) return
+        const updated: EmployeeRequest = {
+          ...existing,
+          status,
+          reviewNote,
+          reviewedAt: new Date().toISOString(),
+          reviewedBy: user?.name || 'System',
+        }
         set(s => ({
           employeeRequests: s.employeeRequests.map(request =>
-            request.id === id
-              ? {
-                  ...request,
-                  status,
-                  reviewNote,
-                  reviewedAt: new Date().toISOString(),
-                  reviewedBy: user?.name || 'System',
-                }
-              : request
+            request.id === id ? updated : request
           )
         }))
+        if (isSupabaseConnected) void upsertEmployeeRequest(updated)
+        // Notify the associate who submitted it so the decision + reply show up
+        // immediately in their own session (directed at that specific user).
+        const decision =
+          status === 'APPROVED' ? 'approved' :
+          status === 'DECLINED' ? 'declined' :
+          status === 'IN_REVIEW' ? 'moved to review' : String(status).toLowerCase()
+        get().addNotification({
+          type: 'SYSTEM',
+          title: `HR request ${decision}`,
+          message: reviewNote.trim()
+            ? `Your request "${updated.title}" was ${decision}: ${reviewNote.trim()}`
+            : `Your request "${updated.title}" was ${decision}.`,
+          read: false,
+          relatedId: updated.id,
+          targetUserId: updated.requesterId,
+        })
       },
 
       updateEmployeeRequest: (id, data) => {
@@ -1169,6 +1199,8 @@ export const useStore = create<AppState>()(
             request.id === id ? { ...request, ...data } : request
           )
         }))
+        const updated = get().employeeRequests.find(r => r.id === id)
+        if (updated && isSupabaseConnected) void upsertEmployeeRequest(updated)
       },
 
       createOpportunity: async (data) => {
@@ -2762,13 +2794,18 @@ export const useStore = create<AppState>()(
         notifications: s.notifications.map(n => ({ ...n, read: true }))
       })),
 
-      addNotification: (data) => set(s => ({
-        notifications: [{
+      addNotification: (data) => {
+        const notification: Notification = {
           ...data,
-          id: `n${Date.now()}`,
+          id: `n${Date.now()}${Math.random().toString(36).slice(2, 7)}`,
           createdAt: new Date().toISOString(),
-        }, ...s.notifications]
-      })),
+        }
+        set(s => ({ notifications: [notification, ...s.notifications] }))
+        // Promote to the shared table so the concerned user receives it in
+        // their own session (poll / realtime picks it up). No-op + silent when
+        // Supabase or the notifications table is unavailable.
+        if (isSupabaseConnected) void upsertNotification(notification)
+      },
 
       // ── Employee assignment ─────────────────────────────────────────
       assignOpportunityToEmployee: (opportunityId, employeeId) => {
@@ -2802,6 +2839,7 @@ export const useStore = create<AppState>()(
             message: `${opp.solicitation} assigned to ${emp.name}.`,
             read: false,
             relatedId: opportunityId,
+            targetUserId: employeeId,
           })
         }
       },
@@ -2827,6 +2865,7 @@ export const useStore = create<AppState>()(
             message: `${contract.title} assigned to ${emp.name}.`,
             read: false,
             relatedId: contractId,
+            targetUserId: employeeId,
           })
         }
       },
@@ -3017,9 +3056,93 @@ export const useStore = create<AppState>()(
           } catch (err) {
             console.error('[Store] fetchAppSettings failed', err)
           }
+
+          // Pull shared notifications + HR requests. These used to live only in
+          // localStorage, so cross-user activity never propagated. The DB is the
+          // source of truth for the set; preserve any locally-read flag so a
+          // refresh doesn't resurrect already-read alerts as unread.
+          try {
+            const [nRes, rRes] = await Promise.all([fetchNotifications(), fetchEmployeeRequests()])
+            const collabPatch: { notifications?: Notification[]; employeeRequests?: EmployeeRequest[] } = {}
+            if (nRes.ok && nRes.payload) {
+              const readLocal = new Set(get().notifications.filter(n => n.read).map(n => n.id))
+              collabPatch.notifications = nRes.payload.map(n => (readLocal.has(n.id) ? { ...n, read: true } : n))
+            }
+            if (rRes.ok && rRes.payload) {
+              collabPatch.employeeRequests = rRes.payload
+            }
+            if (collabPatch.notifications || collabPatch.employeeRequests) set(collabPatch)
+          } catch (err) {
+            console.error('[Store] collaboration sync failed', err)
+          }
         } catch (err) {
           console.error('[Store] Supabase init failed, using local data', err)
           set({ dbReady: true })
+        }
+      },
+
+      // Lightweight periodic/live re-sync used by the app shell so cross-user
+      // activity (new opportunities, HR requests, notifications) shows up without
+      // a manual page refresh. Unlike initializeStore this never flips dbReady,
+      // never touches auth (currentUser stays the same object reference to avoid
+      // needless re-renders / auth churn) and skips the one-time canceled→BD
+      // migration that init performs.
+      refreshFromDb: async () => {
+        if (!isSupabaseConnected || !get().dbReady || refreshInFlight) return
+        refreshInFlight = true
+        try {
+          const data = await loadAllData()
+          if (data) {
+            const canceledIds = new Set(
+              data.opportunities.filter(o => o.status === 'CANCELED').map(o => o.id),
+            )
+            const localCurrent = get().currentUser
+            const dbUsers = data.users.length > 0 ? data.users : get().users
+            // Reflect the current user's latest DB row into the users array (so
+            // Admin views stay live) while keeping firstLogin monotonic and not
+            // clobbering the locally-held password.
+            const finalUsers = localCurrent
+              ? dbUsers.map(u => {
+                  if (u.id !== localCurrent.id) return u
+                  return {
+                    ...u,
+                    firstLogin: u.firstLogin && localCurrent.firstLogin,
+                    password: localCurrent.password ?? u.password,
+                  }
+                })
+              : dbUsers
+            set({
+              users: finalUsers,
+              employees: syncEmployeesWithUsers(
+                finalUsers,
+                data.employees.length > 0 ? data.employees : get().employees,
+              ),
+              opportunities: data.opportunities.filter(o => o.status !== 'CANCELED'),
+              contracts: data.contracts,
+              freshAwards: data.freshAwards,
+              pastPerformances: data.pastPerformances,
+              subcontractors: data.subcontractors,
+              nonSubReports: data.nonSubReports.filter(r => !canceledIds.has(r.opportunityId)),
+              deletionRequests: data.deletionRequests.filter(r => !canceledIds.has(r.opportunityId)),
+              bdSubmissions: data.bdSubmissions,
+              lastSyncedAt: Date.now(),
+            })
+          }
+
+          const [nRes, rRes] = await Promise.all([fetchNotifications(), fetchEmployeeRequests()])
+          const collabPatch: { notifications?: Notification[]; employeeRequests?: EmployeeRequest[] } = {}
+          if (nRes.ok && nRes.payload) {
+            const readLocal = new Set(get().notifications.filter(n => n.read).map(n => n.id))
+            collabPatch.notifications = nRes.payload.map(n => (readLocal.has(n.id) ? { ...n, read: true } : n))
+          }
+          if (rRes.ok && rRes.payload) {
+            collabPatch.employeeRequests = rRes.payload
+          }
+          if (collabPatch.notifications || collabPatch.employeeRequests) set(collabPatch)
+        } catch (err) {
+          console.error('[Store] refreshFromDb failed', err)
+        } finally {
+          refreshInFlight = false
         }
       },
 

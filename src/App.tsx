@@ -25,6 +25,8 @@ import SubkDatabasePage from './pages/SubkDatabasePage'
 import CertificationsPage from './pages/CertificationsPage'
 import PlaceholderPage from './pages/PlaceholderPage'
 import { hasAnyPermission, hasPermission, type Permission } from './lib/permissions'
+import { subscribeToDataChanges } from './lib/db'
+import { isSupabaseConnected } from './lib/supabase'
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, needsFirstLogin, pendingMfaUserId, pendingMfaMode } = useStore()
@@ -68,6 +70,7 @@ export default function App() {
   const { isAuthenticated, accessNoticeAccepted, needsFirstLogin, currentUser, pendingMfaUserId, pendingMfaMode } = useStore()
   const initializeStore = useStore(s => s.initializeStore)
   const syncUsersFromDb = useStore(s => s.syncUsersFromDb)
+  const refreshFromDb = useStore(s => s.refreshFromDb)
 
   // Sync the user roster from Supabase as soon as the app boots — before any
   // login — so credentials and firstLogin flags are correct across browsers.
@@ -104,6 +107,45 @@ export default function App() {
     const timer = setInterval(checkSession, 60_000)
     return () => clearInterval(timer)
   }, [])
+
+  // Live cross-user sync. Once authenticated we keep the local store fresh so a
+  // new opportunity, HR request, assignment or notification created by another
+  // user shows up without a manual page refresh. Three triggers, all backstops
+  // for one another:
+  //   1. Supabase Realtime  — instant push when a row changes (if the migration
+  //      that adds tables to the realtime publication has been applied).
+  //   2. A 20s poll         — catches everything even when Realtime is off.
+  //   3. Tab focus / visibility — an immediate pull the moment the user returns.
+  useEffect(() => {
+    if (!isAuthenticated || !isSupabaseConnected) return
+
+    let debounce: ReturnType<typeof setTimeout> | null = null
+    const scheduleRefresh = () => {
+      if (debounce) return
+      debounce = setTimeout(() => {
+        debounce = null
+        void refreshFromDb()
+      }, 400)
+    }
+
+    // Prime once so we don't wait a whole interval for the first pull.
+    void refreshFromDb()
+
+    const poll = setInterval(() => { void refreshFromDb() }, 20_000)
+    const onFocus = () => { void refreshFromDb() }
+    const onVisibility = () => { if (document.visibilityState === 'visible') void refreshFromDb() }
+    window.addEventListener('focus', onFocus)
+    document.addEventListener('visibilitychange', onVisibility)
+    const unsubscribe = subscribeToDataChanges(scheduleRefresh)
+
+    return () => {
+      clearInterval(poll)
+      if (debounce) clearTimeout(debounce)
+      window.removeEventListener('focus', onFocus)
+      document.removeEventListener('visibilitychange', onVisibility)
+      unsubscribe()
+    }
+  }, [isAuthenticated, refreshFromDb])
 
   return (
     <HashRouter>

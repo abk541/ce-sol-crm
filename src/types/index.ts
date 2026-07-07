@@ -632,6 +632,9 @@ export interface Notification {
   createdAt: string
   relatedId?: string
   targetRole?: Role | 'ALL'
+  // Direct a notification at one specific user (by user id). When set it takes
+  // precedence over targetRole so only that person sees it and gets the pop-up.
+  targetUserId?: string
 }
 
 // ── User preferences ──────────────────────────────────────────────────
