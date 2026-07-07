@@ -774,7 +774,7 @@ function DetailDrawerPP({ pp, onClose, onExport, onEdit, canManage }: { pp: Past
 export default function PastPerformancesPage() {
   const { contracts, opportunities, employees, currentUser } = useStore()
   const canManagePP = hasPermission(currentUser, 'pastPerformance:manage')
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const globalRecordId = searchParams.get('record')
   const [search, setSearch] = useState('')
   const [source, setSource] = useState<'ACTIVE' | 'COMPLETED'>('ACTIVE')
@@ -848,7 +848,14 @@ export default function PastPerformancesPage() {
     if (!target) return
     setSearch('')
     setSelected(target)
-  }, [globalRecordId, sourceRows])
+    // Clear the consumed deep-link param so it can't re-trigger on store
+    // updates and so re-searching the same record navigates again.
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      next.delete('record')
+      return next
+    }, { replace: true })
+  }, [globalRecordId, sourceRows, setSearchParams])
 
   const totalValue = sourceRows.reduce((s, p) => s + p.value, 0)
 

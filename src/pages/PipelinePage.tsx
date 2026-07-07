@@ -16,7 +16,7 @@ import { useStore } from '../store/useStore'
 import type { Opportunity, Priority, OppStatus, Comment, FileAttachment, SamGovContact, SubcontractorContact } from '../types'
 import { TIMEZONES } from '../data/mock'
 import { formatCurrency, formatDate, useEscapeKey } from '../lib/utils'
-import { assignableEmployeesForUser, getAssignmentChain, isAssignedToAssociate, isOpportunityOwnedByUser, ROLE_DISPLAY_LABELS } from '../lib/team'
+import { assignableEmployeesForUser, getAssignmentChain, isAssignedToAssociate, isOpportunityAssignedToUser, isOpportunityOwnedByUser, ROLE_DISPLAY_LABELS } from '../lib/team'
 import { NAICS_CODES } from '../data/naics'
 import toast from 'react-hot-toast'
 import DetailDrawer, { DrawerSection, DrawerField } from '../components/shared/DetailDrawer'
@@ -3796,8 +3796,9 @@ function DueDateTimeCell({ opp }: { opp: Opportunity }) {
 
 export default function PipelinePage() {
   const { opportunities, employees, currentUser, deletionRequests, moveOpportunityToBDTracker, deleteSubcontractor, requireAssociateForActivePipeline, updateOpportunity } = useStore()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const globalRecordId = searchParams.get('record')
+  const mineScope = searchParams.get('mine') === '1'
 
   // ── Filter state ──
   const [columnFilters, setColumnFilters] = useState<ColumnFilters>(() => ({ ...EMPTY_COLUMN_FILTERS }))
@@ -3839,7 +3840,14 @@ export default function PipelinePage() {
     setDueDateRange(null)
     setPage(1)
     setSelectedOpp(target)
-  }, [globalRecordId, opportunities])
+    // Clear the consumed deep-link param so it can't re-trigger on store
+    // updates and so re-searching the same record navigates again.
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      next.delete('record')
+      return next
+    }, { replace: true })
+  }, [globalRecordId, opportunities, setSearchParams])
 
   const filterOptions = useMemo(() => {
     const visibleOpps = opportunities.filter(o => !o.isDeleted && !o.nonSubmissionReportId && OPP_VIEW_STATUSES.includes(o.status as any) && (requireAssociateForActivePipeline ? isAssignedToAssociate(employees, o.assignedTo) : !!o.assignedTo))
@@ -3862,6 +3870,8 @@ export default function PipelinePage() {
   const filtered = useMemo(() => {
     let list = opportunities.filter(o => !o.isDeleted && !o.nonSubmissionReportId && OPP_VIEW_STATUSES.includes(o.status as any) && (requireAssociateForActivePipeline ? isAssignedToAssociate(employees, o.assignedTo) : !!o.assignedTo))
 
+    if (mineScope) list = list.filter(o => isOpportunityAssignedToUser(employees, currentUser, o))
+
     if (dueDateRange) list = list.filter(o => filterByPeriod(o.dueDate, dueDateRange))
 
     COLUMN_FILTERS.forEach(col => {
@@ -3878,7 +3888,7 @@ export default function PipelinePage() {
       return sort.dir === 'asc' ? r : -r
     })
     return list
-  }, [opportunities, employees, sort, dueDateRange, columnFilters, requireAssociateForActivePipeline])
+  }, [opportunities, employees, sort, dueDateRange, columnFilters, requireAssociateForActivePipeline, mineScope, currentUser])
 
   // Paginated slice
   const paginated = useMemo(() => {
@@ -3900,13 +3910,22 @@ export default function PipelinePage() {
     return sort.dir === 'asc' ? <ChevronUp size={9} className="text-indigo-500" /> : <ChevronDown size={9} className="text-indigo-500" />
   }
 
+  const clearMineScope = () => {
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      next.delete('mine')
+      return next
+    }, { replace: true })
+  }
+
   const clearAll = () => {
     setColumnFilters({ ...EMPTY_COLUMN_FILTERS })
     setDueDateRange(null)
+    clearMineScope()
     resetPage()
   }
 
-  const hasFilters = !!dueDateRange || Object.values(columnFilters).some(v => v.trim())
+  const hasFilters = !!dueDateRange || mineScope || Object.values(columnFilters).some(v => v.trim())
 
   const handleCancel = (o: Opportunity) => {
     if (!canCancelOpportunities) {
@@ -3951,7 +3970,7 @@ export default function PipelinePage() {
         <div>
           <p className="text-[10px] font-bold text-slate-400 tracking-[0.2em] mb-1">CES - PIPELINE</p>
           <h1 className="text-2xl font-black text-slate-900">Contract Opportunities</h1>
-          <p className="text-slate-500 text-sm mt-0.5">{filtered.length} opportunities</p>
+          <p className="text-slate-500 text-sm mt-0.5">{filtered.length} {mineScope ? 'of your opportunities' : 'opportunities'}</p>
         </div>
         <div className="flex items-center gap-3">
           {canCreateOpportunity && (
@@ -3971,6 +3990,13 @@ export default function PipelinePage() {
           </div>
 
           <div className="flex items-center gap-2 ml-auto">
+          {mineScope && (
+            <button onClick={clearMineScope}
+              className="text-xs flex items-center gap-1.5 rounded-full px-3 py-1.5 font-semibold text-indigo-600 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 transition-colors"
+              title="Showing only your assignments — click to show all opportunities">
+              <UserIcon size={12} /> My assignments <X size={11} />
+            </button>
+          )}
           {hasFilters && (
             <button onClick={clearAll}
               className="btn-ghost text-xs flex items-center gap-1 text-slate-500">

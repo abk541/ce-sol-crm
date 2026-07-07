@@ -19,7 +19,7 @@ import PeriodFilter, { type Period, filterByPeriod } from '../components/shared/
 import TeamStatisticsPanel from '../components/shared/TeamStatisticsPanel'
 import { formatCurrency, avatarColor } from '../lib/utils'
 import { useNavigate } from 'react-router-dom'
-import { getAssignmentChain, isOpsAgent } from '../lib/team'
+import { getAssignmentChain, isOpportunityAssignedToUser, isOpsAgent } from '../lib/team'
 import { hasAnyPermission, hasPermission, ROLE_LABELS } from '../lib/permissions'
 import { chartColorsForTheme, useAppearance } from '../lib/appearance'
 import { NAICS_CODES } from '../data/naics'
@@ -471,16 +471,10 @@ function AgentDashboard() {
     [goals, myEmployee, employees, monthKey],
   )
 
-  const myOpps = useMemo(() => {
-    const me = employees.find(e => e.email === currentUser?.email || e.name === currentUser?.name)
-    const un = (currentUser?.username ?? '').toLowerCase()
-    const fn = (currentUser?.name ?? '').toLowerCase()
-    return opportunities.filter(o => {
-      if (o.isDeleted) return false
-      const b = `${o.bds} ${o.bdm} ${o.supportAgent}`.toLowerCase()
-      return o.assignedTo === me?.id || b.includes(un) || b.includes(fn)
-    })
-  }, [opportunities, currentUser, employees])
+  const myOpps = useMemo(
+    () => opportunities.filter(o => !o.isDeleted && isOpportunityAssignedToUser(employees, currentUser, o)),
+    [opportunities, currentUser, employees],
+  )
 
   const activeOpps = myOpps.filter(o => o.status === 'ACTIVE')
     .sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime())
@@ -641,7 +635,7 @@ function AgentDashboard() {
           <p className="text-[10px] font-bold text-slate-400 tracking-[0.15em]">MISSION INTEL</p>
           <div className="grid grid-cols-2 gap-2">
             {([
-              { label: 'ACTIVE',    value: myStats.active,      color: '#6366F1', icon: Target, nav: '/pipeline' },
+              { label: 'ACTIVE',    value: myStats.active,      color: '#6366F1', icon: Target, nav: '/pipeline?mine=1' },
               { label: 'SUBMITTED', value: myStats.submissions,  color: '#06B6D4', icon: Send,   nav: '/bd-tracker' },
               { label: 'WINS',      value: myStats.wins,         color: '#22C55E', icon: Trophy, nav: '/bd-tracker' },
               { label: 'NON-SUBS',  value: myStats.nonSubs,      color: myStats.nonSubs > 5 ? '#EF4444' : '#F97316', icon: AlertTriangle, nav: '/non-submissions' },
@@ -729,7 +723,7 @@ function AgentDashboard() {
                 <AlertTriangle size={9} /> {overdueCount} OVERDUE
               </motion.span>
             )}
-            <button onClick={() => navigate('/pipeline')}
+            <button onClick={() => navigate('/pipeline?mine=1')}
               className="text-[10px] text-indigo-600 hover:text-indigo-800 font-semibold flex items-center gap-1 transition-colors">
               View all <ChevronRight size={11} />
             </button>
@@ -747,7 +741,7 @@ function AgentDashboard() {
                   initial={{ opacity: 0, x: -12 }} animate={{ opacity: 1, x: 0 }}
                   transition={{ delay: 0.06 + i * 0.05 }}
                   whileHover={{ x: 3 }}
-                  onClick={() => navigate('/pipeline')}
+                  onClick={() => navigate(`/pipeline?record=${o.id}`)}
                   className="px-5 py-3 flex items-center gap-3 hover:bg-slate-50 transition-all cursor-pointer"
                   style={isOverdue ? { borderLeft: '2px solid #EF4444' } : {}}>
                   <div className={`w-2 h-2 rounded-full flex-shrink-0 ${isOverdue ? 'bg-red-500' : daysUntil <= 2 ? 'bg-amber-400' : 'bg-indigo-500'}`} />

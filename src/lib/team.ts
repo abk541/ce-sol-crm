@@ -190,6 +190,26 @@ export function isOpportunityOwnedByUser(
   return false
 }
 
+// True when the opportunity "belongs" to the user for personal-dashboard
+// purposes: it is assigned to their employee record, or their name/username
+// appears in the BD/BDM/support-agent fields. Mirrors the AgentDashboard
+// "my opportunities" scope so a dashboard drill-down shows exactly the same set.
+export function isOpportunityAssignedToUser(
+  employees: Employee[],
+  user: User | null | undefined,
+  opp: Pick<Opportunity, 'assignedTo' | 'bds' | 'bdm' | 'supportAgent'>,
+): boolean {
+  if (!user) return false
+  const me = findEmployeeForUser(employees, user)
+  if (opp.assignedTo && opp.assignedTo === me?.id) return true
+  const haystack = `${opp.bds ?? ''} ${opp.bdm ?? ''} ${opp.supportAgent ?? ''}`.toLowerCase()
+  const username = (user.username ?? '').toLowerCase()
+  const name = (user.name ?? '').toLowerCase()
+  if (username && haystack.includes(username)) return true
+  if (name && haystack.includes(name)) return true
+  return false
+}
+
 export function assignmentWorkloadByEmployee({
   employees,
   opportunities,

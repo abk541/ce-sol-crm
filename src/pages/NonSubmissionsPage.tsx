@@ -539,9 +539,10 @@ function DroppedOpportunitiesTab({ targetId, onViewReport }: { targetId?: string
 // ── Main Page ──────────────────────────────────────────────────────────
 export default function NonSubmissionsPage() {
   const { nonSubReports, opportunities, currentUser, reviewNonSubReport, returnNonSubmissionToPipeline, employees } = useStore()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const globalRecordId = searchParams.get('record')
   const globalTab = searchParams.get('tab')
+  const [highlightId, setHighlightId] = useState<string | null>(null)
   const [pageTab, setPageTab] = useState<'reports' | 'dropped'>('reports')
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<'ALL' | 'PENDING' | 'APPROVED' | 'DECLINED'>('ALL')
@@ -553,13 +554,23 @@ export default function NonSubmissionsPage() {
 
   useEffect(() => {
     if (globalTab === 'dropped' || globalTab === 'reports') setPageTab(globalTab)
-    if (!globalRecordId) return
-    const target = opportunities.find(o => o.id === globalRecordId || o.solicitationId === globalRecordId)
-    if (target) {
+    if (!globalRecordId && !globalTab) return
+    if (globalRecordId) {
+      const target = opportunities.find(o => o.id === globalRecordId || o.solicitationId === globalRecordId)
+      if (!target) return
       setSearch(target.solicitation)
       if (target.status === 'DROPPED') setPageTab('dropped')
+      setHighlightId(target.id)
     }
-  }, [globalRecordId, globalTab, opportunities])
+    // Clear the consumed deep-link params so they can't re-trigger on store
+    // updates and so re-searching the same record navigates again.
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      next.delete('record')
+      next.delete('tab')
+      return next
+    }, { replace: true })
+  }, [globalRecordId, globalTab, opportunities, setSearchParams])
 
   const droppedCount = useMemo(
     () => opportunities.filter(o => o.status === 'DROPPED' && !o.isDeleted).length,
@@ -739,7 +750,7 @@ export default function NonSubmissionsPage() {
       )}
 
       {/* ── Dropped Tab ── */}
-      {pageTab === 'dropped' && <DroppedOpportunitiesTab targetId={globalRecordId} onViewReport={(id) => setReviewId(id)} />}
+      {pageTab === 'dropped' && <DroppedOpportunitiesTab targetId={highlightId} onViewReport={(id) => setReviewId(id)} />}
 
       {/* Modals */}
       <AnimatePresence>

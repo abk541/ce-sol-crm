@@ -114,7 +114,7 @@ function AssignModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }
 
 export default function ProposalsPage() {
   const { opportunities, employees, currentUser } = useStore()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const globalRecordId = searchParams.get('record')
   const [assignTarget, setAssignTarget] = useState<Opportunity | null>(null)
   const assignable = useMemo(() => assignableEmployeesForUser(employees, currentUser, 'BD'), [employees, currentUser])
@@ -135,8 +135,17 @@ export default function ProposalsPage() {
   useEffect(() => {
     if (!globalRecordId) return
     const target = rows.find(o => o.id === globalRecordId || o.solicitationId === globalRecordId)
-    if (target) setAssignTarget(target)
-  }, [globalRecordId, rows])
+    if (target) {
+      setAssignTarget(target)
+      // Clear the consumed deep-link param so it can't re-trigger on store
+      // updates and so re-searching the same record navigates again.
+      setSearchParams(prev => {
+        const next = new URLSearchParams(prev)
+        next.delete('record')
+        return next
+      }, { replace: true })
+    }
+  }, [globalRecordId, rows, setSearchParams])
 
   if (!canAssign) {
     return (

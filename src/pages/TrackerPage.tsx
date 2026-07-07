@@ -152,7 +152,7 @@ function Paginator({ total, perPage, page, onPage, onPerPage }: {
 
 export default function TrackerPage() {
   const { opportunities, deletionRequests, reviewDeletionRequest, currentUser } = useStore()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const globalRecordId = searchParams.get('record')
   const globalTab = searchParams.get('tab')
   const [tab, setTab] = useState<'submitted' | 'deleted' | 'pending'>('deleted')
@@ -168,12 +168,22 @@ export default function TrackerPage() {
 
   useEffect(() => {
     if (globalTab === 'deleted' || globalTab === 'pending') setTab(globalTab)
-    if (!globalRecordId) return
-    const target = opportunities.find(o => o.id === globalRecordId || o.solicitationId === globalRecordId)
-    if (!target) return
-    setSearch(target.solicitation)
-    setSelected(target)
-  }, [globalRecordId, globalTab, opportunities])
+    if (!globalRecordId && !globalTab) return
+    if (globalRecordId) {
+      const target = opportunities.find(o => o.id === globalRecordId || o.solicitationId === globalRecordId)
+      if (!target) return
+      setSearch(target.solicitation)
+      setSelected(target)
+    }
+    // Clear the consumed deep-link params so they can't re-trigger on store
+    // updates and so re-searching the same record navigates again.
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      next.delete('record')
+      next.delete('tab')
+      return next
+    }, { replace: true })
+  }, [globalRecordId, globalTab, opportunities, setSearchParams])
 
   const submitted = useMemo(() =>
     opportunities.filter(o =>

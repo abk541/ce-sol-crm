@@ -314,7 +314,7 @@ function AssignModal({ award, onClose, onMove }: AssignModalProps) {
 export default function FreshAwardPage() {
   const { freshAwards, moveFreshAwardToActive, currentUser, opportunities } = useStore()
   const canEdit = hasPermission(currentUser, 'opportunity:edit')
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const globalRecordId = searchParams.get('record')
   const [selected, setSelected] = useState<FreshAward | null>(null)
   const [editTarget, setEditTarget] = useState<FreshAward | null>(null)
@@ -327,7 +327,14 @@ export default function FreshAwardPage() {
     if (!target) return
     setFilter(target.status)
     setSelected(target)
-  }, [globalRecordId, freshAwards])
+    // Clear the consumed deep-link param so it can't re-trigger on store
+    // updates and so re-searching the same record navigates again.
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      next.delete('record')
+      return next
+    }, { replace: true })
+  }, [globalRecordId, freshAwards, setSearchParams])
 
   const visible = freshAwards.filter(fa => filter === 'ALL' || fa.status === filter)
 

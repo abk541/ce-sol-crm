@@ -599,6 +599,12 @@ async function canUseSolicitationId(solicitationId: string, opportunities: Oppor
   return true
 }
 
+// ── 2FA feature flag ───────────────────────────────────────
+// Two-factor auth is temporarily disabled. Flip this back to `true` to
+// fully re-enable enrollment + verification — every MFA code path below
+// remains intact and is simply gated on this flag.
+const MFA_ENABLED: boolean = false
+
 // Finalize a session after credentials + MFA both succeed. Clears the
 // pending-MFA gate, marks the store authenticated, and stamps the
 // per-user lastLoginAt watermark used by the Admin People screen.
@@ -685,6 +691,12 @@ export const useStore = create<AppState>()(
           })
           return { ok: true, needsFirst: true }
         }
+        // 2FA temporarily disabled: authenticate on credentials alone. The MFA
+        // gates below are preserved and re-activate when MFA_ENABLED is true.
+        if (!MFA_ENABLED) {
+          finalizeAuthenticatedSession(set, user)
+          return { ok: true }
+        }
         // 2FA gate: everyone needs a TOTP secret on file. Users without one
         // are pushed through enrollment before their session is authenticated.
         if (!user.mfaEnabled || !user.mfaSecret) {
@@ -735,6 +747,13 @@ export const useStore = create<AppState>()(
             toast.error('Could not save your new password. Please try again.')
             return { ok: false }
           }
+        }
+        // 2FA temporarily disabled: persist the new password and authenticate
+        // directly, skipping enrollment. Re-enables when MFA_ENABLED is true.
+        if (!MFA_ENABLED) {
+          set(s => ({ users: s.users.map(x => x.id === u.id ? updated : x) }))
+          finalizeAuthenticatedSession(set, updated)
+          return { ok: true }
         }
         // Route into MFA enrollment before authenticating — first-login users
         // never have a TOTP secret yet.

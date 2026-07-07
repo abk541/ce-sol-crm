@@ -436,9 +436,10 @@ export default function BDTrackerPage() {
   const [selectedRowId, setSelectedRowId] = useState<number | null>(null)
   const [editingRowId, setEditingRowId] = useState<number | null>(null)
   const [sourcingOpp, setSourcingOpp] = useState<Opportunity | null>(null)
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const globalRecordId = searchParams.get('record')
   const globalTab = searchParams.get('tab') as BDTab | null
+  const [highlightId, setHighlightId] = useState<string | null>(null)
   const [tab, setTab] = useState<BDTab>('SUBMITTED')
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
   const [period, setPeriod] = useState<Period | null>(null)
@@ -448,9 +449,12 @@ export default function BDTrackerPage() {
   const [perPage, setPerPage] = useState<PerPageOption>(25)
 
   useEffect(() => {
+    if (!globalRecordId && !globalTab) return
     const target = globalRecordId
       ? bdSubmissions.find(row => String(row.id) === globalRecordId || row.solicitationId === globalRecordId)
       : undefined
+    // Wait for the record to resolve before clearing the deep-link param.
+    if (globalRecordId && !target) return
     const targetTab = target?.status || (globalTab && BD_TABS.some(t => t.key === globalTab) ? globalTab : null)
 
     if (targetTab) setTab(targetTab)
@@ -459,8 +463,17 @@ export default function BDTrackerPage() {
       setFilters({ ...EMPTY_FILTERS })
       setPeriod(null)
       setPage(1)
+      setHighlightId(String(target.id))
     }
-  }, [globalRecordId, globalTab, bdSubmissions])
+    // Clear the consumed deep-link params so they can't re-trigger on store
+    // updates and so re-searching the same record navigates again.
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      next.delete('record')
+      next.delete('tab')
+      return next
+    }, { replace: true })
+  }, [globalRecordId, globalTab, bdSubmissions, setSearchParams])
 
   const filterOptions = useMemo(() => {
     return FILTERS.reduce((acc, filter) => {
@@ -753,7 +766,7 @@ export default function BDTrackerPage() {
                   const meta = STATUS_META[s.status]
                   const opp = rowOpportunity(s, opportunities)
                   const chain = getAssignmentChain(employees, opp?.assignedTo)
-                  const isGlobalTarget = globalRecordId && (String(s.id) === globalRecordId || s.solicitationId === globalRecordId)
+                  const isGlobalTarget = highlightId && (String(s.id) === highlightId || s.solicitationId === highlightId)
                   return (
                     <motion.tr
                       key={s.id}

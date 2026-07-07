@@ -4396,7 +4396,7 @@ function SortHeader({ col, label, currentKey, dir, onSort }: {
 export default function ContractsPage() {
   const { contracts, employees, currentUser } = useStore()
   const hidePricing = isOpsAgent(currentUser) && currentUser?.role === 'ASSOCIATE'
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const globalRecordId = searchParams.get('record')
   const [tab, setTab] = useState<CTab>('ACTIVE_GROUP')
   const [search, setSearch] = useState('')
@@ -4427,7 +4427,14 @@ export default function ContractsPage() {
     setColumnFilters({})
     setSelectedInitialTab('overview')
     setSelected(target)
-  }, [globalRecordId, contracts])
+    // Clear the consumed deep-link param so it can't re-trigger on store
+    // updates and so re-searching the same record navigates again.
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      next.delete('record')
+      return next
+    }, { replace: true })
+  }, [globalRecordId, contracts, setSearchParams])
 
   const assignmentFor = (c: Contract) => {
     const assignedEmployee = c.assignedTo ? employees.find(e => e.id === c.assignedTo) : null
