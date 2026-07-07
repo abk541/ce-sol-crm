@@ -563,6 +563,25 @@ function userToEmployee(user: User): Employee | null {
 // fire near-simultaneously). Overlaps are harmless but wasteful.
 let refreshInFlight = false
 
+// One non-submission report per opportunity is the invariant: an opportunity has
+// a single due datetime, so it can miss submission only once. The auto-sweep and
+// the live DB refresh can briefly race (a freshly created report is momentarily
+// overwritten by a stale DB read), which previously let the sweep mint several
+// rows for the same opportunity. Deterministic ids (nsr-<opportunityId>) make the
+// DB upsert idempotent; this collapses any transient array duplicates so the UI
+// never shows the same non-submission twice. Keeps the first occurrence.
+function dedupeNonSubReports(reports: NonSubmissionReport[]): NonSubmissionReport[] {
+  const seen = new Set<string>()
+  const result: NonSubmissionReport[] = []
+  for (const report of reports) {
+    const key = report.opportunityId
+    if (key && seen.has(key)) continue
+    if (key) seen.add(key)
+    result.push(report)
+  }
+  return result
+}
+
 // Admin users are the source of truth for assignment. We intentionally do not
 // preserve standalone employee records here: if a user is inactive/deleted, they
 // must disappear from every assignment picker immediately.
@@ -1575,8 +1594,8 @@ export const useStore = create<AppState>()(
 
         if (reportableOpps.length === 0) return
 
-        const reports = reportableOpps.map((opp, index): NonSubmissionReport => ({
-          id: `nsr${now.getTime()}-${index}`,
+        const reports = reportableOpps.map((opp): NonSubmissionReport => ({
+          id: `nsr-${opp.id}`,
           opportunityId: opp.id,
           agentUsername: nonSubmissionAgentUsername(opp, get().employees, get().currentUser),
           reason: `No proposal submission was recorded within ${gracePeriodLabel(nonSubGraceHours, nonSubGraceMinutes)} after the due datetime.`,
@@ -1585,7 +1604,7 @@ export const useStore = create<AppState>()(
         }))
 
         set(s => ({
-          nonSubReports: [...reports, ...s.nonSubReports],
+          nonSubReports: dedupeNonSubReports([...reports, ...s.nonSubReports]),
           opportunities: s.opportunities.map(opp => {
             const report = reports.find(r => r.opportunityId === opp.id)
             return report ? { ...opp, nonSubmissionReportId: report.id } : opp
@@ -2608,11 +2627,11 @@ export const useStore = create<AppState>()(
         }
         const report: NonSubmissionReport = {
           ...data,
-          id: `nsr${Date.now()}`,
+          id: `nsr-${data.opportunityId}`,
           status: 'PENDING',
           submittedAt: new Date().toISOString(),
         }
-        set(s => ({ nonSubReports: [report, ...s.nonSubReports] }))
+        set(s => ({ nonSubReports: dedupeNonSubReports([report, ...s.nonSubReports]) }))
         set(s => ({
           opportunities: s.opportunities.map(o =>
             o.id === data.opportunityId ? { ...o, nonSubmissionReportId: report.id } : o
@@ -3004,7 +3023,7 @@ export const useStore = create<AppState>()(
               freshAwards: data.freshAwards,
               pastPerformances: data.pastPerformances,
               subcontractors: data.subcontractors,
-              nonSubReports: data.nonSubReports.filter(r => !canceledIds.has(r.opportunityId)),
+              nonSubReports: dedupeNonSubReports(data.nonSubReports.filter(r => !canceledIds.has(r.opportunityId))),
               deletionRequests: data.deletionRequests.filter(r => !canceledIds.has(r.opportunityId)),
               bdSubmissions,
               nextInvoiceNumber: Math.max(
@@ -3122,7 +3141,7 @@ export const useStore = create<AppState>()(
               freshAwards: data.freshAwards,
               pastPerformances: data.pastPerformances,
               subcontractors: data.subcontractors,
-              nonSubReports: data.nonSubReports.filter(r => !canceledIds.has(r.opportunityId)),
+              nonSubReports: dedupeNonSubReports(data.nonSubReports.filter(r => !canceledIds.has(r.opportunityId))),
               deletionRequests: data.deletionRequests.filter(r => !canceledIds.has(r.opportunityId)),
               bdSubmissions: data.bdSubmissions,
               lastSyncedAt: Date.now(),

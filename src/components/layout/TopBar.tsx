@@ -205,13 +205,14 @@ export default function TopBar() {
             <Icon size={16} style={{ color: accent }} />
           </span>
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-bold text-slate-900 truncate">{n.title}</p>
-            <p className="text-xs text-slate-500 line-clamp-2">{n.message}</p>
+            <p className="text-sm font-bold truncate" style={{ color: 'var(--text-primary)' }}>{n.title}</p>
+            <p className="text-xs line-clamp-2" style={{ color: 'var(--text-secondary)' }}>{n.message}</p>
           </div>
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); toast.dismiss(t.id) }}
-            className="flex-shrink-0 text-slate-400 hover:text-slate-700"
+            className="flex-shrink-0 transition-colors hover:opacity-70"
+            style={{ color: 'var(--text-tertiary)' }}
             aria-label="Dismiss notification"
           >
             <X size={14} />

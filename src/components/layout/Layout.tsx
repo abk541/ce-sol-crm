@@ -18,7 +18,7 @@ export default function Layout() {
       <Toaster
         position="top-center"
         gutter={10}
-        containerStyle={{ top: 24, zIndex: 9999 }}
+        containerStyle={{ top: 24, zIndex: 2147483000 }}
         toastOptions={{
           duration: 6000,
           style: {
