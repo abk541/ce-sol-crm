@@ -386,6 +386,14 @@ function normalizeOpportunityAssignmentStatus(
   return opp
 }
 
+// app_settings keys for the workspace-wide non-submission grace window.
+// Persisted to Supabase (migration 025) so every user's sweep uses the same
+// window; without this the setting lived only in each browser's localStorage,
+// so any session still on the default fired reports early and the configured
+// value looked ignored.
+const NON_SUB_GRACE_HOURS_KEY = 'non_sub_grace_hours'
+const NON_SUB_GRACE_MINUTES_KEY = 'non_sub_grace_minutes'
+
 function deadlineTimeMs(opp: Opportunity): number | null {
   return opportunityDeadlineTimeMs(opp)
 }
@@ -2989,11 +2997,20 @@ export const useStore = create<AppState>()(
             console.error('[Store] fetchPermissionOverrides failed', err)
           }
 
-          // Pull runtime app settings (integration keys) from Supabase.
+          // Pull runtime app settings (integration keys + the shared
+          // non-submission grace window) from Supabase.
           try {
             const s = await fetchAppSettings()
             if (s.ok && s.payload) {
-              set({ appSettings: s.payload, appSettingsSyncStatus: 'synced' })
+              // Hydrate the grace window from the workspace-wide value so this
+              // browser's sweep matches every other session instead of its own
+              // localStorage default.
+              const gracePatch: { nonSubGraceHours?: number; nonSubGraceMinutes?: number } = {}
+              const rawHours = s.payload[NON_SUB_GRACE_HOURS_KEY]
+              const rawMinutes = s.payload[NON_SUB_GRACE_MINUTES_KEY]
+              if (rawHours !== undefined) gracePatch.nonSubGraceHours = Math.max(0, Math.trunc(Number(rawHours) || 0))
+              if (rawMinutes !== undefined) gracePatch.nonSubGraceMinutes = Math.max(0, Math.trunc(Number(rawMinutes) || 0))
+              set({ appSettings: s.payload, appSettingsSyncStatus: 'synced', ...gracePatch })
             } else if (s.missingTable) {
               set({ appSettingsSyncStatus: 'local' })
             }
@@ -3008,10 +3025,26 @@ export const useStore = create<AppState>()(
 
       // ── UI ──────────────────────────────────────────────────────────
       toggleSidebar: () => set(s => ({ sidebarCollapsed: !s.sidebarCollapsed })),
-      updateNonSubGracePeriod: (hours, minutes) => set({
-        nonSubGraceHours: Math.max(0, Math.trunc(Number(hours) || 0)),
-        nonSubGraceMinutes: Math.max(0, Math.trunc(Number(minutes) || 0)),
-      }),
+      updateNonSubGracePeriod: (hours, minutes) => {
+        const cleanHours = Math.max(0, Math.trunc(Number(hours) || 0))
+        const cleanMinutes = Math.max(0, Math.trunc(Number(minutes) || 0))
+        set(s => ({
+          nonSubGraceHours: cleanHours,
+          nonSubGraceMinutes: cleanMinutes,
+          appSettings: {
+            ...s.appSettings,
+            [NON_SUB_GRACE_HOURS_KEY]: String(cleanHours),
+            [NON_SUB_GRACE_MINUTES_KEY]: String(cleanMinutes),
+          },
+        }))
+        // Persist to the shared app_settings table so the grace window is
+        // workspace-wide, not just this browser's localStorage. Fire-and-forget
+        // to keep the action synchronous; localStorage remains the fallback.
+        if (isSupabaseConnected) {
+          void saveAppSetting(NON_SUB_GRACE_HOURS_KEY, String(cleanHours))
+          void saveAppSetting(NON_SUB_GRACE_MINUTES_KEY, String(cleanMinutes))
+        }
+      },
       setAppSetting: async (key, value) => {
         const trimmedKey = String(key ?? '').trim()
         const nextValue  = String(value ?? '')
