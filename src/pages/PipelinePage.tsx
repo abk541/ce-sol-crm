@@ -2092,21 +2092,20 @@ export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () 
     setDirty(true)
   }
 
-  const onPickFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const onPickFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? [])
-    if (files.length) {
-      const additions: FileAttachment[] = files.map(file => ({
-        id: crypto.randomUUID?.() ?? `quote-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        name: file.name,
-        attachedAt: new Date().toISOString(),
-        uploadedBy: currentUser?.username ?? '',
-        mimeType: file.type || undefined,
-        size: file.size,
-      }))
+    if (fileInputRef.current) fileInputRef.current.value = ''
+    if (!files.length) return
+    const now = new Date().toISOString()
+    try {
+      const additions = await Promise.all(
+        files.map(file => fileToProposalAttachment(file, now, currentUser?.username ?? '')),
+      )
       setDraft(p => ({ ...p, quoteFiles: [...(p.quoteFiles ?? []), ...additions] }))
       setDirty(true)
+    } catch {
+      toast.error('One or more quote files could not be read.')
     }
-    if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
   const removeDraftQuote = (id: string) => {
@@ -2471,11 +2470,22 @@ export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () 
                           <span className="w-7 h-7 rounded-md bg-white border border-emerald-200 flex items-center justify-center flex-shrink-0">
                             <FileText size={13} className="text-emerald-600" />
                           </span>
-                          <span className="text-xs font-bold text-emerald-900 truncate">{q.name}</span>
+                          {q.dataUrl ? (
+                            <a href={q.dataUrl} download={q.name} className="text-xs font-bold text-emerald-900 truncate underline decoration-emerald-400 underline-offset-2 hover:text-emerald-700" title={`Download ${q.name}`}>{q.name}</a>
+                          ) : (
+                            <span className="text-xs font-bold text-emerald-900 truncate">{q.name}</span>
+                          )}
                         </div>
-                        <button type="button" onClick={() => removeDraftQuote(q.id)} className="w-6 h-6 rounded flex items-center justify-center text-emerald-700 hover:bg-emerald-100">
-                          <X size={12} />
-                        </button>
+                        <div className="flex items-center gap-1 flex-shrink-0">
+                          {q.dataUrl && (
+                            <a href={q.dataUrl} download={q.name} className="w-6 h-6 rounded flex items-center justify-center text-emerald-700 hover:bg-emerald-100" title={`Download ${q.name}`}>
+                              <Download size={12} />
+                            </a>
+                          )}
+                          <button type="button" onClick={() => removeDraftQuote(q.id)} className="w-6 h-6 rounded flex items-center justify-center text-emerald-700 hover:bg-emerald-100" title="Remove">
+                            <X size={12} />
+                          </button>
+                        </div>
                       </div>
                     ))}
                     <button
@@ -2633,11 +2643,22 @@ export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () 
                           <span className="w-7 h-7 rounded-md bg-white border border-emerald-200 flex items-center justify-center flex-shrink-0">
                             <FileText size={13} className="text-emerald-600" />
                           </span>
-                          <span className="text-xs font-bold text-emerald-900 truncate">{q.name}</span>
+                          {q.dataUrl ? (
+                            <a href={q.dataUrl} download={q.name} className="text-xs font-bold text-emerald-900 truncate underline decoration-emerald-400 underline-offset-2 hover:text-emerald-700" title={`Download ${q.name}`}>{q.name}</a>
+                          ) : (
+                            <span className="text-xs font-bold text-emerald-900 truncate">{q.name}</span>
+                          )}
                         </div>
-                        <button type="button" onClick={() => removeDraftQuote(q.id)} className="w-6 h-6 rounded flex items-center justify-center text-emerald-700 hover:bg-emerald-100">
-                          <X size={12} />
-                        </button>
+                        <div className="flex items-center gap-1 flex-shrink-0">
+                          {q.dataUrl && (
+                            <a href={q.dataUrl} download={q.name} className="w-6 h-6 rounded flex items-center justify-center text-emerald-700 hover:bg-emerald-100" title={`Download ${q.name}`}>
+                              <Download size={12} />
+                            </a>
+                          )}
+                          <button type="button" onClick={() => removeDraftQuote(q.id)} className="w-6 h-6 rounded flex items-center justify-center text-emerald-700 hover:bg-emerald-100" title="Remove">
+                            <X size={12} />
+                          </button>
+                        </div>
                       </div>
                     ))}
                     <button
@@ -3794,8 +3815,204 @@ function DueDateTimeCell({ opp }: { opp: Opportunity }) {
   )
 }
 
+/**
+ * Shared read-only opportunity detail body used by the Pipeline drawer and the
+ * Non-Submission Reports window so both surfaces show the exact same window.
+ * Renders the hero + informational sections (Overview / Team / Schedule /
+ * Contracting / Mandatory Events / Comments / Sourcing). The action footer is
+ * intentionally NOT part of this body — each surface owns its own actions.
+ */
+export function OpportunityDetailBody({
+  opp,
+  canWriteSourcing = false,
+  onDeleteSourcing,
+}: {
+  opp: Opportunity
+  canWriteSourcing?: boolean
+  onDeleteSourcing?: (subId: string, companyName?: string) => void
+}) {
+  const employees = useStore(s => s.employees)
+  return (
+    <>
+      <div
+        className="mb-6 rounded-3xl border p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
+        style={{
+          background: 'linear-gradient(130deg, color-mix(in srgb, var(--accent) 10%, var(--bg-raised)), color-mix(in srgb, var(--accent-2) 10%, var(--bg-card)))',
+          borderColor: 'var(--border-strong)',
+        }}
+      >
+        <div className="flex flex-wrap items-center gap-2">
+          <PriorityBadge p={opp.priority} />
+          <span className="rounded-lg border px-2.5 py-1 text-[10px] font-black uppercase tracking-wide" style={{ borderColor: 'color-mix(in srgb, var(--info-fg) 40%, transparent)', background: 'var(--info-bg)', color: 'var(--info-fg)' }}>{typeLabel(opp.type)}</span>
+          <span className="rounded-lg border px-2.5 py-1 font-mono text-[10px] font-bold text-[var(--text-primary)]" style={{ borderColor: 'color-mix(in srgb, var(--accent) 35%, transparent)', background: 'var(--accent-soft)' }}>{opp.solicitationId}</span>
+        </div>
+        <div className="mt-3 grid gap-3 text-xs text-slate-300 md:grid-cols-3">
+          <div className="min-w-0">
+            <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">Agency</p>
+            <p className="truncate font-semibold text-[#F8FBF7]" title={opp.client}>{opp.client || '-'}</p>
+          </div>
+          <div className="min-w-0">
+            <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">Due</p>
+            <p className="truncate font-semibold text-[#F8FBF7]">
+              {formatOpportunitySourceDueDateTime(opp)}
+            </p>
+          </div>
+          <div className="min-w-0">
+            <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">Location</p>
+            <p className="truncate font-semibold text-[#F8FBF7]" title={opp.location}>{opp.location || '-'}</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <DrawerSection title="Overview" variant="premium">
+          <DrawerField label="Client"    value={opp.client} variant="premium" />
+          <DrawerField label="Type"      value={typeLabel(opp.type)} variant="premium" />
+          <DrawerField label="Set-Aside" value={opp.setAside} variant="premium" />
+          <DrawerField label="NAICS"     value={opp.naicsCode} variant="premium" />
+          <DrawerField label="Location"  value={opp.location} variant="premium" />
+          <DrawerField label="Period"    value={opp.period} variant="premium" />
+        </DrawerSection>
+
+        <DrawerSection title="Team" variant="premium">
+          {(() => {
+            const chain = getAssignmentChain(employees, opp.assignedTo)
+            return (
+              <>
+                <DrawerField label="Manager" value={chain.manager?.name || '-'} variant="premium" />
+                <DrawerField label="Team Lead" value={chain.teamLead?.name || '-'} variant="premium" />
+                <DrawerField label="Associate" value={chain.associate?.name || '-'} variant="premium" />
+              </>
+            )
+          })()}
+        </DrawerSection>
+
+        <DrawerSection title="Schedule" variant="premium">
+          <DrawerField label="Due Date"  value={formatDate(opp.dueDate, { month: 'long', day: 'numeric', year: 'numeric' })} variant="premium" />
+          <DrawerField label="Source Time" value={formatOpportunitySourceDueDateTime(opp)} variant="premium" />
+          {formatOpportunityMoroccoDueDateTime(opp) && (
+            <DrawerField label="Morocco (GMT+1)" value={
+              <span className="font-bold" style={{ color: 'var(--info-fg)' }}>
+                {formatOpportunityMoroccoDueDateTime(opp)}
+              </span>
+            } variant="premium" />
+          )}
+          <DrawerField label="Captured On" value={opp.capturedOn} variant="premium" />
+        </DrawerSection>
+
+      </div>
+
+      {opp.samGovContacts && opp.samGovContacts.length > 0 && (
+        <DrawerSection title={`Contracting Information (${opp.samGovContacts.length})`} variant="premium">
+          <SamGovContactsPanel contacts={opp.samGovContacts} />
+        </DrawerSection>
+      )}
+
+      {(opp.mandatoryEventsList?.length || opp.mandatoryEvents) && (
+        <DrawerSection title="Mandatory Events" variant="premium">
+          <MandatoryEventsList
+            events={opp.mandatoryEventsList}
+            legacy={opp.mandatoryEvents}
+          />
+        </DrawerSection>
+      )}
+
+      {opp.comments && opp.comments.length > 0 && (
+        <DrawerSection title={`Comments (${opp.comments.length})`} variant="premium">
+          {opp.comments.map((c: Comment) => (
+            <div key={c.id} className="border-b border-[var(--border-default)] py-3 last:border-0">
+              <div className="flex items-center justify-between mb-0.5 gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-xs font-bold text-[#F8FBF7] truncate">{c.author}</span>
+                  {c.editedAt && (
+                    <span className="text-[10px] italic text-slate-500" title={`Last edited ${formatDateTime(c.editedAt)}`}>(edited)</span>
+                  )}
+                </div>
+                <span className="text-[10px] font-medium text-slate-400">{formatDateTime(c.createdAt)}</span>
+              </div>
+              <p className="text-xs leading-5 text-slate-300 whitespace-pre-wrap">{c.text}</p>
+              <CommentAttachments attachments={c.attachments} />
+            </div>
+          ))}
+        </DrawerSection>
+      )}
+
+      {opp.subcontractors && opp.subcontractors.length > 0 && (
+        <DrawerSection title={`Sourcing (${opp.subcontractors.length})`} variant="premium">
+          {opp.subcontractors.map(s => {
+            const contacts = normalizeSourcingContacts(s.contacts?.length ? s.contacts : [{
+              id: 'primary',
+              name: s.contactName,
+              email: s.email || undefined,
+              phone: s.phone || undefined,
+            }])
+            return (
+              <div key={s.id} className="border-b border-[var(--border-default)] py-3 last:border-0">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-bold text-[#F8FBF7]">{s.companyName}</p>
+                    {contacts.length > 0 ? (
+                      <div className="mt-2 grid gap-2 md:grid-cols-2">
+                        {contacts.map(contact => (
+                          <div key={contact.id} className="rounded-lg border border-[var(--border-default)] bg-white/[0.04] px-3 py-2">
+                            <p className="text-xs font-bold text-[#F8FBF7]">{contact.name || 'Unnamed POC'}</p>
+                            <div className="mt-1 space-y-1 text-[11px] text-slate-400">
+                              {contact.email && <p className="break-all">{contact.email}</p>}
+                              {contact.phone && <p>{contact.phone}</p>}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-slate-400">No POCs on file</p>
+                    )}
+                    {s.quoteFile && (
+                      <p className="mt-2 flex items-center gap-1 text-[10px] font-semibold" style={{ color: 'var(--info-fg)' }}>
+                        <FileText size={9} /> {s.quoteFile}
+                      </p>
+                    )}
+                    {(s.quoteFiles ?? []).map(q => (
+                      q.dataUrl ? (
+                        <a
+                          key={q.id}
+                          href={q.dataUrl}
+                          download={q.name}
+                          className="mt-1 flex items-center gap-1 text-[10px] font-semibold underline decoration-dotted underline-offset-2 hover:opacity-80"
+                          style={{ color: 'var(--info-fg)' }}
+                          title={`Download ${q.name}`}
+                        >
+                          <Download size={9} /> {q.name}
+                        </a>
+                      ) : (
+                        <p key={q.id} className="mt-1 flex items-center gap-1 text-[10px] font-semibold" style={{ color: 'var(--info-fg)' }}>
+                          <FileText size={9} /> {q.name}
+                        </p>
+                      )
+                    ))}
+                  </div>
+                  {canWriteSourcing && onDeleteSourcing && (
+                    <button
+                      type="button"
+                      onClick={() => onDeleteSourcing(s.id, s.companyName)}
+                      className="inline-flex flex-shrink-0 items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11px] font-bold transition-all hover:opacity-80"
+                      style={{ borderColor: 'color-mix(in srgb, var(--error-fg) 30%, transparent)', background: 'var(--error-bg)', color: 'var(--error-fg)' }}
+                      title="Delete subcontractor"
+                    >
+                      <Trash2 size={11} /> Delete
+                    </button>
+                  )}
+                </div>
+              </div>
+            )
+          })}
+        </DrawerSection>
+      )}
+    </>
+  )
+}
+
 export default function PipelinePage() {
-  const { opportunities, employees, currentUser, deletionRequests, moveOpportunityToBDTracker, deleteSubcontractor, requireAssociateForActivePipeline, updateOpportunity } = useStore()
+  const { opportunities, employees, currentUser, deletionRequests, moveOpportunityToBDTracker, deleteSubcontractor, requireAssociateForActivePipeline, updateOpportunity, submitNonSubReport } = useStore()
   const [searchParams, setSearchParams] = useSearchParams()
   const globalRecordId = searchParams.get('record')
   const mineScope = searchParams.get('mine') === '1'
@@ -3826,6 +4043,9 @@ export default function PipelinePage() {
   const canCancelOpportunities = hasPermission(currentUser, 'opportunity:cancel')
   const canRequestDeletion = hasPermission(currentUser, 'opportunity:deleteRequest')
   const canWriteSourcing = hasPermission(currentUser, 'sourcing:write')
+  // Only the Capture Manager (the report reviewer) can manually file a non-submission
+  // report — a safety valve for when a submission was missed or mislabeled.
+  const canFileNonSubmission = hasPermission(currentUser, 'nonSubmission:review')
   const canOpenEditModal = canEditOpportunities || canCommentOpportunities
   const pendingDeletionIds = useMemo(
     () => new Set(deletionRequests.filter(r => r.status === 'PENDING').map(r => r.opportunityId)),
@@ -3946,6 +4166,26 @@ export default function PipelinePage() {
       return
     }
     setDeleteOpp(o)
+  }
+
+  const handleFileNonSubmission = (o: Opportunity) => {
+    if (!canFileNonSubmission) {
+      toast.error('Only the Capture Manager can file non-submission reports.')
+      return
+    }
+    if (o.nonSubmissionReportId) {
+      toast.error('This opportunity already has a non-submission report.')
+      return
+    }
+    const chain = getAssignmentChain(employees, o.assignedTo)
+    const agentUsername = chain.associate?.email.split('@')[0] || o.supportAgent || currentUser?.username || 'system'
+    submitNonSubReport({
+      opportunityId: o.id,
+      agentUsername,
+      reason: `Manually filed by ${currentUser?.name ?? 'Capture Manager'} — proposal was not submitted by the deadline.`,
+    })
+    toast.success(`Non-submission report filed for "${o.solicitation}".`)
+    setSelectedOpp(null)
   }
 
   const handleDeleteSourcing = (subId: string, companyName?: string) => {
@@ -4187,166 +4427,11 @@ export default function PipelinePage() {
       >
         {selectedOpp && (
           <>
-            <div
-              className="mb-6 rounded-3xl border p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
-              style={{
-                background: 'linear-gradient(130deg, color-mix(in srgb, var(--accent) 10%, var(--bg-raised)), color-mix(in srgb, var(--accent-2) 10%, var(--bg-card)))',
-                borderColor: 'var(--border-strong)',
-              }}
-            >
-              <div className="flex flex-wrap items-center gap-2">
-                <PriorityBadge p={selectedOpp.priority} />
-                <span className="rounded-lg border px-2.5 py-1 text-[10px] font-black uppercase tracking-wide" style={{ borderColor: 'color-mix(in srgb, var(--info-fg) 40%, transparent)', background: 'var(--info-bg)', color: 'var(--info-fg)' }}>{typeLabel(selectedOpp.type)}</span>
-                <span className="rounded-lg border px-2.5 py-1 font-mono text-[10px] font-bold text-[var(--text-primary)]" style={{ borderColor: 'color-mix(in srgb, var(--accent) 35%, transparent)', background: 'var(--accent-soft)' }}>{selectedOpp.solicitationId}</span>
-              </div>
-              <div className="mt-3 grid gap-3 text-xs text-slate-300 md:grid-cols-3">
-                <div className="min-w-0">
-                  <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">Agency</p>
-                  <p className="truncate font-semibold text-[#F8FBF7]" title={selectedOpp.client}>{selectedOpp.client || '-'}</p>
-                </div>
-                <div className="min-w-0">
-                  <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">Due</p>
-                  <p className="truncate font-semibold text-[#F8FBF7]">
-                    {formatOpportunitySourceDueDateTime(selectedOpp)}
-                  </p>
-                </div>
-                <div className="min-w-0">
-                  <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">Location</p>
-                  <p className="truncate font-semibold text-[#F8FBF7]" title={selectedOpp.location}>{selectedOpp.location || '-'}</p>
-                </div>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-              <DrawerSection title="Overview" variant="premium">
-                <DrawerField label="Client"    value={selectedOpp.client} variant="premium" />
-                <DrawerField label="Type"      value={typeLabel(selectedOpp.type)} variant="premium" />
-                <DrawerField label="Set-Aside" value={selectedOpp.setAside} variant="premium" />
-                <DrawerField label="NAICS"     value={selectedOpp.naicsCode} variant="premium" />
-                <DrawerField label="Location"  value={selectedOpp.location} variant="premium" />
-                <DrawerField label="Period"    value={selectedOpp.period} variant="premium" />
-              </DrawerSection>
-
-              <DrawerSection title="Team" variant="premium">
-                {(() => {
-                  const chain = getAssignmentChain(employees, selectedOpp.assignedTo)
-                  return (
-                    <>
-                      <DrawerField label="Manager" value={chain.manager?.name || '-'} variant="premium" />
-                      <DrawerField label="Team Lead" value={chain.teamLead?.name || '-'} variant="premium" />
-                      <DrawerField label="Associate" value={chain.associate?.name || '-'} variant="premium" />
-                    </>
-                  )
-                })()}
-              </DrawerSection>
-
-              <DrawerSection title="Schedule" variant="premium">
-                <DrawerField label="Due Date"  value={formatDate(selectedOpp.dueDate, { month: 'long', day: 'numeric', year: 'numeric' })} variant="premium" />
-                <DrawerField label="Source Time" value={formatOpportunitySourceDueDateTime(selectedOpp)} variant="premium" />
-                {formatOpportunityMoroccoDueDateTime(selectedOpp) && (
-                  <DrawerField label="Morocco (GMT+1)" value={
-                    <span className="font-bold" style={{ color: 'var(--info-fg)' }}>
-                      {formatOpportunityMoroccoDueDateTime(selectedOpp)}
-                    </span>
-                  } variant="premium" />
-                )}
-                <DrawerField label="Captured On" value={selectedOpp.capturedOn} variant="premium" />
-              </DrawerSection>
-
-            </div>
-
-            {selectedOpp.samGovContacts && selectedOpp.samGovContacts.length > 0 && (
-              <DrawerSection title={`Contracting Information (${selectedOpp.samGovContacts.length})`} variant="premium">
-                <SamGovContactsPanel contacts={selectedOpp.samGovContacts} />
-              </DrawerSection>
-            )}
-
-            {(selectedOpp.mandatoryEventsList?.length || selectedOpp.mandatoryEvents) && (
-              <DrawerSection title="Mandatory Events" variant="premium">
-                <MandatoryEventsList
-                  events={selectedOpp.mandatoryEventsList}
-                  legacy={selectedOpp.mandatoryEvents}
-                />
-              </DrawerSection>
-            )}
-
-            {selectedOpp.comments && selectedOpp.comments.length > 0 && (
-              <DrawerSection title={`Comments (${selectedOpp.comments.length})`} variant="premium">
-                {selectedOpp.comments.map((c: Comment) => (
-                  <div key={c.id} className="border-b border-[var(--border-default)] py-3 last:border-0">
-                    <div className="flex items-center justify-between mb-0.5 gap-2">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span className="text-xs font-bold text-[#F8FBF7] truncate">{c.author}</span>
-                        {c.editedAt && (
-                          <span className="text-[10px] italic text-slate-500" title={`Last edited ${formatDateTime(c.editedAt)}`}>(edited)</span>
-                        )}
-                      </div>
-                      <span className="text-[10px] font-medium text-slate-400">{formatDateTime(c.createdAt)}</span>
-                    </div>
-                    <p className="text-xs leading-5 text-slate-300 whitespace-pre-wrap">{c.text}</p>
-                    <CommentAttachments attachments={c.attachments} />
-                  </div>
-                ))}
-              </DrawerSection>
-            )}
-
-            {selectedOpp.subcontractors && selectedOpp.subcontractors.length > 0 && (
-              <DrawerSection title={`Sourcing (${selectedOpp.subcontractors.length})`} variant="premium">
-                {selectedOpp.subcontractors.map(s => {
-                  const contacts = normalizeSourcingContacts(s.contacts?.length ? s.contacts : [{
-                    id: 'primary',
-                    name: s.contactName,
-                    email: s.email || undefined,
-                    phone: s.phone || undefined,
-                  }])
-                  return (
-                    <div key={s.id} className="border-b border-[var(--border-default)] py-3 last:border-0">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm font-bold text-[#F8FBF7]">{s.companyName}</p>
-                          {contacts.length > 0 ? (
-                            <div className="mt-2 grid gap-2 md:grid-cols-2">
-                              {contacts.map(contact => (
-                                <div key={contact.id} className="rounded-lg border border-[var(--border-default)] bg-white/[0.04] px-3 py-2">
-                                  <p className="text-xs font-bold text-[#F8FBF7]">{contact.name || 'Unnamed POC'}</p>
-                                  <div className="mt-1 space-y-1 text-[11px] text-slate-400">
-                                    {contact.email && <p className="break-all">{contact.email}</p>}
-                                    {contact.phone && <p>{contact.phone}</p>}
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          ) : (
-                            <p className="text-xs text-slate-400">No POCs on file</p>
-                          )}
-                          {s.quoteFile && (
-                            <p className="mt-2 flex items-center gap-1 text-[10px] font-semibold" style={{ color: 'var(--info-fg)' }}>
-                              <FileText size={9} /> {s.quoteFile}
-                            </p>
-                          )}
-                          {(s.quoteFiles ?? []).map(q => (
-                            <p key={q.id} className="mt-1 flex items-center gap-1 text-[10px] font-semibold" style={{ color: 'var(--info-fg)' }}>
-                              <FileText size={9} /> {q.name}
-                            </p>
-                          ))}
-                        </div>
-                        {canWriteSourcing && (
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteSourcing(s.id, s.companyName)}
-                            className="inline-flex flex-shrink-0 items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11px] font-bold transition-all hover:opacity-80"
-                            style={{ borderColor: 'color-mix(in srgb, var(--error-fg) 30%, transparent)', background: 'var(--error-bg)', color: 'var(--error-fg)' }}
-                            title="Delete subcontractor"
-                          >
-                            <Trash2 size={11} /> Delete
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  )
-                })}
-              </DrawerSection>
-            )}
+            <OpportunityDetailBody
+              opp={selectedOpp}
+              canWriteSourcing={canWriteSourcing}
+              onDeleteSourcing={handleDeleteSourcing}
+            />
 
             <div className="sticky bottom-0 -mx-6 -mb-5 mt-4 flex flex-wrap gap-2 border-t px-6 py-4 backdrop-blur" style={{ borderColor: 'var(--border-default)', background: 'color-mix(in srgb, var(--bg-app) 94%, transparent)' }}>
               <SamGovListingButton opportunity={selectedOpp} label="Open SAM.gov" variant="premium" />
@@ -4367,6 +4452,16 @@ export default function PipelinePage() {
                     {canSubmit && ownedSelected && OPP_VIEW_STATUSES.includes(selectedOpp.status as any) && (
                       <button className="btn-primary text-xs gap-1.5" onClick={() => { setSelectedOpp(null); setSubmitOpp(selectedOpp) }}>
                         <Send size={12} /> Submit Proposal
+                      </button>
+                    )}
+                    {canFileNonSubmission && !selectedOpp.nonSubmissionReportId && OPP_VIEW_STATUSES.includes(selectedOpp.status as any) && (
+                      <button
+                        className="btn-secondary text-xs gap-1.5"
+                        style={{ borderColor: 'color-mix(in srgb, var(--warning-fg) 35%, transparent)', background: 'var(--warning-bg)', color: 'var(--warning-fg)' }}
+                        onClick={() => handleFileNonSubmission(selectedOpp)}
+                        title="File a non-submission report for this opportunity"
+                      >
+                        <FileText size={12} /> File Non-Submission
                       </button>
                     )}
                     {(canCancelOpportunities || (canRequestDeletion && ownedSelected)) && (

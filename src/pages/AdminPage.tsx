@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useCallback, Fragment } from 'react'
 import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Plus, Pencil, Trash2, X, Check, Shield, ShieldOff, Search, Clock, Save, Network, List, GripVertical, Eye, EyeOff, KeyRound, RotateCcw, Users, GitBranch, AlertTriangle, Bomb, Database, FileText, Award, Bell, Activity, Briefcase, FolderTree, UserCog, Wifi, WifiOff, Download, Upload, ChevronDown, ChevronUp, RefreshCw, HardDrive, Lock, Target } from 'lucide-react'
+import { Plus, Pencil, Trash2, X, Check, Shield, ShieldOff, Search, Save, Network, List, GripVertical, Eye, EyeOff, KeyRound, RotateCcw, Users, GitBranch, AlertTriangle, Bomb, Database, FileText, Award, Bell, Activity, Briefcase, FolderTree, UserCog, Wifi, WifiOff, Download, Upload, ChevronDown, ChevronUp, RefreshCw, HardDrive, Lock, Target } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import type { User, Role, EmployeeTeam, Goal, GoalMetric, GoalScope, Employee, Opportunity, FreshAward } from '../types'
 import { avatarColor, useEscapeKey } from '../lib/utils'
@@ -496,9 +496,6 @@ export default function AdminPage() {
     updateUser,
     adminResetMfa,
     currentUser,
-    nonSubGraceHours,
-    nonSubGraceMinutes,
-    updateNonSubGracePeriod,
     requireAssociateForActivePipeline,
     setRequireAssociateForActivePipeline,
     opportunities,
@@ -565,8 +562,6 @@ export default function AdminPage() {
   const [view, setView] = useState<'hierarchy' | 'table'>('hierarchy')
   const [dragId, setDragId] = useState<string | null>(null)
   const [dragOverKey, setDragOverKey] = useState<string | null>(null)
-  const [graceHours, setGraceHours] = useState(String(nonSubGraceHours))
-  const [graceMinutes, setGraceMinutes] = useState(String(nonSubGraceMinutes))
   const [danger, setDanger] = useState<DangerAction | null>(null)
   const [dangerBusy, setDangerBusy] = useState(false)
   const [contractClient, setContractClient] = useState<string>('')
@@ -736,15 +731,6 @@ export default function AdminPage() {
     toast.success(`${user.name} \u2192 ${ROLE_LABELS[next.role]}${where}`)
   }
 
-  const saveNonSubTiming = () => {
-    const hours = Math.max(0, Math.trunc(Number(graceHours) || 0))
-    const minutes = Math.max(0, Math.trunc(Number(graceMinutes) || 0))
-    updateNonSubGracePeriod(hours, minutes)
-    setGraceHours(String(hours))
-    setGraceMinutes(String(minutes))
-    toast.success('Non-submission timing updated')
-  }
-
   return (
     <div className="p-6 page-enter">
       <div className="mb-6">
@@ -808,45 +794,6 @@ export default function AdminPage() {
 
       {activeTab === 'workspace' && (<>
       <SectionHeader icon={<Save size={14} />} label="Workspace settings" accent="indigo" />
-
-      <div className="glass rounded-2xl p-4 mb-6">
-        <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
-          <div className="max-w-xl">
-            <div className="flex items-center gap-2 mb-1">
-              <Clock size={16} className="text-amber-300" />
-              <h2 className="text-sm font-bold text-white">Non-Submission Timing</h2>
-            </div>
-            <p className="text-xs text-slate-400">
-              Assigned opportunities move directly to Non-Submission Reports after the due datetime plus this grace period.
-            </p>
-          </div>
-          <div className="flex flex-col sm:flex-row gap-3 sm:items-end">
-            <div>
-              <label className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 block mb-1">Hours</label>
-              <input
-                type="number"
-                min={0}
-                value={graceHours}
-                onChange={e => setGraceHours(e.target.value)}
-                className="input-field w-full sm:w-28"
-              />
-            </div>
-            <div>
-              <label className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 block mb-1">Minutes</label>
-              <input
-                type="number"
-                min={0}
-                value={graceMinutes}
-                onChange={e => setGraceMinutes(e.target.value)}
-                className="input-field w-full sm:w-28"
-              />
-            </div>
-            <button type="button" onClick={saveNonSubTiming} className="btn-primary justify-center">
-              <Save size={13} /> Save Timing
-            </button>
-          </div>
-        </div>
-      </div>
 
       <div className="glass rounded-2xl p-4 mb-6">
         <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">

@@ -10,7 +10,7 @@ import type {
   CompanyCertificationStatus, EmployeeRequestStatus,
   ContractLineItem, ContractInvoice, ContractVehicleOrder, UserPreferences, EmployeeTeam,
   ContractStatus, Role,
-  Goal,
+  Goal, Comment,
 } from '../types'
 import {
   MOCK_USERS, MOCK_OPPORTUNITIES, MOCK_NOTIFICATIONS,
@@ -267,6 +267,8 @@ interface AppState {
   submitNonSubReport: (data: Omit<NonSubmissionReport, 'id' | 'submittedAt' | 'status'>) => void
   reviewNonSubReport: (id: string, action: 'APPROVED' | 'DECLINED', reviewNote: string, reviewedBy: string) => void
   returnNonSubmissionToPipeline: (reportId: string) => void
+  updateNonSubReportReason: (reportId: string, reason: string) => void
+  addNonSubReportComment: (reportId: string, text: string) => void
 
   // ── Deletion requests ──────────────────────────────────────────────
   requestDeletion: (opportunityId: string, requestedBy: string, reason: string) => void
@@ -399,6 +401,12 @@ function normalizeOpportunityAssignmentStatus(
 const NON_SUB_GRACE_HOURS_KEY = 'non_sub_grace_hours'
 const NON_SUB_GRACE_MINUTES_KEY = 'non_sub_grace_minutes'
 
+// Fixed 12-hour non-submission window. This used to be an admin-configurable
+// grace period, but the variable timer produced early/duplicate reports, so it
+// is now hard-coded: an assigned opportunity moves to Non-Submission Reports
+// exactly 12 hours after its due datetime.
+const NON_SUBMISSION_GRACE_MS = 12 * 60 * 60 * 1000
+
 function deadlineTimeMs(opp: Opportunity): number | null {
   return opportunityDeadlineTimeMs(opp)
 }
@@ -406,17 +414,6 @@ function deadlineTimeMs(opp: Opportunity): number | null {
 function isNonSubmissionGraceReached(opp: Opportunity, graceMs: number, now = new Date()): boolean {
   const deadlineMs = deadlineTimeMs(opp)
   return deadlineMs !== null && deadlineMs + Math.max(0, graceMs) <= now.getTime()
-}
-
-function gracePeriodLabel(hours: number, minutes: number): string {
-  const cleanHours = Math.max(0, Math.trunc(hours))
-  const cleanMinutes = Math.max(0, Math.trunc(minutes))
-  const parts = [
-    cleanHours ? `${cleanHours} hour${cleanHours === 1 ? '' : 's'}` : '',
-    cleanMinutes ? `${cleanMinutes} minute${cleanMinutes === 1 ? '' : 's'}` : '',
-  ].filter(Boolean)
-
-  return parts.length ? parts.join(' ') : 'immediately'
 }
 
 function nonSubmissionAgentUsername(opp: Opportunity, employees: Employee[], currentUser?: User | null): string {
@@ -1577,8 +1574,7 @@ export const useStore = create<AppState>()(
       // ── Contract management ─────────────────────────────────────────
       syncDueOpportunities: () => {
         const now = new Date()
-        const { nonSubGraceHours, nonSubGraceMinutes, requireAssociateForActivePipeline } = get()
-        const graceMs = ((Math.max(0, nonSubGraceHours) * 60) + Math.max(0, nonSubGraceMinutes)) * 60_000
+        const { requireAssociateForActivePipeline } = get()
         const reportedOpportunityIds = new Set(get().nonSubReports.map(report => report.opportunityId))
         const reportableOpps = get().opportunities.filter(opp => {
           if (opp.isDeleted || !PRE_SUBMISSION_STATUSES.includes(opp.status) || opp.nonSubmissionReportId || reportedOpportunityIds.has(opp.id)) return false
@@ -1588,7 +1584,7 @@ export const useStore = create<AppState>()(
           } else {
             if (!opp.assignedTo) return false
           }
-          if (!isNonSubmissionGraceReached(opp, graceMs, now)) return false
+          if (!isNonSubmissionGraceReached(opp, NON_SUBMISSION_GRACE_MS, now)) return false
           return true
         })
 
@@ -1598,7 +1594,7 @@ export const useStore = create<AppState>()(
           id: `nsr-${opp.id}`,
           opportunityId: opp.id,
           agentUsername: nonSubmissionAgentUsername(opp, get().employees, get().currentUser),
-          reason: `No proposal submission was recorded within ${gracePeriodLabel(nonSubGraceHours, nonSubGraceMinutes)} after the due datetime.`,
+          reason: `No proposal submission was recorded within 12 hours after the due datetime.`,
           status: 'PENDING',
           submittedAt: now.toISOString(),
         }))
@@ -1618,7 +1614,7 @@ export const useStore = create<AppState>()(
           get().addNotification({
             type: 'NON_SUB_REVIEW',
             title: 'Non-submission report pending',
-            message: `${updatedOpp?.solicitation ?? 'An opportunity'} passed the configured non-submission window and moved to Non-Submission Reports.`,
+            message: `${updatedOpp?.solicitation ?? 'An opportunity'} passed the 12-hour non-submission window and moved to Non-Submission Reports.`,
             read: false,
             relatedId: report.opportunityId,
             targetRole: 'CAPTURE_MANAGER',
@@ -2648,6 +2644,52 @@ export const useStore = create<AppState>()(
           relatedId: data.opportunityId,
           targetRole: 'CAPTURE_MANAGER',
         })
+      },
+
+      updateNonSubReportReason: (reportId, reason) => {
+        const actor = get().currentUser
+        const canEdit = hasPermission(actor, 'nonSubmission:submit') || hasPermission(actor, 'nonSubmission:review')
+        if (!canEdit) {
+          toast.error('You do not have permission to edit this report.')
+          return
+        }
+        const trimmed = reason.trim()
+        if (!trimmed) {
+          toast.error('The reason cannot be empty.')
+          return
+        }
+        set(s => ({
+          nonSubReports: s.nonSubReports.map(r =>
+            r.id === reportId ? { ...r, reason: trimmed, reasonEditedAt: new Date().toISOString() } : r
+          )
+        }))
+        const report = get().nonSubReports.find(r => r.id === reportId)
+        if (report) upsertNonSubReport(report)
+      },
+
+      addNonSubReportComment: (reportId, text) => {
+        const actor = get().currentUser
+        const canComment = hasPermission(actor, 'nonSubmission:submit') || hasPermission(actor, 'nonSubmission:review')
+        if (!canComment) {
+          toast.error('You do not have permission to comment on this report.')
+          return
+        }
+        const trimmed = text.trim()
+        if (!trimmed) return
+        const comment: Comment = {
+          id: `nsc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          text: trimmed,
+          author: actor?.name || actor?.username || 'Unknown',
+          authorId: actor?.id,
+          createdAt: new Date().toISOString(),
+        }
+        set(s => ({
+          nonSubReports: s.nonSubReports.map(r =>
+            r.id === reportId ? { ...r, comments: [...(r.comments ?? []), comment] } : r
+          )
+        }))
+        const report = get().nonSubReports.find(r => r.id === reportId)
+        if (report) upsertNonSubReport(report)
       },
 
       reviewNonSubReport: (id, action, reviewNote, reviewedBy) => {

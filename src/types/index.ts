@@ -242,6 +242,10 @@ export interface NonSubmissionReport {
   reviewedAt?: string
   reviewNote?: string
   lastReminderAt?: string
+  /** Discussion thread specific to the non-submission report (separate from opportunity comments). */
+  comments?: Comment[]
+  /** Set when the assigned associate has edited the auto-generated reason. */
+  reasonEditedAt?: string
 }
 
 // ── Deletion Request ─────────────────────────────────────────────────

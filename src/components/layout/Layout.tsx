@@ -1,4 +1,5 @@
 import { Outlet } from 'react-router-dom'
+import { createPortal } from 'react-dom'
 import { Toaster } from 'react-hot-toast'
 import Sidebar from './Sidebar'
 import TopBar from './TopBar'
@@ -15,7 +16,7 @@ export default function Layout() {
         </main>
       </div>
 
-      <Toaster
+      {createPortal(<Toaster
         position="top-center"
         gutter={10}
         containerStyle={{ top: 24, zIndex: 2147483000 }}
@@ -48,7 +49,7 @@ export default function Layout() {
             },
           },
         }}
-      />
+      />, document.body)}
     </div>
   )
 }

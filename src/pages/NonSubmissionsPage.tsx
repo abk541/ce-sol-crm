@@ -4,7 +4,7 @@ import { useSearchParams } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   ClipboardList, CheckCircle2, XCircle, Clock, AlertTriangle,
-  PenLine, Search, MoreHorizontal, Trash2, X, Undo2,
+  PenLine, Search, MoreHorizontal, Trash2, X, Undo2, Send, Users2,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import toast from 'react-hot-toast'
@@ -12,7 +12,9 @@ import { hasPermission } from '../lib/permissions'
 import { isOpportunityOwnedByUser } from '../lib/team'
 import { formatDate } from '../lib/utils'
 import SamGovListingButton from '../components/shared/SamGovListingButton'
-import type { Opportunity } from '../types'
+import DetailDrawer, { DrawerSection } from '../components/shared/DetailDrawer'
+import { OpportunityDetailBody, SourcingModal } from './PipelinePage'
+import type { Opportunity, Comment } from '../types'
 
 const stagger = { animate: { transition: { staggerChildren: 0.05 } } }
 const fadeUp = {
@@ -81,197 +83,205 @@ function SubmitReportModal({ oppId, oppName, onClose }: { oppId: string; oppName
   )
 }
 
-// ── Review / Details Modal ─────────────────────────────────────────────
+// ── Report Detail Window (same window + sourcing sheet as Pipeline) ─────
 function ReviewModal({ reportId, onClose }: { reportId: string; onClose: () => void }) {
-  const [note, setNote] = useState('')
-  const { reviewNonSubReport, returnNonSubmissionToPipeline, nonSubReports, opportunities, currentUser } = useStore()
+  const {
+    reviewNonSubReport, returnNonSubmissionToPipeline,
+    updateNonSubReportReason, addNonSubReportComment, deleteSubcontractor,
+    nonSubReports, opportunities, employees, currentUser,
+  } = useStore()
   const report = nonSubReports.find(r => r.id === reportId)
   const opp = opportunities.find(o => o.id === report?.opportunityId)
 
+  const [note, setNote] = useState('')
+  const [editingReason, setEditingReason] = useState(false)
+  const [reasonDraft, setReasonDraft] = useState(report?.reason ?? '')
+  const [newComment, setNewComment] = useState('')
+  const [sourcingOpen, setSourcingOpen] = useState(false)
+
   const canReview = hasPermission(currentUser, 'nonSubmission:review')
   const canReturn = hasPermission(currentUser, 'opportunity:edit')
+  const canWriteSourcing = hasPermission(currentUser, 'sourcing:write')
+  const isOwnerAgent = !!opp && isOpportunityOwnedByUser(employees, currentUser, opp.assignedTo)
+  const canEditReason = canReview || (hasPermission(currentUser, 'nonSubmission:submit') && (isOwnerAgent || report?.agentUsername === currentUser?.username))
+  const canComment = canReview || hasPermission(currentUser, 'nonSubmission:submit')
   const isPending = report?.status === 'PENDING'
-  const showActions = canReview && isPending
+  const showReviewActions = canReview && isPending
 
   const review = (action: 'APPROVED' | 'DECLINED') => {
     reviewNonSubReport(reportId, action, note, currentUser?.username ?? '')
     toast.success(action === 'APPROVED' ? 'Report approved → NOT_SUBMITTED' : 'Report declined → DROPPED')
     onClose()
   }
-
   const handleReturn = () => {
     returnNonSubmissionToPipeline(reportId)
     toast.success('Opportunity moved back to Contract Opportunities')
     onClose()
   }
+  const saveReason = () => {
+    if (reasonDraft.trim().length < 20) { toast.error('Minimum 20 characters required'); return }
+    updateNonSubReportReason(reportId, reasonDraft.trim())
+    toast.success('Reason updated')
+    setEditingReason(false)
+  }
+  const postComment = () => {
+    if (!newComment.trim()) return
+    addNonSubReportComment(reportId, newComment.trim())
+    setNewComment('')
+  }
+  const handleDeleteSourcing = (subId: string, companyName?: string) => {
+    if (!canWriteSourcing) { toast.error('You do not have permission to update sourcing.'); return }
+    if (!window.confirm(`Remove ${companyName || 'this subcontractor'} from this opportunity?`)) return
+    deleteSubcontractor(subId)
+    toast.success('Subcontractor removed')
+  }
 
-  if (!report) return null
+  if (!report || !opp) return null
 
   const meta = STATUS_META[report.status]
   const StatusIcon = meta.icon
-
   const fmtDate = (iso?: string) =>
     iso ? new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—'
 
-  const fmtMoney = (n?: number) =>
-    typeof n === 'number' ? `$${n.toLocaleString('en-US', { maximumFractionDigits: 0 })}` : '—'
+  return (
+    <>
+      <DetailDrawer
+        isOpen
+        onClose={onClose}
+        title={opp.solicitation}
+        subtitle={`${opp.solicitationId}${opp.client ? ` · ${opp.client}` : ''}`}
+        width={1080}
+        placement="modal"
+        showBackdrop
+        variant="premium"
+      >
+        <OpportunityDetailBody opp={opp} canWriteSourcing={canWriteSourcing} onDeleteSourcing={handleDeleteSourcing} />
 
-  return createPortal(
-    <motion.div className="fixed inset-0 z-[80] flex items-center justify-center p-4"
-      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-      <div className="absolute inset-0" style={{ background: 'var(--bg-overlay)', backdropFilter: 'blur(8px)' }} onClick={onClose} />
-      <motion.div
-        className="relative flex w-full max-w-2xl max-h-[min(92vh,860px)] flex-col overflow-hidden rounded-2xl shadow-2xl"
-        style={{ background: 'var(--bg-card)', border: '1px solid var(--border-default)' }}
-        initial={{ scale: 0.94, opacity: 0, y: 12 }}
-        animate={{ scale: 1, opacity: 1, y: 0 }}
-        exit={{ scale: 0.94, opacity: 0 }}
-        transition={{ type: 'spring', stiffness: 320, damping: 26 }}>
-        <div className="px-6 py-5 border-b border-slate-100 flex-shrink-0 flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h2 className="text-base font-bold text-slate-900 truncate">{showActions ? 'Review Non-Submission Report' : 'Non-Submission Report Details'}</h2>
-            <p className="text-xs text-slate-500 mt-0.5 truncate">
-              {opp?.solicitation ?? report.opportunityId} · By {report.agentUsername}
-            </p>
-          </div>
-          <div className="flex flex-shrink-0 items-center gap-2">
-            <SamGovListingButton opportunity={opp} compact />
-            <span className="inline-flex items-center gap-1 text-[10px] font-black px-2 py-0.5 rounded-full border"
-              style={{ color: meta.color, background: meta.bg, borderColor: meta.border }}>
-              <StatusIcon size={10} /> {report.status}
-            </span>
-          </div>
-        </div>
-
-        <div className="p-6 space-y-4 overflow-y-auto">
-          {/* Opportunity Details */}
-          <div className="rounded-xl border border-slate-200 overflow-hidden">
-            <div className="px-4 py-2 bg-slate-50 border-b border-slate-200">
-              <p className="text-[11px] font-bold text-slate-600 uppercase tracking-wide">Opportunity</p>
-            </div>
-            <div className="p-4 grid grid-cols-2 gap-x-4 gap-y-3 text-xs">
-              <div className="col-span-2">
-                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Solicitation</p>
-                <p className="text-sm font-semibold text-slate-800 mt-0.5 break-words">{opp?.solicitation ?? '—'}</p>
-              </div>
-              <div>
-                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Solicitation ID</p>
-                <p className="text-slate-700 mt-0.5 break-words">{opp?.solicitationId ?? '—'}</p>
-              </div>
-              <div>
-                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Client / Agency</p>
-                <p className="text-slate-700 mt-0.5 break-words">{opp?.client ?? '—'}</p>
-              </div>
-              <div>
-                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Type</p>
-                <p className="text-slate-700 mt-0.5">{opp?.type ?? '—'}</p>
-              </div>
-              <div>
-                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">NAICS / Set-Aside</p>
-                <p className="text-slate-700 mt-0.5">{opp?.naicsCode ?? '—'} · {opp?.setAside ?? '—'}</p>
-              </div>
-              <div>
-                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Due Date</p>
-                <p className="text-slate-700 mt-0.5">{opp?.dueDate ? formatDate(opp.dueDate) : '—'}</p>
-              </div>
-              <div>
-                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Value</p>
-                <p className="text-slate-700 mt-0.5">{fmtMoney(opp?.value ?? opp?.contractAmount)}</p>
-              </div>
-              {opp?.location && (
-                <div>
-                  <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Location</p>
-                  <p className="text-slate-700 mt-0.5 break-words">{opp.location}</p>
-                </div>
+        {/* ── Non-Submission Report (separate from opportunity data) ── */}
+        <DrawerSection title="Non-Submission Report" variant="premium">
+          <div className="space-y-3 py-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="inline-flex items-center gap-1 text-[10px] font-black px-2 py-0.5 rounded-full border"
+                style={{ color: meta.color, background: meta.bg, borderColor: meta.border }}>
+                <StatusIcon size={10} /> {report.status}
+              </span>
+              <span className="text-[11px] text-slate-400">By {report.agentUsername} · Submitted {fmtDate(report.submittedAt)}</span>
+              {report.reasonEditedAt && (
+                <span className="text-[10px] italic text-slate-400" title={`Reason edited ${fmtDate(report.reasonEditedAt)}`}>(reason edited)</span>
               )}
-              {opp?.pop && (
-                <div>
-                  <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Period of Performance</p>
-                  <p className="text-slate-700 mt-0.5 break-words">{opp.pop}</p>
-                </div>
-              )}
-              <div className="col-span-2">
-                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">SAM.gov Listing</p>
-                <div className="mt-1">
-                  <SamGovListingButton opportunity={opp} label="Open SAM.gov" />
-                </div>
-              </div>
             </div>
-          </div>
 
-          {/* Agent's Reason */}
-          <div className="p-4 rounded-xl bg-slate-50 border border-slate-100">
-            <div className="flex items-center justify-between mb-1.5">
-              <p className="text-xs font-semibold text-slate-500">Agent's Reason</p>
-              <p className="text-[10px] text-slate-400">Submitted {fmtDate(report.submittedAt)}</p>
-            </div>
-            <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap">{report.reason}</p>
-          </div>
-
-          {/* Decision history (only for non-pending) */}
-          {!isPending && (
-            <div className="p-4 rounded-xl border" style={{ background: meta.bg, borderColor: meta.border }}>
+            <div className="rounded-xl border p-3" style={{ borderColor: 'var(--border-default)', background: 'var(--bg-raised)' }}>
               <div className="flex items-center justify-between mb-1.5">
-                <p className="text-xs font-semibold" style={{ color: meta.color }}>
-                  {report.status === 'APPROVED' ? 'Approved' : 'Declined'}{report.reviewedBy ? ` by ${report.reviewedBy}` : ''}
-                </p>
-                {report.reviewedAt && <p className="text-[10px]" style={{ color: meta.color }}>{fmtDate(report.reviewedAt)}</p>}
+                <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Reason for non-submission</p>
+                {canEditReason && !editingReason && (
+                  <button onClick={() => { setReasonDraft(report.reason); setEditingReason(true) }}
+                    className="inline-flex items-center gap-1 text-[11px] font-bold text-indigo-400 hover:text-indigo-300 transition-colors">
+                    <PenLine size={11} /> Edit
+                  </button>
+                )}
               </div>
-              {report.reviewNote
-                ? <p className="text-sm leading-relaxed whitespace-pre-wrap" style={{ color: meta.color }}>{report.reviewNote}</p>
-                : <p className="text-xs italic" style={{ color: meta.color, opacity: 0.7 }}>No review note provided.</p>}
+              {editingReason ? (
+                <>
+                  <textarea value={reasonDraft} onChange={e => setReasonDraft(e.target.value)} rows={5}
+                    className="input-field w-full resize-none text-sm leading-relaxed"
+                    placeholder="Explain why this opportunity was not submitted — amendments, disqualifying factors, resource constraints, etc…" />
+                  <div className="flex items-center justify-between mt-1.5">
+                    <p className={`text-[10px] font-semibold ${reasonDraft.trim().length >= 20 ? 'text-emerald-500' : 'text-slate-400'}`}>{reasonDraft.trim().length} / 20 min</p>
+                    <div className="flex gap-2">
+                      <button onClick={() => setEditingReason(false)} className="btn-secondary text-xs">Cancel</button>
+                      <button onClick={saveReason} disabled={reasonDraft.trim().length < 20} className="btn-primary text-xs disabled:opacity-40">Save reason</button>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <p className="text-sm leading-relaxed whitespace-pre-wrap" style={{ color: 'var(--text-primary)' }}>{report.reason}</p>
+              )}
             </div>
-          )}
 
-          {/* Admin: move back to the general pipeline (any status) */}
-          {canReturn && (
-            <div className="rounded-xl border border-indigo-200 bg-indigo-50/70 p-3 flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <p className="text-xs font-semibold text-indigo-800">Move back to Contract Opportunities</p>
-                <p className="text-[11px] text-indigo-600/80 mt-0.5">Restores this opportunity to the active pipeline and removes the report.</p>
+            {!isPending && (
+              <div className="rounded-xl border p-3" style={{ background: meta.bg, borderColor: meta.border }}>
+                <div className="flex items-center justify-between mb-1">
+                  <p className="text-xs font-semibold" style={{ color: meta.color }}>
+                    {report.status === 'APPROVED' ? 'Approved' : 'Declined'}{report.reviewedBy ? ` by ${report.reviewedBy}` : ''}
+                  </p>
+                  {report.reviewedAt && <p className="text-[10px]" style={{ color: meta.color }}>{fmtDate(report.reviewedAt)}</p>}
+                </div>
+                {report.reviewNote
+                  ? <p className="text-sm leading-relaxed whitespace-pre-wrap" style={{ color: meta.color }}>{report.reviewNote}</p>
+                  : <p className="text-xs italic" style={{ color: meta.color, opacity: 0.7 }}>No review note provided.</p>}
               </div>
-              <button onClick={handleReturn}
-                className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-indigo-700 bg-white border border-indigo-200 hover:bg-indigo-100 transition-colors">
-                <Undo2 size={12} /> Move to Pipeline
-              </button>
-            </div>
-          )}
+            )}
 
-          {/* Action area (pending + reviewer only) */}
-          {showActions ? (
-            <>
+            {showReviewActions && (
               <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1.5">Review note <span className="text-slate-400">(optional)</span></label>
-                <textarea value={note} onChange={e => setNote(e.target.value)} rows={3}
-                  className="input-field w-full resize-none text-sm"
-                  placeholder="Add context for your decision…" />
+                <label className="block text-xs font-semibold text-slate-400 mb-1.5">Review note <span className="text-slate-500">(optional)</span></label>
+                <textarea value={note} onChange={e => setNote(e.target.value)} rows={2}
+                  className="input-field w-full resize-none text-sm" placeholder="Add context for your decision…" />
               </div>
-              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
-                <p className="text-xs text-amber-700">
-                  <strong>Approve</strong> → opportunity set to NOT_SUBMITTED &nbsp;·&nbsp; <strong>Decline</strong> → opportunity set to DROPPED
-                </p>
+            )}
+          </div>
+        </DrawerSection>
+
+        {/* ── Report Discussion (separate thread from opportunity comments) ── */}
+        <DrawerSection title={`Report Discussion (${report.comments?.length ?? 0})`} variant="premium">
+          <div className="space-y-3 py-2">
+            {(report.comments?.length ?? 0) === 0 && (
+              <p className="text-xs text-slate-400">No report comments yet.</p>
+            )}
+            {(report.comments ?? []).map((c: Comment) => (
+              <div key={c.id} className="border-b py-2 last:border-0" style={{ borderColor: 'var(--border-default)' }}>
+                <div className="flex items-center justify-between gap-2 mb-0.5">
+                  <span className="text-xs font-bold" style={{ color: 'var(--text-primary)' }}>{c.author}</span>
+                  <span className="text-[10px] text-slate-400">{fmtDate(c.createdAt)}</span>
+                </div>
+                <p className="text-xs leading-5 whitespace-pre-wrap" style={{ color: 'var(--text-secondary)' }}>{c.text}</p>
               </div>
-              <div className="flex gap-3 pt-1">
-                <button onClick={onClose} className="btn-secondary flex-1 justify-center">Cancel</button>
-                <button onClick={() => review('DECLINED')}
-                  className="flex-1 flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold text-red-600 bg-red-50 border border-red-200 hover:bg-red-100 transition-colors">
-                  <XCircle size={14} /> Decline
+            ))}
+            {canComment && (
+              <div className="flex items-end gap-2 pt-1">
+                <textarea value={newComment} onChange={e => setNewComment(e.target.value)} rows={2}
+                  className="input-field flex-1 resize-none text-sm" placeholder="Add a comment to the report thread…" />
+                <button onClick={postComment} disabled={!newComment.trim()} className="btn-primary text-xs gap-1.5 disabled:opacity-40">
+                  <Send size={12} /> Post
                 </button>
-                <button onClick={() => review('APPROVED')}
-                  className="flex-1 flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 transition-colors">
-                  <CheckCircle2 size={14} /> Approve
-                </button>
               </div>
-            </>
-          ) : (
-            <div className="flex justify-end pt-1">
-              <button onClick={onClose} className="btn-secondary justify-center">Close</button>
-            </div>
+            )}
+          </div>
+        </DrawerSection>
+
+        {/* ── Sticky action footer ── */}
+        <div className="sticky bottom-0 -mx-6 -mb-5 mt-4 flex flex-wrap items-center gap-2 border-t px-6 py-4"
+          style={{ borderColor: 'var(--border-default)', background: 'color-mix(in srgb, var(--bg-app) 94%, transparent)', backdropFilter: 'blur(8px)' }}>
+          <SamGovListingButton opportunity={opp} label="Open SAM.gov" />
+          <button onClick={() => setSourcingOpen(true)} className="btn-secondary text-xs gap-1.5">
+            <Users2 size={12} /> Sourcing
+          </button>
+          <div className="flex-1" />
+          {canReturn && (
+            <button onClick={handleReturn}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-indigo-600 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 transition-colors">
+              <Undo2 size={12} /> Move to Pipeline
+            </button>
           )}
+          {showReviewActions && (
+            <>
+              <button onClick={() => review('DECLINED')}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-red-600 bg-red-50 border border-red-200 hover:bg-red-100 transition-colors">
+                <XCircle size={13} /> Decline
+              </button>
+              <button onClick={() => review('APPROVED')}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 transition-colors">
+                <CheckCircle2 size={13} /> Approve
+              </button>
+            </>
+          )}
+          <button onClick={onClose} className="btn-secondary text-xs">Close</button>
         </div>
-      </motion.div>
-    </motion.div>,
-    document.body,
+      </DetailDrawer>
+
+      {sourcingOpen && <SourcingModal opp={opp} onClose={() => setSourcingOpen(false)} />}
+    </>
   )
 }
 
@@ -577,9 +587,18 @@ export default function NonSubmissionsPage() {
     [opportunities]
   )
 
+  // An associate should see reports for opportunities they own — including the
+  // ones auto-created after the 12h expiry window — so they can still edit the
+  // reason even after the opportunity has left the "Write Report" list.
+  const reportVisibleToAgent = (r: { opportunityId: string; agentUsername: string }) => {
+    if (r.agentUsername === currentUser?.username) return true
+    const opp = opportunities.find(o => o.id === r.opportunityId)
+    return !!opp && isOpportunityOwnedByUser(employees, currentUser, opp.assignedTo)
+  }
+
   const reports = useMemo(() => {
     let list = isAgent
-      ? nonSubReports.filter(r => r.agentUsername === currentUser?.username)
+      ? nonSubReports.filter(reportVisibleToAgent)
       : nonSubReports
     if (filter !== 'ALL') list = list.filter(r => r.status === filter)
     if (search) {
@@ -590,7 +609,7 @@ export default function NonSubmissionsPage() {
       })
     }
     return list.sort((a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime())
-  }, [nonSubReports, filter, search, isAgent, currentUser, opportunities])
+  }, [nonSubReports, filter, search, isAgent, currentUser, opportunities, employees])
 
   const agentOpps = useMemo(() => {
     if (!isAgent) return []
@@ -606,7 +625,7 @@ export default function NonSubmissionsPage() {
   const filterCounts = (['ALL', 'PENDING', 'APPROVED', 'DECLINED'] as const).map(f => ({
     id: f,
     count: nonSubReports.filter(r =>
-      (isAgent ? r.agentUsername === currentUser?.username : true) &&
+      (isAgent ? reportVisibleToAgent(r) : true) &&
       (f === 'ALL' ? true : r.status === f)
     ).length,
   }))

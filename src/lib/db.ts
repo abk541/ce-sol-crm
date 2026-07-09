@@ -1117,6 +1117,28 @@ function userRowsForSync(users: User[]): Record<string, unknown>[] {
 
 // ── Load all data ────────────────────────────────────────────────────────────
 
+function normalizeReportComments(value: unknown): Comment[] {
+  let raw: unknown = value
+  if (typeof raw === 'string') {
+    try { raw = JSON.parse(raw) } catch { return [] }
+  }
+  if (!Array.isArray(raw)) return []
+  return raw
+    .filter(item => item && typeof item === 'object')
+    .map((item, index) => {
+      const row = item as Record<string, unknown>
+      const comment: Comment = {
+        id: typeof row.id === 'string' ? row.id : `nsc-${index}`,
+        text: typeof row.text === 'string' ? row.text : '',
+        author: typeof row.author === 'string' ? row.author : 'Unknown',
+        createdAt: typeof row.createdAt === 'string' ? row.createdAt : new Date().toISOString(),
+      }
+      if (typeof row.authorId === 'string') comment.authorId = row.authorId
+      if (typeof row.editedAt === 'string') comment.editedAt = row.editedAt
+      return comment
+    })
+}
+
 function nonSubReportToDb(report: NonSubmissionReport): Record<string, unknown> {
   return {
     id: report.id,
@@ -1129,6 +1151,8 @@ function nonSubReportToDb(report: NonSubmissionReport): Record<string, unknown> 
     reviewed_at: report.reviewedAt ?? null,
     review_note: report.reviewNote ?? null,
     last_reminder_at: report.lastReminderAt ?? null,
+    comments: report.comments ?? [],
+    reason_edited_at: report.reasonEditedAt ?? null,
   }
 }
 
@@ -1144,6 +1168,8 @@ function dbToNonSubReport(row: Record<string, unknown>): NonSubmissionReport {
     reviewedAt: row.reviewed_at as string | undefined,
     reviewNote: row.review_note as string | undefined,
     lastReminderAt: row.last_reminder_at as string | undefined,
+    comments: normalizeReportComments(row.comments),
+    reasonEditedAt: (row.reason_edited_at as string | null) ?? undefined,
   }
 }
 
