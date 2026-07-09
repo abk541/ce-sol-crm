@@ -160,6 +160,58 @@ function fileToProposalAttachment(file: File, attachedAt: string, uploadedBy: st
   })
 }
 
+// Robust download for data-URL-backed attachments. A plain `<a download>` with
+// a large base64 data URL is unreliable across browsers (Chrome may navigate to
+// the URL instead of downloading it), so convert to a Blob and trigger the
+// download programmatically.
+async function downloadDataUrl(dataUrl: string, filename: string): Promise<void> {
+  if (!dataUrl) return
+  try {
+    const res = await fetch(dataUrl)
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename || 'download'
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 1500)
+  } catch {
+    window.open(dataUrl, '_blank')
+  }
+}
+
+// Emerald quote-file chip used in the Sourcing modal (view + add forms).
+function QuoteFileChip({ file, onRemove }: { file: FileAttachment; onRemove?: () => void }) {
+  return (
+    <div className="flex items-center justify-between gap-3 px-3 py-2 rounded-xl border border-emerald-200 bg-emerald-50">
+      <div className="flex items-center gap-2 min-w-0">
+        <span className="w-7 h-7 rounded-md bg-white border border-emerald-200 flex items-center justify-center flex-shrink-0">
+          <FileText size={13} className="text-emerald-600" />
+        </span>
+        {file.dataUrl ? (
+          <a href={file.dataUrl} download={file.name} onClick={e => { e.preventDefault(); void downloadDataUrl(file.dataUrl ?? '', file.name) }} className="text-xs font-bold text-emerald-900 truncate underline decoration-emerald-400 underline-offset-2 hover:text-emerald-700" title={`Download ${file.name}`}>{file.name}</a>
+        ) : (
+          <span className="text-xs font-bold text-emerald-900 truncate">{file.name}</span>
+        )}
+      </div>
+      <div className="flex items-center gap-1 flex-shrink-0">
+        {file.dataUrl && (
+          <a href={file.dataUrl} download={file.name} onClick={e => { e.preventDefault(); void downloadDataUrl(file.dataUrl ?? '', file.name) }} className="w-6 h-6 rounded flex items-center justify-center text-emerald-700 hover:bg-emerald-100" title={`Download ${file.name}`}>
+            <Download size={12} />
+          </a>
+        )}
+        {onRemove && (
+          <button type="button" onClick={onRemove} className="w-6 h-6 rounded flex items-center justify-center text-emerald-700 hover:bg-emerald-100" title="Remove">
+            <X size={12} />
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function CommentAttachmentPicker({
   attachments,
   onChange,
@@ -2465,28 +2517,7 @@ export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () 
                       </div>
                     )}
                     {(draft.quoteFiles ?? []).map(q => (
-                      <div key={q.id} className="flex items-center justify-between gap-3 px-3 py-2 rounded-xl border border-emerald-200 bg-emerald-50">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <span className="w-7 h-7 rounded-md bg-white border border-emerald-200 flex items-center justify-center flex-shrink-0">
-                            <FileText size={13} className="text-emerald-600" />
-                          </span>
-                          {q.dataUrl ? (
-                            <a href={q.dataUrl} download={q.name} className="text-xs font-bold text-emerald-900 truncate underline decoration-emerald-400 underline-offset-2 hover:text-emerald-700" title={`Download ${q.name}`}>{q.name}</a>
-                          ) : (
-                            <span className="text-xs font-bold text-emerald-900 truncate">{q.name}</span>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-1 flex-shrink-0">
-                          {q.dataUrl && (
-                            <a href={q.dataUrl} download={q.name} className="w-6 h-6 rounded flex items-center justify-center text-emerald-700 hover:bg-emerald-100" title={`Download ${q.name}`}>
-                              <Download size={12} />
-                            </a>
-                          )}
-                          <button type="button" onClick={() => removeDraftQuote(q.id)} className="w-6 h-6 rounded flex items-center justify-center text-emerald-700 hover:bg-emerald-100" title="Remove">
-                            <X size={12} />
-                          </button>
-                        </div>
-                      </div>
+                      <QuoteFileChip key={q.id} file={q} onRemove={() => removeDraftQuote(q.id)} />
                     ))}
                     <button
                       type="button"
@@ -2638,28 +2669,7 @@ export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () 
                       </div>
                     )}
                     {(draft.quoteFiles ?? []).map(q => (
-                      <div key={q.id} className="flex items-center justify-between gap-3 px-3 py-2 rounded-xl border border-emerald-200 bg-emerald-50">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <span className="w-7 h-7 rounded-md bg-white border border-emerald-200 flex items-center justify-center flex-shrink-0">
-                            <FileText size={13} className="text-emerald-600" />
-                          </span>
-                          {q.dataUrl ? (
-                            <a href={q.dataUrl} download={q.name} className="text-xs font-bold text-emerald-900 truncate underline decoration-emerald-400 underline-offset-2 hover:text-emerald-700" title={`Download ${q.name}`}>{q.name}</a>
-                          ) : (
-                            <span className="text-xs font-bold text-emerald-900 truncate">{q.name}</span>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-1 flex-shrink-0">
-                          {q.dataUrl && (
-                            <a href={q.dataUrl} download={q.name} className="w-6 h-6 rounded flex items-center justify-center text-emerald-700 hover:bg-emerald-100" title={`Download ${q.name}`}>
-                              <Download size={12} />
-                            </a>
-                          )}
-                          <button type="button" onClick={() => removeDraftQuote(q.id)} className="w-6 h-6 rounded flex items-center justify-center text-emerald-700 hover:bg-emerald-100" title="Remove">
-                            <X size={12} />
-                          </button>
-                        </div>
-                      </div>
+                      <QuoteFileChip key={q.id} file={q} onRemove={() => removeDraftQuote(q.id)} />
                     ))}
                     <button
                       type="button"
@@ -3977,6 +3987,7 @@ export function OpportunityDetailBody({
                           key={q.id}
                           href={q.dataUrl}
                           download={q.name}
+                          onClick={e => { e.preventDefault(); void downloadDataUrl(q.dataUrl ?? '', q.name) }}
                           className="mt-1 flex items-center gap-1 text-[10px] font-semibold underline decoration-dotted underline-offset-2 hover:opacity-80"
                           style={{ color: 'var(--info-fg)' }}
                           title={`Download ${q.name}`}

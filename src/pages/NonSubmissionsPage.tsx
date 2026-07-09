@@ -1,9 +1,8 @@
 import { useEffect, useState, useMemo } from 'react'
-import { createPortal } from 'react-dom'
 import { useSearchParams } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
-  ClipboardList, CheckCircle2, XCircle, Clock, AlertTriangle,
+  ClipboardList, CheckCircle2, XCircle, Clock,
   PenLine, Search, MoreHorizontal, Trash2, X, Undo2, Send, Users2,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
@@ -28,60 +27,9 @@ const STATUS_META = {
   DECLINED: { color: '#DC2626', bg: '#FEE2E2', border: '#FECACA', icon: XCircle },
 } as const
 
-// ── Submit Report Modal ────────────────────────────────────────────────
-function SubmitReportModal({ oppId, oppName, onClose }: { oppId: string; oppName: string; onClose: () => void }) {
-  const [reason, setReason] = useState('')
-  const { submitNonSubReport, currentUser } = useStore()
-
-  const submit = () => {
-    if (reason.trim().length < 20) { toast.error('Minimum 20 characters required'); return }
-    submitNonSubReport({ opportunityId: oppId, agentUsername: currentUser?.username ?? '', reason: reason.trim() })
-    toast.success('Report submitted for review')
-    onClose()
-  }
-
-  return createPortal(
-    <motion.div className="fixed inset-0 z-[80] flex items-center justify-center p-4"
-      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-      <div className="absolute inset-0" style={{ background: 'var(--bg-overlay)', backdropFilter: 'blur(8px)' }} onClick={onClose} />
-      <motion.div
-        className="relative flex w-full max-w-lg max-h-[calc(100vh-2rem)] flex-col overflow-hidden rounded-2xl shadow-2xl"
-        style={{ background: 'var(--bg-card)', border: '1px solid var(--border-default)' }}
-        initial={{ scale: 0.94, opacity: 0, y: 12 }}
-        animate={{ scale: 1, opacity: 1, y: 0 }}
-        exit={{ scale: 0.94, opacity: 0 }}
-        transition={{ type: 'spring', stiffness: 320, damping: 26 }}>
-        <div className="px-6 py-5 border-b border-slate-100 flex-shrink-0">
-          <h2 className="text-base font-bold text-slate-900">Non-Submission Report</h2>
-          <p className="text-sm text-slate-500 mt-0.5 truncate">{oppName}</p>
-        </div>
-        <div className="p-6 space-y-4 overflow-y-auto">
-          <div>
-            <label className="block text-xs font-semibold text-slate-600 mb-1.5">
-              Reason for non-submission <span className="text-red-500">*</span>
-            </label>
-            <textarea
-              value={reason} onChange={e => setReason(e.target.value)} rows={5}
-              className="input-field w-full resize-none text-sm leading-relaxed"
-              placeholder="Explain why this opportunity was not submitted — amendments, disqualifying factors, resource constraints, etc…"
-            />
-            <div className="flex justify-between mt-1">
-              <p className="text-[10px] text-slate-400">Minimum 20 characters</p>
-              <p className={`text-[10px] font-semibold ${reason.length >= 20 ? 'text-emerald-600' : 'text-slate-400'}`}>{reason.length} chars</p>
-            </div>
-          </div>
-          <div className="flex gap-3 pt-1">
-            <button onClick={onClose} className="btn-secondary flex-1 justify-center">Cancel</button>
-            <button onClick={submit} disabled={reason.trim().length < 20} className="btn-primary flex-1 justify-center disabled:opacity-40">
-              <PenLine size={13} /> Submit Report
-            </button>
-          </div>
-        </div>
-      </motion.div>
-    </motion.div>,
-    document.body,
-  )
-}
+/* SubmitReportModal removed — non-submission reports are auto-created after
+   the 12h expiry window; the report reason is edited from the report detail
+   window instead of a separate submit form. */
 
 // ── Report Detail Window (same window + sourcing sheet as Pipeline) ─────
 function ReviewModal({ reportId, onClose }: { reportId: string; onClose: () => void }) {
@@ -556,7 +504,6 @@ export default function NonSubmissionsPage() {
   const [pageTab, setPageTab] = useState<'reports' | 'dropped'>('reports')
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<'ALL' | 'PENDING' | 'APPROVED' | 'DECLINED'>('ALL')
-  const [submitFor, setSubmitFor] = useState<{ id: string; name: string } | null>(null)
   const [reviewId, setReviewId] = useState<string | null>(null)
 
   const canReviewReports = hasPermission(currentUser, 'nonSubmission:review')
@@ -610,17 +557,6 @@ export default function NonSubmissionsPage() {
     }
     return list.sort((a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime())
   }, [nonSubReports, filter, search, isAgent, currentUser, opportunities, employees])
-
-  const agentOpps = useMemo(() => {
-    if (!isAgent) return []
-    if (!hasPermission(currentUser, 'nonSubmission:submit')) return []
-    return opportunities.filter(o => {
-      if (o.isDeleted || o.nonSubmissionReportId) return false
-      if (!['ACTIVE', 'DISCUSSION', 'NEW_ASSIGNMENT'].includes(o.status)) return false
-      if (nonSubReports.some(r => r.opportunityId === o.id)) return false
-      return isOpportunityOwnedByUser(employees, currentUser, o.assignedTo)
-    })
-  }, [opportunities, nonSubReports, isAgent, currentUser, employees])
 
   const filterCounts = (['ALL', 'PENDING', 'APPROVED', 'DECLINED'] as const).map(f => ({
     id: f,
@@ -678,36 +614,6 @@ export default function NonSubmissionsPage() {
       {/* ── Reports Tab ── */}
       {pageTab === 'reports' && (
         <>
-          {/* Agent: eligible opps */}
-          {isAgent && agentOpps.length > 0 && (
-            <motion.div variants={fadeUp} initial="initial" animate="animate"
-              className="glass rounded-2xl overflow-hidden border-l-4 border-amber-400">
-              <div className="px-5 py-3.5 border-b border-slate-100 flex items-center gap-2">
-                <AlertTriangle size={13} className="text-amber-500" />
-                <p className="text-xs font-bold text-amber-700">Opportunities requiring a non-submission report</p>
-                <span className="ml-auto text-[10px] font-black px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">{agentOpps.length}</span>
-              </div>
-              <div className="divide-y divide-slate-50">
-                {agentOpps.map((o, i) => (
-                  <motion.div key={o.id}
-                    initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-                    transition={{ delay: i * 0.04 }}
-                    className="px-5 py-3 flex items-center gap-3 hover:bg-slate-50 transition-colors">
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-semibold text-slate-800 truncate">{o.solicitation}</p>
-                      <p className="text-[10px] text-slate-500">{o.solicitationId} · Due: {formatDate(o.dueDate, { year: 'numeric', month: 'numeric', day: 'numeric' })}</p>
-                    </div>
-                    <button
-                      onClick={() => setSubmitFor({ id: o.id, name: o.solicitation })}
-                      className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-indigo-600 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 transition-colors">
-                      <PenLine size={11} /> Write Report
-                    </button>
-                  </motion.div>
-                ))}
-              </div>
-            </motion.div>
-          )}
-
           {/* Filters */}
           <motion.div variants={fadeUp} initial="initial" animate="animate"
             className="flex items-center justify-between gap-4 flex-wrap">
@@ -773,7 +679,6 @@ export default function NonSubmissionsPage() {
 
       {/* Modals */}
       <AnimatePresence>
-        {submitFor && <SubmitReportModal oppId={submitFor.id} oppName={submitFor.name} onClose={() => setSubmitFor(null)} />}
         {reviewId && <ReviewModal reportId={reviewId} onClose={() => setReviewId(null)} />}
       </AnimatePresence>
     </div>
