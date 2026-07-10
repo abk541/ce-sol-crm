@@ -9,6 +9,7 @@ import toast from 'react-hot-toast'
 import PeriodFilter, { type Period, filterByPeriod } from '../components/shared/PeriodFilter'
 import { getAssignmentChain, isOpportunityOwnedByUser } from '../lib/team'
 import { formatCurrency } from '../lib/utils'
+import { uploadAttachment, downloadAttachment, hasAttachmentSource } from '../lib/attachments'
 import FloatingActionMenu from '../components/shared/FloatingActionMenu'
 import { hasPermission } from '../lib/permissions'
 import DetailDrawer, { DrawerField, DrawerSection } from '../components/shared/DetailDrawer'
@@ -69,36 +70,15 @@ function rowOpportunity(row: BDSubmission, opportunities: ReturnType<typeof useS
 }
 
 function downloadProposalAttachment(att: FileAttachment) {
-  if (!att.dataUrl) {
+  if (!hasAttachmentSource(att)) {
     toast.error('Proposal file has metadata only — re-upload it from the opportunity to download.')
     return
   }
-  const link = document.createElement('a')
-  link.href = att.dataUrl
-  link.download = att.name || 'proposal'
-  link.rel = 'noopener'
-  document.body.appendChild(link)
-  link.click()
-  link.remove()
+  void downloadAttachment(att).catch(() => toast.error('Proposal file could not be downloaded.'))
 }
 
 function fileToProposalAttachment(file: File, uploadedBy: string): Promise<FileAttachment> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => {
-      resolve({
-        id: crypto.randomUUID(),
-        name: file.name,
-        attachedAt: new Date().toISOString(),
-        uploadedBy,
-        dataUrl: typeof reader.result === 'string' ? reader.result : undefined,
-        mimeType: file.type || undefined,
-        size: file.size,
-      })
-    }
-    reader.onerror = () => reject(new Error('File could not be read.'))
-    reader.readAsDataURL(file)
-  })
+  return uploadAttachment(file, { folder: 'proposals', uploadedBy })
 }
 
 function ProposalCell({ attachments }: { attachments: FileAttachment[] }) {
@@ -198,8 +178,9 @@ function BDTrackerEditModal({
       const attachments = await Promise.all(Array.from(files).map(file => fileToProposalAttachment(file, uploadedBy)))
       setForm(prev => ({ ...prev, proposalAttachments: [...prev.proposalAttachments, ...attachments] }))
       toast.success(files.length === 1 ? 'Proposal file added.' : `${files.length} proposal files added.`)
-    } catch {
-      toast.error('Proposal file could not be uploaded.')
+    } catch (err) {
+      console.error(err)
+      toast.error(err instanceof Error ? err.message : 'Proposal file could not be uploaded.')
     }
   }
 

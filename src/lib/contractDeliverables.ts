@@ -15,6 +15,8 @@ function normalizeAttachment(value: unknown, index: number): FileAttachment | nu
     uploadedBy: typeof value.uploadedBy === 'string' ? value.uploadedBy : '',
   }
   if (typeof value.dataUrl === 'string') attachment.dataUrl = value.dataUrl
+  if (typeof value.url === 'string') attachment.url = value.url
+  if (typeof value.storagePath === 'string') attachment.storagePath = value.storagePath
   if (typeof value.mimeType === 'string') attachment.mimeType = value.mimeType
   if (typeof value.size === 'number') attachment.size = value.size
   return attachment

@@ -22,6 +22,7 @@ import type {
   ContractCommEntry, ContractCommChannel,
 } from '../types'
 import { formatCurrency, useEscapeKey } from '../lib/utils'
+import { uploadAttachment as uploadToStorage, downloadAttachment as downloadAttachmentFromStorage } from '../lib/attachments'
 import { hasPermission } from '../lib/permissions'
 import { isOpsAgent } from '../lib/team'
 import FloatingActionMenu from '../components/shared/FloatingActionMenu'
@@ -134,21 +135,6 @@ async function generateInvoiceFile(contract: Contract, invoice: ContractInvoice)
   }
 }
 
-function createAttachment(
-  name: string,
-  attachedAt: string,
-  uploadedBy: string,
-  fileData?: Pick<FileAttachment, 'dataUrl' | 'mimeType' | 'size'>,
-): FileAttachment {
-  return {
-    id: crypto.randomUUID(),
-    name,
-    attachedAt: new Date(attachedAt).toISOString(),
-    uploadedBy,
-    ...fileData,
-  }
-}
-
 function formatFileSize(size?: number) {
   if (!size) return ''
   if (size < 1024) return `${size} B`
@@ -188,6 +174,10 @@ function getAttachmentBlobUrl(att: FileAttachment) {
 }
 
 function downloadAttachment(att: FileAttachment) {
+  if (att.url) {
+    void downloadAttachmentFromStorage(att).catch(() => toast.error('Attachment could not be downloaded.'))
+    return
+  }
   const fileUrl = getAttachmentBlobUrl(att)
   if (!fileUrl) return
 
@@ -202,6 +192,11 @@ function downloadAttachment(att: FileAttachment) {
 }
 
 function viewAttachment(att: FileAttachment) {
+  if (att.url) {
+    const win = window.open(att.url, '_blank')
+    if (!win) toast.error('Popup was blocked. Allow popups to view attachments.')
+    return
+  }
   const fileUrl = getAttachmentBlobUrl(att)
   if (!fileUrl) return
 
@@ -245,23 +240,18 @@ function AttachmentPicker({
       return
     }
 
-    const reader = new FileReader()
-    reader.onload = () => {
-      const attachment = createAttachment(file.name, attachedAt, uploadedBy, {
-        dataUrl: typeof reader.result === 'string' ? reader.result : undefined,
-        mimeType: file.type || undefined,
-        size: file.size,
-      })
-      onChange([...attachments, attachment])
-      setAttachedAt(toDatetimeLocal(new Date().toISOString()))
-      input.value = ''
-      toast.success('Attachment added')
-    }
-    reader.onerror = () => {
-      input.value = ''
-      toast.error('Attachment could not be read.')
-    }
-    reader.readAsDataURL(file)
+    void (async () => {
+      try {
+        const attachment = await uploadToStorage(file, { folder: 'contracts', uploadedBy, attachedAt })
+        onChange([...attachments, attachment])
+        setAttachedAt(toDatetimeLocal(new Date().toISOString()))
+        input.value = ''
+        toast.success('Attachment added')
+      } catch (err) {
+        input.value = ''
+        toast.error(err instanceof Error ? err.message : 'Attachment could not be read.')
+      }
+    })()
   }
 
   return (
@@ -324,7 +314,7 @@ function AttachmentPicker({
                 <button
                   type="button"
                   onClick={() => viewAttachment(att)}
-                  disabled={!att.dataUrl}
+                  disabled={!att.url && !att.dataUrl}
                   className="flex items-center gap-1.5 rounded-lg bg-white px-2.5 py-1.5 text-[11px] font-black text-slate-900 transition-colors hover:bg-[#F8E8B8] disabled:cursor-not-allowed disabled:opacity-45"
                 >
                   <Eye size={12} /> View
@@ -332,7 +322,7 @@ function AttachmentPicker({
                 <button
                   type="button"
                   onClick={() => downloadAttachment(att)}
-                  disabled={!att.dataUrl}
+                  disabled={!att.url && !att.dataUrl}
                   className="flex items-center gap-1.5 rounded-lg border border-[#D7BE7A]/35 bg-[#D7BE7A]/15 px-2.5 py-1.5 text-[11px] font-black text-[#F8E8B8] transition-colors hover:bg-[#D7BE7A]/25 disabled:cursor-not-allowed disabled:opacity-45"
                 >
                   <Download size={12} /> Download
@@ -1206,7 +1196,7 @@ function ContractVehicleOrdersTab({
                       <button
                         type="button"
                         onClick={() => viewAttachment(order.document!)}
-                        disabled={!order.document.dataUrl}
+                        disabled={!order.document.url && !order.document.dataUrl}
                         className="rounded-lg bg-white px-2.5 py-1 text-[11px] font-black text-slate-900 transition-colors hover:bg-[#F8E8B8] disabled:cursor-not-allowed disabled:opacity-45"
                       >
                         View
@@ -1214,7 +1204,7 @@ function ContractVehicleOrdersTab({
                       <button
                         type="button"
                         onClick={() => downloadAttachment(order.document!)}
-                        disabled={!order.document.dataUrl}
+                        disabled={!order.document.url && !order.document.dataUrl}
                         className="rounded-lg border border-[#D7BE7A]/35 bg-[#D7BE7A]/15 px-2.5 py-1 text-[11px] font-black text-[#F8E8B8] transition-colors hover:bg-[#D7BE7A]/25 disabled:cursor-not-allowed disabled:opacity-45"
                       >
                         Download
@@ -2341,7 +2331,7 @@ function ContractDetailDrawer({
                         <button
                           type="button"
                           onClick={() => viewAttachment(att)}
-                          disabled={!att.dataUrl}
+                          disabled={!att.url && !att.dataUrl}
                           className="flex items-center gap-1.5 rounded-lg bg-white px-2.5 py-1.5 text-[11px] font-black text-slate-900 transition-colors hover:bg-[#F8E8B8] disabled:cursor-not-allowed disabled:opacity-45"
                         >
                           <Eye size={12} /> View
@@ -2349,7 +2339,7 @@ function ContractDetailDrawer({
                         <button
                           type="button"
                           onClick={() => downloadAttachment(att)}
-                          disabled={!att.dataUrl}
+                          disabled={!att.url && !att.dataUrl}
                           className="flex items-center gap-1.5 rounded-lg border border-[#D7BE7A]/35 bg-[#D7BE7A]/15 px-2.5 py-1.5 text-[11px] font-black text-[#F8E8B8] transition-colors hover:bg-[#D7BE7A]/25 disabled:cursor-not-allowed disabled:opacity-45"
                         >
                           <Download size={12} /> Download

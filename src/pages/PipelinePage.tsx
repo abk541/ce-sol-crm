@@ -16,6 +16,7 @@ import { useStore } from '../store/useStore'
 import type { Opportunity, Priority, OppStatus, Comment, FileAttachment, SamGovContact, SubcontractorContact } from '../types'
 import { TIMEZONES } from '../data/mock'
 import { formatCurrency, formatDate, useEscapeKey } from '../lib/utils'
+import { uploadAttachment, resolveAttachmentSource, hasAttachmentSource, downloadAttachment } from '../lib/attachments'
 import { assignableEmployeesForUser, getAssignmentChain, isAssignedToAssociate, isOpportunityAssignedToUser, isOpportunityOwnedByUser, ROLE_DISPLAY_LABELS } from '../lib/team'
 import { NAICS_CODES } from '../data/naics'
 import toast from 'react-hot-toast'
@@ -141,45 +142,13 @@ function legacyProposalAttachment(name: string, index: number, uploadedBy: strin
   }
 }
 
-function fileToProposalAttachment(file: File, attachedAt: string, uploadedBy: string): Promise<FileAttachment> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => {
-      resolve({
-        id: crypto.randomUUID(),
-        name: file.name,
-        attachedAt: new Date(attachedAt).toISOString(),
-        uploadedBy,
-        dataUrl: typeof reader.result === 'string' ? reader.result : undefined,
-        mimeType: file.type || undefined,
-        size: file.size,
-      })
-    }
-    reader.onerror = () => reject(new Error('File could not be read.'))
-    reader.readAsDataURL(file)
-  })
-}
-
-// Robust download for data-URL-backed attachments. A plain `<a download>` with
-// a large base64 data URL is unreliable across browsers (Chrome may navigate to
-// the URL instead of downloading it), so convert to a Blob and trigger the
-// download programmatically.
-async function downloadDataUrl(dataUrl: string, filename: string): Promise<void> {
-  if (!dataUrl) return
-  try {
-    const res = await fetch(dataUrl)
-    const blob = await res.blob()
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = filename || 'download'
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
-    setTimeout(() => URL.revokeObjectURL(url), 1500)
-  } catch {
-    window.open(dataUrl, '_blank')
-  }
+function fileToProposalAttachment(
+  file: File,
+  attachedAt: string,
+  uploadedBy: string,
+  folder = 'proposals',
+): Promise<FileAttachment> {
+  return uploadAttachment(file, { folder, uploadedBy, attachedAt })
 }
 
 // Emerald quote-file chip used in the Sourcing modal (view + add forms).
@@ -190,15 +159,15 @@ function QuoteFileChip({ file, onRemove }: { file: FileAttachment; onRemove?: ()
         <span className="w-7 h-7 rounded-md bg-white border border-emerald-200 flex items-center justify-center flex-shrink-0">
           <FileText size={13} className="text-emerald-600" />
         </span>
-        {file.dataUrl ? (
-          <a href={file.dataUrl} download={file.name} onClick={e => { e.preventDefault(); void downloadDataUrl(file.dataUrl ?? '', file.name) }} className="text-xs font-bold text-emerald-900 truncate underline decoration-emerald-400 underline-offset-2 hover:text-emerald-700" title={`Download ${file.name}`}>{file.name}</a>
+        {hasAttachmentSource(file) ? (
+          <a href={resolveAttachmentSource(file)} download={file.name} onClick={e => { e.preventDefault(); void downloadAttachment(file) }} className="text-xs font-bold text-emerald-900 truncate underline decoration-emerald-400 underline-offset-2 hover:text-emerald-700" title={`Download ${file.name}`}>{file.name}</a>
         ) : (
           <span className="text-xs font-bold text-emerald-900 truncate">{file.name}</span>
         )}
       </div>
       <div className="flex items-center gap-1 flex-shrink-0">
-        {file.dataUrl && (
-          <a href={file.dataUrl} download={file.name} onClick={e => { e.preventDefault(); void downloadDataUrl(file.dataUrl ?? '', file.name) }} className="w-6 h-6 rounded flex items-center justify-center text-emerald-700 hover:bg-emerald-100" title={`Download ${file.name}`}>
+        {hasAttachmentSource(file) && (
+          <a href={resolveAttachmentSource(file)} download={file.name} onClick={e => { e.preventDefault(); void downloadAttachment(file) }} className="w-6 h-6 rounded flex items-center justify-center text-emerald-700 hover:bg-emerald-100" title={`Download ${file.name}`}>
             <Download size={12} />
           </a>
         )}
@@ -2151,7 +2120,7 @@ export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () 
     const now = new Date().toISOString()
     try {
       const additions = await Promise.all(
-        files.map(file => fileToProposalAttachment(file, now, currentUser?.username ?? '')),
+        files.map(file => fileToProposalAttachment(file, now, currentUser?.username ?? '', 'quotes')),
       )
       setDraft(p => ({ ...p, quoteFiles: [...(p.quoteFiles ?? []), ...additions] }))
       setDirty(true)
@@ -2812,7 +2781,7 @@ function SubmitModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }
       return attachment
     } catch (err) {
       console.error(err)
-      toast.error('Proposal file could not be uploaded.')
+      toast.error(err instanceof Error ? err.message : 'Proposal file could not be uploaded.')
       return null
     }
   }
@@ -3982,12 +3951,12 @@ export function OpportunityDetailBody({
                       </p>
                     )}
                     {(s.quoteFiles ?? []).map(q => (
-                      q.dataUrl ? (
+                      hasAttachmentSource(q) ? (
                         <a
                           key={q.id}
-                          href={q.dataUrl}
+                          href={resolveAttachmentSource(q)}
                           download={q.name}
-                          onClick={e => { e.preventDefault(); void downloadDataUrl(q.dataUrl ?? '', q.name) }}
+                          onClick={e => { e.preventDefault(); void downloadAttachment(q) }}
                           className="mt-1 flex items-center gap-1 text-[10px] font-semibold underline decoration-dotted underline-offset-2 hover:opacity-80"
                           style={{ color: 'var(--info-fg)' }}
                           title={`Download ${q.name}`}

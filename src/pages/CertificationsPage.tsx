@@ -6,6 +6,7 @@ import toast from 'react-hot-toast'
 import { useStore } from '../store/useStore'
 import { hasPermission } from '../lib/permissions'
 import { useEscapeKey } from '../lib/utils'
+import { uploadAttachment, downloadAttachment, hasAttachmentSource } from '../lib/attachments'
 import type { CompanyCertification, CompanyCertificationStatus, FileAttachment } from '../types'
 
 const CERT_STATUS_STYLE: Record<CompanyCertificationStatus, string> = {
@@ -46,20 +47,7 @@ function badgeClass(base: string) {
 }
 
 function fileToCertificationAttachment(file: File, uploadedBy: string): Promise<FileAttachment> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve({
-      id: `cert-att-${crypto.randomUUID()}`,
-      name: file.name,
-      attachedAt: new Date().toISOString(),
-      uploadedBy,
-      dataUrl: String(reader.result || ''),
-      mimeType: file.type || undefined,
-      size: file.size,
-    })
-    reader.onerror = () => reject(reader.error)
-    reader.readAsDataURL(file)
-  })
+  return uploadAttachment(file, { folder: 'certifications', uploadedBy, id: `cert-att-${crypto.randomUUID()}` })
 }
 
 function downloadCertificationAttachment(cert: CompanyCertification, attachment = cert.attachments?.[0]) {
@@ -67,17 +55,11 @@ function downloadCertificationAttachment(cert: CompanyCertification, attachment 
     toast.error('No certification attachment was uploaded.')
     return
   }
-  if (!attachment.dataUrl) {
+  if (!hasAttachmentSource(attachment)) {
     toast.error('This certification only has file metadata. Re-upload the attachment to download it.')
     return
   }
-  const link = document.createElement('a')
-  link.href = attachment.dataUrl
-  link.download = attachment.name || `${cert.name}.pdf`
-  link.rel = 'noopener'
-  document.body.appendChild(link)
-  link.click()
-  link.remove()
+  void downloadAttachment(attachment).catch(() => toast.error('Attachment could not be downloaded.'))
 }
 
 function StatCard({

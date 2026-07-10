@@ -72,7 +72,9 @@ export interface FileAttachment {
   name: string
   attachedAt: string
   uploadedBy: string
-  dataUrl?: string
+  dataUrl?: string        // legacy / small-file inline base64 fallback
+  url?: string            // Supabase Storage public URL (preferred for large files)
+  storagePath?: string    // path inside the Supabase Storage bucket
   mimeType?: string
   size?: number
 }
