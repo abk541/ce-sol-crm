@@ -9,6 +9,7 @@ import CompanyLogo from '../shared/CompanyLogo'
 import { DEFAULT_EXPANDED_NAV_GROUPS, NAV_GROUPS } from '../../config/navigation'
 import { hasAnyPermission, hasPermission, ROLE_LABELS } from '../../lib/permissions'
 import { isOpsAgent } from '../../lib/team'
+import { isNotificationVisibleTo } from '../../lib/notifications'
 import { useAppearance } from '../../lib/appearance'
 import {
   GOAL_METRIC_LABELS,
@@ -44,11 +45,11 @@ function canSeeNavItem(user: ReturnType<typeof useStore.getState>['currentUser']
 }
 
 export default function Sidebar() {
-  const { sidebarCollapsed, toggleSidebar, currentUser, logout, notifications, employees, goals, opportunities, freshAwards } = useStore()
+  const { sidebarCollapsed, toggleSidebar, currentUser, logout, notifications, employees, contracts, goals, opportunities, freshAwards } = useStore()
   const { prefs } = useAppearance()
   const location = useLocation()
   const [expanded, setExpanded] = useState<Record<string, boolean>>(DEFAULT_EXPANDED_NAV_GROUPS)
-  const unread = notifications.filter(n => !n.read).length
+  const unread = notifications.filter(n => !n.read && isNotificationVisibleTo(n, { user: currentUser, employees, contracts })).length
   const expandedWidth = prefs.theme === 'noir' ? 276 : prefs.theme === 'prism' ? 232 : prefs.theme === 'daylight' ? 246 : 256
   const collapsedWidth = prefs.theme === 'noir' ? 76 : 66
 

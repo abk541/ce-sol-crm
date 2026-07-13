@@ -6,6 +6,7 @@ import {
   Trash2, TrendingUp, Calendar, Trophy, ShieldAlert, FileBarChart,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
+import { isNotificationVisibleTo } from '../lib/notifications'
 import type { NotifType } from '../types'
 
 const TYPE_CONFIG: Record<NotifType, { icon: typeof Bell; color: string; bg: string; label: string }> = {
@@ -64,11 +65,15 @@ const FILTER_GROUPS = [
 ] as const
 
 export default function NotificationsPage() {
-  const { notifications, markNotificationRead, markAllRead, currentUser } = useStore()
+  const { notifications, markNotificationRead, markAllRead, currentUser, contracts, employees } = useStore()
   const [filter, setFilter] = useState<string>('all')
 
-  const visible = notifications.filter(n => {
-    if (n.targetRole && n.targetRole !== 'ALL' && n.targetRole !== currentUser?.role) return false
+  // Only notifications this user is allowed to see (personal targets, role
+  // targets, and contract actions on contracts associated with them). Same
+  // predicate the header bell and sidebar badge use, so all three agree.
+  const mine = notifications.filter(n => isNotificationVisibleTo(n, { user: currentUser, employees, contracts }))
+
+  const visible = mine.filter(n => {
     if (filter === 'unread') return !n.read
     const group = FILTER_GROUPS.find(g => g.id === filter)
     if (group && 'types' in group) return (group.types as readonly string[]).includes(n.type)
@@ -90,7 +95,7 @@ export default function NotificationsPage() {
             {unread > 0 ? `${unread} unread` : 'All caught up'}
           </p>
         </div>
-        {notifications.some(n => !n.read) && (
+        {mine.some(n => !n.read) && (
           <button onClick={markAllRead} className="btn-secondary text-xs gap-1.5">
             <CheckCheck size={12} /> Mark all as read
           </button>
@@ -100,8 +105,7 @@ export default function NotificationsPage() {
       {/* Filter tabs */}
       <div className="flex gap-1 p-1 bg-slate-100 rounded-xl mb-5 flex-wrap border border-slate-200">
         {FILTER_GROUPS.map(g => {
-          const cnt = notifications.filter(n => {
-            if (n.targetRole && n.targetRole !== 'ALL' && n.targetRole !== currentUser?.role) return false
+          const cnt = mine.filter(n => {
             if (g.id === 'unread') return !n.read
             if ('types' in g) return (g.types as readonly string[]).includes(n.type)
             return true

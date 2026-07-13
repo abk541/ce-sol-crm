@@ -34,6 +34,7 @@ import { getAssignmentChain, isOpsAgent, ROLE_DISPLAY_LABELS } from '../../lib/t
 import type { Contract, Employee, NotifType, Notification as AppNotification, Opportunity } from '../../types'
 import { ROUTE_LABELS } from '../../config/navigation'
 import { buildGlobalSearchResults, type GlobalSearchResult } from '../../lib/globalSearch'
+import { isNotificationVisibleTo } from '../../lib/notifications'
 import { ROLE_LABELS } from '../../lib/permissions'
 import { playNotificationDing } from '../../lib/sound'
 import AppearanceMenu from './AppearanceMenu'
@@ -139,13 +140,10 @@ export default function TopBar() {
   useEscapeKey(() => setShowNotifications(false), showNotifications)
 
   const label = ROUTE_LABELS[location.pathname] ?? 'NEXUS ERP'
-  const visibleNotifications = useMemo(() => notifications.filter(n => {
-    // A per-user target is the most specific: only that person sees it.
-    if (n.targetUserId) return n.targetUserId === currentUser?.id
-    // Otherwise fall back to role targeting ('ALL' or an exact role match).
-    if (n.targetRole && n.targetRole !== 'ALL' && n.targetRole !== currentUser?.role) return false
-    return true
-  }), [notifications, currentUser?.id, currentUser?.role])
+  const visibleNotifications = useMemo(
+    () => notifications.filter(n => isNotificationVisibleTo(n, { user: currentUser, employees, contracts })),
+    [notifications, currentUser, employees, contracts],
+  )
 
   const unread = visibleNotifications.filter(n => !n.read).length
   const previewNotifications = visibleNotifications.slice(0, 8)

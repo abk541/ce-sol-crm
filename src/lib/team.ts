@@ -190,6 +190,37 @@ export function isOpportunityOwnedByUser(
   return false
 }
 
+// True when a contract "belongs" to the user: it is assigned to their employee
+// record (directly via assignedTo, or via their name in the spm/pm/bds/bdm/
+// supportAgent fields), or someone they supervise is the assignee. Capture/BD/
+// Ops Managers always pass since they oversee all contracts. Used to scope
+// contract-related notifications so each user only sees actions on contracts
+// associated with them, mirroring isOpportunityOwnedByUser.
+export function isContractAssociatedToUser(
+  employees: Employee[],
+  user: User | null | undefined,
+  contract: Contract,
+): boolean {
+  if (!user) return false
+  if (user.role === 'CAPTURE_MANAGER') return true
+  if (user.role === 'BD_MANAGER')      return true
+  if (user.role === 'OPS_MANAGER')     return true
+
+  const me = findEmployeeForUser(employees, user)
+  if (!me) return false
+
+  const assigneeId = contractWorkloadAssignee(contract, employees)
+  if (!assigneeId) return false
+  if (assigneeId === me.id) return true
+
+  // Team Lead / BD Manager → owns every employee in their downline.
+  if (me.role === 'TEAM_LEAD' || me.role === 'BD_MANAGER') {
+    return teamMemberIdsForWorkload(employees, me.id).includes(assigneeId)
+  }
+
+  return false
+}
+
 // True when the opportunity "belongs" to the user for personal-dashboard
 // purposes: it is assigned to their employee record, or their name/username
 // appears in the BD/BDM/support-agent fields. Mirrors the AgentDashboard
