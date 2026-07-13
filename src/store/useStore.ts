@@ -64,7 +64,7 @@ import {
   fetchEmployeeRequests,
   upsertEmployeeRequest,
 } from '../lib/db'
-import { getAssignmentChain, isAssignedToAssociate } from '../lib/team'
+import { getAssignmentChain, isAssignedToAssociate, findUserForEmployee } from '../lib/team'
 import { hasPermission, applyPermissionOverrides, type Permission } from '../lib/permissions'
 import { nextInvoiceSequenceFromContracts } from '../lib/invoiceNumbers'
 import { verifyTotpCode, consumeRecoveryCode, hashRecoveryCodes } from '../lib/mfa'
@@ -2894,13 +2894,14 @@ export const useStore = create<AppState>()(
         const opp = get().opportunities.find(o => o.id === opportunityId)
         if (opp) persistAssignedOpportunity(opp, get().employees, 'Opportunity assignment')
         if (emp && opp) {
+          const targetUser = findUserForEmployee(get().users, emp)
           get().addNotification({
             type: 'ASSIGNMENT',
             title: 'Opportunity assigned',
             message: `${opp.solicitation} assigned to ${emp.name}.`,
             read: false,
             relatedId: opportunityId,
-            targetUserId: employeeId,
+            targetUserId: targetUser?.id,
           })
         }
       },
@@ -2920,13 +2921,14 @@ export const useStore = create<AppState>()(
         const contract = get().contracts.find(c => c.id === contractId)
         if (contract) persistAssignedContract(contract, get().employees, 'Contract assignment')
         if (emp && contract) {
+          const targetUser = findUserForEmployee(get().users, emp)
           get().addNotification({
             type: 'ASSIGNMENT',
             title: 'Contract assigned',
             message: `${contract.title} assigned to ${emp.name}.`,
             read: false,
             relatedId: contractId,
-            targetUserId: employeeId,
+            targetUserId: targetUser?.id,
           })
         }
       },

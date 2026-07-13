@@ -104,6 +104,19 @@ export function findEmployeeForUser(employees: Employee[], user?: User | null): 
   )
 }
 
+// Inverse of findEmployeeForUser: given an employee, find their login User
+// account (matched by email, falling back to name). Employee ids and User ids
+// are distinct, so notifications targeted at a specific person must use the
+// User id resolved here — not the employee id.
+export function findUserForEmployee(users: User[], employee?: Employee | null): User | undefined {
+  if (!employee) return undefined
+  const email = employee.email?.toLowerCase()
+  return users.find(user =>
+    user.email?.toLowerCase() === email ||
+    user.name.toLowerCase() === employee.name.toLowerCase(),
+  )
+}
+
 // True for users on the OPS team below manager (i.e. Ops Team Lead / Ops Associate).
 // These users get the trimmed ops-only navigation and are bounced from the BD dashboard.
 export function isOpsAgent(user?: User | null): boolean {
