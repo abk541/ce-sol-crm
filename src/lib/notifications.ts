@@ -13,6 +13,7 @@ export interface NotificationVisibilityContext {
  * unread badge so all three always agree.
  *
  * Rules, in order:
+ * 0. Capture Manager sees everything (oversees all actions).
  * 1. targetUserId set  → only that exact user sees it (personal notifications).
  * 2. targetRole set (not 'ALL') → only that role sees it.
  * 3. Notification relates to a contract → only users associated with that
@@ -25,6 +26,10 @@ export function isNotificationVisibleTo(
   ctx: NotificationVisibilityContext,
 ): boolean {
   const { user, employees, contracts } = ctx
+
+  // Capture Manager oversees everything and must see every action taken by
+  // associates and team leads, even role- or user-targeted notifications.
+  if (user?.role === 'CAPTURE_MANAGER') return true
 
   if (n.targetUserId) return n.targetUserId === user?.id
   if (n.targetRole && n.targetRole !== 'ALL' && n.targetRole !== user?.role) return false
