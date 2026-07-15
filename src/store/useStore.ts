@@ -1576,8 +1576,17 @@ export const useStore = create<AppState>()(
         const now = new Date()
         const { requireAssociateForActivePipeline } = get()
         const reportedOpportunityIds = new Set(get().nonSubReports.map(report => report.opportunityId))
+        // An opportunity that already sits in the BD Tracker (any tracker row,
+        // e.g. "Discussion") has been acted on by the BD team, so it must never
+        // be swept into Non-Submission Reports. Tracker rows link back to the
+        // opportunity by solicitationId.
+        const trackerSolicitationIds = new Set(
+          get().bdSubmissions.map(row => row.solicitationId).filter(Boolean)
+        )
         const reportableOpps = get().opportunities.filter(opp => {
           if (opp.isDeleted || !PRE_SUBMISSION_STATUSES.includes(opp.status) || opp.nonSubmissionReportId || reportedOpportunityIds.has(opp.id)) return false
+          // Skip anything already tracked in the BD Tracker (incl. Discussion).
+          if (opp.solicitationId && trackerSolicitationIds.has(opp.solicitationId)) return false
           // Mode A escalates only Associate-led opps; Mode B escalates any assigned opp.
           if (requireAssociateForActivePipeline) {
             if (!isAssignedToAssociate(get().employees, opp.assignedTo)) return false
