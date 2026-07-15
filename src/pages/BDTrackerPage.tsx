@@ -630,25 +630,50 @@ export default function BDTrackerPage() {
                 No associate outcome rows for the current filters.
               </div>
             ) : (
-              associateOutcomes.map(row => (
-                <div key={row.name} className="rounded-xl border border-[var(--border-default)] bg-white/[0.03] p-3">
-                  <p className="truncate text-sm font-black text-[var(--text-primary)]">{row.name}</p>
-                  <div className="mt-3 grid grid-cols-3 gap-2 text-center">
-                    <div>
-                      <p className="text-base font-black" style={{ color: STATUS_META.SUBMITTED.color }}>{row.submitted}</p>
-                      <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--text-muted)]">Submitted</p>
+              associateOutcomes.map(row => {
+                const slices = [
+                  { name: 'Submitted', value: row.submitted, color: STATUS_META.SUBMITTED.color },
+                  { name: 'Non-Sub', value: row.nonSubmitted, color: STATUS_META.NOT_SUBMITTED.color },
+                  { name: 'Dropped', value: row.dropped, color: STATUS_META.DROPPED.color },
+                ].filter(s => s.value > 0)
+                return (
+                  <div key={row.name} className="rounded-xl border border-[var(--border-default)] bg-white/[0.03] p-3">
+                    <p className="truncate text-sm font-black text-[var(--text-primary)]">{row.name}</p>
+                    <div className="relative mt-2 h-28">
+                      {slices.length === 0 ? (
+                        <div className="flex h-full items-center justify-center text-xs font-semibold text-[var(--text-muted)]">No outcomes</div>
+                      ) : (
+                        <ResponsiveContainer width="100%" height="100%">
+                          <PieChart>
+                            <Pie data={slices} dataKey="value" nameKey="name" innerRadius={34} outerRadius={52} paddingAngle={3} stroke="transparent" strokeWidth={0} isAnimationActive={false}>
+                              {slices.map(d => <Cell key={d.name} fill={d.color} stroke="transparent" strokeWidth={0} />)}
+                            </Pie>
+                            <Tooltip />
+                          </PieChart>
+                        </ResponsiveContainer>
+                      )}
+                      <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                        <span className="text-lg font-black leading-none text-[var(--text-primary)]">{row.total}</span>
+                        <span className="text-[9px] font-bold uppercase tracking-wide text-[var(--text-muted)]">Total</span>
+                      </div>
                     </div>
-                    <div>
-                      <p className="text-base font-black" style={{ color: STATUS_META.NOT_SUBMITTED.color }}>{row.nonSubmitted}</p>
-                      <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--text-muted)]">Non-Sub</p>
-                    </div>
-                    <div>
-                      <p className="text-base font-black" style={{ color: STATUS_META.DROPPED.color }}>{row.dropped}</p>
-                      <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--text-muted)]">Dropped</p>
+                    <div className="mt-2 grid grid-cols-3 gap-1 text-center">
+                      <div>
+                        <p className="text-sm font-black" style={{ color: STATUS_META.SUBMITTED.color }}>{row.submitted}</p>
+                        <p className="text-[9px] font-bold uppercase tracking-wide text-[var(--text-muted)]">Sub</p>
+                      </div>
+                      <div>
+                        <p className="text-sm font-black" style={{ color: STATUS_META.NOT_SUBMITTED.color }}>{row.nonSubmitted}</p>
+                        <p className="text-[9px] font-bold uppercase tracking-wide text-[var(--text-muted)]">Non-Sub</p>
+                      </div>
+                      <div>
+                        <p className="text-sm font-black" style={{ color: STATUS_META.DROPPED.color }}>{row.dropped}</p>
+                        <p className="text-[9px] font-bold uppercase tracking-wide text-[var(--text-muted)]">Drop</p>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))
+                )
+              })
             )}
           </div>
         </div>

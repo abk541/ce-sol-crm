@@ -3192,7 +3192,15 @@ export const useStore = create<AppState>()(
             const collabPatch: { notifications?: Notification[]; employeeRequests?: EmployeeRequest[]; activityLogs?: ActivityLog[] } = {}
             if (nRes.ok && nRes.payload) {
               const readLocal = new Set(get().notifications.filter(n => n.read).map(n => n.id))
-              collabPatch.notifications = nRes.payload.map(n => (readLocal.has(n.id) ? { ...n, read: true } : n))
+              const dbIds = new Set(nRes.payload.map(n => n.id))
+              // Keep locally-created notifications that haven't synced to the DB
+              // yet (or when a DB write failed) so the author never loses their
+              // own alerts to a refresh that treats the DB as the whole truth.
+              const localOnly = get().notifications.filter(n => !dbIds.has(n.id))
+              collabPatch.notifications = [
+                ...nRes.payload.map(n => (readLocal.has(n.id) ? { ...n, read: true } : n)),
+                ...localOnly,
+              ].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
             }
             if (rRes.ok && rRes.payload) {
               collabPatch.employeeRequests = rRes.payload
@@ -3264,7 +3272,15 @@ export const useStore = create<AppState>()(
           const collabPatch: { notifications?: Notification[]; employeeRequests?: EmployeeRequest[]; activityLogs?: ActivityLog[] } = {}
           if (nRes.ok && nRes.payload) {
             const readLocal = new Set(get().notifications.filter(n => n.read).map(n => n.id))
-            collabPatch.notifications = nRes.payload.map(n => (readLocal.has(n.id) ? { ...n, read: true } : n))
+            const dbIds = new Set(nRes.payload.map(n => n.id))
+            // Keep locally-created notifications that haven't synced to the DB
+            // yet (or when a DB write failed) so the author never loses their
+            // own alerts to a refresh that treats the DB as the whole truth.
+            const localOnly = get().notifications.filter(n => !dbIds.has(n.id))
+            collabPatch.notifications = [
+              ...nRes.payload.map(n => (readLocal.has(n.id) ? { ...n, read: true } : n)),
+              ...localOnly,
+            ].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
           }
           if (rRes.ok && rRes.payload) {
             collabPatch.employeeRequests = rRes.payload

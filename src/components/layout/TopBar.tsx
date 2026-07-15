@@ -231,8 +231,13 @@ export default function TopBar() {
   }
 
   const submitGlobalSearch = () => {
-    const first = globalSearchResults[0]
-    if (first) openGlobalSearchResult(first)
+    const term = globalSearch.trim()
+    if (!term) return
+    // Drop the user into the pipeline list filtered by their query so results
+    // show inline, not just in the popup.
+    navigate(`/pipeline?q=${encodeURIComponent(term)}`)
+    setGlobalSearch('')
+    setShowGlobalSearch(false)
   }
 
   const openRelatedRecord = () => {
