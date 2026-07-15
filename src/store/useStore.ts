@@ -61,6 +61,8 @@ import {
   saveAppSetting,
   fetchNotifications,
   upsertNotification,
+  fetchActivityLogs,
+  upsertActivityLog,
   fetchEmployeeRequests,
   upsertEmployeeRequest,
 } from '../lib/db'
@@ -2659,13 +2661,18 @@ export const useStore = create<AppState>()(
       },
 
       // ── Activity Logs ───────────────────────────────────────────────
-      logActivity: (entry) => set(s => ({
-        activityLogs: [{
+      logActivity: (entry) => {
+        const log: ActivityLog = {
           ...entry,
-          id: `al${Date.now()}`,
+          id: `al${Date.now()}${Math.random().toString(36).slice(2, 7)}`,
           createdAt: new Date().toISOString(),
-        }, ...s.activityLogs]
-      })),
+        }
+        set(s => ({ activityLogs: [log, ...s.activityLogs] }))
+        // Promote to the shared table so every user's actions show up in the
+        // workspace-wide audit trail. Silent no-op when Supabase or the
+        // activity_logs table is unavailable.
+        if (isSupabaseConnected) void upsertActivityLog(log)
+      },
 
       // ── Non-submission reports ──────────────────────────────────────
       submitNonSubReport: (data) => {
@@ -3181,8 +3188,8 @@ export const useStore = create<AppState>()(
           // source of truth for the set; preserve any locally-read flag so a
           // refresh doesn't resurrect already-read alerts as unread.
           try {
-            const [nRes, rRes] = await Promise.all([fetchNotifications(), fetchEmployeeRequests()])
-            const collabPatch: { notifications?: Notification[]; employeeRequests?: EmployeeRequest[] } = {}
+            const [nRes, rRes, aRes] = await Promise.all([fetchNotifications(), fetchEmployeeRequests(), fetchActivityLogs()])
+            const collabPatch: { notifications?: Notification[]; employeeRequests?: EmployeeRequest[]; activityLogs?: ActivityLog[] } = {}
             if (nRes.ok && nRes.payload) {
               const readLocal = new Set(get().notifications.filter(n => n.read).map(n => n.id))
               collabPatch.notifications = nRes.payload.map(n => (readLocal.has(n.id) ? { ...n, read: true } : n))
@@ -3190,7 +3197,12 @@ export const useStore = create<AppState>()(
             if (rRes.ok && rRes.payload) {
               collabPatch.employeeRequests = rRes.payload
             }
-            if (collabPatch.notifications || collabPatch.employeeRequests) set(collabPatch)
+            if (aRes.ok && aRes.payload) {
+              const dbIds = new Set(aRes.payload.map(l => l.id))
+              const localOnly = get().activityLogs.filter(l => !dbIds.has(l.id))
+              collabPatch.activityLogs = [...aRes.payload, ...localOnly].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
+            }
+            if (collabPatch.notifications || collabPatch.employeeRequests || collabPatch.activityLogs) set(collabPatch)
           } catch (err) {
             console.error('[Store] collaboration sync failed', err)
           }
@@ -3248,8 +3260,8 @@ export const useStore = create<AppState>()(
             })
           }
 
-          const [nRes, rRes] = await Promise.all([fetchNotifications(), fetchEmployeeRequests()])
-          const collabPatch: { notifications?: Notification[]; employeeRequests?: EmployeeRequest[] } = {}
+          const [nRes, rRes, aRes] = await Promise.all([fetchNotifications(), fetchEmployeeRequests(), fetchActivityLogs()])
+          const collabPatch: { notifications?: Notification[]; employeeRequests?: EmployeeRequest[]; activityLogs?: ActivityLog[] } = {}
           if (nRes.ok && nRes.payload) {
             const readLocal = new Set(get().notifications.filter(n => n.read).map(n => n.id))
             collabPatch.notifications = nRes.payload.map(n => (readLocal.has(n.id) ? { ...n, read: true } : n))
@@ -3257,7 +3269,12 @@ export const useStore = create<AppState>()(
           if (rRes.ok && rRes.payload) {
             collabPatch.employeeRequests = rRes.payload
           }
-          if (collabPatch.notifications || collabPatch.employeeRequests) set(collabPatch)
+          if (aRes.ok && aRes.payload) {
+            const dbIds = new Set(aRes.payload.map(l => l.id))
+            const localOnly = get().activityLogs.filter(l => !dbIds.has(l.id))
+            collabPatch.activityLogs = [...aRes.payload, ...localOnly].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
+          }
+          if (collabPatch.notifications || collabPatch.employeeRequests || collabPatch.activityLogs) set(collabPatch)
         } catch (err) {
           console.error('[Store] refreshFromDb failed', err)
         } finally {

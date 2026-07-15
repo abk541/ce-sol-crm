@@ -1,5 +1,6 @@
 import { supabase, isSupabaseConnected } from './supabase'
 import type {
+  ActivityLog,
   BDSubmission,
   Comment,
   DeletionRequest,
@@ -2073,6 +2074,79 @@ export async function upsertNotification(n: Notification): Promise<void> {
     if (error && !isMissingTableError(error)) console.error('[db] upsertNotification error', error)
   } catch (err) {
     if (!isMissingTableError(err)) console.error('[db] upsertNotification failed', err)
+  }
+}
+
+// ── Activity logs (shared, cross-user) ───────────────────────────────────────
+//
+// Backed by the `activity_logs` table (migration
+// 20260715120000_add_activity_logs.sql). Previously activity logs lived only in
+// each browser's localStorage, so the admin/Capture Manager only ever saw their
+// OWN actions. Promoting them to Supabase makes the audit trail workspace-wide.
+// The `user` field is stored in a non-reserved column (`actor`) to avoid any
+// quoting pitfalls.
+
+function activityLogToDb(l: ActivityLog): Record<string, unknown> {
+  return {
+    id: l.id,
+    action: l.action,
+    actor: l.user,
+    actor_role: l.userRole,
+    entity_type: l.entityType,
+    entity_id: l.entityId ?? null,
+    entity_name: l.entityName ?? null,
+    created_at: l.createdAt,
+  }
+}
+
+function dbToActivityLog(row: Record<string, unknown>): ActivityLog {
+  return {
+    id: row.id as string,
+    action: (row.action as string) ?? '',
+    user: (row.actor as string) ?? '',
+    userRole: row.actor_role as ActivityLog['userRole'],
+    entityType: row.entity_type as ActivityLog['entityType'],
+    entityId: (row.entity_id as string | null) ?? undefined,
+    entityName: (row.entity_name as string | null) ?? undefined,
+    createdAt: (row.created_at as string) ?? new Date().toISOString(),
+  }
+}
+
+export interface ActivityLogsResult {
+  ok: boolean
+  missingTable: boolean
+  payload?: ActivityLog[]
+}
+
+export async function fetchActivityLogs(): Promise<ActivityLogsResult> {
+  if (!isSupabaseConnected || !supabase) return { ok: false, missingTable: false }
+  try {
+    const { data, error } = await supabase
+      .from('activity_logs')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(500)
+    if (error) {
+      if (isMissingTableError(error)) return { ok: false, missingTable: true }
+      console.error('[db] fetchActivityLogs error', error)
+      return { ok: false, missingTable: false }
+    }
+    const payload = (data ?? []).map(r => dbToActivityLog(r as Record<string, unknown>))
+    return { ok: true, missingTable: false, payload }
+  } catch (err) {
+    if (isMissingTableError(err)) return { ok: false, missingTable: true }
+    console.error('[db] fetchActivityLogs failed', err)
+    return { ok: false, missingTable: false }
+  }
+}
+
+export async function upsertActivityLog(l: ActivityLog): Promise<void> {
+  if (!isSupabaseConnected || !supabase) return
+  try {
+    const { error } = await supabase.from('activity_logs').upsert(activityLogToDb(l))
+    if (error && !isMissingTableError(error)) console.error('[db] upsertActivityLog error', error)
+  } catch (err) {
+    if (!isMissingTableError(err)) console.error('[db] upsertActivityLog failed', err)
   }
 }
 

@@ -532,13 +532,24 @@ function DateTimePicker({
   const [minute, setMinute] = useState<string>(initialTime.m)
   const [period, setPeriod] = useState<'AM' | 'PM'>(initialTime.p)
 
+  // Re-sync segments from the parent value ONLY when it differs numerically from
+  // what the user has already typed. Without this guard, typing "5" round-trips
+  // through the parent as "05", the effect clobbers the segment back to the
+  // padded form, and the browser resets the cursor to the start — so the next
+  // keystroke/backspace edits from the left instead of the right.
   useEffect(() => {
     const p = parseDueDate(dueDate)
-    setMonthIdx(p.mIdx); setDay(p.d); setYear(p.y)
+    if (p.mIdx !== monthIdx || Number(p.d) !== Number(day) || Number(p.y) !== Number(year)) {
+      setMonthIdx(p.mIdx); setDay(p.d); setYear(p.y)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dueDate])
   useEffect(() => {
     const p = parseLocalTime(localTime)
-    setHour(p.h); setMinute(p.m); setPeriod(p.p)
+    if (Number(p.h) !== Number(hour) || Number(p.m) !== Number(minute) || p.p !== period) {
+      setHour(p.h); setMinute(p.m); setPeriod(p.p)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [localTime])
 
   const emitDate = (mi: number, d: string, y: string) => {
