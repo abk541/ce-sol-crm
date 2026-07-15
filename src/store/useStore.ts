@@ -203,6 +203,7 @@ interface AppState {
   markOpportunityWon: (id: string) => void
   moveOpportunityToBDTracker: (id: string, status: BDSubmission['status'], comment?: string) => void
   syncDueOpportunities: () => void
+  reconcileNonSubReports: () => void
   scanDeadlineReminders: () => void
   scanNonSubReminders: () => void
   scanGoalProgress: () => void
@@ -1628,6 +1629,48 @@ export const useStore = create<AppState>()(
             relatedId: report.opportunityId,
             targetRole: 'CAPTURE_MANAGER',
           })
+        })
+      },
+
+      // Self-heal: drop still-PENDING auto-generated non-submission reports whose
+      // opportunity has since moved into the BD Tracker (e.g. "Discussion") or was
+      // archived to Past Performances — those were never real non-submissions.
+      // Reviewed reports (APPROVED/DECLINED) are kept as the historical record,
+      // even though the review itself creates a NOT_SUBMITTED/DROPPED tracker row.
+      reconcileNonSubReports: () => {
+        const oppById = new Map(get().opportunities.map(o => [o.id, o]))
+        const trackerSolicitationIds = new Set(
+          get().bdSubmissions.map(row => row.solicitationId).filter(Boolean)
+        )
+        const pastPerfOpportunityIds = new Set(
+          get().pastPerformances.map(pp => pp.opportunityId).filter(Boolean)
+        )
+
+        const staleReports = get().nonSubReports.filter(report => {
+          if (report.status !== 'PENDING') return false
+          const opp = oppById.get(report.opportunityId)
+          const inTracker = !!opp?.solicitationId && trackerSolicitationIds.has(opp.solicitationId)
+          const inPastPerf = pastPerfOpportunityIds.has(report.opportunityId)
+          return inTracker || inPastPerf
+        })
+        if (staleReports.length === 0) return
+
+        const staleIds = new Set(staleReports.map(r => r.id))
+        const clearedOppIds = new Set(staleReports.map(r => r.opportunityId))
+
+        set(s => ({
+          nonSubReports: s.nonSubReports.filter(r => !staleIds.has(r.id)),
+          opportunities: s.opportunities.map(o =>
+            clearedOppIds.has(o.id) && o.nonSubmissionReportId && staleIds.has(o.nonSubmissionReportId)
+              ? { ...o, nonSubmissionReportId: undefined }
+              : o
+          ),
+        }))
+
+        staleReports.forEach(report => {
+          void bulkDeleteFromTable('non_submission_reports', { column: 'id', value: report.id })
+          const updatedOpp = get().opportunities.find(o => o.id === report.opportunityId)
+          if (updatedOpp) upsertOpportunity(updatedOpp)
         })
       },
 

@@ -92,6 +92,7 @@ export default function App() {
       if (state.isAuthenticated && state.loginTimestamp) {
         if (state.dbReady) {
           state.syncDueOpportunities()
+          state.reconcileNonSubReports()
           state.scanDeadlineReminders()
           state.scanNonSubReminders()
           state.scanGoalProgress()
