@@ -303,6 +303,10 @@ export interface Opportunity {
   deletionRequested?: boolean
   submittedAt?: string
   nonSubmissionReportId?: string
+  // Set when a capture manager deliberately returns a non-submission back to the
+  // pipeline. Exempts the opportunity from the automatic non-submission sweep so
+  // an already-overdue opportunity is not immediately re-reported.
+  nonSubmissionExempt?: boolean
   notifiedDue24h?: boolean
   notifiedDue4h?: boolean
   assignedTo?: string        // employee id

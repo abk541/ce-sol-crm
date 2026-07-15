@@ -1585,7 +1585,7 @@ export const useStore = create<AppState>()(
           get().bdSubmissions.map(row => row.solicitationId).filter(Boolean)
         )
         const reportableOpps = get().opportunities.filter(opp => {
-          if (opp.isDeleted || !PRE_SUBMISSION_STATUSES.includes(opp.status) || opp.nonSubmissionReportId || reportedOpportunityIds.has(opp.id)) return false
+          if (opp.isDeleted || !PRE_SUBMISSION_STATUSES.includes(opp.status) || opp.nonSubmissionReportId || opp.nonSubmissionExempt || reportedOpportunityIds.has(opp.id)) return false
           // Skip anything already tracked in the BD Tracker (incl. Discussion).
           if (opp.solicitationId && trackerSolicitationIds.has(opp.solicitationId)) return false
           // Mode A escalates only Associate-led opps; Mode B escalates any assigned opp.
@@ -2800,6 +2800,10 @@ export const useStore = create<AppState>()(
           status: 'ACTIVE',
           submittedAt: undefined,
           nonSubmissionReportId: undefined,
+          // Deliberate manager override: keep it in the pipeline. Without this the
+          // next sweep would instantly re-report it (its due datetime is already
+          // >12h in the past), bouncing it straight back to Non-Submission Reports.
+          nonSubmissionExempt: true,
         }, get().employees, get().requireAssociateForActivePipeline)
 
         const relatedSubmission = get().bdSubmissions.find(b => b.solicitationId === linkedOpp.solicitationId)

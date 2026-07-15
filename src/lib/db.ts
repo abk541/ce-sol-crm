@@ -192,6 +192,9 @@ function oppToDb(o: Opportunity, opts: { includeSamGovContacts?: boolean } = {})
     assigned_opportunities: assignedOpportunityNames,
     proposal_attachments: normalizeStoredAttachments(o.proposalAttachments),
   }
+  // Only reference the column when actually exempting, so opportunity saves keep
+  // working even before the migration adding non_submission_exempt has been run.
+  if (o.nonSubmissionExempt) row.non_submission_exempt = true
   if (includeSamGovContacts) row.sam_gov_contacts = samGovContacts
   return row
 }
@@ -275,6 +278,7 @@ function dbToOpp(row: Record<string, unknown>): Partial<Opportunity> {
     deletionRequested: row.deletion_requested as boolean | undefined,
     submittedAt: row.submitted_at as string | undefined,
     nonSubmissionReportId: row.non_submission_report_id as string | undefined,
+    nonSubmissionExempt: (row.non_submission_exempt as boolean | null | undefined) ?? undefined,
     notifiedDue24h: row.notified_due_24h === true ? true : undefined,
     notifiedDue4h: row.notified_due_4h === true ? true : undefined,
     assignedTo: row.assigned_to as string | undefined,
