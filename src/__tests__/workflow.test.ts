@@ -328,19 +328,19 @@ describe('1 · submitOpportunity', () => {
         localTime: '10:00 AM',
         timezone: 'UTC-05:00',
       })
-      useStore.setState({ opportunities: [opp], nonSubReports: [], bdSubmissions: [], nonSubGraceHours: 0, nonSubGraceMinutes: 5 })
+      useStore.setState({ opportunities: [opp], nonSubReports: [], bdSubmissions: [] })
 
       vi.setSystemTime(new Date('2026-05-22T14:59:00Z'))
       useStore.getState().syncDueOpportunities()
       expect(useStore.getState().opportunities.find(o => o.id === opp.id)?.status).toBe('ACTIVE')
       expect(useStore.getState().nonSubReports).toHaveLength(0)
 
-      vi.setSystemTime(new Date('2026-05-22T15:04:59Z'))
+      vi.setSystemTime(new Date('2026-05-23T02:59:59Z'))
       useStore.getState().syncDueOpportunities()
       expect(useStore.getState().opportunities.find(o => o.id === opp.id)?.status).toBe('ACTIVE')
       expect(useStore.getState().nonSubReports).toHaveLength(0)
 
-      vi.setSystemTime(new Date('2026-05-22T15:05:00Z'))
+      vi.setSystemTime(new Date('2026-05-23T03:00:00Z'))
       useStore.getState().syncDueOpportunities()
       expect(useStore.getState().nonSubReports).toHaveLength(1)
       expect(useStore.getState().bdSubmissions).toHaveLength(0)

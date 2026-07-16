@@ -65,13 +65,13 @@ const FILTER_GROUPS = [
 ] as const
 
 export default function NotificationsPage() {
-  const { notifications, markNotificationRead, markAllRead, currentUser, contracts, employees } = useStore()
+  const { notifications, markNotificationRead, markAllRead, currentUser, contracts, opportunities, employees } = useStore()
   const [filter, setFilter] = useState<string>('all')
 
   // Only notifications this user is allowed to see (personal targets, role
   // targets, and contract actions on contracts associated with them). Same
   // predicate the header bell and sidebar badge use, so all three agree.
-  const mine = notifications.filter(n => isNotificationVisibleTo(n, { user: currentUser, employees, contracts }))
+  const mine = notifications.filter(n => isNotificationVisibleTo(n, { user: currentUser, employees, contracts, opportunities }))
 
   const visible = mine.filter(n => {
     if (filter === 'unread') return !n.read

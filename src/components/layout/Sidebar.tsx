@@ -49,7 +49,7 @@ export default function Sidebar() {
   const { prefs } = useAppearance()
   const location = useLocation()
   const [expanded, setExpanded] = useState<Record<string, boolean>>(DEFAULT_EXPANDED_NAV_GROUPS)
-  const unread = notifications.filter(n => !n.read && isNotificationVisibleTo(n, { user: currentUser, employees, contracts })).length
+  const unread = notifications.filter(n => !n.read && isNotificationVisibleTo(n, { user: currentUser, employees, contracts, opportunities })).length
   const expandedWidth = prefs.theme === 'noir' ? 276 : prefs.theme === 'prism' ? 232 : prefs.theme === 'daylight' ? 246 : 256
   const collapsedWidth = prefs.theme === 'noir' ? 76 : 66
 

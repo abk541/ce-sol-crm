@@ -2067,13 +2067,18 @@ export async function fetchNotifications(): Promise<NotificationsResult> {
   }
 }
 
-export async function upsertNotification(n: Notification): Promise<void> {
-  if (!isSupabaseConnected || !supabase) return
+export async function upsertNotification(n: Notification): Promise<boolean> {
+  if (!isSupabaseConnected || !supabase) return false
   try {
     const { error } = await supabase.from('notifications').upsert(notificationToDb(n))
-    if (error && !isMissingTableError(error)) console.error('[db] upsertNotification error', error)
+    if (error) {
+      if (!isMissingTableError(error)) console.error('[db] upsertNotification error', error)
+      return false
+    }
+    return true
   } catch (err) {
     if (!isMissingTableError(err)) console.error('[db] upsertNotification failed', err)
+    return false
   }
 }
 
@@ -2103,8 +2108,8 @@ function dbToActivityLog(row: Record<string, unknown>): ActivityLog {
   return {
     id: row.id as string,
     action: (row.action as string) ?? '',
-    user: (row.actor as string) ?? '',
-    userRole: row.actor_role as ActivityLog['userRole'],
+    user: ((row.actor as string | null) ?? (row.user_name as string | null) ?? ''),
+    userRole: ((row.actor_role as ActivityLog['userRole'] | null) ?? (row.user_role as ActivityLog['userRole'] | null) ?? 'CAPTURE_MANAGER'),
     entityType: row.entity_type as ActivityLog['entityType'],
     entityId: (row.entity_id as string | null) ?? undefined,
     entityName: (row.entity_name as string | null) ?? undefined,
@@ -2140,13 +2145,18 @@ export async function fetchActivityLogs(): Promise<ActivityLogsResult> {
   }
 }
 
-export async function upsertActivityLog(l: ActivityLog): Promise<void> {
-  if (!isSupabaseConnected || !supabase) return
+export async function upsertActivityLog(l: ActivityLog): Promise<boolean> {
+  if (!isSupabaseConnected || !supabase) return false
   try {
     const { error } = await supabase.from('activity_logs').upsert(activityLogToDb(l))
-    if (error && !isMissingTableError(error)) console.error('[db] upsertActivityLog error', error)
+    if (error) {
+      if (!isMissingTableError(error)) console.error('[db] upsertActivityLog error', error)
+      return false
+    }
+    return true
   } catch (err) {
     if (!isMissingTableError(err)) console.error('[db] upsertActivityLog failed', err)
+    return false
   }
 }
 

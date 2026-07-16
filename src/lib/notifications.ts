@@ -1,10 +1,11 @@
-import type { Notification, User, Employee, Contract } from '../types'
-import { isContractAssociatedToUser } from './team'
+import type { Notification, User, Employee, Contract, Opportunity } from '../types'
+import { isContractAssociatedToUser, isOpportunityOwnedByUser } from './team'
 
 export interface NotificationVisibilityContext {
   user?: User | null
   employees: Employee[]
   contracts: Contract[]
+  opportunities?: Opportunity[]
 }
 
 /**
@@ -25,7 +26,7 @@ export function isNotificationVisibleTo(
   n: Notification,
   ctx: NotificationVisibilityContext,
 ): boolean {
-  const { user, employees, contracts } = ctx
+  const { user, employees, contracts, opportunities = [] } = ctx
 
   // Capture Manager oversees everything and must see every action taken by
   // associates and team leads, even role- or user-targeted notifications.
@@ -36,6 +37,11 @@ export function isNotificationVisibleTo(
 
   const contract = n.relatedId ? contracts.find(c => c.id === n.relatedId) : undefined
   if (contract) return isContractAssociatedToUser(employees, user, contract)
+
+  const opportunity = n.relatedId
+    ? opportunities.find(o => o.id === n.relatedId || o.solicitationId === n.relatedId)
+    : undefined
+  if (opportunity) return isOpportunityOwnedByUser(employees, user, opportunity.assignedTo)
 
   return true
 }

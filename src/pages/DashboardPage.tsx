@@ -2936,7 +2936,7 @@ function ExecutiveDashboard() {
             subtitle="Latest app activity only"
             action={<span className="rounded-full bg-emerald-400/10 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-emerald-300">Live</span>}
           >
-            {!hasPermission(currentUser, 'admin:manageUsers') ? (
+            {currentUser?.role !== 'CAPTURE_MANAGER' && !hasPermission(currentUser, 'admin:manageUsers') ? (
               <EmptyDashboardState label="You do not have access to the live activity log." />
             ) : recentActivity.length === 0 ? (
               <EmptyDashboardState label="No activity recorded yet." />
@@ -3616,7 +3616,7 @@ function AdminDashboard() {
         </motion.div>
 
         {/* Activity Log (admin only) */}
-        {hasPermission(currentUser, 'admin:manageUsers') && (
+        {(currentUser?.role === 'CAPTURE_MANAGER' || hasPermission(currentUser, 'admin:manageUsers')) && (
           <motion.div variants={fadeUp} className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
             <div className="px-4 py-3.5 border-b border-slate-100 flex items-center justify-between">
               <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">

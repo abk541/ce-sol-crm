@@ -141,8 +141,8 @@ export default function TopBar() {
 
   const label = ROUTE_LABELS[location.pathname] ?? 'NEXUS ERP'
   const visibleNotifications = useMemo(
-    () => notifications.filter(n => isNotificationVisibleTo(n, { user: currentUser, employees, contracts })),
-    [notifications, currentUser, employees, contracts],
+    () => notifications.filter(n => isNotificationVisibleTo(n, { user: currentUser, employees, contracts, opportunities })),
+    [notifications, currentUser, employees, contracts, opportunities],
   )
 
   const unread = visibleNotifications.filter(n => !n.read).length

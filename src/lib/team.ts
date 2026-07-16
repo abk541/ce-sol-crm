@@ -110,6 +110,9 @@ export function findEmployeeForUser(employees: Employee[], user?: User | null): 
 // User id resolved here — not the employee id.
 export function findUserForEmployee(users: User[], employee?: Employee | null): User | undefined {
   if (!employee) return undefined
+  const exact = users.find(user => user.id === employee.id)
+  if (exact) return exact
+
   const email = employee.email?.toLowerCase()
   return users.find(user =>
     user.email?.toLowerCase() === email ||
