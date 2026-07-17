@@ -46,10 +46,37 @@ function calendarDays(viewDate: Date) {
   })
 }
 
+export function normalizePeriodDate(dateStr: string | undefined): string | null {
+  const value = dateStr?.trim()
+  if (!value) return null
+
+  const yearFirst = value.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/)
+  if (yearFirst) {
+    const [, year, month, day] = yearFirst
+    return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`
+  }
+
+  const slashDate = value.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/)
+  if (slashDate) {
+    const [, first, second, year] = slashDate
+    const firstNumber = Number(first)
+    const secondNumber = Number(second)
+    const month = firstNumber > 12 ? secondNumber : firstNumber
+    const day = firstNumber > 12 ? firstNumber : secondNumber
+    if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+    }
+  }
+
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return null
+  return toYMD(parsed)
+}
+
 export function filterByPeriod(dateStr: string | undefined, period: Period | null): boolean {
   if (!period) return true
-  if (!dateStr) return true
-  const d = dateStr.slice(0, 10)
+  const d = normalizePeriodDate(dateStr)
+  if (!d) return false
   return d >= period.from && d <= period.to
 }
 
@@ -309,8 +336,9 @@ export function filterByPeriodLegacy<T extends { createdAt?: string; submittedAt
   const cutoff = now - ms[period as Exclude<PeriodPill, 'ALL'>]
   return items.filter(item => {
     const raw = item[dateKey] as string | undefined
-    if (!raw) return true
-    return new Date(raw).getTime() >= cutoff
+    const normalized = normalizePeriodDate(raw)
+    if (!normalized) return false
+    return new Date(`${normalized}T00:00:00`).getTime() >= cutoff
   })
 }
 

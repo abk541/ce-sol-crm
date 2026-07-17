@@ -7,7 +7,7 @@ import type { BDSubmission, ContractType, FileAttachment, Opportunity, SetAside 
 import { useStore } from '../store/useStore'
 import toast from 'react-hot-toast'
 import PeriodFilter, { type Period, filterByPeriod } from '../components/shared/PeriodFilter'
-import { getAssignmentChain, isOpportunityOwnedByUser } from '../lib/team'
+import { getAssignmentChain, isBDSubmissionAssociatedToUser } from '../lib/team'
 import { formatCurrency } from '../lib/utils'
 import { uploadAttachment, downloadAttachment, hasAttachmentSource } from '../lib/attachments'
 import FloatingActionMenu from '../components/shared/FloatingActionMenu'
@@ -468,10 +468,8 @@ export default function BDTrackerPage() {
 
   const baseFiltered = useMemo(() => {
     let list = [...bdSubmissions]
-    list = list.filter(row => {
-      const opp = rowOpportunity(row, opportunities)
-      return isOpportunityOwnedByUser(employees, currentUser, opp?.assignedTo)
-    })
+    list = list.filter(row =>
+      isBDSubmissionAssociatedToUser(employees, currentUser, row, opportunities))
     if (period) list = list.filter(s => filterByPeriod(s.dueDate || s.submittedOn, period))
     if (search.trim()) {
       const q = search.trim().toLowerCase()

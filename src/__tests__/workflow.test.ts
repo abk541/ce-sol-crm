@@ -115,6 +115,13 @@ const CAPTURE_MANAGER_USER = {
   createdAt: '2026-01-01',
 }
 
+const ASSOCIATE_USER = {
+  id: 'user-associate', name: 'Test Associate', email: 'associate@ces.com',
+  username: 'associate', role: 'ASSOCIATE' as const, avatar: 'TA',
+  status: 'active' as const, firstLogin: false,
+  createdAt: '2026-01-01',
+}
+
 const TEST_EMPLOYEES: Employee[] = [
   { id: 'emp-manager', name: 'Test Manager', email: 'manager@ces.com', role: 'BD_MANAGER', managerId: null, avatar: 'TM' },
   { id: 'emp-lead', name: 'Test Team Lead', email: 'lead@ces.com', role: 'TEAM_LEAD', managerId: 'emp-manager', avatar: 'TL' },
@@ -141,6 +148,90 @@ beforeEach(() => {
     employees: TEST_EMPLOYEES,
     nonSubGraceHours: 0,
     nonSubGraceMinutes: 5,
+  })
+})
+
+describe('associate comments and quoted workflow', () => {
+  it('lets an associate mark their opportunity as quoted and alerts the Capture Manager once', async () => {
+    const opp = makeOpp({ id: 'opp-quoted', assignedTo: 'emp-associate', quoted: false })
+    useStore.setState({
+      opportunities: [opp],
+      currentUser: ASSOCIATE_USER,
+      users: [CAPTURE_MANAGER_USER, ASSOCIATE_USER],
+    })
+
+    const saved = await useStore.getState().updateOpportunity(opp.id, { quoted: true })
+
+    expect(saved).toBe(true)
+    expect(useStore.getState().opportunities[0].quoted).toBe(true)
+    expect(useStore.getState().notifications.filter(item => item.title === 'Opportunity quoted')).toHaveLength(1)
+    expect(useStore.getState().notifications[0]).toMatchObject({
+      relatedId: opp.id,
+      targetRole: 'CAPTURE_MANAGER',
+    })
+  })
+
+  it('notifies the Capture Manager when an associate comments on an opportunity', async () => {
+    const opp = makeOpp({ id: 'opp-comment', assignedTo: 'emp-associate' })
+    useStore.setState({
+      opportunities: [opp],
+      currentUser: ASSOCIATE_USER,
+      users: [CAPTURE_MANAGER_USER, ASSOCIATE_USER],
+    })
+
+    const comment = {
+      id: 'comment-1',
+      text: 'Proposal review completed.',
+      author: ASSOCIATE_USER.name,
+      authorId: ASSOCIATE_USER.id,
+      createdAt: '2026-07-17T10:00:00.000Z',
+    }
+    const saved = await useStore.getState().updateOpportunity(opp.id, { comments: [comment] })
+
+    expect(saved).toBe(true)
+    expect(useStore.getState().notifications).toContainEqual(expect.objectContaining({
+      title: 'New opportunity comment',
+      relatedId: opp.id,
+      targetRole: 'CAPTURE_MANAGER',
+    }))
+    expect(useStore.getState().activityLogs).toContainEqual(expect.objectContaining({
+      entityId: opp.id,
+      userRole: 'ASSOCIATE',
+    }))
+  })
+
+  it('automatically marks an opportunity quoted when sourcing receives a quote attachment', async () => {
+    const opp = makeOpp({ id: 'opp-auto-quoted', assignedTo: 'emp-associate', quoted: false })
+    const quote: FileAttachment = {
+      id: 'quote-1',
+      name: 'supplier-quote.pdf',
+      attachedAt: '2026-07-17T10:00:00.000Z',
+      uploadedBy: ASSOCIATE_USER.name,
+      storagePath: 'quotes/supplier-quote.pdf',
+    }
+    useStore.setState({
+      opportunities: [opp],
+      currentUser: ASSOCIATE_USER,
+      users: [CAPTURE_MANAGER_USER, ASSOCIATE_USER],
+    })
+
+    useStore.getState().addSubcontractor({
+      opportunityId: opp.id,
+      companyName: 'Supplier Company',
+      contactName: 'Supplier Contact',
+      email: 'supplier@example.test',
+      phone: '',
+      naicsCode: '',
+      setAside: '',
+      notes: '',
+      quoteFiles: [quote],
+      createdBy: ASSOCIATE_USER.name,
+    })
+
+    await vi.waitFor(() => {
+      expect(useStore.getState().opportunities[0].quoted).toBe(true)
+      expect(useStore.getState().notifications.filter(item => item.title === 'Opportunity quoted')).toHaveLength(1)
+    })
   })
 })
 

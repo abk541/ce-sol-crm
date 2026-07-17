@@ -19,9 +19,24 @@ import PeriodFilter, { type Period, filterByPeriod } from '../components/shared/
 import TeamStatisticsPanel from '../components/shared/TeamStatisticsPanel'
 import { formatCurrency, avatarColor } from '../lib/utils'
 import { useNavigate } from 'react-router-dom'
-import { getAssignmentChain, isOpportunityAssignedToUser, isOpsAgent } from '../lib/team'
+import {
+  getAssignmentChain,
+  isBDSubmissionAssociatedToUser,
+  isBDSubmissionAttributedToEmployee,
+  isOpportunityAssignedToUser,
+  isOpsAgent,
+} from '../lib/team'
 import { hasAnyPermission, hasPermission, ROLE_LABELS } from '../lib/permissions'
+import { buildActivityHistory, canViewCompanyActivity } from '../lib/notifications'
 import { chartColorsForTheme, useAppearance } from '../lib/appearance'
+import {
+  calculateBdDashboardSummary,
+  contractOpportunityRows,
+  dashboardContractGrossProfit,
+  dashboardContractValue,
+  isActiveContractAdminRecord,
+  isSubmittedLifecycleRow,
+} from '../lib/dashboardMetrics'
 import { NAICS_CODES } from '../data/naics'
 import type { BDSubmission, Contract, Employee, EmployeeTeam, FreshAward, Goal, HierarchyRole, NonSubmissionReport, Opportunity, User } from '../types'
 import {
@@ -458,7 +473,10 @@ function MyGoalsWidget({
 
 // Agent Dashboard
 function AgentDashboard() {
-  const { currentUser, opportunities, nonSubReports, bdSubmissions, employees, goals, freshAwards } = useStore()
+  const {
+    currentUser, opportunities, nonSubReports, bdSubmissions, employees, goals,
+    freshAwards, requireAssociateForActivePipeline,
+  } = useStore()
   const navigate = useNavigate()
 
   const monthKey = currentMonthKey()
@@ -476,14 +494,16 @@ function AgentDashboard() {
     [opportunities, currentUser, employees],
   )
 
-  const activeOpps = myOpps.filter(o => o.status === 'ACTIVE')
+  const activeOpps = contractOpportunityRows(opportunities, employees, requireAssociateForActivePipeline)
+    .filter(o => isOpportunityAssignedToUser(employees, currentUser, o))
     .sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime())
   const overdueCount = activeOpps.filter(o => new Date(o.dueDate) < new Date()).length
   const pendingReport = nonSubReports.find(r => r.agentUsername === currentUser?.username && r.status === 'PENDING')
-  const mySubmissionRows = bdSubmissions.filter(s => {
-    const q = `${s.supportAgent || ''} ${s.bdm} ${s.bds}`.toLowerCase()
-    return q.includes((currentUser?.name || '').toLowerCase()) || q.includes((currentUser?.username || '').toLowerCase())
-  })
+  const myTrackerRows = bdSubmissions.filter(submission =>
+    isBDSubmissionAssociatedToUser(employees, currentUser, submission, opportunities))
+  const mySubmissionRows = myTrackerRows.filter(isSubmittedLifecycleRow)
+  const myApprovedNonSubs = nonSubReports.filter(r =>
+    r.agentUsername === currentUser?.username && r.status === 'APPROVED')
   const myStats = {
     username: currentUser?.username ?? '',
     name: currentUser?.name ?? '',
@@ -491,12 +511,12 @@ function AgentDashboard() {
     role: currentUser?.role ?? 'ASSOCIATE',
     submissions: mySubmissionRows.length,
     wins: mySubmissionRows.filter(s => s.status === 'AWARDED').length,
-    losses: mySubmissionRows.filter(s => ['LOST', 'DROPPED', 'CANCELED', 'NOT_SUBMITTED'].includes(s.status)).length,
-    nonSubs: nonSubReports.filter(r => r.agentUsername === currentUser?.username).length,
+    losses: mySubmissionRows.filter(s => s.status === 'LOST').length,
+    nonSubs: myApprovedNonSubs.length,
     active: activeOpps.length,
     winRate: mySubmissionRows.length ? Math.round((mySubmissionRows.filter(s => s.status === 'AWARDED').length / mySubmissionRows.length) * 100) : 0,
     submissionRate: myOpps.length ? Math.round((mySubmissionRows.length / myOpps.length) * 100) : 0,
-    score: Math.min(100, Math.round((mySubmissionRows.length * 10) + (mySubmissionRows.filter(s => s.status === 'AWARDED').length * 18) - (nonSubReports.filter(r => r.agentUsername === currentUser?.username).length * 6))),
+    score: Math.min(100, Math.round((mySubmissionRows.length * 10) + (mySubmissionRows.filter(s => s.status === 'AWARDED').length * 18) - (myApprovedNonSubs.length * 6))),
     rank: 1,
     goal: myGoals.find(g => g.scope === 'employee' && g.targetId === myEmployee?.id && g.metric === 'submissions_count')?.targetValue ?? 5,
     streak: mySubmissionRows.length ? 1 : 0,
@@ -636,9 +656,9 @@ function AgentDashboard() {
           <div className="grid grid-cols-2 gap-2">
             {([
               { label: 'ACTIVE',    value: myStats.active,      color: '#6366F1', icon: Target, nav: '/pipeline?mine=1' },
-              { label: 'SUBMITTED', value: myStats.submissions,  color: '#06B6D4', icon: Send,   nav: '/bd-tracker' },
-              { label: 'WINS',      value: myStats.wins,         color: '#22C55E', icon: Trophy, nav: '/bd-tracker' },
-              { label: 'NON-SUBS',  value: myStats.nonSubs,      color: myStats.nonSubs > 5 ? '#EF4444' : '#F97316', icon: AlertTriangle, nav: '/non-submissions' },
+              { label: 'SUBMITTED', value: myStats.submissions,  color: '#06B6D4', icon: Send,   nav: '/bd-tracker?tab=SUBMITTED&mine=1' },
+              { label: 'WINS',      value: myStats.wins,         color: '#22C55E', icon: Trophy, nav: '/bd-tracker?tab=AWARDED&mine=1' },
+              { label: 'NON-SUBS',  value: myStats.nonSubs,      color: myStats.nonSubs > 5 ? '#EF4444' : '#F97316', icon: AlertTriangle, nav: '/non-submissions?mine=1' },
             ] as const).map(stat => (
               <motion.div key={stat.label}
                 whileHover={{ scale: 1.03, y: -1 }}
@@ -779,8 +799,10 @@ const EXECUTIVE_TABS: Array<{ id: ExecutiveDashboardTab; label: string; icon: an
   { id: 'bd', label: 'Business Development', icon: Target, subtitle: 'Pipeline, submissions, capture and agency return' },
   { id: 'team', label: 'Team Performance', icon: Users, subtitle: 'Associate output, conversion and active users' },
   { id: 'ops', label: 'Operations', icon: FileCheck2, subtitle: 'Awarded value, archive value and gross profit' },
-  { id: 'activity', label: 'Live Activity', icon: Activity, subtitle: 'Only the latest live activities' },
+  { id: 'activity', label: 'Activity Log', icon: Activity, subtitle: 'Assignments, comments, uploads and workflow actions' },
 ]
+
+const ACTIVITY_HISTORY_PAGE_SIZE = 40
 
 const EXEC_PANEL_STYLE = {
   background: 'var(--exec-panel)',
@@ -865,32 +887,8 @@ function lockedSubkSpend(contract: Contract) {
   return (contract.lockedSubcontractors || []).reduce((sum, sub) => sum + numberValue(sub.paymentRate), 0)
 }
 
-function baseYearTotal(contract: Contract) {
-  const lineTotal = (contract.lineItems || [])
-    .filter(line => line.year === 'base')
-    .reduce((sum, line) => sum + numberValue(line.amount, line.quantity * line.rate), 0)
-  return lineTotal || numberValue(contract.baseAmount)
-}
-
-function grossProfitForContract(contract: Contract) {
-  const contractTotal = numberValue(contract.value, contract.baseAmount, contract.monthlyPayment)
-  const subkQuote = lockedSubkSpend(contract)
-  if (contract.type === 'RECURRING') return contractTotal - baseYearTotal(contract) - subkQuote
-  return contractTotal - subkQuote
-}
-
-function isActiveContract(contract: Contract) {
-  return !['ARCHIVED', 'TERMINATED', 'CANCELED'].includes(contract.status)
-}
-
 function matchesEmployee(employee: Employee, submission: BDSubmission, opportunities: Opportunity[], employees: Employee[]) {
-  const opp = submissionOpportunity(submission, opportunities)
-  const chain = getAssignmentChain(employees, opp?.assignedTo)
-  const lowerName = employee.name.toLowerCase()
-  return chain.manager?.id === employee.id ||
-    chain.teamLead?.id === employee.id ||
-    chain.associate?.id === employee.id ||
-    [submission.bdm, submission.bds, submission.supportAgent].some(name => (name || '').toLowerCase() === lowerName)
+  return isBDSubmissionAttributedToEmployee(employees, employee, submission, opportunities)
 }
 
 function DashboardStat({
@@ -1989,20 +1987,25 @@ function BdPersonCard({
   const userRecord = users.find(u => (u.email || '').toLowerCase() === (employee.email || '').toLowerCase())
   const userName = (userRecord?.username || '').trim().toLowerCase()
 
-  const personalSubs = useMemo(
+  const personalTrackerRows = useMemo(
     () => submissions.filter(sub => matchesEmployee(employee, sub, visibleOpps, employees)),
     [submissions, employee, visibleOpps, employees],
   )
+  const personalSubs = useMemo(
+    () => personalTrackerRows.filter(isSubmittedLifecycleRow),
+    [personalTrackerRows],
+  )
   const personalNonSubs = useMemo(
-    () => nonSubs.filter(report => report.status !== 'DECLINED' && report.agentUsername.toLowerCase() === userName),
+    () => nonSubs.filter(report => report.status === 'APPROVED' && report.agentUsername.toLowerCase() === userName),
     [nonSubs, userName],
   )
 
   const wins = personalSubs.filter(s => s.status === 'AWARDED').length
-  const losses = personalSubs.filter(s => ['LOST', 'DROPPED', 'CANCELED'].includes(s.status)).length
+  const losses = personalSubs.filter(s => s.status === 'LOST').length
+  const dropped = personalTrackerRows.filter(s => s.status === 'DROPPED').length
   const submissionsCount = personalSubs.length
   const nonSubsCount = personalNonSubs.length
-  const total = submissionsCount + nonSubsCount
+  const total = submissionsCount + nonSubsCount + dropped
   const successRate = total ? Math.round((submissionsCount / total) * 100) : 0
   const winRate = submissionsCount ? Math.round((wins / submissionsCount) * 100) : 0
   const goal = BD_GOAL_BY_ROLE[employee.role]
@@ -2010,12 +2013,13 @@ function BdPersonCard({
   const goalAchieved = submissionsCount >= goal && goal > 0
 
   const pieData = useMemo(() => {
-    if (metric === 'status') return groupRows(personalSubs, s => s.status || 'Unspecified')
+    if (metric === 'status') return groupRows(personalTrackerRows, s => s.status || 'Unspecified')
     if (metric === 'type') return groupRows(personalSubs, s => s.type || 'Unspecified')
     if (metric === 'setAside') return groupRows(personalSubs, s => submissionOpportunity(s, visibleOpps)?.setAside || 'Unspecified')
     if (metric === 'subsVsNon') return [
       { name: 'Submissions', value: submissionsCount, count: submissionsCount },
       { name: 'Non-Submissions', value: nonSubsCount, count: nonSubsCount },
+      ...(dropped ? [{ name: 'Dropped', value: dropped, count: dropped }] : []),
     ]
     if (metric === 'winsVsLosses') return [
       { name: 'Wins', value: wins, count: wins },
@@ -2023,7 +2027,7 @@ function BdPersonCard({
       { name: 'Pending', value: Math.max(0, submissionsCount - wins - losses), count: Math.max(0, submissionsCount - wins - losses) },
     ]
     return []
-  }, [metric, personalSubs, visibleOpps, submissionsCount, nonSubsCount, wins, losses])
+  }, [metric, personalTrackerRows, personalSubs, visibleOpps, submissionsCount, nonSubsCount, dropped, wins, losses])
 
   const pieColorFor = (name: string, idx: number): string => {
     if (metric === 'status') return STATUS_COLORS[name] || chartColors[idx % chartColors.length]
@@ -2088,6 +2092,7 @@ function BdPersonCard({
       <div className="px-3.5 pb-2 space-y-1.5">
         <BdStatRow label="Submissions" value={submissionsCount} color={secondaryAccent} />
         <BdStatRow label="Non-Submissions" value={nonSubsCount} color="#F87171" />
+        {dropped > 0 && <BdStatRow label="Dropped" value={dropped} color="#F59E0B" />}
         <BdStatRow label="Success Rate" value={`${successRate}%`} color={successRate >= 60 ? '#10B981' : successRate >= 40 ? '#F59E0B' : '#F87171'} />
         {wins > 0 && <BdStatRow label="Win Rate" value={`${winRate}%`} color="#10B981" sub={`${wins} wins`} />}
       </div>
@@ -2199,20 +2204,29 @@ function BdStatRow({ label, value, color, sub }: { label: string; value: number 
 }
 
 function ExecutiveDashboard() {
-  const { opportunities, nonSubReports, activityLogs, currentUser, bdSubmissions, contracts, employees, users } = useStore()
+  const {
+    opportunities, nonSubReports, activityLogs, currentUser,
+    bdSubmissions, contracts, employees, users, requireAssociateForActivePipeline,
+  } = useStore()
   const { prefs } = useAppearance()
   const navigate = useNavigate()
   const [period, setPeriod] = useState<Period | null>(null)
   const [tab, setTab] = useState<ExecutiveDashboardTab>('bd')
+  const [activityPage, setActivityPage] = useState(1)
   const [bdTeamView, setBdTeamView] = useState<TeamView>({ mode: 'teams' })
   const [opsTeamView, setOpsTeamView] = useState<TeamView>({ mode: 'teams' })
-  // BD Team Leads don't see the Operations tab.
-  const visibleTabs = useMemo(
-    () => currentUser?.role === 'TEAM_LEAD' && (currentUser?.team ?? 'BD') === 'BD'
-      ? EXECUTIVE_TABS.filter(t => t.id !== 'ops')
-      : EXECUTIVE_TABS,
-    [currentUser],
-  )
+  const visibleTabs = useMemo(() => {
+    let tabs = EXECUTIVE_TABS
+    // BD Team Leads don't see Operations. Company history is reserved for
+    // Capture, BD, and Operations Managers.
+    if (currentUser?.role === 'TEAM_LEAD' && (currentUser?.team ?? 'BD') === 'BD') {
+      tabs = tabs.filter(t => t.id !== 'ops')
+    }
+    if (!canViewCompanyActivity(currentUser)) {
+      tabs = tabs.filter(t => t.id !== 'activity')
+    }
+    return tabs
+  }, [currentUser])
   useEffect(() => {
     if (!visibleTabs.some(t => t.id === tab)) setTab(visibleTabs[0]?.id ?? 'bd')
   }, [visibleTabs, tab])
@@ -2222,8 +2236,8 @@ function ExecutiveDashboard() {
   const tertiaryAccent = chartColors[2]
 
   const visibleOpps = useMemo(() => opportunities.filter(opp => !opp.isDeleted), [opportunities])
-  const periodOpps = useMemo(
-    () => visibleOpps.filter(opp => filterByPeriod(opp.submittedAt || opp.capturedOn || opp.dueDate, period)),
+  const periodCapturedOpps = useMemo(
+    () => visibleOpps.filter(opp => filterByPeriod(opp.capturedOn || opp.dueDate, period)),
     [visibleOpps, period],
   )
   const periodSubmissions = useMemo(
@@ -2233,6 +2247,11 @@ function ExecutiveDashboard() {
   const periodContracts = useMemo(
     () => contracts.filter(contract => filterByPeriod(contract.popStart || contract.popEnd, period)),
     [contracts, period],
+  )
+  const activeOpportunityRows = useMemo(
+    () => contractOpportunityRows(opportunities, employees, requireAssociateForActivePipeline)
+      .filter(opp => filterByPeriod(opp.capturedOn || opp.dueDate, period)),
+    [opportunities, employees, requireAssociateForActivePipeline, period],
   )
 
   // ── BD vs OPS scoping (so each tab shows only its own people's data) ─────
@@ -2253,34 +2272,28 @@ function ExecutiveDashboard() {
       const team = opportunityTeam(opp)
       if (team) return team
     }
-    const candidateIds = [submission.bdm, ...(submission.bds || []), submission.supportAgent].filter(Boolean) as string[]
+    const candidateIds = [submission.bdm, submission.bds, submission.supportAgent].filter(Boolean) as string[]
     for (const id of candidateIds) {
-      const team = employeeTeamMap.get(id)
+      const employee = employees.find(item =>
+        item.id === id || item.name.toLowerCase() === id.toLowerCase())
+      const team = employee ? employeeTeamMap.get(employee.id) : undefined
       if (team) return team
     }
     return null
-  }, [opportunityTeam, employeeTeamMap, visibleOpps])
+  }, [opportunityTeam, employeeTeamMap, visibleOpps, employees])
 
   const bdPeriodOpps = useMemo(
-    () => periodOpps.filter(opp => {
+    () => periodCapturedOpps.filter(opp => {
       const team = opportunityTeam(opp)
       return team === null || team === 'BD'
     }),
-    [periodOpps, opportunityTeam],
+    [periodCapturedOpps, opportunityTeam],
   )
-  const opsPeriodOpps = useMemo(
-    () => periodOpps.filter(opp => opportunityTeam(opp) === 'OPS'),
-    [periodOpps, opportunityTeam],
-  )
-  const bdPeriodSubs = useMemo(
+  const bdPeriodTrackerRows = useMemo(
     () => periodSubmissions.filter(submission => {
       const team = submissionTeam(submission)
       return team === null || team === 'BD'
     }),
-    [periodSubmissions, submissionTeam],
-  )
-  const opsPeriodSubs = useMemo(
-    () => periodSubmissions.filter(submission => submissionTeam(submission) === 'OPS'),
     [periodSubmissions, submissionTeam],
   )
 
@@ -2289,16 +2302,23 @@ function ExecutiveDashboard() {
     [employees],
   )
   const periodNonSubs = useMemo(
-    () => nonSubReports.filter(r => r.status !== 'DECLINED' && filterByPeriod(r.submittedAt, period)),
+    () => nonSubReports.filter(r => r.status === 'APPROVED' && filterByPeriod(r.reviewedAt || r.submittedAt, period)),
     [nonSubReports, period],
   )
 
-  const activeOpportunities = bdPeriodOpps.filter(opp => ['ACTIVE', 'DISCUSSION'].includes(opp.status))
-  const capturedContracts = bdPeriodOpps.filter(opp => !!opp.capturedOn || ['ACTIVE', 'DISCUSSION', 'SUBMITTED', 'WON'].includes(opp.status))
-  const awardedSubmissions = bdPeriodSubs.filter(submission => submission.status === 'AWARDED')
-  const submittedValue = bdPeriodSubs.reduce((sum, submission) => sum + submissionValue(submission, visibleOpps), 0)
-  const captureRate = pct(capturedContracts.length, bdPeriodSubs.length)
-  const winRate = pct(awardedSubmissions.length, bdPeriodSubs.length)
+  const bdSummary = useMemo(() => calculateBdDashboardSummary({
+    activeOpportunities: activeOpportunityRows,
+    capturedOpportunities: bdPeriodOpps,
+    trackerRows: bdPeriodTrackerRows,
+    valueForSubmission: submission => submissionValue(submission, visibleOpps),
+  }), [activeOpportunityRows, bdPeriodOpps, bdPeriodTrackerRows, visibleOpps])
+  const activeOpportunities = bdSummary.activeOpportunities
+  const capturedCount = bdSummary.capturedCount
+  const bdPeriodSubs = bdSummary.submittedOpportunities
+  const awardedSubmissions = bdSummary.awardedSubmissions
+  const submittedValue = bdSummary.submittedValue
+  const captureRate = bdSummary.captureRate
+  const winRate = bdSummary.winRate
 
   const submittedByNaics = groupRows(
     bdPeriodSubs,
@@ -2321,48 +2341,57 @@ function ExecutiveDashboard() {
       .reduce((sum, submission) => sum + submissionValue(submission, visibleOpps), 0),
   }))
 
-  const recentActivity = [...activityLogs]
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-    .slice(0, 16)
+  const activityHistory = useMemo(
+    () => buildActivityHistory(activityLogs),
+    [activityLogs],
+  )
+  const activityPageCount = Math.max(1, Math.ceil(activityHistory.length / ACTIVITY_HISTORY_PAGE_SIZE))
+  const activityPageItems = useMemo(() => {
+    const start = (activityPage - 1) * ACTIVITY_HISTORY_PAGE_SIZE
+    return activityHistory.slice(start, start + ACTIVITY_HISTORY_PAGE_SIZE)
+  }, [activityHistory, activityPage])
+  useEffect(() => {
+    setActivityPage(page => Math.min(page, activityPageCount))
+  }, [activityPageCount])
 
   const activeUsers = users.filter(user => user.status === 'active')
-  const activeContracts = periodContracts.filter(isActiveContract)
+  const activeContracts = periodContracts.filter(isActiveContractAdminRecord)
   const archivedContracts = periodContracts.filter(contract => contract.status === 'ARCHIVED')
-  const awardedValue = activeContracts.reduce((sum, contract) => sum + numberValue(contract.value, contract.baseAmount), 0)
-  const archivedValue = archivedContracts.reduce((sum, contract) => sum + numberValue(contract.value, contract.baseAmount), 0)
+  const awardedValue = activeContracts.reduce((sum, contract) => sum + dashboardContractValue(contract), 0)
+  const archivedValue = archivedContracts.reduce((sum, contract) => sum + dashboardContractValue(contract), 0)
   const currentYear = new Date().getFullYear().toString()
   const ytdContracts = contracts.filter(contract => {
     const date = contract.popStart || contract.popEnd || ''
-    return !date || date.startsWith(currentYear)
+    return date.startsWith(currentYear)
   })
-  const grossProfitYtd = ytdContracts.reduce((sum, contract) => sum + grossProfitForContract(contract), 0)
+  const grossProfitYtd = ytdContracts.reduce((sum, contract) => sum + dashboardContractGrossProfit(contract), 0)
 
   const contractStatusRows = groupRows(activeContracts, contract => contract.status).slice(0, 7)
   const contractTypeProfitRows = groupRows(
     ytdContracts,
     contract => contract.type || 'Unspecified',
-    contract => grossProfitForContract(contract),
+    contract => dashboardContractGrossProfit(contract),
   ).slice(0, 7)
 
   // ── Business Development distributions ────────────────────────────────────
   const oppsByStatus = useMemo(
-    () => groupRows(bdPeriodOpps, opp => opp.status || 'Unspecified'),
-    [bdPeriodOpps],
+    () => groupRows(activeOpportunityRows, opp => opp.status || 'Unspecified'),
+    [activeOpportunityRows],
   )
   const oppsBySetAside = useMemo(
-    () => groupRows(bdPeriodOpps, opp => opp.setAside || 'Unspecified'),
-    [bdPeriodOpps],
+    () => groupRows(activeOpportunityRows, opp => opp.setAside || 'Unspecified'),
+    [activeOpportunityRows],
   )
   const oppsByPriority = useMemo(
-    () => groupRows(bdPeriodOpps, opp => opp.priority || 'Unspecified'),
-    [bdPeriodOpps],
+    () => groupRows(activeOpportunityRows, opp => opp.priority || 'Unspecified'),
+    [activeOpportunityRows],
   )
   const oppsByType = useMemo(
-    () => groupRows(bdPeriodOpps, opp => opp.type || 'Unspecified'),
-    [bdPeriodOpps],
+    () => groupRows(activeOpportunityRows, opp => opp.type || 'Unspecified'),
+    [activeOpportunityRows],
   )
   const conversionFunnel = useMemo(() => {
-    const total = bdPeriodOpps.length
+    const total = capturedCount
     const submitted = bdPeriodSubs.length
     const awarded = awardedSubmissions.length
     return [
@@ -2370,13 +2399,12 @@ function ExecutiveDashboard() {
       { name: 'Submitted', value: submitted, fill: chartColors[1] },
       { name: 'Awarded', value: awarded, fill: chartColors[0] },
     ]
-  }, [bdPeriodOpps.length, bdPeriodSubs.length, awardedSubmissions.length, chartColors])
+  }, [capturedCount, bdPeriodSubs.length, awardedSubmissions.length, chartColors])
   const topOpenOpps = useMemo(
-    () => [...bdPeriodOpps]
-      .filter(opp => ['ACTIVE', 'DISCUSSION', 'NEW_ASSIGNMENT'].includes(opp.status))
+    () => [...activeOpportunityRows]
       .sort((a, b) => opportunityValue(b) - opportunityValue(a))
       .slice(0, 10),
-    [bdPeriodOpps],
+    [activeOpportunityRows],
   )
 
   // ── Team rollups ──────────────────────────────────────────────────────────
@@ -2410,9 +2438,10 @@ function ExecutiveDashboard() {
   const computeMemberRollup = useMemo(() => (employeeId: string) => {
     const employee = employeesById.get(employeeId)
     if (!employee) return null
-    const subs = periodSubmissions.filter(submission =>
+    const trackerRows = periodSubmissions.filter(submission =>
       matchesEmployee(employee, submission, visibleOpps, employees))
-    const assignedOpps = visibleOpps.filter(opp => {
+    const subs = trackerRows.filter(isSubmittedLifecycleRow)
+    const assignedOpps = activeOpportunityRows.filter(opp => {
       const chain = getAssignmentChain(employees, opp.assignedTo)
       return chain.associate?.id === employee.id ||
         chain.teamLead?.id === employee.id ||
@@ -2420,10 +2449,10 @@ function ExecutiveDashboard() {
     })
     const awarded = subs.filter(submission => submission.status === 'AWARDED')
     const lost = subs.filter(submission => submission.status === 'LOST')
-    const dropped = subs.filter(submission => submission.status === 'DROPPED' || submission.status === 'CANCELED')
+    const dropped = trackerRows.filter(submission => submission.status === 'DROPPED')
     const value = subs.reduce((sum, submission) => sum + submissionValue(submission, visibleOpps), 0)
     const awardedValue = awarded.reduce((sum, submission) => sum + submissionValue(submission, visibleOpps), 0)
-    const byStatus = groupRows(subs, submission => submission.status || 'Unspecified')
+    const byStatus = groupRows(trackerRows, submission => submission.status || 'Unspecified')
     const byType = groupRows(subs, submission => submission.type || 'Unspecified')
     const byNaics = groupRows(subs, submission => naicsDisplay(submissionOpportunity(submission, visibleOpps)?.naicsCode))
     const bySetAside = groupRows(assignedOpps, opp => opp.setAside || 'Unspecified')
@@ -2453,22 +2482,23 @@ function ExecutiveDashboard() {
       subs, assignedOpps, awarded, lost, dropped,
       value, awardedValue,
       winRate: pct(awarded.length, subs.length),
-      captureRate: pct(subs.length, assignedOpps.length),
+      captureRate: pct(subs.length, assignedOpps.length + trackerRows.length),
       byStatus, byType, byNaics, bySetAside, byPriority, byAgency, assignedByStatus,
       monthsData,
       valueByMonth,
       recent,
     }
-  }, [employeesById, periodSubmissions, visibleOpps, employees])
+  }, [employeesById, periodSubmissions, visibleOpps, employees, activeOpportunityRows])
 
   const computeTeamRollup = useMemo(() => (managerId: string) => {
     const manager = employeesById.get(managerId)
     if (!manager) return null
     const members = collectReports(managerId)
     const all = [manager, ...members]
-    const subs = periodSubmissions.filter(submission =>
+    const trackerRows = periodSubmissions.filter(submission =>
       all.some(employee => matchesEmployee(employee, submission, visibleOpps, employees)))
-    const assignedOpps = visibleOpps.filter(opp => {
+    const subs = trackerRows.filter(isSubmittedLifecycleRow)
+    const assignedOpps = activeOpportunityRows.filter(opp => {
       const chain = getAssignmentChain(employees, opp.assignedTo)
       return all.some(employee =>
         employee.id === chain.manager?.id ||
@@ -2477,7 +2507,7 @@ function ExecutiveDashboard() {
     })
     const awarded = subs.filter(submission => submission.status === 'AWARDED')
     const lost = subs.filter(submission => submission.status === 'LOST')
-    const dropped = subs.filter(submission => submission.status === 'DROPPED' || submission.status === 'CANCELED')
+    const dropped = trackerRows.filter(submission => submission.status === 'DROPPED')
     const notSubmitted = nonSubReports.filter(report => {
       if (report.status !== 'APPROVED') return false
       if (!filterByPeriod(report.reviewedAt || report.submittedAt, period)) return false
@@ -2516,11 +2546,11 @@ function ExecutiveDashboard() {
       subs, assignedOpps, awarded, lost, dropped, notSubmitted,
       value, awardedValue,
       winRate: pct(awarded.length, subs.length),
-      captureRate: pct(subs.length, assignedOpps.length),
+      captureRate: pct(subs.length, assignedOpps.length + trackerRows.length),
       memberStats,
       monthsData,
       valueByMonth,
-      byStatus: groupRows(subs, submission => submission.status || 'Unspecified'),
+      byStatus: groupRows(trackerRows, submission => submission.status || 'Unspecified'),
       bySetAside: groupRows(assignedOpps, opp => opp.setAside || 'Unspecified'),
       byPriority: groupRows(assignedOpps, opp => opp.priority || 'Unspecified'),
       byAgency: groupRows(assignedOpps, opp => opp.client || 'Unspecified agency').slice(0, 6),
@@ -2532,7 +2562,7 @@ function ExecutiveDashboard() {
       })),
       byRole: groupRows(all, employee => ROLE_LABELS[employee.role] ?? employee.role),
     }
-  }, [employeesById, collectReports, periodSubmissions, visibleOpps, employees, nonSubReports, period, computeMemberRollup])
+  }, [employeesById, collectReports, periodSubmissions, visibleOpps, employees, nonSubReports, period, computeMemberRollup, activeOpportunityRows])
 
   // BD managers head their own teams; the OPS lead is mirrored as a BD_MANAGER with team='OPS'.
   const bdTeamHeads = useMemo(
@@ -2580,22 +2610,38 @@ function ExecutiveDashboard() {
     if (recordId) navigate(`/pipeline?record=${encodeURIComponent(recordId)}`)
     else navigate('/pipeline')
   }
-  const goToContracts = () => navigate('/contracts')
+  const goToTracker = (tab: BDSubmission['status'] = 'SUBMITTED') =>
+    navigate(`/bd-tracker?tab=${encodeURIComponent(tab)}`)
+  const goToContracts = (tab: 'ACTIVE_GROUP' | 'ARCHIVED' = 'ACTIVE_GROUP') =>
+    navigate(`/contracts?tab=${encodeURIComponent(tab)}`)
+  const goToOpportunityStatus = (status: string) => {
+    const destinations: Partial<Record<Opportunity['status'], BDSubmission['status']>> = {
+      SUBMITTED: 'SUBMITTED',
+      WON: 'AWARDED',
+      LOST: 'LOST',
+      CANCELED: 'CANCELED',
+      DROPPED: 'DROPPED',
+      NOT_SUBMITTED: 'NOT_SUBMITTED',
+    }
+    const trackerTab = destinations[status as Opportunity['status']]
+    if (trackerTab) goToTracker(trackerTab)
+    else goToPipeline()
+  }
 
   const bdStats = [
-    { icon: Target, label: 'Active Opportunities', value: activeOpportunities.length, detail: 'Currently in Contract Opportunities', accent: tertiaryAccent },
-    { icon: FileCheck2, label: 'Total Captured Contracts', value: capturedContracts.length, detail: 'Captured opportunity records', accent },
-    { icon: Send, label: 'Submitted Opportunities', value: bdPeriodSubs.length, detail: 'Submitted from Contract Opportunities', accent: secondaryAccent },
-    { icon: DollarSign, label: 'Submitted Value', value: formatCurrency(submittedValue), detail: 'Dollar value submitted', accent: chartColors[3] },
-    { icon: Percent, label: 'Capture Rate', value: `${captureRate}%`, detail: 'Captured opportunities / submitted', accent: chartColors[4] },
-    { icon: Trophy, label: 'Win Rate', value: `${winRate}%`, detail: 'Awarded from submitted opportunities', accent },
+    { icon: Target, label: 'Active Opportunities', value: activeOpportunities.length, detail: 'Currently in Contract Opportunities', accent: tertiaryAccent, onClick: () => goToPipeline() },
+    { icon: FileCheck2, label: 'Total Captured Opportunities', value: capturedCount, detail: 'Active opportunities plus every BD Tracker outcome', accent, onClick: () => goToPipeline() },
+    { icon: Send, label: 'Submitted Opportunities', value: bdPeriodSubs.length, detail: 'Actual submissions, including later outcomes', accent: secondaryAccent, onClick: () => goToTracker('SUBMITTED') },
+    { icon: DollarSign, label: 'Submitted Value', value: formatCurrency(submittedValue), detail: 'Value of actual submitted opportunities', accent: chartColors[3], onClick: () => goToTracker('SUBMITTED') },
+    { icon: Percent, label: 'Capture Rate', value: `${captureRate}%`, detail: 'Submitted opportunities / captured opportunities', accent: chartColors[4], onClick: () => goToTracker('SUBMITTED') },
+    { icon: Trophy, label: 'Win Rate', value: `${winRate}%`, detail: 'Awarded opportunities / submitted opportunities', accent, onClick: () => goToTracker('AWARDED') },
   ]
 
   const opsStats = [
-    { icon: DollarSign, label: 'Awarded Value', value: formatCurrency(awardedValue), detail: 'Active Contract Admin value', accent },
-    { icon: FileCheck2, label: 'Awarded Contracts', value: activeContracts.length, detail: 'Active contracts in Contract Admin', accent: secondaryAccent },
-    { icon: Clock, label: 'Archived Value', value: formatCurrency(archivedValue), detail: `${archivedContracts.length} archived contracts`, accent: chartColors[3] },
-    { icon: TrendingUp, label: 'Gross Profit YTD', value: formatCurrency(grossProfitYtd), detail: 'Contract value minus base/subk costs', accent: grossProfitYtd >= 0 ? accent : chartColors[5] },
+    { icon: DollarSign, label: 'Awarded Value', value: formatCurrency(awardedValue), detail: 'Active Contract Admin value', accent, onClick: () => goToContracts('ACTIVE_GROUP') },
+    { icon: FileCheck2, label: 'Awarded Contracts', value: activeContracts.length, detail: 'Active contracts in Contract Admin', accent: secondaryAccent, onClick: () => goToContracts('ACTIVE_GROUP') },
+    { icon: Clock, label: 'Archived Value', value: formatCurrency(archivedValue), detail: `${archivedContracts.length} archived contracts`, accent: chartColors[3], onClick: () => goToContracts('ARCHIVED') },
+    { icon: TrendingUp, label: 'Gross Profit YTD', value: formatCurrency(grossProfitYtd), detail: 'Contract value minus base/subk costs', accent: grossProfitYtd >= 0 ? accent : chartColors[5], onClick: () => navigate('/finance-projections') },
   ]
 
   return (
@@ -2650,7 +2696,7 @@ function ExecutiveDashboard() {
         <motion.div variants={stagger} initial="initial" animate="animate" className="space-y-5">
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">
             {bdStats.map(stat => (
-              <DashboardStat key={stat.label} {...stat} onClick={() => goToPipeline()} />
+              <DashboardStat key={stat.label} {...stat} />
             ))}
           </div>
 
@@ -2660,8 +2706,8 @@ function ExecutiveDashboard() {
               subtitle="Pipeline distribution across statuses"
               data={oppsByStatus}
               chartColors={chartColors}
-              total={bdPeriodOpps.length}
-              onSlice={() => goToPipeline()}
+              total={activeOpportunityRows.length}
+              onSlice={(row) => goToOpportunityStatus(row.name)}
               colorOverride={(name) => STATUS_COLORS[name]}
             />
             <BdPiePanel
@@ -2669,7 +2715,7 @@ function ExecutiveDashboard() {
               subtitle="Active socio-economic designations"
               data={oppsBySetAside}
               chartColors={chartColors}
-              total={bdPeriodOpps.length}
+              total={activeOpportunityRows.length}
               onSlice={() => goToPipeline()}
             />
             <BdPiePanel
@@ -2677,7 +2723,7 @@ function ExecutiveDashboard() {
               subtitle="Priority mix in the current period"
               data={oppsByPriority}
               chartColors={chartColors}
-              total={bdPeriodOpps.length}
+              total={activeOpportunityRows.length}
               onSlice={() => goToPipeline()}
             />
             <BdPiePanel
@@ -2685,15 +2731,15 @@ function ExecutiveDashboard() {
               subtitle="OTJ, recurring and other vehicles"
               data={oppsByType}
               chartColors={chartColors}
-              total={bdPeriodOpps.length}
-              onSlice={() => goToPipeline()}
+              total={activeOpportunityRows.length}
+              onSlice={(row) => navigate(`/pipeline?type=${encodeURIComponent(row.name)}`)}
             />
           </div>
 
           <BdPeopleGrid
             bdEmployees={bdEmployees}
             users={users}
-            submissions={bdPeriodSubs}
+            submissions={bdPeriodTrackerRows}
             nonSubs={periodNonSubs}
             visibleOpps={visibleOpps}
             employees={employees}
@@ -2707,7 +2753,7 @@ function ExecutiveDashboard() {
           <div className="exec-section-grid">
             <DashboardPanel title="Submission Trend" subtitle="Submissions, awards and dollar value by month">
               <ResponsiveContainer width="100%" height={260}>
-                <ComposedChart data={submissionTrend} onClick={() => goToPipeline()} style={{ cursor: 'pointer' }}>
+                <ComposedChart data={submissionTrend} onClick={() => goToTracker('SUBMITTED')} style={{ cursor: 'pointer' }}>
                   <defs>
                     <linearGradient id="submittedValue" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="0%" stopColor={secondaryAccent} stopOpacity={0.34} />
@@ -2727,7 +2773,7 @@ function ExecutiveDashboard() {
             </DashboardPanel>
 
             <DashboardPanel title="Conversion Funnel" subtitle="Opportunities → Submitted → Awarded">
-              {periodOpps.length === 0 ? (
+              {capturedCount === 0 ? (
                 <EmptyDashboardState label="No opportunities in range." />
               ) : (
                 <div className="flex h-[260px] flex-col gap-3">
@@ -2770,7 +2816,7 @@ function ExecutiveDashboard() {
                 <EmptyDashboardState label="No submitted NAICS data yet." />
               ) : (
                 <ResponsiveContainer width="100%" height={300}>
-                  <BarChart data={submittedByNaics} layout="vertical" margin={{ left: 16, right: 12 }} onClick={() => goToPipeline()} style={{ cursor: 'pointer' }}>
+                  <BarChart data={submittedByNaics} layout="vertical" margin={{ left: 16, right: 12 }} onClick={() => goToTracker('SUBMITTED')} style={{ cursor: 'pointer' }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="var(--exec-grid)" horizontal={false} />
                     <XAxis type="number" tick={{ fill: '#9FB2AD', fontSize: 10 }} axisLine={false} tickLine={false} />
                     <YAxis dataKey="name" type="category" width={170} tick={{ fill: '#C7D7D3', fontSize: 10 }} axisLine={false} tickLine={false} />
@@ -2828,7 +2874,7 @@ function ExecutiveDashboard() {
             ) : (
               <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
                 <ResponsiveContainer width="100%" height={300}>
-                  <BarChart data={agencyPerformance} layout="vertical" margin={{ left: 16, right: 20 }} onClick={() => goToPipeline()} style={{ cursor: 'pointer' }}>
+                  <BarChart data={agencyPerformance} layout="vertical" margin={{ left: 16, right: 20 }} onClick={() => goToTracker('AWARDED')} style={{ cursor: 'pointer' }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="var(--exec-grid)" horizontal={false} />
                     <XAxis type="number" tick={{ fill: '#9FB2AD', fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={value => `$${Math.round(Number(value) / 1000)}K`} />
                     <YAxis dataKey="name" type="category" width={170} tick={{ fill: '#C7D7D3', fontSize: 10 }} axisLine={false} tickLine={false} />
@@ -2841,7 +2887,7 @@ function ExecutiveDashboard() {
                     <button
                       key={agency.name}
                       type="button"
-                      onClick={() => goToPipeline()}
+                      onClick={() => goToTracker('AWARDED')}
                       className="block w-full rounded-xl border p-3 text-left transition-all hover:-translate-y-px"
                       style={{ borderColor: 'var(--exec-border)', background: 'var(--exec-panel-soft)' }}
                     >
@@ -2932,32 +2978,62 @@ function ExecutiveDashboard() {
       {tab === 'activity' && (
         <div className="space-y-5">
           <DashboardPanel
-            title="Live Activity Log"
-            subtitle="Latest app activity only"
+            title="Company Activity Log"
+            subtitle="Recorded assignments, comments, uploads, submissions and status changes"
             action={<span className="rounded-full bg-emerald-400/10 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-emerald-300">Live</span>}
           >
-            {currentUser?.role !== 'CAPTURE_MANAGER' && !hasPermission(currentUser, 'admin:manageUsers') ? (
-              <EmptyDashboardState label="You do not have access to the live activity log." />
-            ) : recentActivity.length === 0 ? (
+            {!canViewCompanyActivity(currentUser) ? (
+              <EmptyDashboardState label="You do not have access to the company history log." />
+            ) : activityHistory.length === 0 ? (
               <EmptyDashboardState label="No activity recorded yet." />
             ) : (
-              <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-                {recentActivity.map(log => (
-                  <div key={log.id} className="rounded-xl border p-3" style={{ borderColor: 'var(--exec-border)', background: 'var(--exec-panel-soft)' }}>
-                    <div className="flex items-start gap-3">
-                      <div className="flex h-8 w-8 items-center justify-center rounded-xl text-xs font-black" style={{ background: `${secondaryAccent}24`, color: secondaryAccent }}>
-                        {log.user.split(' ').map(part => part[0]).join('').slice(0, 2)}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-semibold leading-snug" style={{ color: 'var(--text-primary)' }}>{log.action}</p>
-                        <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
-                          {log.user} | {new Date(log.createdAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
-                        </p>
+              <>
+                <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                  {activityPageItems.map(log => (
+                    <div key={log.id} className="rounded-xl border p-3" style={{ borderColor: 'var(--exec-border)', background: 'var(--exec-panel-soft)' }}>
+                      <div className="flex items-start gap-3">
+                        <div className="flex h-8 w-8 items-center justify-center rounded-xl text-xs font-black" style={{ background: `${secondaryAccent}24`, color: secondaryAccent }}>
+                          {log.user.split(' ').map(part => part[0]).join('').slice(0, 2)}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-semibold leading-snug" style={{ color: 'var(--text-primary)' }}>{log.action}</p>
+                          <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                            {log.user} | {new Date(log.createdAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                          </p>
+                        </div>
                       </div>
                     </div>
+                  ))}
+                </div>
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t pt-4" style={{ borderColor: 'var(--exec-border)' }}>
+                  <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                    Showing {(activityPage - 1) * ACTIVITY_HISTORY_PAGE_SIZE + 1}-{Math.min(activityPage * ACTIVITY_HISTORY_PAGE_SIZE, activityHistory.length)} of {activityHistory.length}
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={activityPage === 1}
+                      onClick={() => setActivityPage(page => Math.max(1, page - 1))}
+                      className="rounded-lg border px-3 py-1.5 text-xs font-black disabled:cursor-not-allowed disabled:opacity-40"
+                      style={{ borderColor: 'var(--exec-border-strong)', color: 'var(--text-primary)', background: 'var(--exec-panel-soft)' }}
+                    >
+                      Previous
+                    </button>
+                    <span className="min-w-16 text-center text-xs font-black" style={{ color: 'var(--text-primary)' }}>
+                      {activityPage} / {activityPageCount}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={activityPage === activityPageCount}
+                      onClick={() => setActivityPage(page => Math.min(activityPageCount, page + 1))}
+                      className="rounded-lg border px-3 py-1.5 text-xs font-black disabled:cursor-not-allowed disabled:opacity-40"
+                      style={{ borderColor: 'var(--exec-border-strong)', color: 'var(--text-primary)', background: 'var(--exec-panel-soft)' }}
+                    >
+                      Next
+                    </button>
                   </div>
-                ))}
-              </div>
+                </div>
+              </>
             )}
           </DashboardPanel>
         </div>
@@ -3023,7 +3099,7 @@ function ExecutiveDashboard() {
                         </div>
                         <div className="grid grid-cols-2 gap-2 text-xs" style={{ color: 'var(--text-tertiary)' }}>
                           <span>Subk: <b style={{ color: 'var(--text-secondary)' }}>{formatCurrency(lockedSubkSpend(contract))}</b></span>
-                          <span>Profit: <b style={{ color: 'var(--text-secondary)' }}>{formatCurrency(grossProfitForContract(contract))}</b></span>
+                          <span>Profit: <b style={{ color: 'var(--text-secondary)' }}>{formatCurrency(dashboardContractGrossProfit(contract))}</b></span>
                         </div>
                       </div>
                     ))}

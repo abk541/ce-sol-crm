@@ -1319,6 +1319,32 @@ export async function loadAllData(): Promise<{
     if (deletionRes.error) console.error('[db] deletion_requests load error', deletionRes.error)
     if (bdRes.error) console.error('[db] bd_submissions load error', bdRes.error)
 
+    // A failed request is not an empty table. Returning partially empty data
+    // here would make the store overwrite its last known-good snapshot during
+    // an outage, billing restriction, or transient network failure.
+    if ([
+      userRes.error,
+      empRes.error,
+      oppRes.error,
+      commentRes.error,
+      subRes.error,
+      conRes.error,
+      pocRes.error,
+      invoiceRes.error,
+      lockedSubRes.error,
+      warningRes.error,
+      lineItemRes.error,
+      vehicleOrderRes.error,
+      faRes.error,
+      ppRes.error,
+      nonSubRes.error,
+      deletionRes.error,
+      bdRes.error,
+    ].some(Boolean)) {
+      console.error('[db] loadAllData aborted; preserving the last known-good local snapshot')
+      return null
+    }
+
     const employees: Employee[] = (empRes.data ?? []).map(r => dbToEmp(r as Record<string, unknown>))
     const users: User[] = (userRes.data ?? []).map(r => dbToUser(r as Record<string, unknown>))
     const commentsByOpp = new Map<string, Comment[]>()

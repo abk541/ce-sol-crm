@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import {
   Bell, CheckCheck, AlertTriangle, UserPlus, FileCheck2,
@@ -6,7 +7,7 @@ import {
   Trash2, TrendingUp, Calendar, Trophy, ShieldAlert, FileBarChart,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
-import { isNotificationVisibleTo } from '../lib/notifications'
+import { isNotificationVisibleTo, notificationRecordRoute } from '../lib/notifications'
 import type { NotifType } from '../types'
 
 const TYPE_CONFIG: Record<NotifType, { icon: typeof Bell; color: string; bg: string; label: string }> = {
@@ -65,13 +66,26 @@ const FILTER_GROUPS = [
 ] as const
 
 export default function NotificationsPage() {
-  const { notifications, markNotificationRead, markAllRead, currentUser, contracts, opportunities, employees } = useStore()
+  const { notifications, markNotificationRead, markAllRead, currentUser, contracts, opportunities, bdSubmissions, employees } = useStore()
   const [filter, setFilter] = useState<string>('all')
+  const navigate = useNavigate()
 
   // Only notifications this user is allowed to see (personal targets, role
   // targets, and contract actions on contracts associated with them). Same
   // predicate the header bell and sidebar badge use, so all three agree.
-  const mine = notifications.filter(n => isNotificationVisibleTo(n, { user: currentUser, employees, contracts, opportunities }))
+  const mine = notifications.filter(n => isNotificationVisibleTo(n, {
+    user: currentUser,
+    employees,
+    contracts,
+    opportunities,
+    bdSubmissions,
+  }))
+
+  const openNotification = (notification: typeof notifications[number]) => {
+    markNotificationRead(notification.id)
+    const route = notificationRecordRoute(notification, { contracts, opportunities, bdSubmissions })
+    if (route) navigate(route)
+  }
 
   const visible = mine.filter(n => {
     if (filter === 'unread') return !n.read
@@ -144,7 +158,7 @@ export default function NotificationsPage() {
               key={n.id}
               initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
               transition={{ delay: i * 0.03 }}
-              onClick={() => markNotificationRead(n.id)}
+              onClick={() => openNotification(n)}
               className={`flex items-start gap-4 p-4 rounded-2xl cursor-pointer transition-all border ${
                 n.read
                   ? 'bg-white border-slate-100 opacity-60 hover:opacity-80'

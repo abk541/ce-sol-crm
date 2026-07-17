@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import type { Contract, Employee, Notification, Opportunity, User } from '../types'
-import { isNotificationVisibleTo } from '../lib/notifications'
+import type { ActivityLog, BDSubmission, Contract, Employee, Notification, Opportunity, User } from '../types'
+import {
+  buildActivityHistory,
+  canViewCompanyActivity,
+  isNotificationVisibleTo,
+  notificationRecordRoute,
+} from '../lib/notifications'
 import { findUserForEmployee } from '../lib/team'
 
 function user(overrides: Partial<User>): User {
@@ -77,6 +82,23 @@ const captureManager = user({
   role: 'CAPTURE_MANAGER',
 })
 
+const bdManager = user({
+  id: 'user-bd-manager',
+  name: 'BD Manager',
+  email: 'bd.manager@example.com',
+  username: 'bd-manager',
+  role: 'BD_MANAGER',
+})
+
+const opsManager = user({
+  id: 'user-ops-manager',
+  name: 'Operations Manager',
+  email: 'ops.manager@example.com',
+  username: 'ops-manager',
+  role: 'OPS_MANAGER',
+  team: 'OPS',
+})
+
 const assignedAssociate = user({
   id: 'user-associate',
   name: 'Associate Example',
@@ -124,7 +146,22 @@ describe('notification visibility', () => {
     })).toBe(true)
   })
 
-  it('keeps explicitly targeted notifications personal for non-capture users', () => {
+  it.each([captureManager, bdManager, opsManager])(
+    'lets company managers see notifications targeted to another user ($role)',
+    manager => {
+      const item = notification({ targetUserId: 'user-associate' })
+
+      expect(isNotificationVisibleTo(item, {
+        user: manager,
+        employees,
+        contracts: [],
+        opportunities: [],
+      })).toBe(true)
+      expect(canViewCompanyActivity(manager)).toBe(true)
+    },
+  )
+
+  it('keeps explicitly targeted notifications personal for non-management users', () => {
     const item = notification({ targetUserId: 'user-associate' })
 
     expect(isNotificationVisibleTo(item, {
@@ -158,6 +195,80 @@ describe('notification visibility', () => {
     expect(isNotificationVisibleTo(item, { ...context, user: assignedAssociate })).toBe(true)
     expect(isNotificationVisibleTo(item, { ...context, user: teamLead })).toBe(true)
     expect(isNotificationVisibleTo(item, { ...context, user: otherAssociate })).toBe(false)
+  })
+
+  it('hides unscoped legacy notifications from associates', () => {
+    const item = notification({ relatedId: undefined, targetRole: undefined, targetUserId: undefined })
+
+    expect(isNotificationVisibleTo(item, {
+      user: assignedAssociate,
+      employees,
+      contracts: [],
+      opportunities: [],
+    })).toBe(false)
+  })
+
+  it('keeps a canceled tracker notification visible to its associate after the opportunity is removed', () => {
+    const canceled = {
+      id: 42,
+      solicitationId: 'SOL-CANCELED',
+      solicitation: 'Canceled opportunity',
+      status: 'CANCELED',
+      bdm: 'Manager Example',
+      bds: 'Lead Example',
+      supportAgent: 'Associate Example',
+    } as BDSubmission
+    const item = notification({ relatedId: 'SOL-CANCELED' })
+    const context = { employees, contracts: [], opportunities: [], bdSubmissions: [canceled] }
+
+    expect(isNotificationVisibleTo(item, { ...context, user: assignedAssociate })).toBe(true)
+    expect(isNotificationVisibleTo(item, { ...context, user: otherAssociate })).toBe(false)
+  })
+})
+
+describe('company history', () => {
+  it('contains actual activities without mixing in notification events', () => {
+    const logs: ActivityLog[] = [{
+      id: 'activity-1',
+      action: 'Updated a work item',
+      user: 'Team Member',
+      userRole: 'ASSOCIATE',
+      entityType: 'opportunity',
+      createdAt: '2026-01-01T10:00:00.000Z',
+    }]
+    const alerts = [
+      notification({ id: 'notif-older', title: 'Older alert', createdAt: '2026-01-01T09:00:00.000Z' }),
+      notification({ id: 'notif-newer', title: 'Newer alert', createdAt: '2026-01-01T11:00:00.000Z' }),
+    ]
+
+    const history = buildActivityHistory(logs, alerts)
+
+    expect(history).toHaveLength(1)
+    expect(history.map(item => item.id)).toEqual(['activity:activity-1'])
+    expect(history.every(item => item.source === 'activity')).toBe(true)
+  })
+})
+
+describe('notification record navigation', () => {
+  it('links directly to the related opportunity', () => {
+    expect(notificationRecordRoute(notification({ relatedId: opportunity.id }), {
+      contracts: [],
+      opportunities: [opportunity],
+    })).toBe('/pipeline?record=opp-1')
+  })
+
+  it('links directly to a tracker row when the source opportunity no longer exists', () => {
+    const canceled = {
+      id: 42,
+      solicitationId: 'SOL-CANCELED',
+      status: 'CANCELED',
+    } as BDSubmission
+
+    expect(notificationRecordRoute(notification({ relatedId: 'SOL-CANCELED' }), {
+      contracts: [],
+      opportunities: [],
+      bdSubmissions: [canceled],
+    })).toBe('/bd-tracker?record=42&tab=CANCELED')
   })
 })
 

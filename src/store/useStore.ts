@@ -70,6 +70,7 @@ import { getAssignmentChain, isAssignedToAssociate, findUserForEmployee } from '
 import { hasPermission, applyPermissionOverrides, type Permission } from '../lib/permissions'
 import { nextInvoiceSequenceFromContracts } from '../lib/invoiceNumbers'
 import { verifyTotpCode, consumeRecoveryCode, hashRecoveryCodes } from '../lib/mfa'
+import { hasSourcingQuote } from '../lib/subcontractorQuotes'
 
 interface AppState {
   // Auth
@@ -450,7 +451,9 @@ function bdSubmissionFromOpportunity(
   status: BDSubmission['status'],
   existing?: BDSubmission,
   comment?: string,
+  employees: Employee[] = [],
 ): BDSubmission {
+  const chain = getAssignmentChain(employees, opp.assignedTo)
   return {
     id: existing?.id ?? Date.now(),
     submittedOn: existing?.submittedOn ?? todayLabel(),
@@ -462,9 +465,9 @@ function bdSubmissionFromOpportunity(
     dueDate: opp.dueDate,
     localTime: `${opp.localTime ?? ''}${opp.timezone ? ` ${opp.timezone}` : ''}`.trim(),
     location: opp.location,
-    bdm: opp.bdm,
-    bds: opp.bds,
-    supportAgent: opp.supportAgent,
+    bdm: chain.manager?.name || opp.bdm || existing?.bdm || '',
+    bds: chain.teamLead?.name || opp.bds || existing?.bds || '',
+    supportAgent: chain.associate?.name || opp.supportAgent || existing?.supportAgent,
     value: opp.contractAmount ?? opp.value ?? opp.baseAmount ?? 0,
     comment: comment ?? existing?.comment,
   }
@@ -1268,8 +1271,9 @@ export const useStore = create<AppState>()(
       },
 
       updateOpportunity: async (id, data) => {
+        const actor = get().currentUser
         if (data.status === 'CANCELED') {
-          if (!hasPermission(get().currentUser, 'opportunity:cancel')) {
+          if (!hasPermission(actor, 'opportunity:cancel')) {
             toast.error('Only the Capture Manager can cancel opportunities.')
             return false
           }
@@ -1283,16 +1287,19 @@ export const useStore = create<AppState>()(
         const isScheduleOrCommentUpdate = changeKeys.length > 0 && changeKeys.every(key =>
           SCHEDULE_FIELDS.includes(key) || key === 'comments'
         )
-        if (!hasPermission(get().currentUser, 'opportunity:edit')) {
-          const canCommentOnly = isCommentOnlyUpdate && hasPermission(get().currentUser, 'opportunity:comment')
-          const canScheduleEdit = isScheduleOrCommentUpdate && hasPermission(get().currentUser, 'opportunity:editSchedule')
-          if (!canCommentOnly && !canScheduleEdit) {
+        const isQuotedOnlyUpdate = changeKeys.length > 0 && changeKeys.every(key => key === 'quoted')
+        if (!hasPermission(actor, 'opportunity:edit')) {
+          const canCommentOnly = isCommentOnlyUpdate && hasPermission(actor, 'opportunity:comment')
+          const canScheduleEdit = isScheduleOrCommentUpdate && hasPermission(actor, 'opportunity:editSchedule')
+          const canUpdateQuoted = isQuotedOnlyUpdate && hasPermission(actor, 'sourcing:write')
+          if (!canCommentOnly && !canScheduleEdit && !canUpdateQuoted) {
             toast.error('You do not have permission to edit opportunity details.')
             return false
           }
         }
 
         const current = get().opportunities.find(o => o.id === id)
+        if (!current) return false
         if (data.assignedTo && data.assignedTo !== current?.assignedTo && !employeeBelongsToTeam(get().employees.find(e => e.id === data.assignedTo), 'BD')) {
           toast.error('Opportunities can only be assigned to Business Development users.')
           return false
@@ -1327,6 +1334,50 @@ export const useStore = create<AppState>()(
           set({ opportunities: previous })
           showDatabaseSaveError('Opportunity update')
           return false
+        }
+
+        const previousCommentIds = new Set((current.comments || []).map(comment => comment.id))
+        const addedComments = (updated.comments || []).filter(comment => !previousCommentIds.has(comment.id))
+        if (addedComments.length > 0) {
+          get().logActivity({
+            action: `Commented on opportunity: ${updated.solicitation}`,
+            user: actor?.name || 'System',
+            userRole: actor?.role || 'CAPTURE_MANAGER',
+            entityType: 'opportunity',
+            entityId: updated.id,
+            entityName: updated.solicitation,
+          })
+          if (actor?.role === 'ASSOCIATE') {
+            get().addNotification({
+              type: 'STATUS_CHANGE',
+              title: 'New opportunity comment',
+              message: `${actor.name} commented on ${updated.solicitation}.`,
+              read: false,
+              relatedId: updated.id,
+              targetRole: 'CAPTURE_MANAGER',
+            })
+          }
+        }
+
+        if (current.quoted !== updated.quoted) {
+          get().logActivity({
+            action: `${updated.quoted ? 'Marked' : 'Unmarked'} opportunity as quoted: ${updated.solicitation}`,
+            user: actor?.name || 'System',
+            userRole: actor?.role || 'CAPTURE_MANAGER',
+            entityType: 'opportunity',
+            entityId: updated.id,
+            entityName: updated.solicitation,
+          })
+          if (updated.quoted) {
+            get().addNotification({
+              type: 'STATUS_CHANGE',
+              title: 'Opportunity quoted',
+              message: `${updated.solicitation} has been quoted.`,
+              read: false,
+              relatedId: updated.id,
+              targetRole: 'CAPTURE_MANAGER',
+            })
+          }
         }
         get().syncDueOpportunities()
         return true
@@ -1372,7 +1423,7 @@ export const useStore = create<AppState>()(
         const opp = get().opportunities.find(o => o.id === id)
         if (opp) {
           const existing = get().bdSubmissions.find(b => b.solicitationId === opp.solicitationId)
-          const trackerRow = bdSubmissionFromOpportunity(opp, 'SUBMITTED', existing)
+          const trackerRow = bdSubmissionFromOpportunity(opp, 'SUBMITTED', existing, undefined, get().employees)
           set(s => ({
             bdSubmissions: existing
               ? s.bdSubmissions.map(b => b.id === existing.id ? trackerRow : b)
@@ -1447,7 +1498,7 @@ export const useStore = create<AppState>()(
         const existing = get().bdSubmissions.find(b => b.solicitationId === opp.solicitationId)
 
         if (status === 'CANCELED') {
-          const trackerRow = bdSubmissionFromOpportunity(opp, 'CANCELED', existing, comment)
+          const trackerRow = bdSubmissionFromOpportunity(opp, 'CANCELED', existing, comment, get().employees)
           set(s => ({
             opportunities: s.opportunities.filter(o => o.id !== id),
             nonSubReports: s.nonSubReports.filter(r => r.opportunityId !== id),
@@ -1471,7 +1522,7 @@ export const useStore = create<AppState>()(
             title: 'Opportunity canceled',
             message: `${opp.solicitation} was canceled${comment ? `: ${comment}` : '.'}`,
             read: false,
-            relatedId: id,
+            relatedId: opp.solicitationId,
           })
           return
         }
@@ -1487,7 +1538,7 @@ export const useStore = create<AppState>()(
 
         const updatedOpp = get().opportunities.find(o => o.id === id)
         if (!updatedOpp) return
-        const trackerRow = bdSubmissionFromOpportunity(updatedOpp, status, existing, comment)
+        const trackerRow = bdSubmissionFromOpportunity(updatedOpp, status, existing, comment, get().employees)
         set(s => ({
           bdSubmissions: existing
             ? s.bdSubmissions.map(b => b.id === existing.id ? trackerRow : b)
@@ -2358,7 +2409,8 @@ export const useStore = create<AppState>()(
 
       // ── Subcontractor management ────────────────────────────────────
       addSubcontractor: (data) => {
-        if (!hasPermission(get().currentUser, 'sourcing:write')) {
+        const actor = get().currentUser
+        if (!hasPermission(actor, 'sourcing:write')) {
           toast.error('You do not have permission to update sourcing.')
           return
         }
@@ -2376,10 +2428,23 @@ export const useStore = create<AppState>()(
           )
         }))
         upsertSubcontractor(sub)
+        get().logActivity({
+          action: `${hasSourcingQuote(sub) ? 'Added quote-backed sourcing' : 'Added sourcing'}: ${sub.companyName}`,
+          user: actor?.name || 'System',
+          userRole: actor?.role || 'CAPTURE_MANAGER',
+          entityType: 'subcontractor',
+          entityId: sub.id,
+          entityName: sub.companyName,
+        })
+        const opportunity = get().opportunities.find(item => item.id === sub.opportunityId)
+        if (hasSourcingQuote(sub) && opportunity && !opportunity.quoted) {
+          void get().updateOpportunity(opportunity.id, { quoted: true })
+        }
       },
 
       updateSubcontractor: (id, data) => {
-        if (!hasPermission(get().currentUser, 'sourcing:write')) {
+        const actor = get().currentUser
+        if (!hasPermission(actor, 'sourcing:write')) {
           toast.error('You do not have permission to update sourcing.')
           return
         }
@@ -2391,7 +2456,21 @@ export const useStore = create<AppState>()(
           })),
         }))
         const updated = get().subcontractors.find(sc => sc.id === id)
-        if (updated) upsertSubcontractor(updated)
+        if (updated) {
+          upsertSubcontractor(updated)
+          get().logActivity({
+            action: `${hasSourcingQuote(updated) ? 'Updated quote-backed sourcing' : 'Updated sourcing'}: ${updated.companyName}`,
+            user: actor?.name || 'System',
+            userRole: actor?.role || 'CAPTURE_MANAGER',
+            entityType: 'subcontractor',
+            entityId: updated.id,
+            entityName: updated.companyName,
+          })
+          const opportunity = get().opportunities.find(item => item.id === updated.opportunityId)
+          if (hasSourcingQuote(updated) && opportunity && !opportunity.quoted) {
+            void get().updateOpportunity(opportunity.id, { quoted: true })
+          }
+        }
       },
 
       deleteSubcontractor: (id) => {
@@ -2410,6 +2489,14 @@ export const useStore = create<AppState>()(
             )
           }))
           deleteSubcontractorRecord(id)
+          get().logActivity({
+            action: `Deleted sourcing subcontractor: ${sub.companyName}`,
+            user: get().currentUser?.name || 'System',
+            userRole: get().currentUser?.role || 'CAPTURE_MANAGER',
+            entityType: 'subcontractor',
+            entityId: sub.id,
+            entityName: sub.companyName,
+          })
         }
       },
 
@@ -2703,6 +2790,14 @@ export const useStore = create<AppState>()(
           relatedId: data.opportunityId,
           targetRole: 'CAPTURE_MANAGER',
         })
+        get().logActivity({
+          action: `Submitted non-submission report${updatedOpp ? ` for ${updatedOpp.solicitation}` : ''}`,
+          user: get().currentUser?.name || 'System',
+          userRole: get().currentUser?.role || 'CAPTURE_MANAGER',
+          entityType: 'report',
+          entityId: report.id,
+          entityName: updatedOpp?.solicitation,
+        })
       },
 
       updateNonSubReportReason: (reportId, reason) => {
@@ -2776,7 +2871,7 @@ export const useStore = create<AppState>()(
           const updatedOpp = get().opportunities.find(o => o.id === report.opportunityId)
           if (updatedOpp) {
             const existing = get().bdSubmissions.find(b => b.solicitationId === updatedOpp.solicitationId)
-            const trackerRow = bdSubmissionFromOpportunity(updatedOpp, trackerStatus, existing, reviewNote || report.reason)
+            const trackerRow = bdSubmissionFromOpportunity(updatedOpp, trackerStatus, existing, reviewNote || report.reason, get().employees)
             set(s => ({
               bdSubmissions: existing
                 ? s.bdSubmissions.map(b => b.id === existing.id ? trackerRow : b)
@@ -2966,6 +3061,14 @@ export const useStore = create<AppState>()(
             relatedId: opportunityId,
             targetUserId: targetUser?.id,
           })
+          get().logActivity({
+            action: `Assigned opportunity ${opp.solicitation} to ${emp.name}`,
+            user: get().currentUser?.name || 'System',
+            userRole: get().currentUser?.role || 'CAPTURE_MANAGER',
+            entityType: 'opportunity',
+            entityId: opp.id,
+            entityName: opp.solicitation,
+          })
         }
       },
 
@@ -2992,6 +3095,14 @@ export const useStore = create<AppState>()(
             read: false,
             relatedId: contractId,
             targetUserId: targetUser?.id,
+          })
+          get().logActivity({
+            action: `Assigned contract ${contract.title} to ${emp.name}`,
+            user: get().currentUser?.name || 'System',
+            userRole: get().currentUser?.role || 'CAPTURE_MANAGER',
+            entityType: 'contract',
+            entityId: contract.id,
+            entityName: contract.title,
           })
         }
       },
@@ -3080,7 +3191,7 @@ export const useStore = create<AppState>()(
 
             canceledOpportunities.forEach(opp => {
               const existing = bdSubmissions.find(b => b.solicitationId === opp.solicitationId)
-              const trackerRow = bdSubmissionFromOpportunity(opp, 'CANCELED', existing, 'Canceled')
+              const trackerRow = bdSubmissionFromOpportunity(opp, 'CANCELED', existing, 'Canceled', get().employees)
               if (existing) {
                 const idx = bdSubmissions.findIndex(b => b.id === existing.id)
                 bdSubmissions[idx] = trackerRow
@@ -3141,7 +3252,10 @@ export const useStore = create<AppState>()(
               lastSyncedAt: Date.now(),
             })
           } else {
-            set({ lastSyncedAt: Date.now() })
+            // Keep the rehydrated snapshot intact. Mark initialization as
+            // complete so refreshFromDb can retry periodically without
+            // re-running all one-time startup work on every render.
+            set({ dbReady: true })
           }
 
           // Pull permission overrides from Supabase if available; falls back

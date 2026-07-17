@@ -23,6 +23,7 @@ import type {
 } from '../types'
 import { formatCurrency, useEscapeKey } from '../lib/utils'
 import { uploadAttachment as uploadToStorage, downloadAttachment as downloadAttachmentFromStorage } from '../lib/attachments'
+import { collectSourcingQuoteAttachments, getSourcingQuoteAttachments, hasSourcingQuote } from '../lib/subcontractorQuotes'
 import { hasPermission } from '../lib/permissions'
 import { isOpsAgent } from '../lib/team'
 import FloatingActionMenu from '../components/shared/FloatingActionMenu'
@@ -408,10 +409,6 @@ function subkDocumentTotal(documents: LockedSubkDocuments) {
 
 function subkCompanyKey(companyName = '', email = '') {
   return `${companyName.trim().toLowerCase()}|${email.trim().toLowerCase()}`
-}
-
-function hasSourcingQuote(entry: Subcontractor) {
-  return Boolean(entry.quoteFile?.trim())
 }
 
 function uniqueSourcingEntries(entries: Subcontractor[]) {
@@ -1783,19 +1780,20 @@ function ContractDetailDrawer({
     fromContractAdmin: boolean
     contractSourceQuote: boolean
     fromDatabase: boolean
+    quoteAttachments: FileAttachment[]
   }>()
 
+  const currentProjectSourcingByKey = new Map<string, Subcontractor[]>()
   sourceOpportunitySourcing.forEach(entry => {
     const companyName = entry.companyName?.trim()
     if (!companyName) return
     const key = subkCompanyKey(companyName, entry.email)
-    const existing = subkCandidateMap.get(key)
-    if (existing) {
-      existing.entries = sourcingHistoryByKey.get(key) || existing.entries
-      existing.currentProject = true
-      existing.contractSourceQuote = true
-      return
-    }
+    currentProjectSourcingByKey.set(key, [...(currentProjectSourcingByKey.get(key) || []), entry])
+  })
+
+  currentProjectSourcingByKey.forEach((currentEntries, key) => {
+    const entry = currentEntries[0]
+    const companyName = entry.companyName.trim()
     subkCandidateMap.set(key, {
       key,
       companyName,
@@ -1810,6 +1808,7 @@ function ContractDetailDrawer({
       fromContractAdmin: false,
       contractSourceQuote: true,
       fromDatabase: false,
+      quoteAttachments: collectSourcingQuoteAttachments(currentEntries),
     })
   })
 
@@ -1837,6 +1836,7 @@ function ContractDetailDrawer({
       fromContractAdmin: true,
       contractSourceQuote: false,
       fromDatabase: false,
+      quoteAttachments: [],
     })
   })
 
@@ -1869,6 +1869,7 @@ function ContractDetailDrawer({
       fromContractAdmin: false,
       contractSourceQuote: false,
       fromDatabase: true,
+      quoteAttachments: [],
     })
   })
 
@@ -2835,7 +2836,7 @@ function ContractDetailDrawer({
                   title: opp?.solicitation || 'Unknown opportunity',
                   solicitationId: opp?.solicitationId || entry.opportunityId,
                   capturedOn: opp?.capturedOn || entry.createdAt,
-                  quoteFile: entry.quoteFile,
+                  quoteCount: getSourcingQuoteAttachments(entry).length,
                 }
               })
 
@@ -2909,7 +2910,9 @@ function ContractDetailDrawer({
                         disabled={alreadyLocked}
                         onClick={() => {
                           setSelectedSubkKey(candidate.key)
-                          setSubkDocumentDrafts({})
+                          setSubkDocumentDrafts(candidate.quoteAttachments.length
+                            ? { quote: candidate.quoteAttachments }
+                            : {})
                           setTab('lockSubk')
                         }}
                         className="btn-primary text-xs disabled:cursor-not-allowed disabled:opacity-45"
@@ -2930,9 +2933,9 @@ function ContractDetailDrawer({
                                 <p className="truncate text-xs font-bold text-slate-100">{project.title}</p>
                                 <p className="text-[10px] text-slate-400">{project.solicitationId} - {formatDate(project.capturedOn)}</p>
                               </div>
-                              {project.quoteFile && (
+                              {project.quoteCount > 0 && (
                                 <span className="flex items-center gap-1 rounded-lg bg-cyan-400/10 px-2 py-1 text-[10px] font-bold text-cyan-100">
-                                  <FileText size={10} /> Quote on file
+                                  <FileText size={10} /> {project.quoteCount} quote{project.quoteCount === 1 ? '' : 's'} on file
                                 </span>
                               )}
                             </div>
@@ -4388,6 +4391,7 @@ export default function ContractsPage() {
   const hidePricing = isOpsAgent(currentUser) && currentUser?.role === 'ASSOCIATE'
   const [searchParams, setSearchParams] = useSearchParams()
   const globalRecordId = searchParams.get('record')
+  const globalTab = searchParams.get('tab') as CTab | null
   const [tab, setTab] = useState<CTab>('ACTIVE_GROUP')
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<Contract | null>(null)
@@ -4405,6 +4409,19 @@ export default function ContractsPage() {
   }
 
   const tabDef = C_TABS.find(t => t.key === tab) ?? C_TABS[0]
+
+  useEffect(() => {
+    if (!globalTab || !C_TABS.some(item => item.key === globalTab)) return
+    setTab(globalTab)
+    setSearch('')
+    setPeriod(null)
+    setColumnFilters({})
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      next.delete('tab')
+      return next
+    }, { replace: true })
+  }, [globalTab, setSearchParams])
 
   useEffect(() => {
     if (!globalRecordId) return

@@ -34,7 +34,7 @@ import { getAssignmentChain, isOpsAgent, ROLE_DISPLAY_LABELS } from '../../lib/t
 import type { Contract, Employee, NotifType, Notification as AppNotification, Opportunity } from '../../types'
 import { ROUTE_LABELS } from '../../config/navigation'
 import { buildGlobalSearchResults, type GlobalSearchResult } from '../../lib/globalSearch'
-import { isNotificationVisibleTo } from '../../lib/notifications'
+import { isNotificationVisibleTo, notificationRecordRoute } from '../../lib/notifications'
 import { ROLE_LABELS } from '../../lib/permissions'
 import { playNotificationDing } from '../../lib/sound'
 import AppearanceMenu from './AppearanceMenu'
@@ -141,14 +141,23 @@ export default function TopBar() {
 
   const label = ROUTE_LABELS[location.pathname] ?? 'NEXUS ERP'
   const visibleNotifications = useMemo(
-    () => notifications.filter(n => isNotificationVisibleTo(n, { user: currentUser, employees, contracts, opportunities })),
-    [notifications, currentUser, employees, contracts, opportunities],
+    () => notifications.filter(n => isNotificationVisibleTo(n, {
+      user: currentUser,
+      employees,
+      contracts,
+      opportunities,
+      bdSubmissions,
+    })),
+    [notifications, currentUser, employees, contracts, opportunities, bdSubmissions],
   )
 
   const unread = visibleNotifications.filter(n => !n.read).length
   const previewNotifications = visibleNotifications.slice(0, 8)
   const selectedContext = selectedNotification
     ? resolveNotificationContext(selectedNotification, contracts, opportunities, employees)
+    : null
+  const selectedRoute = selectedNotification
+    ? notificationRecordRoute(selectedNotification, { contracts, opportunities, bdSubmissions })
     : null
   const globalSearchResults = useMemo(
     () => buildGlobalSearchResults(globalSearch, {
@@ -193,9 +202,10 @@ export default function TopBar() {
       const cfg = TYPE_CONFIG[n.type]
       const Icon = cfg?.icon ?? Bell
       const accent = cfg?.color ?? '#94A3B8'
+      const relatedRoute = notificationRecordRoute(n, { contracts, opportunities, bdSubmissions })
       toast.custom((t) => (
         <div
-          onClick={() => { navigate('/notifications'); toast.dismiss(t.id) }}
+          onClick={() => { navigate(relatedRoute || '/notifications'); toast.dismiss(t.id) }}
           className={`pointer-events-auto flex w-[340px] max-w-[90vw] cursor-pointer items-start gap-3 rounded-xl p-3.5 transition-all duration-300 ${t.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2'}`}
           style={{ background: 'var(--bg-card)', border: '1px solid var(--border-default)', boxShadow: '0 12px 32px rgba(0,0,0,0.18)' }}
         >
@@ -222,7 +232,7 @@ export default function TopBar() {
     setBellPulse(true)
     const timer = window.setTimeout(() => setBellPulse(false), 1400)
     return () => window.clearTimeout(timer)
-  }, [visibleNotifications, soundEnabled, navigate])
+  }, [visibleNotifications, soundEnabled, navigate, contracts, opportunities, bdSubmissions])
 
   const openGlobalSearchResult = (result: GlobalSearchResult) => {
     navigate(result.route)
@@ -241,9 +251,8 @@ export default function TopBar() {
   }
 
   const openRelatedRecord = () => {
-    if (!selectedContext) return
-    if (selectedContext.contract) navigate('/contracts')
-    else if (selectedContext.opportunity) navigate('/pipeline')
+    if (!selectedRoute) return
+    navigate(selectedRoute)
     setSelectedNotification(null)
   }
 
@@ -606,7 +615,7 @@ export default function TopBar() {
                 <button type="button" onClick={() => setSelectedNotification(null)} className="btn-secondary text-xs">
                   Close
                 </button>
-                {(selectedContext.contract || selectedContext.opportunity) && (
+                {selectedRoute && (
                   <button type="button" onClick={openRelatedRecord} className="btn-primary text-xs">
                     Open Related Record <ExternalLink size={12} />
                   </button>

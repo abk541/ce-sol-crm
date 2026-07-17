@@ -17,7 +17,8 @@ import type { Opportunity, Priority, OppStatus, Comment, FileAttachment, SamGovC
 import { TIMEZONES } from '../data/mock'
 import { formatCurrency, formatDate, useEscapeKey } from '../lib/utils'
 import { uploadAttachment, resolveAttachmentSource, hasAttachmentSource, downloadAttachment } from '../lib/attachments'
-import { assignableEmployeesForUser, getAssignmentChain, isAssignedToAssociate, isOpportunityAssignedToUser, isOpportunityOwnedByUser, ROLE_DISPLAY_LABELS } from '../lib/team'
+import { assignableEmployeesForUser, getAssignmentChain, isOpportunityAssignedToUser, isOpportunityOwnedByUser, ROLE_DISPLAY_LABELS } from '../lib/team'
+import { CONTRACT_OPPORTUNITY_STATUSES, isContractOpportunityVisible } from '../lib/dashboardMetrics'
 import { NAICS_CODES } from '../data/naics'
 import toast from 'react-hot-toast'
 import DetailDrawer, { DrawerSection, DrawerField } from '../components/shared/DetailDrawer'
@@ -58,7 +59,7 @@ const SET_ASIDES = ['SB', 'SDVOSB', 'WOSB', 'HUBZone', 'VOSB', '8(a)', 'UNRES']
 const PRIORITIES: Priority[] = ['MEDIUM', 'HIGH', 'VERY_HIGH']
 
 // Pre-submission view statuses only
-const OPP_VIEW_STATUSES: OppStatus[] = ['ACTIVE', 'NEW_ASSIGNMENT', 'DISCUSSION']
+const OPP_VIEW_STATUSES: OppStatus[] = CONTRACT_OPPORTUNITY_STATUSES
 
 const PREFERRED_TIMEZONE_CODES = [
   'EDT', 'EST', 'CDT', 'CST', 'MDT', 'MST', 'PDT', 'PST', 'AKDT', 'AKST', 'HST',
@@ -4008,9 +4009,13 @@ export default function PipelinePage() {
   const globalRecordId = searchParams.get('record')
   const mineScope = searchParams.get('mine') === '1'
   const queryParam = searchParams.get('q')
+  const typeParam = searchParams.get('type')
 
   // ── Filter state ──
-  const [columnFilters, setColumnFilters] = useState<ColumnFilters>(() => ({ ...EMPTY_COLUMN_FILTERS }))
+  const [columnFilters, setColumnFilters] = useState<ColumnFilters>(() => ({
+    ...EMPTY_COLUMN_FILTERS,
+    type: typeParam ?? '',
+  }))
   const [dueDateRange, setDueDateRange] = useState<Period | null>(null)
   // Free-text search across all columns. Seeded from the ?q= param so the global
   // top-bar search can drop the user straight into a filtered pipeline list.
@@ -4021,6 +4026,13 @@ export default function PipelinePage() {
   useEffect(() => {
     if (queryParam !== null) setSearch(queryParam)
   }, [queryParam])
+
+  useEffect(() => {
+    if (typeParam !== null) {
+      setColumnFilters(previous => ({ ...previous, type: typeParam }))
+      setPage(1)
+    }
+  }, [typeParam])
 
   // ── Modal state ──
   const [showCreate, setShowCreate]   = useState(false)
@@ -4071,7 +4083,8 @@ export default function PipelinePage() {
   }, [globalRecordId, opportunities, setSearchParams])
 
   const filterOptions = useMemo(() => {
-    const visibleOpps = opportunities.filter(o => !o.isDeleted && !o.nonSubmissionReportId && OPP_VIEW_STATUSES.includes(o.status as any) && (requireAssociateForActivePipeline ? isAssignedToAssociate(employees, o.assignedTo) : !!o.assignedTo))
+    const visibleOpps = opportunities.filter(o =>
+      isContractOpportunityVisible(o, employees, requireAssociateForActivePipeline))
     return COLUMN_FILTERS.reduce((acc, col) => {
       const values = visibleOpps
         .map(o => getColumnFilterValue(o, col.key, employees))
@@ -4089,7 +4102,8 @@ export default function PipelinePage() {
   }, [opportunities, employees, requireAssociateForActivePipeline])
 
   const filtered = useMemo(() => {
-    let list = opportunities.filter(o => !o.isDeleted && !o.nonSubmissionReportId && OPP_VIEW_STATUSES.includes(o.status as any) && (requireAssociateForActivePipeline ? isAssignedToAssociate(employees, o.assignedTo) : !!o.assignedTo))
+    let list = opportunities.filter(o =>
+      isContractOpportunityVisible(o, employees, requireAssociateForActivePipeline))
 
     if (mineScope) list = list.filter(o => isOpportunityAssignedToUser(employees, currentUser, o))
 
@@ -4147,6 +4161,12 @@ export default function PipelinePage() {
     setDueDateRange(null)
     setSearch('')
     clearMineScope()
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      next.delete('q')
+      next.delete('type')
+      return next
+    }, { replace: true })
     resetPage()
   }
 
@@ -4400,9 +4420,9 @@ export default function PipelinePage() {
                               onEdit={() => setEditOpp(o)}
                               onSourcing={() => setSourcingOpp(o)}
                               onSubmit={() => setSubmitOpp(o)}
-                              onToggleQuoted={() => {
-                                void updateOpportunity(o.id, { quoted: !o.quoted })
-                                toast.success(o.quoted ? 'Marked as not quoted' : 'Marked as quoted')
+                              onToggleQuoted={async () => {
+                                const saved = await updateOpportunity(o.id, { quoted: !o.quoted })
+                                if (saved) toast.success(o.quoted ? 'Marked as not quoted' : 'Marked as quoted')
                               }}
                               onCancel={() => handleCancel(o)}
                               onRequestDeletion={() => handleDelete(o)}

@@ -1,4 +1,4 @@
-import type { Contract, Employee, EmployeeTeam, Opportunity, User } from '../types'
+import type { BDSubmission, Contract, Employee, EmployeeTeam, Opportunity, User } from '../types'
 
 export const ROLE_DISPLAY_LABELS: Record<string, string> = {
   BD_MANAGER: 'Manager',
@@ -36,6 +36,17 @@ function normalizeDate(date?: string) {
 
 function normalizeName(name?: string) {
   return (name ?? '').trim().toLowerCase()
+}
+
+function employeeMatchesReference(employee: Employee, reference?: string): boolean {
+  const normalized = normalizeName(reference)
+  if (!normalized) return false
+  return [
+    employee.id,
+    employee.name,
+    employee.email,
+    employee.email.split('@')[0],
+  ].some(value => normalizeName(value) === normalized)
 }
 
 function findEmployeeIdByName(employees: Employee[], name?: string): string | undefined {
@@ -255,6 +266,60 @@ export function isOpportunityAssignedToUser(
   if (username && haystack.includes(username)) return true
   if (name && haystack.includes(name)) return true
   return false
+}
+
+function submissionOpportunity(
+  submission: Pick<BDSubmission, 'solicitationId' | 'solicitation'>,
+  opportunities: Opportunity[],
+): Opportunity | undefined {
+  return opportunities.find(opportunity =>
+    opportunity.solicitationId === submission.solicitationId ||
+    opportunity.solicitation === submission.solicitation)
+}
+
+/**
+ * Resolves a tracker row to the employee who owns it. Current rows use the
+ * linked opportunity assignment; legacy/canceled rows fall back to the names
+ * saved on the tracker row because the original opportunity may no longer
+ * exist.
+ */
+export function isBDSubmissionAttributedToEmployee(
+  employees: Employee[],
+  employee: Employee,
+  submission: BDSubmission,
+  opportunities: Opportunity[],
+): boolean {
+  const linkedOpportunity = submissionOpportunity(submission, opportunities)
+  const chain = getAssignmentChain(employees, linkedOpportunity?.assignedTo)
+  if (
+    chain.manager?.id === employee.id ||
+    chain.teamLead?.id === employee.id ||
+    chain.associate?.id === employee.id
+  ) return true
+
+  return [submission.bdm, submission.bds, submission.supportAgent]
+    .some(reference => employeeMatchesReference(employee, reference))
+}
+
+/** Scopes BD Tracker rows and their notifications to the responsible user. */
+export function isBDSubmissionAssociatedToUser(
+  employees: Employee[],
+  user: User | null | undefined,
+  submission: BDSubmission,
+  opportunities: Opportunity[],
+): boolean {
+  if (!user) return false
+  if (['CAPTURE_MANAGER', 'BD_MANAGER', 'OPS_MANAGER'].includes(user.role)) return true
+
+  const linkedOpportunity = submissionOpportunity(submission, opportunities)
+  if (linkedOpportunity?.assignedTo) {
+    return isOpportunityOwnedByUser(employees, user, linkedOpportunity.assignedTo)
+  }
+
+  return employees.some(employee =>
+    [submission.bdm, submission.bds, submission.supportAgent]
+      .some(reference => employeeMatchesReference(employee, reference)) &&
+    isOpportunityOwnedByUser(employees, user, employee.id))
 }
 
 export function assignmentWorkloadByEmployee({
