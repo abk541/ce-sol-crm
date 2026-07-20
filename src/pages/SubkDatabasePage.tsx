@@ -11,8 +11,17 @@ import type { SubkDatabaseEntry, SetAside, Subcontractor } from '../types'
 import { formatCurrency, useEscapeKey } from '../lib/utils'
 import toast from 'react-hot-toast'
 import FloatingActionMenu from '../components/shared/FloatingActionMenu'
+import { parseSourcingComments, sourcingNotesText } from '../lib/sourcingComments'
 
 const SETASIDE_OPTIONS: SetAside[] = ['SB', 'SDVOSB', 'WOSB', 'HUBZone', 'VOSB', '8(a)', 'UNRES']
+
+function formatNoteDateTime(value: string) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleString('en-US', {
+    month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit',
+  })
+}
 
 // Enriched entry used only in this page: the base SubkDatabaseEntry plus a
 // marker indicating whether it lives in the Subk Database table or was
@@ -35,6 +44,7 @@ const SETASIDE_COLORS: Record<string, { bg: string; color: string }> = {
 
 function EntryDrawer({ entry, onClose, onEdit }: { entry: SubkDatabaseEntry; onClose: () => void; onEdit?: () => void }) {
   const saStyle = SETASIDE_COLORS[entry.setAside] || SETASIDE_COLORS['UNRES']
+  const notes = parseSourcingComments(entry.notes)
 
   return createPortal(
     <AnimatePresence>
@@ -111,10 +121,23 @@ function EntryDrawer({ entry, onClose, onEdit }: { entry: SubkDatabaseEntry; onC
         </div>
 
         {/* Notes */}
-        {entry.notes && (
+        {notes.length > 0 && (
           <div>
             <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Notes</p>
-            <p className="text-sm text-slate-700 leading-relaxed">{entry.notes}</p>
+            <div className="space-y-2">
+              {notes.map(note => (
+                <div key={note.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                  <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-slate-700">{note.text}</p>
+                  {(note.author !== 'Legacy note' || note.createdAt) && (
+                    <p className="mt-2 text-[10px] font-semibold text-slate-400">
+                      {note.author !== 'Legacy note' ? note.author : ''}
+                      {note.author !== 'Legacy note' && note.createdAt ? ' - ' : ''}
+                      {note.createdAt ? formatNoteDateTime(note.createdAt) : ''}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
@@ -472,7 +495,8 @@ export default function SubkDatabasePage() {
         e.companyName.toLowerCase().includes(q) ||
         e.contactName.toLowerCase().includes(q) ||
         e.naicsCodes.some(n => n.includes(q)) ||
-        (e.location ?? '').toLowerCase().includes(q)
+        (e.location ?? '').toLowerCase().includes(q) ||
+        sourcingNotesText(e.notes).toLowerCase().includes(q)
       )
     }
     return list

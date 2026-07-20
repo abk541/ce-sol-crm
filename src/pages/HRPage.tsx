@@ -3,19 +3,25 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { createPortal } from 'react-dom'
 import {
   Award,
+  CalendarDays,
   CheckCircle2,
   Clock3,
   FileBadge2,
   FileText,
   Pencil,
   Search,
+  Trash2,
+  UsersRound,
   UserRound,
   X,
 } from 'lucide-react'
+import { Cell, Pie, PieChart, ResponsiveContainer } from 'recharts'
 import toast from 'react-hot-toast'
 import { useStore } from '../store/useStore'
 import { hasPermission } from '../lib/permissions'
 import { useEscapeKey } from '../lib/utils'
+import { approvedTimeOffDays, hrRoleGroup, type HRRoleGroup } from '../lib/hr'
+import PeriodFilter, { type Period } from '../components/shared/PeriodFilter'
 import type {
   CompanyCertification,
   CompanyCertificationStatus,
@@ -39,6 +45,7 @@ const REQUEST_STATUS_STYLE: Record<EmployeeRequestStatus, string> = {
 
 const REQUEST_TYPE_LABEL: Record<EmployeeRequestType, string> = {
   TIME_OFF: 'Time off',
+  SICK_LEAVE: 'Sick leave',
   DOCUMENT: 'Document',
   CERTIFICATION: 'Certification',
   PAYROLL: 'Payroll',
@@ -46,8 +53,13 @@ const REQUEST_TYPE_LABEL: Record<EmployeeRequestType, string> = {
   OTHER: 'Other',
 }
 
-const REQUEST_TYPES: EmployeeRequestType[] = ['TIME_OFF', 'DOCUMENT', 'CERTIFICATION', 'PAYROLL', 'ACCESS', 'OTHER']
+const REQUEST_TYPES: EmployeeRequestType[] = ['TIME_OFF', 'SICK_LEAVE', 'DOCUMENT', 'CERTIFICATION', 'PAYROLL', 'ACCESS', 'OTHER']
 const REQUEST_STATUSES: EmployeeRequestStatus[] = ['PENDING', 'IN_REVIEW', 'APPROVED', 'DECLINED']
+const ROLE_FILTER_LABELS: Record<HRRoleGroup, string> = {
+  MANAGER: 'Managers',
+  TEAM_LEAD: 'Team leads',
+  ASSOCIATE: 'Associates',
+}
 
 function formatDate(value?: string) {
   if (!value) return '-'
@@ -129,7 +141,10 @@ function RequestModal({ onClose }: { onClose: () => void }) {
     priority: 'MEDIUM' as EmployeeRequest['priority'],
     title: '',
     details: '',
+    deadline: '',
   })
+  const [leavePeriod, setLeavePeriod] = useState<Period | null>(null)
+  const needsLeavePeriod = form.type === 'TIME_OFF' || form.type === 'SICK_LEAVE'
 
   const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault()
@@ -137,11 +152,18 @@ function RequestModal({ onClose }: { onClose: () => void }) {
       toast.error('Add a title and request details.')
       return
     }
+    if (needsLeavePeriod && !leavePeriod) {
+      toast.error('Select the requested leave dates.')
+      return
+    }
     submitEmployeeRequest({
       type: form.type,
       priority: form.priority,
       title: form.title.trim(),
       details: form.details.trim(),
+      deadline: form.deadline || undefined,
+      leaveStart: needsLeavePeriod ? leavePeriod?.from : undefined,
+      leaveEnd: needsLeavePeriod ? leavePeriod?.to : undefined,
       attachments: [],
     })
     toast.success('Request submitted')
@@ -174,10 +196,34 @@ function RequestModal({ onClose }: { onClose: () => void }) {
         <div className="grid gap-4 overflow-y-auto p-5 md:grid-cols-2">
           <div>
             <label className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-400">Type</label>
-            <select className="select-field" value={form.type} onChange={e => setForm(p => ({ ...p, type: e.target.value as EmployeeRequestType }))}>
+            <select
+              className="select-field"
+              value={form.type}
+              onChange={e => {
+                const type = e.target.value as EmployeeRequestType
+                setForm(p => ({ ...p, type }))
+                if (type !== 'TIME_OFF' && type !== 'SICK_LEAVE') setLeavePeriod(null)
+              }}
+            >
               {REQUEST_TYPES.map(type => <option key={type} value={type}>{REQUEST_TYPE_LABEL[type]}</option>)}
             </select>
           </div>
+          <div className="md:col-span-2">
+            <label className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-400">Requested completion date</label>
+            <input type="date" className="input-field" value={form.deadline} onChange={e => setForm(p => ({ ...p, deadline: e.target.value }))} />
+          </div>
+          {needsLeavePeriod && (
+            <div className="md:col-span-2 rounded-xl border border-[var(--border-default)] bg-white/[0.03] p-4">
+              <div className="mb-3 flex items-center gap-2">
+                <CalendarDays size={14} className="text-cyan-200" />
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-slate-300">Requested leave period *</p>
+                  <p className="text-xs text-slate-500">Select the first and last day in one calendar.</p>
+                </div>
+              </div>
+              <PeriodFilter value={leavePeriod} onChange={setLeavePeriod} placeholder="Select leave dates" />
+            </div>
+          )}
           <div>
             <label className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-400">Priority</label>
             <select className="select-field" value={form.priority} onChange={e => setForm(p => ({ ...p, priority: e.target.value as EmployeeRequest['priority'] }))}>
@@ -253,6 +299,12 @@ function ReviewModal({
           <div className="rounded-xl border border-[var(--border-default)] bg-white/[0.03] p-4">
             <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">{REQUEST_TYPE_LABEL[request.type]}</p>
             <p className="mt-2 text-sm leading-relaxed text-slate-200">{request.details}</p>
+            {(request.deadline || request.leaveStart) && (
+              <div className="mt-4 grid gap-3 border-t border-[var(--border-default)] pt-3 text-xs sm:grid-cols-2">
+                {request.deadline && <p className="text-slate-400">Requested by <span className="font-semibold text-slate-100">{formatDate(request.deadline)}</span></p>}
+                {request.leaveStart && <p className="text-slate-400">Leave period <span className="font-semibold text-slate-100">{formatDate(request.leaveStart)} - {formatDate(request.leaveEnd)}</span></p>}
+              </div>
+            )}
           </div>
           <div>
             <label className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-400">Decision</label>
@@ -290,7 +342,14 @@ function EditRequestModal({
     type: request.type,
     priority: request.priority,
     details: request.details,
+    deadline: request.deadline ?? '',
   })
+  const [leavePeriod, setLeavePeriod] = useState<Period | null>(
+    request.leaveStart && request.leaveEnd
+      ? { label: `${formatDate(request.leaveStart)} - ${formatDate(request.leaveEnd)}`, from: request.leaveStart, to: request.leaveEnd }
+      : null,
+  )
+  const needsLeavePeriod = form.type === 'TIME_OFF' || form.type === 'SICK_LEAVE'
 
   const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault()
@@ -303,6 +362,9 @@ function EditRequestModal({
       type: form.type,
       priority: form.priority,
       details: form.details.trim(),
+      deadline: form.deadline || undefined,
+      leaveStart: needsLeavePeriod ? leavePeriod?.from : undefined,
+      leaveEnd: needsLeavePeriod ? leavePeriod?.to : undefined,
     })
     toast.success('Request updated')
     onClose()
@@ -340,7 +402,15 @@ function EditRequestModal({
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-400">Type</label>
-              <select className="select-field" value={form.type} onChange={e => setForm(p => ({ ...p, type: e.target.value as EmployeeRequestType }))}>
+              <select
+                className="select-field"
+                value={form.type}
+                onChange={e => {
+                  const type = e.target.value as EmployeeRequestType
+                  setForm(p => ({ ...p, type }))
+                  if (type !== 'TIME_OFF' && type !== 'SICK_LEAVE') setLeavePeriod(null)
+                }}
+              >
                 {REQUEST_TYPES.map(t => <option key={t} value={t}>{REQUEST_TYPE_LABEL[t]}</option>)}
               </select>
             </div>
@@ -357,6 +427,16 @@ function EditRequestModal({
             <label className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-400">Details</label>
             <textarea className="input-field min-h-32 resize-y" value={form.details} onChange={e => setForm(p => ({ ...p, details: e.target.value }))} />
           </div>
+          <div>
+            <label className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-400">Requested completion date</label>
+            <input type="date" className="input-field" value={form.deadline} onChange={e => setForm(p => ({ ...p, deadline: e.target.value }))} />
+          </div>
+          {needsLeavePeriod && (
+            <div className="rounded-xl border border-[var(--border-default)] bg-white/[0.03] p-4">
+              <label className="mb-2 block text-[10px] font-bold uppercase tracking-wide text-slate-400">Requested leave period</label>
+              <PeriodFilter value={leavePeriod} onChange={setLeavePeriod} placeholder="Select leave dates" />
+            </div>
+          )}
         </div>
 
         <div className="flex justify-end gap-3 border-t border-[var(--border-default)] p-5">
@@ -370,23 +450,87 @@ function EditRequestModal({
   )
 }
 
+function DeleteRequestModal({ request, onClose }: { request: EmployeeRequest; onClose: () => void }) {
+  const deleteEmployeeRequest = useStore(s => s.deleteEmployeeRequest)
+  useEscapeKey(onClose)
+
+  return createPortal(
+    <AnimatePresence>
+      <motion.div key="hr-delete-modal" className="fixed inset-0 z-[70] flex items-center justify-center p-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+        <button className="absolute inset-0 cursor-default bg-black/70 backdrop-blur-sm" onClick={onClose} aria-label="Close delete confirmation" />
+        <motion.div
+          initial={{ opacity: 0, y: 14, scale: 0.97 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          exit={{ opacity: 0, y: 10, scale: 0.97 }}
+          className="relative z-10 w-full max-w-md rounded-2xl border border-rose-400/25 bg-[var(--bg-modal)] p-5 shadow-[var(--shadow-modal)]"
+        >
+          <div className="flex items-start gap-3">
+            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-rose-400/25 bg-rose-400/10 text-rose-200">
+              <Trash2 size={17} />
+            </div>
+            <div>
+              <h2 className="text-lg font-black text-white">Delete this HR request?</h2>
+              <p className="mt-1 text-sm leading-relaxed text-slate-400">“{request.title}” will be removed from the employee’s history and the shared database.</p>
+            </div>
+          </div>
+          <div className="mt-5 flex justify-end gap-3">
+            <button type="button" onClick={onClose} className="btn-secondary justify-center">Keep Request</button>
+            <button
+              type="button"
+              onClick={() => {
+                deleteEmployeeRequest(request.id)
+                toast.success('Request deleted')
+                onClose()
+              }}
+              className="inline-flex items-center justify-center gap-2 rounded-xl border border-rose-400/30 bg-rose-500/15 px-4 py-2 text-sm font-bold text-rose-100 transition-colors hover:bg-rose-500/25"
+            >
+              <Trash2 size={14} /> Delete Request
+            </button>
+          </div>
+        </motion.div>
+      </motion.div>
+    </AnimatePresence>,
+    document.body,
+  )
+}
+
 export default function HRPage() {
   const {
     currentUser,
     employeeRequests,
+    users,
   } = useStore()
   const [search, setSearch] = useState('')
   const [requestModalOpen, setRequestModalOpen] = useState(false)
   const [reviewRequest, setReviewRequest] = useState<EmployeeRequest | null>(null)
   const [editRequest, setEditRequest] = useState<EmployeeRequest | null>(null)
+  const [deleteRequest, setDeleteRequest] = useState<EmployeeRequest | null>(null)
+  const [roleFilter, setRoleFilter] = useState<'ALL' | HRRoleGroup>('ALL')
+  const [employeeFilter, setEmployeeFilter] = useState('ALL')
 
   const canReviewRequests = hasPermission(currentUser, 'hr:reviewRequests')
+  const userById = useMemo(() => new Map(users.map(user => [user.id, user])), [users])
+  const requestRole = (request: EmployeeRequest) => request.requesterRole ?? userById.get(request.requesterId)?.role
 
-  const visibleRequests = useMemo(() => {
-    const scoped = canReviewRequests
+  const dashboardPeople = useMemo(() => {
+    const active = users.filter(user => user.status === 'active')
+    const scoped = roleFilter === 'ALL'
+      ? active
+      : active.filter(user => hrRoleGroup(user.role) === roleFilter)
+    return canReviewRequests ? scoped : scoped.filter(user => user.id === currentUser?.id)
+  }, [canReviewRequests, currentUser?.id, roleFilter, users])
+
+  const scopedRequests = useMemo(() => {
+    let scoped = canReviewRequests
       ? employeeRequests
       : employeeRequests.filter(request => request.requesterId === currentUser?.id)
-    return scoped.filter(request => {
+    if (roleFilter !== 'ALL') scoped = scoped.filter(request => hrRoleGroup(requestRole(request)) === roleFilter)
+    if (canReviewRequests && employeeFilter !== 'ALL') scoped = scoped.filter(request => request.requesterId === employeeFilter)
+    return scoped
+  }, [canReviewRequests, currentUser?.id, employeeFilter, employeeRequests, roleFilter, userById])
+
+  const visibleRequests = useMemo(() => {
+    return scopedRequests.filter(request => {
       const q = search.trim().toLowerCase()
       if (!q) return true
       return [
@@ -398,10 +542,24 @@ export default function HRPage() {
         request.status,
       ].some(value => value.toLowerCase().includes(q))
     })
-  }, [canReviewRequests, currentUser?.id, employeeRequests, search])
+  }, [scopedRequests, search])
 
   const ownRequests = employeeRequests.filter(request => request.requesterId === currentUser?.id)
   const pendingReviewCount = employeeRequests.filter(request => request.status === 'PENDING' || request.status === 'IN_REVIEW').length
+  const leaveDashboardPeople = employeeFilter !== 'ALL'
+    ? dashboardPeople.filter(person => person.id === employeeFilter)
+    : dashboardPeople
+  const currentYear = new Date().getFullYear()
+  const usedLeaveDays = leaveDashboardPeople.reduce(
+    (sum, person) => sum + approvedTimeOffDays(employeeRequests.filter(request => request.requesterId === person.id), currentYear),
+    0,
+  )
+  const leaveAllowance = Math.max(18, leaveDashboardPeople.length * 18)
+  const remainingLeaveDays = Math.max(0, leaveAllowance - usedLeaveDays)
+  const leaveChartData = [
+    { name: 'Used', value: usedLeaveDays, color: '#D7BE7A' },
+    { name: 'Remaining', value: remainingLeaveDays, color: '#1C4B4B' },
+  ]
 
   return (
     <div className="page-enter p-6">
@@ -427,31 +585,55 @@ export default function HRPage() {
       </div>
 
       <div className="glass rounded-2xl p-4">
-        <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="mb-4 flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
           <div className="flex items-center gap-2">
             <FileBadge2 size={16} className="text-cyan-200" />
             <h2 className="text-sm font-black text-white">{canReviewRequests ? 'Employee Requests' : 'My Requests'}</h2>
             <span className="rounded-full bg-black/20 px-2 py-0.5 text-[10px] font-bold text-slate-300">{visibleRequests.length}</span>
           </div>
-          <div className="relative w-full lg:w-80">
-            <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input
-              className={`input-field pl-9 ${search ? 'pr-9' : ''}`}
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder="Search requests..."
-            />
-            {search && (
-              <button
-                type="button"
-                onClick={() => setSearch('')}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 flex h-5 w-5 items-center justify-center rounded-full bg-rose-500/15 text-rose-500 transition-colors hover:bg-rose-500 hover:text-white"
-                aria-label="Clear search"
-                title="Clear search"
+          <div className={canReviewRequests
+            ? 'grid w-full gap-2 sm:grid-cols-2 xl:w-auto xl:grid-cols-[150px_210px_300px]'
+            : 'w-full xl:w-80'}>
+            {canReviewRequests && (
+              <select
+                className="select-field"
+                value={roleFilter}
+                onChange={event => {
+                  setRoleFilter(event.target.value as 'ALL' | HRRoleGroup)
+                  setEmployeeFilter('ALL')
+                }}
+                aria-label="Filter by employee role"
               >
-                <X size={11} strokeWidth={2.5} />
-              </button>
+                <option value="ALL">All roles</option>
+                {Object.entries(ROLE_FILTER_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              </select>
             )}
+            {canReviewRequests && (
+              <select className="select-field" value={employeeFilter} onChange={event => setEmployeeFilter(event.target.value)} aria-label="Filter by employee">
+                <option value="ALL">All employees</option>
+                {dashboardPeople.map(person => <option key={person.id} value={person.id}>{person.name}</option>)}
+              </select>
+            )}
+            <div className={`relative w-full ${canReviewRequests ? 'sm:col-span-2 xl:col-span-1' : ''}`}>
+              <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                className={`input-field pl-9 ${search ? 'pr-9' : ''}`}
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="Search requests..."
+              />
+              {search && (
+                <button
+                  type="button"
+                  onClick={() => setSearch('')}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 flex h-5 w-5 items-center justify-center rounded-full bg-rose-500/15 text-rose-500 transition-colors hover:bg-rose-500 hover:text-white"
+                  aria-label="Clear search"
+                  title="Clear search"
+                >
+                  <X size={11} strokeWidth={2.5} />
+                </button>
+              )}
+            </div>
           </div>
         </div>
 
@@ -459,14 +641,42 @@ export default function HRPage() {
           <div className="rounded-xl border border-[var(--border-default)] bg-white/[0.03] p-4">
             <div className="mb-4 flex items-center gap-3">
               <div className="grid h-10 w-10 place-items-center rounded-xl border border-cyan-400/20 bg-cyan-400/10 text-cyan-200">
-                <FileBadge2 size={17} />
+                <UsersRound size={17} />
               </div>
               <div>
-                <h2 className="text-sm font-black text-white">{canReviewRequests ? 'Admin request queue' : 'My request dashboard'}</h2>
-                <p className="text-xs text-slate-400">{visibleRequests.length} visible requests</p>
+                <h2 className="text-sm font-black text-white">{canReviewRequests ? 'Employee request dashboard' : 'My request dashboard'}</h2>
+                <p className="text-xs text-slate-400">{employeeFilter === 'ALL' ? 'Current filtered workforce' : userById.get(employeeFilter)?.name}</p>
               </div>
             </div>
-            <div className="grid gap-3 sm:grid-cols-2">
+
+            <div className="grid items-center gap-4 border-y border-[var(--border-default)] py-4 sm:grid-cols-[150px_1fr]">
+              <div className="relative h-36">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie data={leaveChartData} dataKey="value" nameKey="name" innerRadius={43} outerRadius={62} paddingAngle={usedLeaveDays > 0 ? 2 : 0} stroke="none">
+                      {leaveChartData.map(item => <Cell key={item.name} fill={item.color} />)}
+                    </Pie>
+                  </PieChart>
+                </ResponsiveContainer>
+                <div className="pointer-events-none absolute inset-0 grid place-items-center text-center">
+                  <div>
+                    <p className="text-2xl font-black text-white">{usedLeaveDays}</p>
+                    <p className="text-[9px] font-bold uppercase tracking-wide text-slate-400">days used</p>
+                  </div>
+                </div>
+              </div>
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-amber-200">{currentYear} time off</p>
+                <p className="mt-2 text-sm font-bold text-white">{remainingLeaveDays} of {leaveAllowance} days remaining</p>
+                <p className="mt-1 text-xs leading-relaxed text-slate-400">Only approved time-off requests count toward the 18-day annual allowance for each employee.</p>
+                <div className="mt-3 flex items-center gap-4 text-xs">
+                  <span className="flex items-center gap-1.5 text-slate-300"><span className="h-2 w-2 rounded-full bg-[#D7BE7A]" /> Used</span>
+                  <span className="flex items-center gap-1.5 text-slate-300"><span className="h-2 w-2 rounded-full bg-[#1C4B4B]" /> Remaining</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
               {REQUEST_STATUSES.map(status => {
                 const count = visibleRequests.filter(request => request.status === status).length
                 return (
@@ -477,6 +687,35 @@ export default function HRPage() {
                 )
               })}
             </div>
+
+            {canReviewRequests && dashboardPeople.length > 0 && (
+              <div className="mt-4">
+                <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">Employee overview</p>
+                <div className="max-h-52 divide-y divide-[var(--border-default)] overflow-y-auto pr-1">
+                  {dashboardPeople.map(person => {
+                    const personRequests = employeeRequests.filter(request => request.requesterId === person.id)
+                    const days = approvedTimeOffDays(personRequests, currentYear)
+                    return (
+                      <button
+                        key={person.id}
+                        type="button"
+                        onClick={() => setEmployeeFilter(current => current === person.id ? 'ALL' : person.id)}
+                        className={`flex w-full items-center justify-between gap-3 px-1 py-2.5 text-left transition-colors hover:text-white ${employeeFilter === person.id ? 'text-amber-100' : 'text-slate-300'}`}
+                      >
+                        <span className="min-w-0">
+                          <span className="block truncate text-xs font-bold">{person.name}</span>
+                          <span className="block text-[10px] text-slate-500">{ROLE_FILTER_LABELS[hrRoleGroup(person.role) ?? 'ASSOCIATE']}</span>
+                        </span>
+                        <span className="shrink-0 text-right text-[10px] text-slate-400">
+                          <span className="block font-bold text-slate-200">{personRequests.length} requests</span>
+                          <span>{days}/18 days used</span>
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="space-y-3">
@@ -493,6 +732,9 @@ export default function HRPage() {
                         <span className={badgeClass(REQUEST_STATUS_STYLE[request.status])}>{request.status.replace('_', ' ')}</span>
                         <span className="rounded-full border border-[var(--border-default)] px-2 py-0.5 text-[10px] font-bold uppercase text-slate-300">{REQUEST_TYPE_LABEL[request.type]}</span>
                         <span className="rounded-full border border-[var(--border-default)] px-2 py-0.5 text-[10px] font-bold uppercase text-slate-300">{request.priority}</span>
+                        {canReviewRequests && hrRoleGroup(requestRole(request)) && (
+                          <span className="rounded-full border border-[var(--border-default)] px-2 py-0.5 text-[10px] font-bold uppercase text-slate-400">{ROLE_FILTER_LABELS[hrRoleGroup(requestRole(request))!]}</span>
+                        )}
                       </div>
                       <h3 className="text-sm font-black text-white">{request.title}</h3>
                       <p className="mt-1 text-xs text-slate-400">
@@ -504,6 +746,9 @@ export default function HRPage() {
                         <button onClick={() => setEditRequest(request)} className="btn-secondary justify-center px-3 py-2 text-xs" title="Edit request fields">
                           <Pencil size={12} /> Edit
                         </button>
+                        <button onClick={() => setDeleteRequest(request)} className="btn-ghost justify-center px-3 py-2 text-xs text-rose-200" title="Delete request">
+                          <Trash2 size={12} /> Delete
+                        </button>
                         <button onClick={() => setReviewRequest(request)} className="btn-primary justify-center px-3 py-2 text-xs">
                           Review
                         </button>
@@ -514,6 +759,8 @@ export default function HRPage() {
                   <div className="mt-4 grid gap-3 text-xs text-slate-400 sm:grid-cols-2">
                     <p>Submitted: <span className="font-semibold text-slate-200">{formatDateTime(request.submittedAt)}</span></p>
                     <p>Reviewed: <span className="font-semibold text-slate-200">{formatDateTime(request.reviewedAt)}</span></p>
+                    {request.deadline && <p>Requested by: <span className="font-semibold text-slate-200">{formatDate(request.deadline)}</span></p>}
+                    {request.leaveStart && <p>Leave period: <span className="font-semibold text-slate-200">{formatDate(request.leaveStart)} - {formatDate(request.leaveEnd)}</span></p>}
                   </div>
                   {request.reviewNote && (
                     <div className="mt-3 rounded-lg border border-[var(--border-default)] bg-white/[0.03] p-3">
@@ -531,6 +778,7 @@ export default function HRPage() {
       {requestModalOpen && <RequestModal onClose={() => setRequestModalOpen(false)} />}
       {reviewRequest && <ReviewModal request={reviewRequest} onClose={() => setReviewRequest(null)} />}
       {editRequest && <EditRequestModal request={editRequest} onClose={() => setEditRequest(null)} />}
+      {deleteRequest && <DeleteRequestModal request={deleteRequest} onClose={() => setDeleteRequest(null)} />}
     </div>
   )
 }

@@ -27,7 +27,7 @@ export function buildActivityHistory(
   activityLogs: ActivityLog[],
   _notifications: Notification[] = [],
 ): ActivityHistoryItem[] {
-  return activityLogs.map(log => ({
+  return activityLogs.map<ActivityHistoryItem>(log => ({
     id: `activity:${log.id}`,
     action: log.action,
     user: log.user,

@@ -45,6 +45,7 @@ import {
   mapSamGovOpportunityToForm,
 } from '../lib/samGov'
 import { canDeleteComment, canEditComment, hasPermission } from '../lib/permissions'
+import { parseSourcingComments, serializeSourcingComments } from '../lib/sourcingComments'
 
 // ── Constants ─────────────────────────────────────────────────────────
 const TYPES_DISPLAY: { value: string; label: string }[] = [
@@ -1817,24 +1818,6 @@ function DeleteOpportunityModal({ opp, onClose }: { opp: Opportunity; onClose: (
 }
 
 // ── Sourcing Modal ────────────────────────────────────────────────────
-function parseSourcingComments(notes: string | undefined): Comment[] {
-  if (!notes) return []
-  try {
-    const parsed = JSON.parse(notes)
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && Array.isArray(parsed.comments)) {
-      return parsed.comments.filter((c: Comment) => c?.text && c?.createdAt)
-    }
-    if (Array.isArray(parsed)) return parsed.filter(c => c?.text && c?.createdAt)
-  } catch {
-    // Legacy notes were stored as one plain text field.
-  }
-  return [{ id: 'legacy-note', text: notes, author: 'legacy', createdAt: new Date().toISOString() }]
-}
-
-function serializeSourcingComments(comments: Comment[]) {
-  return JSON.stringify(comments)
-}
-
 // Deterministic avatar background color from a string (company name).
 const SOURCING_AVATAR_PALETTE = [
   'bg-indigo-500', 'bg-emerald-500', 'bg-rose-500', 'bg-amber-500',
@@ -1881,9 +1864,13 @@ type SourcingDraft = {
   newComment: string
 }
 
-const EMPTY_DRAFT: SourcingDraft = {
-  companyName: '', contactName: '', email: '', phone: '', website: '', location: '',
-  quoteFile: '', quoteFiles: [], setAside: 'SB', contacts: [], newComment: '',
+function createEmptySourcingDraft(): SourcingDraft {
+  return {
+    companyName: '', contactName: '', email: '', phone: '', website: '', location: '',
+    quoteFile: '', quoteFiles: [], setAside: 'SB',
+    contacts: [{ id: crypto.randomUUID(), name: '', email: '', phone: '' }],
+    newComment: '',
+  }
 }
 
 function normalizeSourcingContacts(contacts?: SubcontractorContact[]) {
@@ -1939,7 +1926,7 @@ function SourcingContactsEditor({
   onAdd: () => void
   onRemove: (id: string) => void
 }) {
-  const rows = contacts.length ? contacts : [{ id: 'new-contact', name: '', email: '', phone: '' }]
+  const rows = contacts
   return (
     <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
       <div className="mb-2 flex items-center justify-between gap-3">
@@ -2004,7 +1991,7 @@ export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () 
   const [filter, setFilter] = useState<'all' | 'quote' | 'comment'>('all')
   const [mode, setMode] = useState<'view' | 'add'>(oppSubs.length === 0 ? 'add' : 'view')
   const [selectedId, setSelectedId] = useState<string | null>(oppSubs[0]?.id ?? null)
-  const [draft, setDraft] = useState<SourcingDraft>(EMPTY_DRAFT)
+  const [draft, setDraft] = useState<SourcingDraft>(() => createEmptySourcingDraft())
   const [dirty, setDirty] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -2021,7 +2008,7 @@ export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () 
   // Hydrate draft when entering view mode or switching selection.
   useEffect(() => {
     if (mode === 'add') {
-      setDraft(EMPTY_DRAFT)
+      setDraft(createEmptySourcingDraft())
       setDirty(false)
       return
     }
@@ -2190,11 +2177,11 @@ export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () 
     })
     toast.success('Subcontractor added')
     if (keepOpen) {
-      setDraft(EMPTY_DRAFT)
+      setDraft(createEmptySourcingDraft())
       setDirty(false)
     } else {
       setMode('view')
-      setDraft(EMPTY_DRAFT)
+      setDraft(createEmptySourcingDraft())
       setDirty(false)
     }
   }

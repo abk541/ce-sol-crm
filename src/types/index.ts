@@ -554,7 +554,7 @@ export interface CompanyCertification {
   createdBy: string
 }
 
-export type EmployeeRequestType = 'TIME_OFF' | 'DOCUMENT' | 'CERTIFICATION' | 'PAYROLL' | 'ACCESS' | 'OTHER'
+export type EmployeeRequestType = 'TIME_OFF' | 'SICK_LEAVE' | 'DOCUMENT' | 'CERTIFICATION' | 'PAYROLL' | 'ACCESS' | 'OTHER'
 export type EmployeeRequestStatus = 'PENDING' | 'IN_REVIEW' | 'APPROVED' | 'DECLINED'
 
 export interface EmployeeRequest {
@@ -562,11 +562,15 @@ export interface EmployeeRequest {
   requesterId: string
   requesterName: string
   requesterEmail: string
+  requesterRole?: Role
   type: EmployeeRequestType
   title: string
   details: string
   status: EmployeeRequestStatus
   priority: 'LOW' | 'MEDIUM' | 'HIGH'
+  deadline?: string
+  leaveStart?: string
+  leaveEnd?: string
   submittedAt: string
   reviewedAt?: string
   reviewedBy?: string

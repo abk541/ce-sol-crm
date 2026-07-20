@@ -34,8 +34,10 @@ import {
   contractOpportunityRows,
   dashboardContractGrossProfit,
   dashboardContractValue,
+  dashboardMonthBuckets,
   isActiveContractAdminRecord,
   isSubmittedLifecycleRow,
+  uniqueBDSubmissionRows,
 } from '../lib/dashboardMetrics'
 import { NAICS_CODES } from '../data/naics'
 import type { BDSubmission, Contract, Employee, EmployeeTeam, FreshAward, Goal, HierarchyRole, NonSubmissionReport, Opportunity, User } from '../types'
@@ -834,21 +836,6 @@ function naicsDisplay(code?: string) {
 
 function monthKey(value?: string) {
   return (value || '').slice(0, 7)
-}
-
-function monthLabelFromKey(key: string) {
-  const [year, month] = key.split('-').map(Number)
-  if (!year || !month) return key || 'Unscheduled'
-  return new Date(year, month - 1, 1).toLocaleDateString('en-US', { month: 'short' })
-}
-
-function lastMonths(count = 6) {
-  return Array.from({ length: count }, (_, offset) => {
-    const d = new Date()
-    d.setMonth(d.getMonth() - (count - 1 - offset))
-    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
-    return { key, month: monthLabelFromKey(key) }
-  })
 }
 
 function opportunityValue(opp?: Opportunity) {
@@ -2241,7 +2228,9 @@ function ExecutiveDashboard() {
     [visibleOpps, period],
   )
   const periodSubmissions = useMemo(
-    () => bdSubmissions.filter(submission => filterByPeriod(submission.submittedOn || submission.dueDate, period)),
+    () => uniqueBDSubmissionRows(
+      bdSubmissions.filter(submission => filterByPeriod(submission.submittedOn || submission.dueDate, period)),
+    ),
     [bdSubmissions, period],
   )
   const periodContracts = useMemo(
@@ -2331,7 +2320,10 @@ function ExecutiveDashboard() {
     submission => submission.status === 'AWARDED' ? submissionValue(submission, visibleOpps) : 0,
   ).slice(0, 8)
 
-  const months = lastMonths(6)
+  const months = useMemo(
+    () => dashboardMonthBuckets(period),
+    [period],
+  )
   const submissionTrend = months.map(month => ({
     month: month.month,
     submitted: bdPeriodSubs.filter(submission => monthKey(submission.submittedOn) === month.key).length,
@@ -2364,11 +2356,12 @@ function ExecutiveDashboard() {
     const date = contract.popStart || contract.popEnd || ''
     return date.startsWith(currentYear)
   })
-  const grossProfitYtd = ytdContracts.reduce((sum, contract) => sum + dashboardContractGrossProfit(contract), 0)
+  const profitContracts = period ? periodContracts : ytdContracts
+  const grossProfit = profitContracts.reduce((sum, contract) => sum + dashboardContractGrossProfit(contract), 0)
 
   const contractStatusRows = groupRows(activeContracts, contract => contract.status).slice(0, 7)
   const contractTypeProfitRows = groupRows(
-    ytdContracts,
+    profitContracts,
     contract => contract.type || 'Unspecified',
     contract => dashboardContractGrossProfit(contract),
   ).slice(0, 7)
@@ -2459,12 +2452,12 @@ function ExecutiveDashboard() {
     const byPriority = groupRows(assignedOpps, opp => opp.priority || 'Unspecified')
     const byAgency = groupRows(assignedOpps, opp => opp.client || 'Unspecified agency').slice(0, 6)
     const assignedByStatus = groupRows(assignedOpps, opp => opp.status || 'Unspecified')
-    const monthsData = lastMonths(6).map(month => ({
+    const monthsData = months.map(month => ({
       month: month.month,
       submitted: subs.filter(s => monthKey(s.submittedOn) === month.key).length,
       awarded: subs.filter(s => monthKey(s.submittedOn) === month.key && s.status === 'AWARDED').length,
     }))
-    const valueByMonth = lastMonths(6).map(month => {
+    const valueByMonth = months.map(month => {
       const monthSubs = subs.filter(s => monthKey(s.submittedOn) === month.key)
       return {
         month: month.month,
@@ -2488,7 +2481,7 @@ function ExecutiveDashboard() {
       valueByMonth,
       recent,
     }
-  }, [employeesById, periodSubmissions, visibleOpps, employees, activeOpportunityRows])
+  }, [employeesById, periodSubmissions, visibleOpps, employees, activeOpportunityRows, months])
 
   const computeTeamRollup = useMemo(() => (managerId: string) => {
     const manager = employeesById.get(managerId)
@@ -2524,12 +2517,12 @@ function ExecutiveDashboard() {
       .map(employee => computeMemberRollup(employee.id)!)
       .filter(Boolean)
       .sort((a, b) => b.subs.length - a.subs.length || b.value - a.value)
-    const monthsData = lastMonths(6).map(month => ({
+    const monthsData = months.map(month => ({
       month: month.month,
       submitted: subs.filter(s => monthKey(s.submittedOn) === month.key).length,
       awarded: subs.filter(s => monthKey(s.submittedOn) === month.key && s.status === 'AWARDED').length,
     }))
-    const valueByMonth = lastMonths(6).map(month => {
+    const valueByMonth = months.map(month => {
       const monthSubs = subs.filter(s => monthKey(s.submittedOn) === month.key)
       return {
         month: month.month,
@@ -2562,7 +2555,7 @@ function ExecutiveDashboard() {
       })),
       byRole: groupRows(all, employee => ROLE_LABELS[employee.role] ?? employee.role),
     }
-  }, [employeesById, collectReports, periodSubmissions, visibleOpps, employees, nonSubReports, period, computeMemberRollup, activeOpportunityRows])
+  }, [employeesById, collectReports, periodSubmissions, visibleOpps, employees, nonSubReports, period, computeMemberRollup, activeOpportunityRows, months])
 
   // BD managers head their own teams; the OPS lead is mirrored as a BD_MANAGER with team='OPS'.
   const bdTeamHeads = useMemo(
@@ -2641,7 +2634,7 @@ function ExecutiveDashboard() {
     { icon: DollarSign, label: 'Awarded Value', value: formatCurrency(awardedValue), detail: 'Active Contract Admin value', accent, onClick: () => goToContracts('ACTIVE_GROUP') },
     { icon: FileCheck2, label: 'Awarded Contracts', value: activeContracts.length, detail: 'Active contracts in Contract Admin', accent: secondaryAccent, onClick: () => goToContracts('ACTIVE_GROUP') },
     { icon: Clock, label: 'Archived Value', value: formatCurrency(archivedValue), detail: `${archivedContracts.length} archived contracts`, accent: chartColors[3], onClick: () => goToContracts('ARCHIVED') },
-    { icon: TrendingUp, label: 'Gross Profit YTD', value: formatCurrency(grossProfitYtd), detail: 'Contract value minus base/subk costs', accent: grossProfitYtd >= 0 ? accent : chartColors[5], onClick: () => navigate('/finance-projections') },
+    { icon: TrendingUp, label: period ? 'Gross Profit' : 'Gross Profit YTD', value: formatCurrency(grossProfit), detail: period ? 'For the selected period' : 'Contract value minus base/subk costs', accent: grossProfit >= 0 ? accent : chartColors[5], onClick: () => navigate('/finance-projections') },
   ]
 
   return (
@@ -3064,7 +3057,7 @@ function ExecutiveDashboard() {
               )}
             </DashboardPanel>
 
-            <DashboardPanel title="Gross Profit by Type" subtitle="YTD contract value minus base/subk costs">
+            <DashboardPanel title="Gross Profit by Type" subtitle={period ? 'Selected-period contract value minus base/subk costs' : 'YTD contract value minus base/subk costs'}>
               {contractTypeProfitRows.length === 0 ? (
                 <EmptyDashboardState label="No gross profit data yet." />
               ) : (

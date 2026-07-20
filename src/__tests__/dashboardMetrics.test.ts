@@ -4,8 +4,10 @@ import {
   calculateBdDashboardSummary,
   contractOpportunityRows,
   dashboardContractGrossProfit,
+  dashboardMonthBuckets,
   isActiveContractAdminRecord,
   submittedLifecycleRows,
+  uniqueBDSubmissionRows,
 } from '../lib/dashboardMetrics'
 import { isBDSubmissionAssociatedToUser, isBDSubmissionAttributedToEmployee } from '../lib/team'
 
@@ -113,6 +115,16 @@ describe('dashboard submission definitions', () => {
       submission(1, 'AWARDED'),
     ])).toHaveLength(1)
   })
+
+  it('does not double-count two rows for the same solicitation', () => {
+    const first = submission(1, 'SUBMITTED')
+    const latest = submission(2, 'AWARDED')
+    latest.solicitationId = first.solicitationId
+    latest.submittedOn = '2026-07-11'
+
+    expect(uniqueBDSubmissionRows([first, latest])).toEqual([latest])
+    expect(submittedLifecycleRows([first, latest])).toHaveLength(1)
+  })
 })
 
 describe('Contract Opportunities visibility', () => {
@@ -195,10 +207,10 @@ describe('dashboard KPI calculations', () => {
 
     expect(result.activeOpportunities).toHaveLength(4)
     expect(result.capturedOpportunities).toHaveLength(10)
-    expect(result.capturedCount).toBe(9)
+    expect(result.capturedCount).toBe(10)
     expect(result.submittedOpportunities).toHaveLength(3)
     expect(result.submittedValue).toBe(6_000)
-    expect(result.captureRate).toBe(33)
+    expect(result.captureRate).toBe(30)
     expect(result.winRate).toBe(33)
   })
 
@@ -219,6 +231,24 @@ describe('dashboard KPI calculations', () => {
 
     expect(result.capturedCount).toBe(8)
     expect(result.submittedOpportunities).toHaveLength(3)
+  })
+})
+
+describe('dashboard period buckets', () => {
+  it('builds chart months from the selected range', () => {
+    expect(dashboardMonthBuckets({ from: '2026-02-10', to: '2026-05-19' })).toEqual([
+      { key: '2026-02', month: 'Feb' },
+      { key: '2026-03', month: 'Mar' },
+      { key: '2026-04', month: 'Apr' },
+      { key: '2026-05', month: 'May' },
+    ])
+  })
+
+  it('uses year labels when a range crosses a year boundary', () => {
+    expect(dashboardMonthBuckets({ from: '2025-12-10', to: '2026-01-05' }).map(item => item.month)).toEqual([
+      'Dec 25',
+      'Jan 26',
+    ])
   })
 })
 

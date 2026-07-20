@@ -12,6 +12,7 @@ import { formatCurrency } from '../lib/utils'
 import { uploadAttachment, downloadAttachment, hasAttachmentSource } from '../lib/attachments'
 import FloatingActionMenu from '../components/shared/FloatingActionMenu'
 import { hasPermission } from '../lib/permissions'
+import { isSubmittedLifecycleRow, uniqueBDSubmissionRows } from '../lib/dashboardMetrics'
 import DetailDrawer, { DrawerField, DrawerSection } from '../components/shared/DetailDrawer'
 import SamGovListingButton from '../components/shared/SamGovListingButton'
 import { MandatoryEventsEditor, MandatoryEventsList } from '../components/shared/MandatoryEvents'
@@ -467,7 +468,7 @@ export default function BDTrackerPage() {
   }, [bdSubmissions, opportunities, employees])
 
   const baseFiltered = useMemo(() => {
-    let list = [...bdSubmissions]
+    let list = uniqueBDSubmissionRows(bdSubmissions)
     list = list.filter(row =>
       isBDSubmissionAssociatedToUser(employees, currentUser, row, opportunities))
     if (period) list = list.filter(s => filterByPeriod(s.dueDate || s.submittedOn, period))
@@ -501,7 +502,7 @@ export default function BDTrackerPage() {
   const editingOpportunity = editingRow ? rowOpportunity(editingRow, opportunities) ?? null : null
 
   const outcomeChart = useMemo(() => {
-    const submitted = baseFiltered.filter(row => !['NOT_SUBMITTED', 'DROPPED'].includes(row.status)).length
+    const submitted = baseFiltered.filter(isSubmittedLifecycleRow).length
     const nonSubmitted = baseFiltered.filter(row => row.status === 'NOT_SUBMITTED').length
     const dropped = baseFiltered.filter(row => row.status === 'DROPPED').length
     return [
@@ -520,7 +521,8 @@ export default function BDTrackerPage() {
       const current = counts[key] || { name: key, submitted: 0, nonSubmitted: 0, dropped: 0, total: 0 }
       if (row.status === 'NOT_SUBMITTED') current.nonSubmitted += 1
       else if (row.status === 'DROPPED') current.dropped += 1
-      else current.submitted += 1
+      else if (isSubmittedLifecycleRow(row)) current.submitted += 1
+      else return
       current.total += 1
       counts[key] = current
     })

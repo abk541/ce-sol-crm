@@ -22,6 +22,8 @@ vi.mock('../lib/db', () => ({
   upsertDeletionRequest: vi.fn().mockResolvedValue(null),
   upsertBDSubmission: vi.fn().mockResolvedValue(null),
   deleteBDSubmissionRecord: vi.fn().mockResolvedValue(null),
+  bulkDeleteFromTable: vi.fn().mockResolvedValue(true),
+  upsertEmployeeRequest: vi.fn().mockResolvedValue(undefined),
 }))
 
 vi.mock('../lib/supabase', () => ({
@@ -120,7 +122,30 @@ describe('HR store actions', () => {
     const request = useStore.getState().employeeRequests[0]
     expect(request.requesterId).toBe(ASSOCIATE.id)
     expect(request.requesterEmail).toBe(ASSOCIATE.email)
+    expect(request.requesterRole).toBe('ASSOCIATE')
     expect(request.status).toBe('PENDING')
+  })
+
+  it('stores sick leave, deadlines, and requested leave dates', () => {
+    useStore.setState({ currentUser: ASSOCIATE })
+
+    useStore.getState().submitEmployeeRequest({
+      type: 'SICK_LEAVE',
+      priority: 'HIGH',
+      title: 'Medical leave',
+      details: 'Medical recovery period.',
+      deadline: '2026-07-25',
+      leaveStart: '2026-07-21',
+      leaveEnd: '2026-07-23',
+      attachments: [],
+    })
+
+    expect(useStore.getState().employeeRequests[0]).toMatchObject({
+      type: 'SICK_LEAVE',
+      deadline: '2026-07-25',
+      leaveStart: '2026-07-21',
+      leaveEnd: '2026-07-23',
+    })
   })
 
   it('only lets Capture Manager review employee requests', () => {
@@ -141,5 +166,27 @@ describe('HR store actions', () => {
     useStore.getState().reviewEmployeeRequest(request.id, 'APPROVED', 'Approved')
     expect(useStore.getState().employeeRequests[0].status).toBe('APPROVED')
     expect(useStore.getState().employeeRequests[0].reviewedBy).toBe('Capture Manager')
+  })
+
+  it('only lets Capture Manager delete a submitted request', async () => {
+    useStore.setState({ currentUser: ASSOCIATE })
+    useStore.getState().submitEmployeeRequest({
+      type: 'TIME_OFF',
+      priority: 'MEDIUM',
+      title: 'Annual leave',
+      details: 'Requested annual leave.',
+      leaveStart: '2026-08-03',
+      leaveEnd: '2026-08-07',
+      attachments: [],
+    })
+    const request = useStore.getState().employeeRequests[0]
+
+    useStore.getState().deleteEmployeeRequest(request.id)
+    expect(useStore.getState().employeeRequests).toHaveLength(1)
+
+    useStore.setState({ currentUser: CAPTURE_MANAGER })
+    useStore.getState().deleteEmployeeRequest(request.id)
+    await Promise.resolve()
+    expect(useStore.getState().employeeRequests).toHaveLength(0)
   })
 })

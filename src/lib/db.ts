@@ -2194,11 +2194,15 @@ function employeeRequestToDb(r: EmployeeRequest): Record<string, unknown> {
     requester_id: r.requesterId,
     requester_name: r.requesterName,
     requester_email: r.requesterEmail,
+    requester_role: r.requesterRole ?? null,
     type: r.type,
     title: r.title,
     details: r.details ?? '',
     status: r.status,
     priority: r.priority,
+    deadline: r.deadline ?? null,
+    leave_start: r.leaveStart ?? null,
+    leave_end: r.leaveEnd ?? null,
     submitted_at: r.submittedAt,
     reviewed_at: r.reviewedAt ?? null,
     reviewed_by: r.reviewedBy ?? null,
@@ -2213,6 +2217,7 @@ function dbToEmployeeRequest(row: Record<string, unknown>): EmployeeRequest {
     requesterId: (row.requester_id as string) ?? '',
     requesterName: (row.requester_name as string) ?? '',
     requesterEmail: (row.requester_email as string) ?? '',
+    requesterRole: (row.requester_role as EmployeeRequest['requesterRole']) ?? undefined,
     type: (row.type as EmployeeRequestType) ?? 'OTHER',
     title: (row.title as string) ?? '',
     details: (row.details as string) ?? '',
@@ -2220,6 +2225,9 @@ function dbToEmployeeRequest(row: Record<string, unknown>): EmployeeRequest {
     priority: (row.priority as EmployeeRequest['priority']) ?? 'MEDIUM',
     submittedAt: (row.submitted_at as string) ?? new Date().toISOString(),
   }
+  if (row.deadline != null) r.deadline = row.deadline as string
+  if (row.leave_start != null) r.leaveStart = row.leave_start as string
+  if (row.leave_end != null) r.leaveEnd = row.leave_end as string
   if (row.reviewed_at != null) r.reviewedAt = row.reviewed_at as string
   if (row.reviewed_by != null) r.reviewedBy = row.reviewed_by as string
   if (row.review_note != null) r.reviewNote = row.review_note as string

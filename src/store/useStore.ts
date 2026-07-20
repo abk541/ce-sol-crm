@@ -192,6 +192,7 @@ interface AppState {
   submitEmployeeRequest: (data: Omit<EmployeeRequest, 'id' | 'requesterId' | 'requesterName' | 'requesterEmail' | 'status' | 'submittedAt'>) => void
   reviewEmployeeRequest: (id: string, status: EmployeeRequestStatus, reviewNote?: string) => void
   updateEmployeeRequest: (id: string, data: Partial<EmployeeRequest>) => void
+  deleteEmployeeRequest: (id: string) => void
 
   // ── Goals (Capture Manager) ────────────────────────────────────────
   createGoal: (data: Omit<Goal, 'id' | 'createdAt' | 'createdBy'>) => void
@@ -601,6 +602,24 @@ function syncEmployeesWithUsers(users: User[], employees: Employee[]): Employee[
 
 function employeeBelongsToTeam(employee: Employee | undefined, team: EmployeeTeam): employee is Employee {
   return !!employee && (employee.team ?? 'BD') === team
+}
+
+function recordStoreActivity(
+  get: () => AppState,
+  action: string,
+  entityType: ActivityLog['entityType'],
+  entityId?: string,
+  entityName?: string,
+) {
+  const actor = get().currentUser
+  get().logActivity({
+    action,
+    user: actor?.name || 'System',
+    userRole: actor?.role || 'CAPTURE_MANAGER',
+    entityType,
+    entityId,
+    entityName,
+  })
 }
 
 function normalizedSolicitationId(value?: string) {
@@ -1155,6 +1174,7 @@ export const useStore = create<AppState>()(
           requesterId: user.id,
           requesterName: user.name,
           requesterEmail: user.email,
+          requesterRole: user.role,
           status: 'PENDING',
           submittedAt: new Date().toISOString(),
         }
@@ -1170,6 +1190,7 @@ export const useStore = create<AppState>()(
           relatedId: request.id,
           targetRole: 'CAPTURE_MANAGER',
         })
+        recordStoreActivity(get, `Submitted HR request: ${request.title}`, 'hr', request.id, request.title)
       },
 
       reviewEmployeeRequest: (id, status, reviewNote = '') => {
@@ -1209,6 +1230,7 @@ export const useStore = create<AppState>()(
           relatedId: updated.id,
           targetUserId: updated.requesterId,
         })
+        recordStoreActivity(get, `Marked HR request "${updated.title}" as ${status.replace('_', ' ').toLowerCase()}`, 'hr', updated.id, updated.title)
       },
 
       updateEmployeeRequest: (id, data) => {
@@ -1222,7 +1244,31 @@ export const useStore = create<AppState>()(
           )
         }))
         const updated = get().employeeRequests.find(r => r.id === id)
-        if (updated && isSupabaseConnected) void upsertEmployeeRequest(updated)
+        if (updated) {
+          if (isSupabaseConnected) void upsertEmployeeRequest(updated)
+          recordStoreActivity(get, `Edited HR request: ${updated.title}`, 'hr', updated.id, updated.title)
+        }
+      },
+
+      deleteEmployeeRequest: (id) => {
+        const user = get().currentUser
+        if (!hasPermission(user, 'hr:reviewRequests')) {
+          toast.error('Only the Capture Manager can delete HR requests.')
+          return
+        }
+        const request = get().employeeRequests.find(item => item.id === id)
+        if (!request) return
+        set(s => ({ employeeRequests: s.employeeRequests.filter(item => item.id !== id) }))
+        void bulkDeleteFromTable('employee_requests', { column: 'id', value: id }).then(saved => {
+          if (saved) return
+          set(s => ({
+            employeeRequests: s.employeeRequests.some(item => item.id === id)
+              ? s.employeeRequests
+              : [request, ...s.employeeRequests],
+          }))
+          showDatabaseSaveError('HR request deletion')
+        })
+        recordStoreActivity(get, `Deleted HR request: ${request.title}`, 'hr', request.id, request.title)
       },
 
       createOpportunity: async (data) => {
@@ -1915,6 +1961,7 @@ export const useStore = create<AppState>()(
           showDatabaseSaveError('Contract update')
           return false
         }
+        recordStoreActivity(get, `Updated contract: ${updated.title}`, 'contract', updated.id, updated.title)
         return true
       },
 
@@ -1928,6 +1975,8 @@ export const useStore = create<AppState>()(
           )
         }))
         upsertContractPoC(newPoC)
+        const contract = get().contracts.find(c => c.id === contractId)
+        recordStoreActivity(get, `Added contract point of contact: ${newPoC.name}`, 'contract', contractId, contract?.title)
       },
 
       updateContractPoC: (contractId, pocId, data) => {
@@ -1939,10 +1988,16 @@ export const useStore = create<AppState>()(
           )
         }))
         const updated = get().contracts.find(c => c.id === contractId)?.pocs?.find(p => p.id === pocId)
-        if (updated) upsertContractPoC(updated)
+        if (updated) {
+          upsertContractPoC(updated)
+          const contract = get().contracts.find(c => c.id === contractId)
+          recordStoreActivity(get, `Updated contract point of contact: ${updated.name}`, 'contract', contractId, contract?.title)
+        }
       },
 
       removeContractPoC: (contractId, pocId) => {
+        const contract = get().contracts.find(c => c.id === contractId)
+        const poc = contract?.pocs?.find(p => p.id === pocId)
         set(s => ({
           contracts: s.contracts.map(c =>
             c.id === contractId
@@ -1951,6 +2006,7 @@ export const useStore = create<AppState>()(
           )
         }))
         deleteContractPoC(pocId)
+        recordStoreActivity(get, `Removed contract point of contact${poc?.name ? `: ${poc.name}` : ''}`, 'contract', contractId, contract?.title)
       },
 
       addContractInvoice: (contractId, invoice) => {
@@ -1969,6 +2025,8 @@ export const useStore = create<AppState>()(
           )
         }))
         upsertContractInvoice(newInvoice)
+        const contract = get().contracts.find(c => c.id === contractId)
+        recordStoreActivity(get, `Added invoice ${newInvoice.invoiceNumber}`, 'contract', contractId, contract?.title)
         return id
       },
 
@@ -1981,10 +2039,16 @@ export const useStore = create<AppState>()(
           )
         }))
         const updated = get().contracts.find(c => c.id === contractId)?.invoices?.find(i => i.id === invoiceId)
-        if (updated) upsertContractInvoice(updated)
+        if (updated) {
+          upsertContractInvoice(updated)
+          const contract = get().contracts.find(c => c.id === contractId)
+          recordStoreActivity(get, `Updated invoice ${updated.invoiceNumber}`, 'contract', contractId, contract?.title)
+        }
       },
 
       removeContractInvoice: (contractId, invoiceId) => {
+        const contract = get().contracts.find(c => c.id === contractId)
+        const invoice = contract?.invoices?.find(item => item.id === invoiceId)
         set(s => ({
           contracts: s.contracts.map(c =>
             c.id === contractId
@@ -1993,6 +2057,7 @@ export const useStore = create<AppState>()(
           )
         }))
         deleteContractInvoice(invoiceId)
+        recordStoreActivity(get, `Deleted invoice${invoice?.invoiceNumber ? ` ${invoice.invoiceNumber}` : ''}`, 'contract', contractId, contract?.title)
       },
 
       addLockedSubcontractor: (contractId, sub) => {
@@ -2005,6 +2070,8 @@ export const useStore = create<AppState>()(
           )
         }))
         upsertLockedSubcontractor(newSub)
+        const contract = get().contracts.find(c => c.id === contractId)
+        recordStoreActivity(get, `Locked subcontractor: ${newSub.companyName}`, 'contract', contractId, contract?.title)
       },
 
       updateLockedSubcontractor: (contractId, subId, data) => {
@@ -2016,7 +2083,11 @@ export const useStore = create<AppState>()(
           )
         }))
         const updated = get().contracts.find(c => c.id === contractId)?.lockedSubcontractors?.find(s => s.id === subId)
-        if (updated) upsertLockedSubcontractor(updated)
+        if (updated) {
+          upsertLockedSubcontractor(updated)
+          const contract = get().contracts.find(c => c.id === contractId)
+          recordStoreActivity(get, `Updated locked subcontractor: ${updated.companyName}`, 'contract', contractId, contract?.title)
+        }
       },
 
       addGovernmentWarning: (contractId, warning) => {
@@ -2037,6 +2108,8 @@ export const useStore = create<AppState>()(
           relatedId: contractId,
           targetRole: 'ALL',
         })
+        const contract = get().contracts.find(c => c.id === contractId)
+        recordStoreActivity(get, `Added government warning: ${warning.type.replace(/_/g, ' ')}`, 'contract', contractId, contract?.title)
       },
 
       updateGovernmentWarning: (contractId, warningId, data) => {
@@ -2053,10 +2126,16 @@ export const useStore = create<AppState>()(
           )
         }))
         const updated = get().contracts.find(c => c.id === contractId)?.governmentWarnings?.find(w => w.id === warningId)
-        if (updated) upsertGovernmentWarning(updated)
+        if (updated) {
+          upsertGovernmentWarning(updated)
+          const contract = get().contracts.find(c => c.id === contractId)
+          recordStoreActivity(get, `Updated government warning: ${updated.type.replace(/_/g, ' ')}`, 'contract', contractId, contract?.title)
+        }
       },
 
       removeGovernmentWarning: (contractId, warningId) => {
+        const contract = get().contracts.find(c => c.id === contractId)
+        const warning = contract?.governmentWarnings?.find(item => item.id === warningId)
         set(s => ({
           contracts: s.contracts.map(c =>
             c.id === contractId
@@ -2068,6 +2147,7 @@ export const useStore = create<AppState>()(
           )
         }))
         deleteGovernmentWarningRecord(warningId)
+        recordStoreActivity(get, `Deleted government warning${warning ? `: ${warning.type.replace(/_/g, ' ')}` : ''}`, 'contract', contractId, contract?.title)
       },
 
       resolveGovernmentWarning: (contractId, warningId, note) => {
@@ -2086,7 +2166,11 @@ export const useStore = create<AppState>()(
           )
         }))
         const updated = get().contracts.find(c => c.id === contractId)?.governmentWarnings?.find(w => w.id === warningId)
-        if (updated) upsertGovernmentWarning(updated)
+        if (updated) {
+          upsertGovernmentWarning(updated)
+          const contract = get().contracts.find(c => c.id === contractId)
+          recordStoreActivity(get, `Resolved government warning: ${updated.type.replace(/_/g, ' ')}`, 'contract', contractId, contract?.title)
+        }
       },
 
       addContractLineItem: (contractId, line) => {
@@ -2130,6 +2214,7 @@ export const useStore = create<AppState>()(
           )
         }))
         upsertContractLineItem(newLine)
+        recordStoreActivity(get, `Added CLIN ${newLine.clin}: ${newLine.description}`, 'contract', contractId, contract.title)
         return newLine.id
       },
 
@@ -2153,10 +2238,16 @@ export const useStore = create<AppState>()(
           })
         }))
         const updated = get().contracts.find(c => c.id === contractId)?.lineItems?.find(l => l.id === lineId)
-        if (updated) upsertContractLineItem(updated)
+        if (updated) {
+          upsertContractLineItem(updated)
+          const contract = get().contracts.find(c => c.id === contractId)
+          recordStoreActivity(get, `Updated CLIN ${updated.clin}`, 'contract', contractId, contract?.title)
+        }
       },
 
       removeContractLineItem: (contractId, lineId) => {
+        const contract = get().contracts.find(c => c.id === contractId)
+        const line = contract?.lineItems?.find(item => item.id === lineId)
         set(s => ({
           contracts: s.contracts.map(c =>
             c.id === contractId
@@ -2165,6 +2256,7 @@ export const useStore = create<AppState>()(
           )
         }))
         deleteContractLineItemRecord(lineId)
+        recordStoreActivity(get, `Deleted CLIN${line?.clin ? ` ${line.clin}` : ''}`, 'contract', contractId, contract?.title)
       },
 
       addContractVehicleOrder: (contractId, order) => {
@@ -2184,6 +2276,7 @@ export const useStore = create<AppState>()(
           )
         }))
         upsertContractVehicleOrder(newOrder)
+        recordStoreActivity(get, `Added ${newOrder.type === 'TASK_ORDER' ? 'task order' : 'call'}: ${newOrder.number}`, 'contract', contractId, contract.title)
         return newOrder.id
       },
 
@@ -2201,10 +2294,16 @@ export const useStore = create<AppState>()(
           )
         }))
         const updated = get().contracts.find(c => c.id === contractId)?.vehicleOrders?.find(order => order.id === orderId)
-        if (updated) upsertContractVehicleOrder(updated)
+        if (updated) {
+          upsertContractVehicleOrder(updated)
+          const contract = get().contracts.find(c => c.id === contractId)
+          recordStoreActivity(get, `Updated ${updated.type === 'TASK_ORDER' ? 'task order' : 'call'}: ${updated.number}`, 'contract', contractId, contract?.title)
+        }
       },
 
       removeContractVehicleOrder: (contractId, orderId) => {
+        const contract = get().contracts.find(c => c.id === contractId)
+        const order = contract?.vehicleOrders?.find(item => item.id === orderId)
         set(s => ({
           contracts: s.contracts.map(c =>
             c.id === contractId
@@ -2213,6 +2312,7 @@ export const useStore = create<AppState>()(
           )
         }))
         deleteContractVehicleOrderRecord(orderId)
+        recordStoreActivity(get, `Deleted ${order?.type === 'CALL' ? 'call' : 'task order'}${order?.number ? ` ${order.number}` : ''}`, 'contract', contractId, contract?.title)
       },
 
       advanceContractStatus: (id) => {

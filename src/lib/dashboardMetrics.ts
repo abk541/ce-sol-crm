@@ -16,13 +16,34 @@ export function isSubmittedLifecycleRow(submission: BDSubmission): boolean {
   return submittedStatusSet.has(submission.status)
 }
 
+export function submissionBusinessKey(submission: BDSubmission): string {
+  const solicitationId = submission.solicitationId.trim().toLowerCase()
+  return solicitationId ? `solicitation:${solicitationId}` : `row:${submission.id}`
+}
+
+function submissionRecency(submission: BDSubmission): number {
+  const timestamp = new Date(submission.submittedOn || submission.dueDate || 0).getTime()
+  return Number.isFinite(timestamp) ? timestamp : 0
+}
+
+export function uniqueBDSubmissionRows(submissions: BDSubmission[]): BDSubmission[] {
+  const byOpportunity = new Map<string, BDSubmission>()
+  for (const submission of submissions) {
+    const key = submissionBusinessKey(submission)
+    const current = byOpportunity.get(key)
+    if (
+      !current ||
+      submissionRecency(submission) > submissionRecency(current) ||
+      (submissionRecency(submission) === submissionRecency(current) && submission.id > current.id)
+    ) {
+      byOpportunity.set(key, submission)
+    }
+  }
+  return [...byOpportunity.values()]
+}
+
 export function submittedLifecycleRows(submissions: BDSubmission[]): BDSubmission[] {
-  const seen = new Set<number>()
-  return submissions.filter(submission => {
-    if (!isSubmittedLifecycleRow(submission) || seen.has(submission.id)) return false
-    seen.add(submission.id)
-    return true
-  })
+  return uniqueBDSubmissionRows(submissions).filter(isSubmittedLifecycleRow)
 }
 
 export function isContractOpportunityVisible(
@@ -49,10 +70,55 @@ export function contractOpportunityRows(
 function uniqueOpportunities(opportunities: Opportunity[]): Opportunity[] {
   const seen = new Set<string>()
   return opportunities.filter(opportunity => {
-    if (opportunity.isDeleted || seen.has(opportunity.id)) return false
-    seen.add(opportunity.id)
+    const solicitationId = opportunity.solicitationId.trim().toLowerCase()
+    const key = solicitationId ? `solicitation:${solicitationId}` : `opportunity:${opportunity.id}`
+    if (opportunity.isDeleted || seen.has(key)) return false
+    seen.add(key)
     return true
   })
+}
+
+export interface DashboardMonthBucket {
+  key: string
+  month: string
+}
+
+export function dashboardMonthBuckets(
+  period: { from: string; to: string } | null,
+  fallbackCount = 6,
+  maximumCount = 24,
+): DashboardMonthBucket[] {
+  const now = new Date()
+  const fallback = () => Array.from({ length: fallbackCount }, (_, index) => {
+    const date = new Date(now.getFullYear(), now.getMonth() - fallbackCount + index + 1, 1)
+    return {
+      key: `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`,
+      month: date.toLocaleDateString('en-US', { month: 'short' }),
+    }
+  })
+
+  if (!period?.from || !period.to) return fallback()
+  const [fromYear, fromMonth] = period.from.split('-').map(Number)
+  const [toYear, toMonth] = period.to.split('-').map(Number)
+  if (!fromYear || !fromMonth || !toYear || !toMonth) return fallback()
+
+  const start = new Date(fromYear, fromMonth - 1, 1)
+  const end = new Date(toYear, toMonth - 1, 1)
+  if (start > end) return fallback()
+
+  const buckets: DashboardMonthBucket[] = []
+  const cursor = new Date(start)
+  while (cursor <= end && buckets.length < maximumCount) {
+    buckets.push({
+      key: `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}`,
+      month: cursor.toLocaleDateString('en-US', {
+        month: 'short',
+        year: start.getFullYear() === end.getFullYear() ? undefined : '2-digit',
+      }),
+    })
+    cursor.setMonth(cursor.getMonth() + 1)
+  }
+  return buckets.length ? buckets : fallback()
 }
 
 export function dashboardPercent(value: number, total: number): number {
@@ -84,9 +150,18 @@ export function calculateBdDashboardSummary({
 }): BdDashboardSummary {
   const active = uniqueOpportunities(activeOpportunities)
   const captured = uniqueOpportunities(capturedOpportunities)
-  const trackerIds = new Set(trackerRows.map(row => row.id))
-  const capturedCount = active.length + trackerIds.size
-  const submitted = submittedLifecycleRows(trackerRows)
+  const uniqueTracker = uniqueBDSubmissionRows(trackerRows)
+  const capturedKeys = new Set(captured.map(opportunity => {
+    const solicitationId = opportunity.solicitationId.trim().toLowerCase()
+    return solicitationId ? `solicitation:${solicitationId}` : `opportunity:${opportunity.id}`
+  }))
+  active.forEach(opportunity => {
+    const solicitationId = opportunity.solicitationId.trim().toLowerCase()
+    capturedKeys.add(solicitationId ? `solicitation:${solicitationId}` : `opportunity:${opportunity.id}`)
+  })
+  uniqueTracker.forEach(row => capturedKeys.add(submissionBusinessKey(row)))
+  const capturedCount = capturedKeys.size
+  const submitted = uniqueTracker.filter(isSubmittedLifecycleRow)
   const awarded = submitted.filter(submission => submission.status === 'AWARDED')
 
   return {
