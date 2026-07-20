@@ -6,8 +6,6 @@ import Layout from './components/layout/Layout'
 import AccessNoticePage from './pages/auth/AccessNoticePage'
 import LoginPage from './pages/auth/LoginPage'
 import FirstLoginPage from './pages/auth/FirstLoginPage'
-import MfaVerifyPage from './pages/auth/MfaVerifyPage'
-import MfaEnrollPage from './pages/auth/MfaEnrollPage'
 import DashboardPage from './pages/DashboardPage'
 import PipelinePage from './pages/PipelinePage'
 import ProposalsPage from './pages/ProposalsPage'
@@ -27,22 +25,19 @@ import PlaceholderPage from './pages/PlaceholderPage'
 import { hasAnyPermission, hasPermission, type Permission } from './lib/permissions'
 import { subscribeToDataChanges } from './lib/db'
 import { isSupabaseConnected } from './lib/supabase'
+import { subscribeToAuthSessionChanges } from './lib/auth'
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, needsFirstLogin, pendingMfaUserId, pendingMfaMode } = useStore()
+  const { isAuthenticated, needsFirstLogin } = useStore()
   if (needsFirstLogin) return <Navigate to="/first-login" replace />
-  if (pendingMfaUserId && pendingMfaMode === 'verify') return <Navigate to="/mfa-verify" replace />
-  if (pendingMfaUserId && pendingMfaMode === 'enroll') return <Navigate to="/mfa-enroll" replace />
   if (!isAuthenticated) return <Navigate to="/login" replace />
   return <>{children}</>
 }
 
 function AccessNoticeGuard({ children }: { children: React.ReactNode }) {
-  const { accessNoticeAccepted, isAuthenticated, needsFirstLogin, currentUser, pendingMfaUserId, pendingMfaMode } = useStore()
+  const { accessNoticeAccepted, isAuthenticated, needsFirstLogin, currentUser } = useStore()
   // A pending 2FA gate takes precedence over the access notice — a user in
   // the middle of enrolling/verifying can't peek at anything else.
-  if (pendingMfaUserId && pendingMfaMode === 'verify') return <Navigate to="/mfa-verify" replace />
-  if (pendingMfaUserId && pendingMfaMode === 'enroll') return <Navigate to="/mfa-enroll" replace />
   const hasValidatedCredentials = isAuthenticated || needsFirstLogin || !!currentUser
   if (!hasValidatedCredentials) return <Navigate to="/login" replace />
   if (!accessNoticeAccepted) return <Navigate to="/access-notice" replace />
@@ -67,24 +62,35 @@ function PermissionGuard({
 }
 
 export default function App() {
-  const { isAuthenticated, accessNoticeAccepted, needsFirstLogin, currentUser, pendingMfaUserId, pendingMfaMode } = useStore()
+  const {
+    authInitialized,
+    isAuthenticated,
+    accessNoticeAccepted,
+    needsFirstLogin,
+    currentUser,
+    loginTimestamp,
+  } = useStore()
+  const restoreAuthSession = useStore(s => s.restoreAuthSession)
   const initializeStore = useStore(s => s.initializeStore)
-  const syncUsersFromDb = useStore(s => s.syncUsersFromDb)
   const refreshFromDb = useStore(s => s.refreshFromDb)
 
-  // Sync the user roster from Supabase as soon as the app boots — before any
-  // login — so credentials and firstLogin flags are correct across browsers.
-  // Without this the local Zustand persist (which is browser-scoped) is the
-  // only source of truth and admins on different browsers see different user
-  // lists.
+  // Restore only the Supabase Auth session and its linked safe profile. Full
+  // workspace data is not requested until the session has been accepted.
   useEffect(() => {
-    void syncUsersFromDb()
-  }, [syncUsersFromDb])
+    void restoreAuthSession()
+  }, [restoreAuthSession])
+
+  // The auth helper defers handlers outside Supabase's auth callback lock.
+  // This lets USER_UPDATED/TOKEN_REFRESHED safely revalidate through Auth and
+  // ensures cross-tab SIGNED_OUT events purge the in-memory workspace.
+  useEffect(() => subscribeToAuthSessionChanges((event, session) => {
+    void useStore.getState().handleAuthSessionEvent(event, session)
+  }), [])
 
   // Re-run every time the user logs in so Supabase data always wins over stale localStorage
   useEffect(() => {
-    if (isAuthenticated) initializeStore()
-  }, [isAuthenticated])
+    if (isAuthenticated) void initializeStore()
+  }, [isAuthenticated, initializeStore])
 
   useEffect(() => {
     const checkSession = () => {
@@ -99,7 +105,7 @@ export default function App() {
         }
         const elapsed = Date.now() - state.loginTimestamp
         if (elapsed > 24 * 60 * 60 * 1000) {
-          state.logout()
+          void state.logout()
           toast.error('Session expired. Please log in again.')
         }
       }
@@ -107,7 +113,7 @@ export default function App() {
     checkSession()
     const timer = setInterval(checkSession, 60_000)
     return () => clearInterval(timer)
-  }, [])
+  }, [isAuthenticated, loginTimestamp])
 
   // Live cross-user sync. Once authenticated we keep the local store fresh so a
   // new opportunity, HR request, assignment or notification created by another
@@ -148,17 +154,21 @@ export default function App() {
     }
   }, [isAuthenticated, refreshFromDb])
 
+  if (!authInitialized) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-950 text-sm text-slate-400">
+        Restoring your secure session&hellip;
+      </div>
+    )
+  }
+
   return (
     <HashRouter>
       <Routes>
         <Route
           path="/access-notice"
           element={
-            pendingMfaUserId && pendingMfaMode === 'verify'
-              ? <Navigate to="/mfa-verify" replace />
-              : pendingMfaUserId && pendingMfaMode === 'enroll'
-                ? <Navigate to="/mfa-enroll" replace />
-                : !isAuthenticated && !needsFirstLogin && !currentUser
+            !isAuthenticated && !needsFirstLogin && !currentUser
                   ? <Navigate to="/login" replace />
                   : accessNoticeAccepted
                     ? <Navigate to={needsFirstLogin ? "/first-login" : isAuthenticated ? "/dashboard" : "/login"} replace />
@@ -168,32 +178,14 @@ export default function App() {
         <Route
           path="/login"
           element={
-            pendingMfaUserId && pendingMfaMode === 'verify'
-              ? <Navigate to="/mfa-verify" replace />
-              : pendingMfaUserId && pendingMfaMode === 'enroll'
-                ? <Navigate to="/mfa-enroll" replace />
-                : isAuthenticated
+            isAuthenticated
                   ? <Navigate to={accessNoticeAccepted ? "/dashboard" : "/access-notice"} replace />
+                  : needsFirstLogin && currentUser
+                    ? <Navigate to={accessNoticeAccepted ? "/first-login" : "/access-notice"} replace />
                   : <LoginPage />
           }
         />
         <Route path="/first-login" element={<AccessNoticeGuard><FirstLoginPage /></AccessNoticeGuard>} />
-        <Route
-          path="/mfa-verify"
-          element={
-            pendingMfaUserId && pendingMfaMode === 'verify'
-              ? <MfaVerifyPage />
-              : <Navigate to={isAuthenticated ? "/dashboard" : "/login"} replace />
-          }
-        />
-        <Route
-          path="/mfa-enroll"
-          element={
-            pendingMfaUserId && pendingMfaMode === 'enroll'
-              ? <MfaEnrollPage />
-              : <Navigate to={isAuthenticated ? "/dashboard" : "/login"} replace />
-          }
-        />
 
         <Route path="/" element={<AccessNoticeGuard><AuthGuard><Layout /></AuthGuard></AccessNoticeGuard>}>
           <Route index element={<Navigate to="/dashboard" replace />} />

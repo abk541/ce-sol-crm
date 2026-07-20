@@ -16,7 +16,7 @@ import { useStore } from '../store/useStore'
 import type { Opportunity, Priority, OppStatus, Comment, FileAttachment, SamGovContact, SubcontractorContact } from '../types'
 import { TIMEZONES } from '../data/mock'
 import { formatCurrency, formatDate, useEscapeKey } from '../lib/utils'
-import { uploadAttachment, resolveAttachmentSource, hasAttachmentSource, downloadAttachment } from '../lib/attachments'
+import { uploadAttachment, hasAttachmentSource, downloadAttachment } from '../lib/attachments'
 import { assignableEmployeesForUser, getAssignmentChain, isOpportunityAssignedToUser, isOpportunityOwnedByUser, ROLE_DISPLAY_LABELS } from '../lib/team'
 import { CONTRACT_OPPORTUNITY_STATUSES, isContractOpportunityVisible } from '../lib/dashboardMetrics'
 import { NAICS_CODES } from '../data/naics'
@@ -41,7 +41,7 @@ import {
   utcToMoroccoClock,
 } from '../lib/timezone'
 import {
-  buildSamGovOpportunityEndpoint,
+  importSamGovOpportunity,
   mapSamGovOpportunityToForm,
 } from '../lib/samGov'
 import { canDeleteComment, canEditComment, hasPermission } from '../lib/permissions'
@@ -74,36 +74,6 @@ const TIMEZONE_CODE_OPTIONS = Array.from(new Set([
 ])).filter(code => code && (TIMEZONES[code] || fixedOffsetMinutes(code) !== null))
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100, 0] // 0 = All
-// SAM.gov API key is stored in Supabase (app_settings.sam_gov_api_key) and
-// managed at runtime from Admin → Integrations. No env / build-time
-// fallback: production must set the row in the database so keys can be
-// rotated without a redeploy and never end up baked into the JS bundle.
-// The store is read imperatively via getState() so this stays a plain
-// function callable from anywhere (e.g. handlers) without hook wiring.
-function getBuildSamGovApiKey() {
-  return (useStore.getState().appSettings?.['sam_gov_api_key'] ?? '').trim()
-}
-
-async function readSamGovError(res: Response) {
-  try {
-    const body = await res.clone().json()
-    const message =
-      body?.error?.message ??
-      body?.message ??
-      body?.error_description ??
-      body?.errors?.[0]?.message
-    if (message) return String(message)
-  } catch {
-    // Fall back to text below.
-  }
-  try {
-    const text = await res.text()
-    if (text) return text.slice(0, 240)
-  } catch {
-    // Ignore response body parse errors.
-  }
-  return res.statusText
-}
 
 function typeLabel(val: string) {
   if (val === 'S&D' || val === 'SUPPLY') return 'S&D'
@@ -153,6 +123,14 @@ function fileToProposalAttachment(
   return uploadAttachment(file, { folder, uploadedBy, attachedAt })
 }
 
+async function downloadPipelineAttachment(file: FileAttachment): Promise<void> {
+  try {
+    await downloadAttachment(file)
+  } catch {
+    toast.error('Attachment could not be downloaded. Please try again.')
+  }
+}
+
 // Emerald quote-file chip used in the Sourcing modal (view + add forms).
 function QuoteFileChip({ file, onRemove }: { file: FileAttachment; onRemove?: () => void }) {
   return (
@@ -162,16 +140,16 @@ function QuoteFileChip({ file, onRemove }: { file: FileAttachment; onRemove?: ()
           <FileText size={13} className="text-emerald-600" />
         </span>
         {hasAttachmentSource(file) ? (
-          <a href={resolveAttachmentSource(file)} download={file.name} onClick={e => { e.preventDefault(); void downloadAttachment(file) }} className="text-xs font-bold text-emerald-900 truncate underline decoration-emerald-400 underline-offset-2 hover:text-emerald-700" title={`Download ${file.name}`}>{file.name}</a>
+          <button type="button" onClick={() => { void downloadPipelineAttachment(file) }} className="min-w-0 truncate text-left text-xs font-bold text-emerald-900 underline decoration-emerald-400 underline-offset-2 hover:text-emerald-700" title={`Download ${file.name}`}>{file.name}</button>
         ) : (
           <span className="text-xs font-bold text-emerald-900 truncate">{file.name}</span>
         )}
       </div>
       <div className="flex items-center gap-1 flex-shrink-0">
         {hasAttachmentSource(file) && (
-          <a href={resolveAttachmentSource(file)} download={file.name} onClick={e => { e.preventDefault(); void downloadAttachment(file) }} className="w-6 h-6 rounded flex items-center justify-center text-emerald-700 hover:bg-emerald-100" title={`Download ${file.name}`}>
+          <button type="button" onClick={() => { void downloadPipelineAttachment(file) }} className="w-6 h-6 rounded flex items-center justify-center text-emerald-700 hover:bg-emerald-100" title={`Download ${file.name}`}>
             <Download size={12} />
-          </a>
+          </button>
         )}
         {onRemove && (
           <button type="button" onClick={onRemove} className="w-6 h-6 rounded flex items-center justify-center text-emerald-700 hover:bg-emerald-100" title="Remove">
@@ -3051,7 +3029,6 @@ function CreateModal({ onClose }: { onClose: () => void }) {
   const [importing, setImporting] = useState(false)
   const [initialComment, setInitialComment] = useState('')
   const [initialCommentAttachments, setInitialCommentAttachments] = useState<FileAttachment[]>([])
-  const samApiKey = getBuildSamGovApiKey()
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState<Partial<Opportunity>>({
     priority: 'MEDIUM', status: 'ACTIVE', type: undefined, setAside: 'SB',
@@ -3072,36 +3049,9 @@ function CreateModal({ onClose }: { onClose: () => void }) {
     const url = samUrl.trim()
     if (!url || importing) return
 
-    if (!samApiKey) {
-      toast.error('SAM.gov API key is not configured. An admin must set it in Admin → Integrations.')
-      return
-    }
-
-    let endpoint = ''
-    try {
-      endpoint = buildSamGovOpportunityEndpoint(url, samApiKey)
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Could not parse the SAM.gov URL.')
-      return
-    }
-
     setImporting(true)
     try {
-      const res = await fetch(endpoint)
-      if (!res.ok) {
-        const details = await readSamGovError(res)
-        if (res.status === 429) {
-          throw new Error('SAM.gov rate limit reached. Wait a few minutes, then try again.')
-        }
-        throw new Error(`SAM.gov returned ${res.status}: ${details}`)
-      }
-
-      const json = await res.json()
-      const opp = json.opportunitiesData?.[0]
-      if (!opp) {
-        toast.error('Opportunity not found on SAM.gov. Check the URL.')
-        return
-      }
+      const opp = await importSamGovOpportunity(url)
 
       const mapped = mapSamGovOpportunityToForm(opp, url)
       // Batch all form updates in a single setForm call to avoid stale-closure issues
@@ -3951,17 +3901,16 @@ export function OpportunityDetailBody({
                     )}
                     {(s.quoteFiles ?? []).map(q => (
                       hasAttachmentSource(q) ? (
-                        <a
+                        <button
                           key={q.id}
-                          href={resolveAttachmentSource(q)}
-                          download={q.name}
-                          onClick={e => { e.preventDefault(); void downloadAttachment(q) }}
+                          type="button"
+                          onClick={() => { void downloadPipelineAttachment(q) }}
                           className="mt-1 flex items-center gap-1 text-[10px] font-semibold underline decoration-dotted underline-offset-2 hover:opacity-80"
                           style={{ color: 'var(--info-fg)' }}
                           title={`Download ${q.name}`}
                         >
                           <Download size={9} /> {q.name}
-                        </a>
+                        </button>
                       ) : (
                         <p key={q.id} className="mt-1 flex items-center gap-1 text-[10px] font-semibold" style={{ color: 'var(--info-fg)' }}>
                           <FileText size={9} /> {q.name}

@@ -3,14 +3,8 @@ import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { Lock, Eye, EyeOff, Check, ArrowRight, Loader } from 'lucide-react'
 import { useStore } from '../../store/useStore'
+import { PASSWORD_RULES, passwordMeetsPolicy } from '../../lib/passwordPolicy'
 import toast from 'react-hot-toast'
-
-const rules = [
-  { label: 'At least 8 characters', test: (p: string) => p.length >= 8 },
-  { label: 'One uppercase letter', test: (p: string) => /[A-Z]/.test(p) },
-  { label: 'One number', test: (p: string) => /\d/.test(p) },
-  { label: 'One special character', test: (p: string) => /[^A-Za-z0-9]/.test(p) },
-]
 
 export default function FirstLoginPage() {
   const navigate = useNavigate()
@@ -20,7 +14,7 @@ export default function FirstLoginPage() {
   const [showPass, setShowPass] = useState(false)
   const [loading, setLoading] = useState(false)
 
-  const allPassed = rules.every(r => r.test(password))
+  const allPassed = passwordMeetsPolicy(password)
   const matches = password === confirm && confirm.length > 0
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -30,11 +24,8 @@ export default function FirstLoginPage() {
     const result = await completeFirstLogin(password)
     setLoading(false)
     if (!result.ok) return
-    toast.success('Password set! Now let\u2019s secure your account.')
-    // First-login users never have a TOTP secret yet, so they always land
-    // on the enrollment screen next. When 2FA is later made optional this
-    // branch should fall back to /dashboard.
-    navigate(result.needsMfaEnroll ? '/mfa-enroll' : '/dashboard')
+    toast.success('Password updated. Your account is ready.')
+    navigate('/dashboard')
   }
 
   return (
@@ -82,7 +73,7 @@ export default function FirstLoginPage() {
               {password.length > 0 && (
                 <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }}
                   className="space-y-1.5">
-                  {rules.map(r => (
+                  {PASSWORD_RULES.map(r => (
                     <div key={r.label} className="flex items-center gap-2">
                       <div className={`w-4 h-4 rounded-full flex items-center justify-center transition-all ${r.test(password) ? 'bg-emerald-500/20 text-emerald-400' : 'bg-white/5 text-slate-600'}`}>
                         <Check size={9} />

@@ -1,5 +1,6 @@
 import type { Opportunity, SamGovContact } from '../types'
 import { TIMEZONES } from '../data/mock'
+import { isSupabaseConnected, supabase } from './supabase'
 import {
   formatTime12h,
   ianaTimeZoneFromOffset,
@@ -32,59 +33,105 @@ const SAM_TIMEZONE_ALIASES: Record<string, string> = {
   'GREENWICH MEAN TIME': 'Europe/London',
 }
 
-export function formatSamGovDate(d: Date) {
-  const mm = String(d.getMonth() + 1).padStart(2, '0')
-  const dd = String(d.getDate()).padStart(2, '0')
-  return `${mm}/${dd}/${d.getFullYear()}`
+const SAM_GOV_FUNCTION = 'sam-gov-import'
+
+export interface SamGovOpportunityReference {
+  noticeId?: string
+  solicitationNumber?: string
 }
 
-function samGovEasternToday(now = new Date()) {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/New_York',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(now)
-  const value = (type: string) => parts.find(part => part.type === type)?.value ?? ''
-  return new Date(`${value('year')}-${value('month')}-${value('day')}T12:00:00Z`)
+function invalidSamGovUrl(): never {
+  throw new Error('Could not parse the SAM.gov URL. Paste the full URL from the opportunity page.')
 }
 
-export function getSamGovPostedRange(now = new Date()) {
-  const postedTo = samGovEasternToday(now)
-  const postedFrom = new Date(postedTo)
-  postedFrom.setFullYear(postedTo.getFullYear() - 1)
-  postedFrom.setDate(postedFrom.getDate() + 1)
-  return {
-    postedFrom: formatSamGovDate(postedFrom),
-    postedTo: formatSamGovDate(postedTo),
-  }
-}
-
-export function buildSamGovOpportunityEndpoint(url: string, apiKey: string, now = new Date()) {
+/** Parses only identifiers. The browser never constructs or receives the API URL or secret. */
+export function parseSamGovOpportunityReference(url: string): SamGovOpportunityReference {
   const trimmedUrl = url.trim()
-  const trimmedKey = apiKey.trim()
-  if (!trimmedUrl) throw new Error('SAM.gov URL is required.')
-  if (!trimmedKey) throw new Error('SAM.gov API key is required.')
+  if (!trimmedUrl) invalidSamGovUrl()
 
-  const oppIdMatch = trimmedUrl.match(/\/opp\/([a-f0-9]{32})/i)
-  const solNumMatch = trimmedUrl.match(/[?&]q=([^&]+)/) || trimmedUrl.match(/\/([A-Z0-9\-]{6,})\/?(?:view)?$/i)
-  const solNum = solNumMatch ? decodeURIComponent(solNumMatch[1]).trim() : ''
-  if (!oppIdMatch && (!solNum || !/\d/.test(solNum))) {
-    throw new Error('Could not parse the SAM.gov URL. Paste the full URL from the opportunity page.')
+  let parsed: URL
+  try {
+    parsed = new URL(trimmedUrl)
+  } catch {
+    invalidSamGovUrl()
   }
 
-  const { postedFrom, postedTo } = getSamGovPostedRange(now)
-  const params = new URLSearchParams({
-    limit: '1',
-    offset: '0',
-    api_key: trimmedKey,
-    postedFrom,
-    postedTo,
-  })
-  if (oppIdMatch) params.set('noticeid', oppIdMatch[1])
-  else params.set('solnum', solNum)
+  const host = parsed.hostname.toLowerCase()
+  if (parsed.protocol !== 'https:' || (host !== 'sam.gov' && !host.endsWith('.sam.gov'))) {
+    invalidSamGovUrl()
+  }
 
-  return `https://api.sam.gov/opportunities/v2/search?${params.toString()}`
+  const noticeId = parsed.pathname.match(/\/opp\/([a-f0-9]{32})(?:\/|$)/i)?.[1]
+  if (noticeId) return { noticeId: noticeId.toLowerCase() }
+
+  const pathSegments = parsed.pathname.split('/').filter(Boolean)
+  const finalSegment = pathSegments[pathSegments.length - 1]
+  const lastSegment = finalSegment?.toLowerCase() === 'view'
+    ? pathSegments[pathSegments.length - 2]
+    : finalSegment
+  const solicitationNumber = (parsed.searchParams.get('q') ?? lastSegment ?? '').trim()
+  if (
+    solicitationNumber.length < 3 ||
+    solicitationNumber.length > 128 ||
+    !/\d/.test(solicitationNumber) ||
+    /[\u0000-\u001f\u007f]/.test(solicitationNumber)
+  ) {
+    invalidSamGovUrl()
+  }
+
+  return { solicitationNumber }
+}
+
+async function functionErrorMessage(error: unknown): Promise<string> {
+  const context = (error as { context?: unknown } | null)?.context
+  if (typeof Response !== 'undefined' && context instanceof Response) {
+    try {
+      const payload = await context.clone().json() as {
+        error?: { message?: unknown }
+        message?: unknown
+      }
+      const message = payload.error?.message ?? payload.message
+      if (typeof message === 'string' && message.trim()) return message.trim()
+    } catch {
+      // Fall back to the SDK's generic error below.
+    }
+  }
+
+  if (error instanceof Error && error.message.trim()) return error.message
+  return 'The SAM.gov integration request failed.'
+}
+
+async function invokeSamGovFunction(body: Record<string, unknown>): Promise<Record<string, unknown>> {
+  if (!isSupabaseConnected || !supabase) {
+    throw new Error('Supabase is not connected. Sign in to use the SAM.gov integration.')
+  }
+
+  const { data, error } = await supabase.functions.invoke(SAM_GOV_FUNCTION, { body })
+  if (error) throw new Error(await functionErrorMessage(error))
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    throw new Error('The SAM.gov integration returned an invalid response.')
+  }
+  return data as Record<string, unknown>
+}
+
+/** Returns only whether the server secret exists; the secret never reaches the browser. */
+export async function getSamGovImportStatus(): Promise<boolean> {
+  const data = await invokeSamGovFunction({ action: 'status' })
+  return data.configured === true
+}
+
+/** Fetches one opportunity through the authenticated server-side proxy. */
+export async function importSamGovOpportunity(url: string): Promise<Record<string, any>> {
+  const trimmedUrl = url.trim()
+  parseSamGovOpportunityReference(trimmedUrl)
+
+  const data = await invokeSamGovFunction({ action: 'import', url: trimmedUrl })
+  const opportunity = data.opportunity
+  if (!opportunity || typeof opportunity !== 'object' || Array.isArray(opportunity)) {
+    throw new Error('Opportunity not found on SAM.gov. Check the URL.')
+  }
+
+  return opportunity as Record<string, any>
 }
 
 function normaliseSamGovTimezone(value: unknown): string {

@@ -16,6 +16,7 @@ vi.mock('../lib/supabase', () => ({
 }))
 
 import { loadAllData } from '../lib/db'
+import { SAFE_USER_COLUMNS } from '../lib/userProfile'
 
 describe('database snapshot safety', () => {
   afterEach(() => vi.restoreAllMocks())
@@ -25,5 +26,10 @@ describe('database snapshot safety', () => {
 
     await expect(loadAllData()).resolves.toBeNull()
     expect(fromMock).toHaveBeenCalledWith('contracts')
+    const usersCall = fromMock.mock.calls.findIndex(([table]) => table === 'users')
+    const usersClient = fromMock.mock.results[usersCall].value as { select: ReturnType<typeof vi.fn> }
+    expect(usersClient.select).toHaveBeenCalledWith(SAFE_USER_COLUMNS)
+    expect(SAFE_USER_COLUMNS).not.toContain('password')
+    expect(SAFE_USER_COLUMNS).not.toContain('mfa_')
   })
 })

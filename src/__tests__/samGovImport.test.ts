@@ -6,84 +6,34 @@ import {
   timezoneCodeForDisplay,
 } from '../pages/PipelinePage'
 import {
-  buildSamGovOpportunityEndpoint,
   extractSamGovAgency,
   extractSamGovDeadlineTimezone,
-  getSamGovPostedRange,
   mapSamGovOpportunityToForm,
+  parseSamGovOpportunityReference,
   parseSamGovDeadline,
 } from '../lib/samGov'
 import { formatMoroccoDueTime, formatTime12h, opportunityDeadlineTimeMs } from '../lib/timezone'
 
-const NOW = new Date('2026-05-18T12:00:00Z')
-
-function params(endpoint: string) {
-  return new URL(endpoint).searchParams
-}
-
 describe('SAM.gov import API calls', () => {
-  it('builds a documented notice ID lookup for SAM.gov opportunity URLs', () => {
+  it('parses a notice ID without constructing the secret-bearing API request in the browser', () => {
     const noticeId = '7f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c'
-    const endpoint = buildSamGovOpportunityEndpoint(
-      `https://sam.gov/opp/${noticeId}/view`,
-      'test key',
-      NOW,
-    )
-    const p = params(endpoint)
-
-    expect(endpoint.startsWith('https://api.sam.gov/opportunities/v2/search?')).toBe(true)
-    expect(p.get('noticeid')).toBe(noticeId)
-    expect(p.get('solnum')).toBeNull()
-    expect(p.get('limit')).toBe('1')
-    expect(p.get('offset')).toBe('0')
-    expect(p.get('api_key')).toBe('test key')
-    expect(p.get('postedFrom')).toBe('05/19/2025')
-    expect(p.get('postedTo')).toBe('05/18/2026')
+    expect(parseSamGovOpportunityReference(`https://sam.gov/opp/${noticeId}/view`))
+      .toEqual({ noticeId })
   })
 
-  it('builds a documented solicitation-number lookup from SAM.gov search URLs', () => {
-    const endpoint = buildSamGovOpportunityEndpoint(
-      'https://sam.gov/search/?q=W912EP-26-R-0001',
-      'abc123',
-      NOW,
-    )
-    const p = params(endpoint)
-
-    expect(p.get('solnum')).toBe('W912EP-26-R-0001')
-    expect(p.get('noticeid')).toBeNull()
-    expect(p.get('postedFrom')).toBe('05/19/2025')
-    expect(p.get('postedTo')).toBe('05/18/2026')
-    expect(p.get('offset')).toBe('0')
+  it('parses a solicitation number from a SAM.gov search URL', () => {
+    expect(parseSamGovOpportunityReference('https://sam.gov/search/?q=W912EP-26-R-0001'))
+      .toEqual({ solicitationNumber: 'W912EP-26-R-0001' })
   })
 
-  it('keeps the mandatory posted-date range inside SAM.gov one-year limit', () => {
-    expect(getSamGovPostedRange(NOW)).toEqual({
-      postedFrom: '05/19/2025',
-      postedTo: '05/18/2026',
-    })
-  })
-
-  it('uses the SAM.gov Eastern business date instead of the browser local date', () => {
-    expect(getSamGovPostedRange(new Date('2026-05-19T01:00:00Z'))).toEqual({
-      postedFrom: '05/19/2025',
-      postedTo: '05/18/2026',
-    })
-  })
-
-  it('rejects unparseable URLs before making an API call', () => {
-    expect(() => buildSamGovOpportunityEndpoint('https://sam.gov/opportunities', 'abc123', NOW))
+  it('rejects non-SAM hosts before invoking the server proxy', () => {
+    expect(() => parseSamGovOpportunityReference('https://example.com/search/?q=W912EP-26-R-0001'))
       .toThrow('Could not parse the SAM.gov URL')
   })
 
-  it('keeps API calls explicit by only exposing endpoint construction', () => {
-    const endpoint = buildSamGovOpportunityEndpoint(
-      'https://sam.gov/search/?q=W912EP-26-R-0001',
-      'abc123',
-      NOW,
-    )
-
-    expect(endpoint).toContain('/opportunities/v2/search?')
-    expect(endpoint).toContain('solnum=W912EP-26-R-0001')
+  it('rejects unparseable URLs before making an API call', () => {
+    expect(() => parseSamGovOpportunityReference('https://sam.gov/opportunities'))
+      .toThrow('Could not parse the SAM.gov URL')
   })
 
   it('preserves the original SAM.gov local time and timezone, and computes Morocco time separately', () => {

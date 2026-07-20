@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import toast from 'react-hot-toast'
+import type { Session } from '@supabase/supabase-js'
 import type {
   User, Opportunity, Contract, Notification, Subcontractor,
   NonSubmissionReport, DeletionRequest, FreshAward,
@@ -25,9 +26,6 @@ import {
   loadAllData,
   seedIfEmpty,
   seedEmployeesIfEmpty,
-  seedUsersIfEmpty,
-  upsertUser,
-  deleteUserRecord,
   findActiveOpportunityDuplicate,
   upsertOpportunity,
   deleteOpportunityRecord,
@@ -69,12 +67,23 @@ import {
 import { getAssignmentChain, isAssignedToAssociate, findUserForEmployee } from '../lib/team'
 import { hasPermission, applyPermissionOverrides, type Permission } from '../lib/permissions'
 import { nextInvoiceSequenceFromContracts } from '../lib/invoiceNumbers'
-import { verifyTotpCode, consumeRecoveryCode, hashRecoveryCodes } from '../lib/mfa'
 import { hasSourcingQuote } from '../lib/subcontractorQuotes'
+import {
+  authenticateWithPassword,
+  completeSupabaseFirstLogin,
+  revalidateAuthenticatedProfile,
+  restoreAuthenticatedProfile,
+  sessionStartedAt,
+  signOutCurrentSession,
+  type ResilientAuthEvent,
+} from '../lib/auth'
+import { invokeManageUsers } from '../lib/userManagement'
+import { mergeSafeUser, toSafeUser } from '../lib/userProfile'
 
 interface AppState {
   // Auth
   currentUser: User | null
+  authInitialized: boolean
   isAuthenticated: boolean
   needsFirstLogin: boolean
   loginTimestamp: number | null
@@ -148,14 +157,16 @@ interface AppState {
   goalProgressLastNotifiedAt?: string
 
   // ── Auth actions ───────────────────────────────────────────────────
-  login: (email: string, password: string) => {
+  login: (email: string, password: string) => Promise<{
     ok: boolean
     error?: string
     needsFirst?: boolean
     needsMfaEnroll?: boolean
     needsMfaVerify?: boolean
-  }
-  logout: () => void
+  }>
+  restoreAuthSession: () => Promise<void>
+  handleAuthSessionEvent: (event: ResilientAuthEvent, session: Session | null) => Promise<void>
+  logout: () => Promise<void>
   acceptAccessNotice: () => void
   // Returns false when the Supabase write fails so callers can stay on
   // the page and let the user retry instead of advancing with unsaved auth
@@ -183,9 +194,10 @@ interface AppState {
   adminResetMfa: (userId: string) => Promise<boolean>
 
   // ── User management ────────────────────────────────────────────────
-  createUser: (u: Omit<User, 'id' | 'createdAt'>) => void
-  updateUser: (id: string, data: Partial<User>) => void
-  deleteUser: (id: string) => void
+  createUser: (u: Omit<User, 'id' | 'createdAt'> & { password: string }) => Promise<boolean>
+  updateUser: (id: string, data: Partial<User>) => Promise<boolean>
+  resetUserPassword: (id: string, password: string) => Promise<boolean>
+  deleteUser: (id: string) => Promise<boolean>
   addCompanyCertification: (data: Omit<CompanyCertification, 'id' | 'createdAt' | 'updatedAt' | 'createdBy' | 'status'> & { status?: CompanyCertificationStatus }) => void
   updateCompanyCertification: (id: string, data: Partial<CompanyCertification>) => void
   deleteCompanyCertification: (id: string) => void
@@ -661,7 +673,64 @@ async function canUseSolicitationId(solicitationId: string, opportunities: Oppor
 // Two-factor auth is temporarily disabled. Flip this back to `true` to
 // fully re-enable enrollment + verification — every MFA code path below
 // remains intact and is simply gated on this flag.
-const MFA_ENABLED: boolean = false
+// Legacy app-managed MFA remains disabled; Supabase Auth owns the session.
+
+const AUTH_SESSION_META_KEY = 'ces-crm-auth-session-meta'
+
+interface AuthSessionMeta {
+  authUserId: string
+  startedAt: number
+  accessNoticeAccepted: boolean
+}
+
+function readAuthSessionMeta(authUserId?: string): AuthSessionMeta | null {
+  if (!authUserId || typeof window === 'undefined') return null
+  try {
+    const raw = window.sessionStorage.getItem(AUTH_SESSION_META_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as Partial<AuthSessionMeta>
+    if (
+      parsed.authUserId !== authUserId ||
+      typeof parsed.startedAt !== 'number' ||
+      !Number.isFinite(parsed.startedAt) ||
+      parsed.startedAt <= 0
+    ) return null
+    return {
+      authUserId,
+      startedAt: parsed.startedAt,
+      accessNoticeAccepted: parsed.accessNoticeAccepted === true,
+    }
+  } catch {
+    return null
+  }
+}
+
+function writeAuthSessionMeta(
+  authUserId: string | undefined,
+  startedAt: number,
+  accessNoticeAccepted: boolean,
+): void {
+  if (!authUserId || typeof window === 'undefined') return
+  try {
+    window.sessionStorage.setItem(AUTH_SESSION_META_KEY, JSON.stringify({
+      authUserId,
+      startedAt,
+      accessNoticeAccepted,
+    } satisfies AuthSessionMeta))
+  } catch {
+    // Auth remains valid when browser storage is unavailable; only the
+    // reload-only notice convenience is lost.
+  }
+}
+
+function clearAuthSessionMeta(): void {
+  if (typeof window === 'undefined') return
+  try {
+    window.sessionStorage.removeItem(AUTH_SESSION_META_KEY)
+  } catch {
+    // Nothing else is required to purge in-memory state.
+  }
+}
 
 // Finalize a session after credentials + MFA both succeed. Clears the
 // pending-MFA gate, marks the store authenticated, and stamps the
@@ -669,14 +738,26 @@ const MFA_ENABLED: boolean = false
 function finalizeAuthenticatedSession(
   set: (partial: (state: AppState) => Partial<AppState>) => void,
   user: User,
+  options: {
+    startedAt?: number
+    accessNoticeAccepted?: boolean
+  } = {},
 ): void {
   const nowIso = new Date().toISOString()
+  const profile = toSafeUser(user)
+  const startedAt = options.startedAt && Number.isFinite(options.startedAt)
+    ? options.startedAt
+    : Date.now()
+  const accessNoticeAccepted = options.accessNoticeAccepted === true
+  writeAuthSessionMeta(profile.authUserId, startedAt, accessNoticeAccepted)
   set(s => ({
-    currentUser: user,
+    currentUser: profile,
+    users: mergeSafeUser(s.users, profile),
+    authInitialized: true,
     isAuthenticated: true,
     needsFirstLogin: false,
-    loginTimestamp: Date.now(),
-    accessNoticeAccepted: false,
+    loginTimestamp: startedAt,
+    accessNoticeAccepted,
     pendingMfaUserId: null,
     pendingMfaMode: null,
     userSessions: {
@@ -686,10 +767,74 @@ function finalizeAuthenticatedSession(
   }))
 }
 
+function clearedAuthState(): Partial<AppState> {
+  return {
+    currentUser: null,
+    authInitialized: true,
+    isAuthenticated: false,
+    needsFirstLogin: false,
+    loginTimestamp: null,
+    dbReady: false,
+    accessNoticeAccepted: false,
+    pendingMfaUserId: null,
+    pendingMfaMode: null,
+    users: [],
+    employees: [],
+    opportunities: [],
+    contracts: [],
+    notifications: [],
+    subcontractors: [],
+    nonSubReports: [],
+    deletionRequests: [],
+    freshAwards: [],
+    pastPerformances: [],
+    subkDatabase: [],
+    activityLogs: [],
+    bdSubmissions: [],
+    companyCertifications: [],
+    employeeRequests: [],
+    goals: [],
+    userSessions: {},
+    lastSyncedAt: null,
+    rolePermissionOverrides: {},
+    userPermissionGrants: {},
+    userPermissionRevokes: {},
+    permissionOverridesSyncStatus: 'unknown',
+    appSettings: {},
+    appSettingsSyncStatus: 'unknown',
+    nonSubGraceHours: 0,
+    nonSubGraceMinutes: 5,
+    requireAssociateForActivePipeline: true,
+    nextInvoiceNumber: 1,
+    goalProgressLastNotifiedAt: undefined,
+    needsPurge: false,
+  }
+}
+
+function pendingFirstLoginState(
+  user: User,
+  startedAt: number,
+  accessNoticeAccepted: boolean,
+): Partial<AppState> {
+  const profile = toSafeUser(user)
+  writeAuthSessionMeta(profile.authUserId, startedAt, accessNoticeAccepted)
+  return {
+    ...clearedAuthState(),
+    currentUser: profile,
+    users: [profile],
+    authInitialized: true,
+    isAuthenticated: false,
+    needsFirstLogin: true,
+    loginTimestamp: startedAt,
+    accessNoticeAccepted,
+  }
+}
+
 export const useStore = create<AppState>()(
   persist(
     (set, get) => ({
       currentUser: null,
+      authInitialized: false,
       isAuthenticated: false,
       needsFirstLogin: false,
       loginTimestamp: null,
@@ -730,168 +875,172 @@ export const useStore = create<AppState>()(
       appSettingsSyncStatus: 'unknown',
 
       // ── Auth ────────────────────────────────────────────────────────
-      login: (email, password) => {
-        const user = get().users.find(u => u.email.toLowerCase() === email.toLowerCase())
-        if (!user) return { ok: false, error: 'No account found with that email.' }
-        if (user.status === 'inactive') return { ok: false, error: 'Account is deactivated.' }
-        if (user.password && user.password !== password)
-          return { ok: false, error: 'Incorrect password.' }
+      login: async (email, password) => {
+        const result = await authenticateWithPassword(email, password)
+        if (!result.ok) {
+          clearAuthSessionMeta()
+          set({ ...clearedAuthState(), authInitialized: true })
+          return result
+        }
+        // A password login always starts a new notice/session boundary, even
+        // when the same account previously used this browser tab.
+        clearAuthSessionMeta()
+        const user = toSafeUser(result.profile)
+        const startedAt = result.session
+          ? sessionStartedAt(result.session, Date.now())
+          : Date.now()
         // First-login password change still runs first — MFA enrollment
         // happens after the user has set their real password.
         if (user.firstLogin) {
-          set({
-            currentUser: user,
-            needsFirstLogin: true,
-            isAuthenticated: false,
-            accessNoticeAccepted: false,
-            pendingMfaUserId: null,
-            pendingMfaMode: null,
-          })
+          // A browser reused by another user must not retain any workspace,
+          // settings, or permission data while this session is setup-only.
+          set(pendingFirstLoginState(user, startedAt, false))
           return { ok: true, needsFirst: true }
         }
-        // 2FA temporarily disabled: authenticate on credentials alone. The MFA
-        // gates below are preserved and re-activate when MFA_ENABLED is true.
-        if (!MFA_ENABLED) {
-          finalizeAuthenticatedSession(set, user)
-          return { ok: true }
-        }
-        // 2FA gate: everyone needs a TOTP secret on file. Users without one
-        // are pushed through enrollment before their session is authenticated.
-        if (!user.mfaEnabled || !user.mfaSecret) {
-          set({
-            currentUser: user,
-            isAuthenticated: false,
-            needsFirstLogin: false,
-            accessNoticeAccepted: false,
-            pendingMfaUserId: user.id,
-            pendingMfaMode: 'enroll',
-          })
-          return { ok: true, needsMfaEnroll: true }
-        }
-        set({
-          currentUser: user,
-          isAuthenticated: false,
-          needsFirstLogin: false,
+        finalizeAuthenticatedSession(set, user, {
+          startedAt,
           accessNoticeAccepted: false,
-          pendingMfaUserId: user.id,
-          pendingMfaMode: 'verify',
         })
-        return { ok: true, needsMfaVerify: true }
+        return { ok: true }
       },
 
-      logout: () => set({
-        currentUser: null,
-        isAuthenticated: false,
-        needsFirstLogin: false,
-        loginTimestamp: null,
-        dbReady: false,
-        accessNoticeAccepted: false,
-        pendingMfaUserId: null,
-        pendingMfaMode: null,
-      }),
+      restoreAuthSession: async () => {
+        const result = await restoreAuthenticatedProfile()
+        if (!result.profile) {
+          // A transient profile outage must not destroy a valid in-memory
+          // session. Initial page load has no safe profile to show, so it still
+          // completes initialization in the logged-out shell and can recover on
+          // a later Auth event.
+          if (result.retryable && get().currentUser) return
+          if (!result.retryable) clearAuthSessionMeta()
+          set(clearedAuthState())
+          return
+        }
+        const user = toSafeUser(result.profile)
+        const current = get()
+        const sameInMemorySession = current.currentUser?.authUserId === user.authUserId
+        const stored = readAuthSessionMeta(user.authUserId)
+        const fallbackStartedAt = sameInMemorySession && current.loginTimestamp
+          ? current.loginTimestamp
+          : stored?.startedAt ?? Date.now()
+        const startedAt = result.session
+          ? sessionStartedAt(result.session, fallbackStartedAt)
+          : fallbackStartedAt
+        const storedMatches = stored?.startedAt === startedAt
+        const accessNoticeAccepted = (
+          sameInMemorySession && current.accessNoticeAccepted
+        ) || (
+          storedMatches && stored?.accessNoticeAccepted === true
+        )
+        if (user.firstLogin) {
+          set(pendingFirstLoginState(user, startedAt, accessNoticeAccepted))
+          return
+        }
+        finalizeAuthenticatedSession(set, user, {
+          startedAt,
+          accessNoticeAccepted,
+        })
+      },
 
-      acceptAccessNotice: () => set({ accessNoticeAccepted: true }),
+      handleAuthSessionEvent: async (event, session) => {
+        if (event === 'SIGNED_OUT' || !session) {
+          clearAuthSessionMeta()
+          set(clearedAuthState())
+          return
+        }
+
+        const state = get()
+        if (!state.currentUser) {
+          await state.restoreAuthSession()
+          return
+        }
+
+        const result = await revalidateAuthenticatedProfile(
+          state.currentUser.authUserId ?? session.user.id,
+        )
+        if (!result.ok) {
+          if (result.retryable) return
+          clearAuthSessionMeta()
+          set(clearedAuthState())
+          try {
+            await signOutCurrentSession()
+          } catch {
+            // The in-memory purge is the security boundary; remote sign-out is
+            // best effort when Auth has already invalidated the session.
+          }
+          return
+        }
+
+        const latest = get()
+        if (
+          !latest.currentUser ||
+          latest.currentUser.id !== state.currentUser.id ||
+          latest.loginTimestamp !== state.loginTimestamp
+        ) return
+
+        const profile = toSafeUser(result.profile)
+        const startedAt = latest.loginTimestamp
+          ?? sessionStartedAt(session, Date.now())
+        if (profile.firstLogin) {
+          set(pendingFirstLoginState(
+            profile,
+            startedAt,
+            latest.accessNoticeAccepted,
+          ))
+          return
+        }
+        finalizeAuthenticatedSession(set, profile, {
+          startedAt,
+          accessNoticeAccepted: latest.accessNoticeAccepted,
+        })
+      },
+
+      logout: async () => {
+        try {
+          await signOutCurrentSession()
+        } finally {
+          clearAuthSessionMeta()
+          set(clearedAuthState())
+        }
+      },
+
+      acceptAccessNotice: () => set(state => {
+        if (state.currentUser && state.loginTimestamp) {
+          writeAuthSessionMeta(
+            state.currentUser.authUserId,
+            state.loginTimestamp,
+            true,
+          )
+        }
+        return { accessNoticeAccepted: true }
+      }),
 
       completeFirstLogin: async (password) => {
         const u = get().currentUser
         if (!u) return { ok: false }
-        const updated = { ...u, firstLogin: false, password: password || u.password }
-        // Persist to Supabase BEFORE flipping local state so a tab close can't
-        // leave the DB stuck at the pre-completion state and bounce the user
-        // back on next sync.
-        if (isSupabaseConnected) {
-          const ok = await upsertUser(updated)
-          if (!ok) {
-            toast.error('Could not save your new password. Please try again.')
-            return { ok: false }
-          }
+        const result = await completeSupabaseFirstLogin(password)
+        if (!result.ok) {
+          toast.error(result.error)
+          return { ok: false }
         }
-        // 2FA temporarily disabled: persist the new password and authenticate
-        // directly, skipping enrollment. Re-enables when MFA_ENABLED is true.
-        if (!MFA_ENABLED) {
-          set(s => ({ users: s.users.map(x => x.id === u.id ? updated : x) }))
-          finalizeAuthenticatedSession(set, updated)
-          return { ok: true }
-        }
-        // Route into MFA enrollment before authenticating — first-login users
-        // never have a TOTP secret yet.
-        set(s => ({
-          users: s.users.map(x => x.id === u.id ? updated : x),
-          currentUser: updated,
-          needsFirstLogin: false,
-          isAuthenticated: false,
-          pendingMfaUserId: updated.id,
-          pendingMfaMode: 'enroll',
-        }))
-        return { ok: true, needsMfaEnroll: true }
+        const state = get()
+        if (!state.currentUser || state.currentUser.id !== u.id) return { ok: false }
+        finalizeAuthenticatedSession(set, result.profile, {
+          startedAt: state.loginTimestamp ?? Date.now(),
+          accessNoticeAccepted: state.accessNoticeAccepted,
+        })
+        return { ok: true }
       },
 
       // ── MFA ─────────────────────────────────────────────────────────
-      verifyMfaCode: (code) => {
-        const s = get()
-        if (!s.pendingMfaUserId || s.pendingMfaMode !== 'verify') {
-          return { ok: false, error: 'No pending 2FA verification.' }
-        }
-        const user = s.users.find(u => u.id === s.pendingMfaUserId)
-        if (!user || !user.mfaSecret) return { ok: false, error: '2FA is not configured for this account.' }
-        if (!verifyTotpCode(user.mfaSecret, code)) {
-          return { ok: false, error: 'That code is invalid or expired. Try again.' }
-        }
-        finalizeAuthenticatedSession(set, user)
-        return { ok: true }
-      },
+      verifyMfaCode: (_code) => ({ ok: false, error: 'Legacy 2FA is disabled.' }),
 
-      useRecoveryCode: async (code) => {
-        const s = get()
-        if (!s.pendingMfaUserId || s.pendingMfaMode !== 'verify') {
-          return { ok: false, error: 'No pending 2FA verification.' }
-        }
-        const user = s.users.find(u => u.id === s.pendingMfaUserId)
-        if (!user) return { ok: false, error: 'Account not found.' }
-        const { ok, remaining } = await consumeRecoveryCode(user.mfaRecoveryCodes, code)
-        if (!ok) return { ok: false, error: 'That recovery code is invalid or already used.' }
-        const updated: User = { ...user, mfaRecoveryCodes: remaining }
-        if (isSupabaseConnected) {
-          const saved = await upsertUser(updated)
-          if (!saved) {
-            toast.error('Could not update your recovery codes. Please try again.')
-            return { ok: false, error: 'Sync failed. Please try again.' }
-          }
-        }
-        set(state => ({
-          users: state.users.map(u => u.id === updated.id ? updated : u),
-        }))
-        finalizeAuthenticatedSession(set, updated)
-        return { ok: true }
-      },
+      useRecoveryCode: async (_code) => ({ ok: false, error: 'Legacy 2FA is disabled.' }),
 
-      completeMfaEnrollment: async (secret, plaintextRecoveryCodes) => {
-        const s = get()
-        if (!s.pendingMfaUserId || s.pendingMfaMode !== 'enroll') {
-          return { ok: false, error: 'No pending 2FA enrollment.' }
-        }
-        const user = s.users.find(u => u.id === s.pendingMfaUserId)
-        if (!user) return { ok: false, error: 'Account not found.' }
-        const hashed = await hashRecoveryCodes(plaintextRecoveryCodes)
-        const updated: User = {
-          ...user,
-          mfaEnabled: true,
-          mfaSecret: secret,
-          mfaRecoveryCodes: hashed,
-        }
-        if (isSupabaseConnected) {
-          const ok = await upsertUser(updated)
-          if (!ok) {
-            toast.error('Could not save your 2FA setup. Please try again.')
-            return { ok: false, error: 'Sync failed. Please try again.' }
-          }
-        }
-        set(state => ({
-          users: state.users.map(u => u.id === updated.id ? updated : u),
-        }))
-        finalizeAuthenticatedSession(set, updated)
-        return { ok: true }
-      },
+      completeMfaEnrollment: async (_secret, _plaintextRecoveryCodes) => ({
+        ok: false,
+        error: 'Legacy 2FA is disabled.',
+      }),
 
       cancelPendingMfa: () => set({
         currentUser: null,
@@ -903,55 +1052,47 @@ export const useStore = create<AppState>()(
         pendingMfaMode: null,
       }),
 
-      adminResetMfa: async (userId) => {
+      adminResetMfa: async (_userId) => {
         const actor = get().currentUser
         if (!hasPermission(actor, 'admin:manageUsers')) {
           toast.error('You do not have permission to reset 2FA.')
           return false
         }
-        const target = get().users.find(u => u.id === userId)
-        if (!target) return false
-        const updated: User = { ...target, mfaEnabled: false, mfaSecret: null, mfaRecoveryCodes: [] }
-        if (isSupabaseConnected) {
-          const ok = await upsertUser(updated)
-          if (!ok) {
-            toast.error('Could not reset 2FA in the database. Please try again.')
-            return false
-          }
-        }
-        set(s => ({ users: s.users.map(u => u.id === userId ? updated : u) }))
-        get().logActivity({
-          action: `Reset 2FA for user: ${target.name} (${target.email})`,
-          user: actor?.name || 'System',
-          userRole: actor?.role || 'CAPTURE_MANAGER',
-          entityType: 'user',
-          entityId: target.id,
-          entityName: target.name,
-        })
-        return true
+        toast.error('Legacy 2FA is disabled.')
+        return false
       },
 
       // ── User management ─────────────────────────────────────────────
-      createUser: (data) => {
+      createUser: async (data) => {
         const actor = get().currentUser
         if (!hasPermission(actor, 'admin:manageUsers')) {
           toast.error('Only the Capture Manager can manage users.')
-          return
+          return false
         }
-        const user: User = {
-          ...data,
-          id: `u${Date.now()}`,
-          createdAt: new Date().toISOString().split('T')[0],
-        }
-        set(s => ({
-          users: [...s.users, user],
-          employees: syncEmployeesWithUsers([...s.users, user], s.employees),
-        }))
-        void upsertUser(user).then(ok => {
-          if (!ok && isSupabaseConnected) {
-            toast.error('Saved locally but failed to sync user to the database.')
-          }
+        const result = await invokeManageUsers({
+          action: 'create',
+          user: {
+            name: data.name,
+            email: data.email,
+            username: data.username,
+            role: data.role,
+            avatar: data.avatar,
+            status: data.status,
+            firstLogin: true,
+            team: data.team,
+            managerId: data.managerId,
+            password: data.password,
+          },
         })
+        if (!result.ok || !result.user) {
+          toast.error(result.ok ? 'The service returned no user profile.' : result.error)
+          return false
+        }
+        const user = toSafeUser(result.user)
+        set(s => ({
+          users: mergeSafeUser(s.users, user),
+          employees: syncEmployeesWithUsers(mergeSafeUser(s.users, user), s.employees),
+        }))
         get().logActivity({
           action: `Created user: ${user.name} (${user.email}) as ${user.role}`,
           user: actor?.name || 'System',
@@ -960,38 +1101,49 @@ export const useStore = create<AppState>()(
           entityId: user.id,
           entityName: user.name,
         })
+        return true
       },
 
-      updateUser: (id, data) => {
+      updateUser: async (id, data) => {
         const actor = get().currentUser
         if (!hasPermission(actor, 'admin:manageUsers')) {
           toast.error('Only the Capture Manager can manage users.')
-          return
+          return false
         }
         const before = get().users.find(u => u.id === id)
+        if (!before) return false
+        const result = await invokeManageUsers({
+          action: 'update',
+          userId: id,
+          updates: {
+            name: data.name,
+            email: data.email,
+            username: data.username,
+            role: data.role,
+            avatar: data.avatar,
+            status: data.status,
+            team: data.team,
+            managerId: data.managerId,
+          },
+        })
+        if (!result.ok) {
+          toast.error(result.error)
+          return false
+        }
+        const after = toSafeUser(result.user ?? { ...before, ...data })
         set(s => {
-          const nextUsers = s.users.map(u => u.id === id ? { ...u, ...data } : u)
+          const nextUsers = mergeSafeUser(s.users, after)
           const currentUser = s.currentUser && s.currentUser.id === id
-            ? { ...s.currentUser, ...data }
+            ? after
             : s.currentUser
           return { users: nextUsers, employees: syncEmployeesWithUsers(nextUsers, s.employees), currentUser }
         })
-        const after = get().users.find(u => u.id === id)
         if (after) {
-          void upsertUser(after).then(ok => {
-            if (!ok && isSupabaseConnected) {
-              toast.error('Saved locally but failed to sync user changes to the database.')
-            }
-          })
-        }
-        if (before && after) {
           const changes: string[] = []
           if (data.role && data.role !== before.role) changes.push(`role: ${before.role} → ${after.role}`)
           if (data.team !== undefined && data.team !== before.team) changes.push(`team: ${before.team ?? '-'} → ${after.team ?? '-'}`)
           if (data.managerId !== undefined && data.managerId !== before.managerId) changes.push('manager updated')
           if (data.status && data.status !== before.status) changes.push(`status: ${before.status} → ${after.status}`)
-          if (data.password && data.password !== before.password) changes.push('password reset')
-          if (data.firstLogin && !before.firstLogin) changes.push('first-login forced')
           if (changes.length > 0 || data.name || data.email) {
             const detail = changes.length ? ` (${changes.join(', ')})` : ''
             get().logActivity({
@@ -1004,25 +1156,56 @@ export const useStore = create<AppState>()(
             })
           }
         }
+        return true
       },
 
-      deleteUser: (id) => {
+      resetUserPassword: async (id, password) => {
         const actor = get().currentUser
         if (!hasPermission(actor, 'admin:manageUsers')) {
           toast.error('Only the Capture Manager can manage users.')
-          return
+          return false
+        }
+        const target = get().users.find(user => user.id === id)
+        if (!target || password.length < 8) return false
+        const result = await invokeManageUsers({ action: 'reset-password', userId: id, password })
+        if (!result.ok) {
+          toast.error(result.error)
+          return false
+        }
+        const updated = toSafeUser(result.user ?? { ...target, firstLogin: true })
+        set(s => {
+          const users = mergeSafeUser(s.users, updated)
+          return { users, employees: syncEmployeesWithUsers(users, s.employees) }
+        })
+        get().logActivity({
+          action: `Forced password reset for user: ${target.name}`,
+          user: actor?.name || 'System',
+          userRole: actor?.role || 'CAPTURE_MANAGER',
+          entityType: 'user',
+          entityId: target.id,
+          entityName: target.name,
+        })
+        return true
+      },
+
+      deleteUser: async (id) => {
+        const actor = get().currentUser
+        if (!hasPermission(actor, 'admin:manageUsers')) {
+          toast.error('Only the Capture Manager can manage users.')
+          return false
         }
         const target = get().users.find(u => u.id === id)
+        if (!target || target.id === actor?.id) return false
+        const result = await invokeManageUsers({ action: 'delete', userId: id })
+        if (!result.ok) {
+          toast.error(result.error)
+          return false
+        }
         set(s => {
           const nextUsers = s.users.filter(u => u.id !== id)
           return { users: nextUsers, employees: syncEmployeesWithUsers(nextUsers, s.employees) }
         })
         if (target) {
-          void deleteUserRecord(id).then(ok => {
-            if (!ok && isSupabaseConnected) {
-              toast.error('Removed locally but failed to delete user from the database.')
-            }
-          })
           get().logActivity({
             action: `Removed user: ${target.name} (${target.email})`,
             user: actor?.name || 'System',
@@ -1032,6 +1215,7 @@ export const useStore = create<AppState>()(
             entityName: target.name,
           })
         }
+        return true
       },
 
       // ── Opportunity management ──────────────────────────────────────
@@ -3209,12 +3393,8 @@ export const useStore = create<AppState>()(
 
       // ── DB ──────────────────────────────────────────────────────────
       syncUsersFromDb: async () => {
-        if (!isSupabaseConnected) return
+        if (!isSupabaseConnected || !get().isAuthenticated) return
         try {
-          // Push the local seed users (and any locally-created users that the
-          // DB hasn't seen yet) so the DB is the source of truth across browsers.
-          await seedUsersIfEmpty(get().users)
-
           const data = await loadAllData()
           if (!data) return
           if (data.users.length === 0) return
@@ -3234,11 +3414,7 @@ export const useStore = create<AppState>()(
                     u.email.toLowerCase() === s.currentUser!.email.toLowerCase()
                   )
                   if (!dbMatch) return s.currentUser
-                  return {
-                    ...dbMatch,
-                    firstLogin: dbMatch.firstLogin && s.currentUser!.firstLogin,
-                    password: s.currentUser!.password ?? dbMatch.password,
-                  }
+                  return dbMatch
                 })()
               : null
             // Reflect the monotonic merge in the users list too so Admin
@@ -3268,11 +3444,10 @@ export const useStore = create<AppState>()(
       },
 
       initializeStore: async () => {
-        if (!isSupabaseConnected) return
+        if (!isSupabaseConnected || !get().isAuthenticated) return
         if (get().dbReady) return
 
         try {
-          await seedUsersIfEmpty(get().users)
           await seedEmployeesIfEmpty(syncEmployeesWithUsers(get().users, []))
 
           // seedIfEmpty is now a no-op (all mock arrays are empty)
@@ -3306,7 +3481,7 @@ export const useStore = create<AppState>()(
             const localCurrentUser = get().currentUser
             const mergedUsers = data.users.length > 0
               ? data.users
-              : localUsers
+              : localCurrentUser ? mergeSafeUser(localUsers, localCurrentUser) : []
             // See syncUsersFromDb: never regress monotonic auth flags for the
             // active user when the DB read is stale relative to a just-completed
             // first-login that is still propagating.
@@ -3317,11 +3492,7 @@ export const useStore = create<AppState>()(
                     u.email.toLowerCase() === localCurrentUser.email.toLowerCase()
                   )
                   if (!dbMatch) return localCurrentUser
-                  return {
-                    ...dbMatch,
-                    firstLogin: dbMatch.firstLogin && localCurrentUser.firstLogin,
-                    password: localCurrentUser.password ?? dbMatch.password,
-                  }
+                  return dbMatch
                 })()
               : null
             const finalUsers = refreshedCurrent
@@ -3441,29 +3612,74 @@ export const useStore = create<AppState>()(
       // needless re-renders / auth churn) and skips the one-time canceled→BD
       // migration that init performs.
       refreshFromDb: async () => {
-        if (!isSupabaseConnected || !get().dbReady || refreshInFlight) return
+        const initial = get()
+        if (
+          !isSupabaseConnected ||
+          !initial.dbReady ||
+          !initial.isAuthenticated ||
+          !initial.currentUser ||
+          refreshInFlight
+        ) return
         refreshInFlight = true
         try {
+          // Revalidate identity/profile before touching workspace tables. This
+          // makes inactive/deleted/admin-reset accounts fail closed even while
+          // an older JWT is still present in the browser.
+          const profileResult = await revalidateAuthenticatedProfile(
+            initial.currentUser.authUserId,
+          )
+          if (!profileResult.ok) {
+            if (profileResult.retryable) return
+            clearAuthSessionMeta()
+            set(clearedAuthState())
+            try {
+              await signOutCurrentSession()
+            } catch {
+              // State is already purged; remote sign-out is best effort.
+            }
+            return
+          }
+
+          // Do not let a refresh that started before logout/account switching
+          // re-authenticate a newer store state with stale results.
+          const latest = get()
+          if (
+            !latest.isAuthenticated ||
+            !latest.currentUser ||
+            latest.currentUser.id !== initial.currentUser.id ||
+            latest.loginTimestamp !== initial.loginTimestamp
+          ) return
+
+          const refreshedProfile = toSafeUser(profileResult.profile)
+          const startedAt = latest.loginTimestamp ?? Date.now()
+          if (refreshedProfile.firstLogin) {
+            set(pendingFirstLoginState(
+              refreshedProfile,
+              startedAt,
+              latest.accessNoticeAccepted,
+            ))
+            return
+          }
+
+          // Apply role/team/manager changes before any business payload lands.
+          set(state => ({
+            currentUser: refreshedProfile,
+            users: mergeSafeUser(state.users, refreshedProfile),
+          }))
+
           const data = await loadAllData()
+          const afterLoad = get()
+          if (
+            !afterLoad.isAuthenticated ||
+            afterLoad.currentUser?.id !== refreshedProfile.id ||
+            afterLoad.loginTimestamp !== startedAt
+          ) return
           if (data) {
             const canceledIds = new Set(
               data.opportunities.filter(o => o.status === 'CANCELED').map(o => o.id),
             )
-            const localCurrent = get().currentUser
             const dbUsers = data.users.length > 0 ? data.users : get().users
-            // Reflect the current user's latest DB row into the users array (so
-            // Admin views stay live) while keeping firstLogin monotonic and not
-            // clobbering the locally-held password.
-            const finalUsers = localCurrent
-              ? dbUsers.map(u => {
-                  if (u.id !== localCurrent.id) return u
-                  return {
-                    ...u,
-                    firstLogin: u.firstLogin && localCurrent.firstLogin,
-                    password: localCurrent.password ?? u.password,
-                  }
-                })
-              : dbUsers
+            const finalUsers = mergeSafeUser(dbUsers, refreshedProfile)
             set({
               users: finalUsers,
               employees: syncEmployeesWithUsers(
@@ -3483,6 +3699,12 @@ export const useStore = create<AppState>()(
           }
 
           const [nRes, rRes, aRes] = await Promise.all([fetchNotifications(), fetchEmployeeRequests(), fetchActivityLogs()])
+          const afterCollaborationLoad = get()
+          if (
+            !afterCollaborationLoad.isAuthenticated ||
+            afterCollaborationLoad.currentUser?.id !== refreshedProfile.id ||
+            afterCollaborationLoad.loginTimestamp !== startedAt
+          ) return
           const collabPatch: { notifications?: Notification[]; employeeRequests?: EmployeeRequest[]; activityLogs?: ActivityLog[] } = {}
           if (nRes.ok && nRes.payload) {
             const readLocal = new Set(get().notifications.filter(n => n.read).map(n => n.id))
@@ -3892,7 +4114,7 @@ export const useStore = create<AppState>()(
         if (isSupabaseConnected) {
           // Remove rows one at a time so the existing per-row helper handles
           // any FK side-effects already encoded in deleteUserRecord.
-          await Promise.all(removed.map(u => deleteUserRecord(u.id)))
+          await Promise.all(removed.map(u => invokeManageUsers({ action: 'delete', userId: u.id })))
         }
         get().logActivity({
           action: `Removed ${removed.length} non-admin user account(s)`,
@@ -3959,7 +4181,7 @@ export const useStore = create<AppState>()(
           await bulkDeleteFromTable('subk_database')
           await bulkDeleteFromTable('notifications')
           await bulkDeleteFromTable('activity_logs')
-          await Promise.all(removedUsers.map(u => deleteUserRecord(u.id)))
+          await Promise.all(removedUsers.map(u => invokeManageUsers({ action: 'delete', userId: u.id })))
         }
 
         get().logActivity({
@@ -3980,7 +4202,7 @@ export const useStore = create<AppState>()(
           exportedAt: new Date().toISOString(),
           exportedBy: s.currentUser?.name ?? null,
           data: {
-            users: s.users,
+            users: s.users.map(toSafeUser),
             employees: s.employees,
             opportunities: s.opportunities,
             contracts: s.contracts,
@@ -4021,7 +4243,7 @@ export const useStore = create<AppState>()(
           return { ok: false, error: 'Snapshot is missing the "data" section.' }
         }
         const arr = <T,>(v: unknown, fallback: T[]): T[] => (Array.isArray(v) ? v as T[] : fallback)
-        const nextUsers          = arr<User>(d.users, get().users)
+        const nextUsers          = arr<User>(d.users, get().users).map(toSafeUser)
         const nextOpportunities  = arr<Opportunity>(d.opportunities, [])
         const nextContracts      = arr<Contract>(d.contracts, [])
         const nextFreshAwards    = arr<FreshAward>(d.freshAwards, [])
@@ -4103,118 +4325,25 @@ export const useStore = create<AppState>()(
       // v14: first forced refresh of seeded department users.
       // v13: assignment employees are derived strictly from active users so
       // deleted/inactive users disappear from assignment pickers.
-      version: 21,
-      migrate: (persistedState: unknown, fromVersion: number) => {
-        const s = persistedState as Record<string, unknown>
-        delete s.needsMFASetup
-        // Never let a persisted mid-flow 2FA gate survive a rehydrate. These
-        // fields are not in partialize either, so they always start null.
-        delete s.pendingMfaUserId
-        delete s.pendingMfaMode
-        if (fromVersion < 17) {
-          return {
-            ...s,
-            currentUser:     null,
-            isAuthenticated: false,
-            needsFirstLogin: false,
-            loginTimestamp:  null,
-            accessNoticeAccepted: false,
-            users:           MOCK_USERS,
-            employees:       syncEmployeesWithUsers(MOCK_USERS, []),
-            opportunities:   [],
-            contracts:       [],
-            freshAwards:     [],
-            pastPerformances:[],
-            nonSubReports:   [],
-            deletionRequests:[],
-            subcontractors:  [],
-            bdSubmissions:   [],
-            notifications:   [],
-            activityLogs:    [],
-            subkDatabase:    [],
-            companyCertifications: [],
-            employeeRequests: [],
-            needsPurge:      false,
-            dbReady:         false,
-            nonSubGraceHours: 0,
-            nonSubGraceMinutes: 5,
-            requireAssociateForActivePipeline: true,
-            nextInvoiceNumber: 1,
-            prefs:           { notificationSound: true },
-            userSessions:    {},
-            rolePermissionOverrides: {},
-            userPermissionGrants:    {},
-            userPermissionRevokes:   {},
-          }
-        }
-        const nextUsers = mergeSeedUsers(s.users, fromVersion < 15)
-        const normalizedCurrentUser = normalizePersistedUserRole(s.currentUser) as User | null
-        const nextCurrentUser = normalizedCurrentUser
-          ? nextUsers.find(user =>
-              user.id === normalizedCurrentUser.id ||
-              user.email.toLowerCase() === normalizedCurrentUser.email.toLowerCase()
-            ) ?? normalizedCurrentUser
-          : null
+      // v22 intentionally discards every legacy auth and workspace snapshot.
+      // Supabase is the data source; only non-sensitive display preferences may
+      // survive a refresh in this browser.
+      version: 22,
+      migrate: (persistedState: unknown) => {
+        const state = persistedState && typeof persistedState === 'object'
+          ? persistedState as Record<string, unknown>
+          : {}
+        const prefs = state.prefs && typeof state.prefs === 'object'
+          ? state.prefs as Record<string, unknown>
+          : {}
         return {
-          ...s,
-          currentUser: nextCurrentUser,
-          users: nextUsers,
-          employees: syncEmployeesWithUsers(nextUsers, []),
-          accessNoticeAccepted: Boolean(s.accessNoticeAccepted),
-          nonSubGraceHours: Number(s.nonSubGraceHours ?? 0),
-          nonSubGraceMinutes: Number(s.nonSubGraceMinutes ?? 5),
-          requireAssociateForActivePipeline: s.requireAssociateForActivePipeline !== false,
-          nextInvoiceNumber: Math.max(1, Math.trunc(Number(s.nextInvoiceNumber) || 1)),
-          companyCertifications: Array.isArray(s.companyCertifications) ? s.companyCertifications : [],
-          employeeRequests: Array.isArray(s.employeeRequests) ? s.employeeRequests : [],
-          goals: Array.isArray(s.goals) ? s.goals as Goal[] : [],
-          prefs: {
-            notificationSound: (s.prefs as Record<string, unknown> | undefined)?.notificationSound !== false,
-          },
-          userSessions: (s.userSessions && typeof s.userSessions === 'object') ? s.userSessions as Record<string, { lastLoginAt?: string }> : {},
-          rolePermissionOverrides: (s.rolePermissionOverrides && typeof s.rolePermissionOverrides === 'object') ? s.rolePermissionOverrides as Partial<Record<Role, Permission[]>> : {},
-          userPermissionGrants:    (s.userPermissionGrants    && typeof s.userPermissionGrants    === 'object') ? s.userPermissionGrants    as Record<string, Permission[]> : {},
-          userPermissionRevokes:   (s.userPermissionRevokes   && typeof s.userPermissionRevokes   === 'object') ? s.userPermissionRevokes   as Record<string, Permission[]> : {},
-          needsPurge: false,
-          dbReady: false,
+          sidebarCollapsed: state.sidebarCollapsed === true,
+          prefs: { notificationSound: prefs.notificationSound !== false },
         }
       },
-      // Persist all business data so changes survive logout/refresh
-      // (Supabase sync overrides this when connected; localStorage is the fallback)
-      partialize: s => ({
-        currentUser:       s.currentUser,
-        isAuthenticated:  s.isAuthenticated,
-        needsFirstLogin:  s.needsFirstLogin,
-        loginTimestamp:   s.loginTimestamp,
-        accessNoticeAccepted: s.accessNoticeAccepted,
-        sidebarCollapsed:  s.sidebarCollapsed,
-        nonSubGraceHours:  s.nonSubGraceHours,
-        nonSubGraceMinutes: s.nonSubGraceMinutes,
-        requireAssociateForActivePipeline: s.requireAssociateForActivePipeline,
-        nextInvoiceNumber: s.nextInvoiceNumber,
-        opportunities:     s.opportunities,
-        contracts:         s.contracts,
-        freshAwards:       s.freshAwards,
-        pastPerformances:  s.pastPerformances,
-        nonSubReports:     s.nonSubReports,
-        deletionRequests:  s.deletionRequests,
-        subcontractors:    s.subcontractors,
-        bdSubmissions:     s.bdSubmissions,
-        users:             s.users,
-        employees:         s.employees,
-        activityLogs:      s.activityLogs,
-        subkDatabase:      s.subkDatabase,
-        companyCertifications: s.companyCertifications,
-        employeeRequests:  s.employeeRequests,
-        goals:             s.goals,
-        notifications:     s.notifications,
-        prefs:             s.prefs,
-        userSessions:      s.userSessions,
-        rolePermissionOverrides: s.rolePermissionOverrides,
-        userPermissionGrants:    s.userPermissionGrants,
-        userPermissionRevokes:   s.userPermissionRevokes,
-        needsPurge:        false,
-        dbReady:           false,
+      partialize: state => ({
+        sidebarCollapsed: state.sidebarCollapsed,
+        prefs: state.prefs,
       }),
     }
   )

@@ -22,7 +22,12 @@ import type {
   ContractCommEntry, ContractCommChannel,
 } from '../types'
 import { formatCurrency, useEscapeKey } from '../lib/utils'
-import { uploadAttachment as uploadToStorage, downloadAttachment as downloadAttachmentFromStorage } from '../lib/attachments'
+import {
+  uploadAttachment as uploadToStorage,
+  downloadAttachment as downloadAttachmentFile,
+  hasAttachmentSource,
+  previewAttachment as previewAttachmentFile,
+} from '../lib/attachments'
 import { collectSourcingQuoteAttachments, getSourcingQuoteAttachments, hasSourcingQuote } from '../lib/subcontractorQuotes'
 import { hasPermission } from '../lib/permissions'
 import { isOpsAgent } from '../lib/team'
@@ -143,82 +148,22 @@ function formatFileSize(size?: number) {
   return `${(size / (1024 * 1024)).toFixed(1)} MB`
 }
 
-function dataUrlToBlob(dataUrl: string, fallbackMimeType?: string) {
-  const commaIndex = dataUrl.indexOf(',')
-  if (commaIndex === -1) return null
-
-  const meta = dataUrl.slice(0, commaIndex)
-  const body = dataUrl.slice(commaIndex + 1)
-  const mimeType = meta.match(/^data:([^;]+)/i)?.[1] || fallbackMimeType || 'application/octet-stream'
-  let raw = ''
-  try {
-    raw = meta.includes(';base64') ? atob(body) : decodeURIComponent(body)
-  } catch {
-    return null
-  }
-  const bytes = new Uint8Array(raw.length)
-  for (let i = 0; i < raw.length; i += 1) bytes[i] = raw.charCodeAt(i)
-  return new Blob([bytes], { type: mimeType })
-}
-
-function getAttachmentBlobUrl(att: FileAttachment) {
-  if (!att.dataUrl) {
-    toast.error('This attachment only has saved metadata. Re-upload it to make the file viewable.')
-    return null
-  }
-  const blob = dataUrlToBlob(att.dataUrl, att.mimeType)
-  if (!blob) {
-    toast.error('Attachment data could not be opened.')
-    return null
-  }
-  return URL.createObjectURL(blob)
-}
-
 function downloadAttachment(att: FileAttachment) {
-  if (att.url) {
-    void downloadAttachmentFromStorage(att).catch(() => toast.error('Attachment could not be downloaded.'))
+  if (!hasAttachmentSource(att)) {
+    toast.error('This attachment only has saved metadata. Re-upload it to download the file.')
     return
   }
-  const fileUrl = getAttachmentBlobUrl(att)
-  if (!fileUrl) return
-
-  const link = document.createElement('a')
-  link.href = fileUrl
-  link.download = att.name || 'attachment'
-  link.rel = 'noopener'
-  document.body.appendChild(link)
-  link.click()
-  link.remove()
-  setTimeout(() => URL.revokeObjectURL(fileUrl), 60 * 1000)
+  void downloadAttachmentFile(att).catch(() => toast.error('Attachment could not be downloaded.'))
 }
 
 function viewAttachment(att: FileAttachment) {
-  if (att.url) {
-    const win = window.open(att.url, '_blank')
-    if (!win) toast.error('Popup was blocked. Allow popups to view attachments.')
+  if (!hasAttachmentSource(att)) {
+    toast.error('This attachment only has saved metadata. Re-upload it to view the file.')
     return
   }
-  const fileUrl = getAttachmentBlobUrl(att)
-  if (!fileUrl) return
-
-  const mimeType = att.mimeType || ''
-  const lowerName = att.name.toLowerCase()
-  const isImage = mimeType.startsWith('image/') || /\.(png|jpe?g|gif|webp|avif|svg)$/i.test(lowerName)
-  const isPdf = mimeType === 'application/pdf' || lowerName.endsWith('.pdf')
-
-  if (!isImage && !isPdf) {
-    URL.revokeObjectURL(fileUrl)
-    downloadAttachment(att)
-    return
-  }
-
-  const win = window.open(fileUrl, '_blank')
-  if (!win) {
-    URL.revokeObjectURL(fileUrl)
-    toast.error('Popup was blocked. Allow popups to view attachments.')
-    return
-  }
-  setTimeout(() => URL.revokeObjectURL(fileUrl), 10 * 60 * 1000)
+  void previewAttachmentFile(att).catch(error => {
+    toast.error(error instanceof Error ? error.message : 'Attachment could not be opened.')
+  })
 }
 
 function AttachmentPicker({
@@ -315,7 +260,7 @@ function AttachmentPicker({
                 <button
                   type="button"
                   onClick={() => viewAttachment(att)}
-                  disabled={!att.url && !att.dataUrl}
+                  disabled={!hasAttachmentSource(att)}
                   className="flex items-center gap-1.5 rounded-lg bg-white px-2.5 py-1.5 text-[11px] font-black text-slate-900 transition-colors hover:bg-[#F8E8B8] disabled:cursor-not-allowed disabled:opacity-45"
                 >
                   <Eye size={12} /> View
@@ -323,7 +268,7 @@ function AttachmentPicker({
                 <button
                   type="button"
                   onClick={() => downloadAttachment(att)}
-                  disabled={!att.url && !att.dataUrl}
+                  disabled={!hasAttachmentSource(att)}
                   className="flex items-center gap-1.5 rounded-lg border border-[#D7BE7A]/35 bg-[#D7BE7A]/15 px-2.5 py-1.5 text-[11px] font-black text-[#F8E8B8] transition-colors hover:bg-[#D7BE7A]/25 disabled:cursor-not-allowed disabled:opacity-45"
                 >
                   <Download size={12} /> Download
@@ -1193,7 +1138,7 @@ function ContractVehicleOrdersTab({
                       <button
                         type="button"
                         onClick={() => viewAttachment(order.document!)}
-                        disabled={!order.document.url && !order.document.dataUrl}
+                        disabled={!hasAttachmentSource(order.document)}
                         className="rounded-lg bg-white px-2.5 py-1 text-[11px] font-black text-slate-900 transition-colors hover:bg-[#F8E8B8] disabled:cursor-not-allowed disabled:opacity-45"
                       >
                         View
@@ -1201,7 +1146,7 @@ function ContractVehicleOrdersTab({
                       <button
                         type="button"
                         onClick={() => downloadAttachment(order.document!)}
-                        disabled={!order.document.url && !order.document.dataUrl}
+                        disabled={!hasAttachmentSource(order.document)}
                         className="rounded-lg border border-[#D7BE7A]/35 bg-[#D7BE7A]/15 px-2.5 py-1 text-[11px] font-black text-[#F8E8B8] transition-colors hover:bg-[#D7BE7A]/25 disabled:cursor-not-allowed disabled:opacity-45"
                       >
                         Download
@@ -2332,7 +2277,7 @@ function ContractDetailDrawer({
                         <button
                           type="button"
                           onClick={() => viewAttachment(att)}
-                          disabled={!att.url && !att.dataUrl}
+                          disabled={!hasAttachmentSource(att)}
                           className="flex items-center gap-1.5 rounded-lg bg-white px-2.5 py-1.5 text-[11px] font-black text-slate-900 transition-colors hover:bg-[#F8E8B8] disabled:cursor-not-allowed disabled:opacity-45"
                         >
                           <Eye size={12} /> View
@@ -2340,7 +2285,7 @@ function ContractDetailDrawer({
                         <button
                           type="button"
                           onClick={() => downloadAttachment(att)}
-                          disabled={!att.url && !att.dataUrl}
+                          disabled={!hasAttachmentSource(att)}
                           className="flex items-center gap-1.5 rounded-lg border border-[#D7BE7A]/35 bg-[#D7BE7A]/15 px-2.5 py-1.5 text-[11px] font-black text-[#F8E8B8] transition-colors hover:bg-[#D7BE7A]/25 disabled:cursor-not-allowed disabled:opacity-45"
                         >
                           <Download size={12} /> Download

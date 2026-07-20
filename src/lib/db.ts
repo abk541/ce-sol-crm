@@ -31,6 +31,7 @@ import type {
   User,
 } from '../types'
 import type { Permission } from './permissions'
+import { mapSafeUserRow, SAFE_USER_COLUMNS } from './userProfile'
 import {
   normalizeContractDeliverables,
   serializeContractDeliverables,
@@ -1065,63 +1066,8 @@ async function upsertEmployeeRowForSync(
 
 // ── User mapper ──────────────────────────────────────────────────────────────
 
-function userToDb(u: User): Record<string, unknown> {
-  return {
-    id: u.id,
-    name: u.name,
-    email: u.email,
-    username: u.username,
-    role: u.role,
-    avatar: u.avatar ?? '',
-    status: u.status,
-    first_login: u.firstLogin,
-    password: u.password ?? null,
-    team: u.team ?? null,
-    manager_id: u.managerId ?? null,
-    created_at: u.createdAt ?? new Date().toISOString().split('T')[0],
-    mfa_enabled: u.mfaEnabled ?? false,
-    mfa_secret: u.mfaSecret ?? null,
-    mfa_recovery_codes: u.mfaRecoveryCodes ?? [],
-  }
-}
-
 function dbToUser(row: Record<string, unknown>): User {
-  const createdAtRaw = row.created_at as string | null | undefined
-  const createdAt = (createdAtRaw ?? '').split('T')[0] || new Date().toISOString().split('T')[0]
-  const recoveryRaw = row.mfa_recovery_codes
-  const mfaRecoveryCodes = Array.isArray(recoveryRaw)
-    ? (recoveryRaw as unknown[]).filter((x): x is string => typeof x === 'string')
-    : []
-  return {
-    id: row.id as string,
-    name: row.name as string,
-    email: row.email as string,
-    username: row.username as string,
-    role: row.role as User['role'],
-    avatar: ((row.avatar as string | null) ?? '') as string,
-    status: ((row.status as string) ?? 'active') as User['status'],
-    firstLogin: Boolean(row.first_login),
-    createdAt,
-    password: ((row.password as string | null) ?? undefined) as string | undefined,
-    team: ((row.team as string | null | undefined) ?? undefined) as User['team'],
-    managerId: ((row.manager_id as string | null | undefined) ?? null) as User['managerId'],
-    mfaEnabled: Boolean(row.mfa_enabled),
-    mfaSecret: ((row.mfa_secret as string | null) ?? null),
-    mfaRecoveryCodes,
-  }
-}
-
-function userSyncRank(user: User): number {
-  // Insert top-level managers (no manager) first so self-FK resolves.
-  if (!user.managerId) return 0
-  if (user.role === 'TEAM_LEAD') return 1
-  return 2
-}
-
-function userRowsForSync(users: User[]): Record<string, unknown>[] {
-  return [...users]
-    .sort((a, b) => userSyncRank(a) - userSyncRank(b))
-    .map(userToDb)
+  return mapSafeUserRow(row)
 }
 
 // ── Load all data ────────────────────────────────────────────────────────────
@@ -1282,7 +1228,7 @@ export async function loadAllData(): Promise<{
       deletionRes,
       bdRes,
     ] = await Promise.all([
-      supabase.from('users').select('*'),
+      supabase.from('users').select(SAFE_USER_COLUMNS),
       supabase.from('employees').select('*'),
       supabase.from('opportunities').select('*'),
       supabase.from('comments').select('*'),
@@ -1346,7 +1292,7 @@ export async function loadAllData(): Promise<{
     }
 
     const employees: Employee[] = (empRes.data ?? []).map(r => dbToEmp(r as Record<string, unknown>))
-    const users: User[] = (userRes.data ?? []).map(r => dbToUser(r as Record<string, unknown>))
+    const users: User[] = (userRes.data ?? []).map(r => dbToUser(r as unknown as Record<string, unknown>))
     const commentsByOpp = new Map<string, Comment[]>()
     ;(commentRes.data ?? []).forEach(r => {
       const row = r as Record<string, unknown>
@@ -1977,6 +1923,11 @@ export async function clearAllPermissionOverrides(): Promise<PermissionOverrides
 
 export type AppSettings = Record<string, string>
 
+const KNOWN_NON_SECRET_APP_SETTINGS = new Set([
+  'non_sub_grace_hours',
+  'non_sub_grace_minutes',
+])
+
 export interface AppSettingsResult {
   ok: boolean
   missingTable: boolean
@@ -1997,7 +1948,11 @@ export async function fetchAppSettings(): Promise<AppSettingsResult> {
     const payload: AppSettings = {}
     for (const row of data ?? []) {
       const r = row as { key: unknown; value: unknown }
-      if (typeof r.key === 'string' && typeof r.value === 'string') {
+      if (
+        typeof r.key === 'string' &&
+        typeof r.value === 'string' &&
+        KNOWN_NON_SECRET_APP_SETTINGS.has(r.key)
+      ) {
         payload[r.key] = r.value
       }
     }
@@ -2011,6 +1966,7 @@ export async function fetchAppSettings(): Promise<AppSettingsResult> {
 
 export async function saveAppSetting(key: string, value: string): Promise<AppSettingsResult> {
   if (!isSupabaseConnected || !supabase) return { ok: false, missingTable: false }
+  if (!KNOWN_NON_SECRET_APP_SETTINGS.has(key)) return { ok: false, missingTable: false }
   try {
     const { error } = await supabase
       .from('app_settings')
@@ -2362,56 +2318,6 @@ export async function seedEmployeesIfEmpty(employees: Employee[]): Promise<boole
     return allSynced
   } catch (err) {
     console.error('[db] seedEmployeesIfEmpty failed', err)
-    return false
-  }
-}
-
-export async function upsertUser(user: User): Promise<boolean> {
-  if (!isSupabaseConnected || !supabase) return false
-  try {
-    const { error } = await supabase.from('users').upsert(userToDb(user), { onConflict: 'id' })
-    if (error) {
-      console.error('[db] upsertUser error', error)
-      return false
-    }
-    return true
-  } catch (err) {
-    console.error('[db] upsertUser threw', err)
-    return false
-  }
-}
-
-export async function deleteUserRecord(id: string): Promise<boolean> {
-  if (!isSupabaseConnected || !supabase) return false
-  try {
-    const { error } = await supabase.from('users').delete().eq('id', id)
-    if (error) {
-      console.error('[db] deleteUser error', error)
-      return false
-    }
-    return true
-  } catch (err) {
-    console.error('[db] deleteUser threw', err)
-    return false
-  }
-}
-
-export async function seedUsersIfEmpty(users: User[]): Promise<boolean> {
-  if (!isSupabaseConnected || !supabase || users.length === 0) return true
-  try {
-    const { count, error } = await supabase
-      .from('users')
-      .select('*', { count: 'exact', head: true })
-    if (error) {
-      console.error('[db] seedUsersIfEmpty count error', error)
-      return false
-    }
-    if ((count ?? 0) > 0) return true
-    const synced = await upsertBatched('users', userRowsForSync(users))
-    if (synced) console.log('[db] Seeded users in Supabase.')
-    return synced
-  } catch (err) {
-    console.error('[db] seedUsersIfEmpty failed', err)
     return false
   }
 }

@@ -7,7 +7,7 @@ import type {
 } from '../types'
 
 export const MOCK_USERS: User[] = [
-  { id:'u0', name:'Capture Admin', email:'abk@cesolutionplus.com', username:'abk', role:'CAPTURE_MANAGER', avatar:'CA', status:'active', firstLogin:false, createdAt:'2024-01-01', password:'abk123' },
+  { id:'u0', name:'Capture Admin', email:'abk@cesolutionplus.com', username:'abk', role:'CAPTURE_MANAGER', avatar:'CA', status:'active', firstLogin:false, createdAt:'2024-01-01' },
 ]
 
 // Empty business data: the system starts from the database, not seeded records.

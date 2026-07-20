@@ -26,7 +26,7 @@ describe('role permissions', () => {
       role: 'CAPTURE_MANAGER',
       status: 'active',
     })
-    expect(MOCK_USERS[0].password).toBeTruthy()
+    expect(MOCK_USERS[0]).not.toHaveProperty('password')
   })
 
   it('gives Capture Manager full control', () => {

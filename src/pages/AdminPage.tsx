@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useCallback, Fragment } from 'react'
 import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Plus, Pencil, Trash2, X, Check, Shield, ShieldOff, Search, Save, Network, List, GripVertical, Eye, EyeOff, KeyRound, RotateCcw, Users, GitBranch, AlertTriangle, Bomb, Database, FileText, Award, Bell, Activity, Briefcase, FolderTree, UserCog, Wifi, WifiOff, Download, Upload, ChevronDown, ChevronUp, RefreshCw, HardDrive, Lock, Target } from 'lucide-react'
+import { Plus, Pencil, Trash2, X, Check, Shield, Search, Save, Network, List, GripVertical, Eye, EyeOff, KeyRound, RotateCcw, Users, GitBranch, AlertTriangle, Bomb, Database, FileText, Award, Bell, Activity, Briefcase, FolderTree, UserCog, Wifi, WifiOff, Download, Upload, ChevronDown, ChevronUp, RefreshCw, HardDrive, Lock, Target } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import type { User, Role, EmployeeTeam, Goal, GoalMetric, GoalScope, Employee, Opportunity, FreshAward } from '../types'
 import { avatarColor, useEscapeKey } from '../lib/utils'
@@ -25,6 +25,8 @@ import {
 } from '../lib/permissions'
 import { fetchRemoteRowCounts, REMOTE_COUNT_TABLES, type RemoteCountTable } from '../lib/db'
 import { isSupabaseConnected, supabaseHost } from '../lib/supabase'
+import { getSamGovImportStatus } from '../lib/samGov'
+import { PASSWORD_POLICY_MESSAGE, passwordMeetsPolicy } from '../lib/passwordPolicy'
 import toast from 'react-hot-toast'
 
 const ROLES: Role[] = ['CAPTURE_MANAGER', 'BD_MANAGER', 'TEAM_LEAD', 'ASSOCIATE', 'OPS_MANAGER']
@@ -170,7 +172,7 @@ function UserModal({ user, defaultRole, defaultTeam, defaultManagerId, onClose }
   defaultManagerId?: string | null
   onClose: () => void
 }) {
-  const { createUser, updateUser, users, adminResetMfa } = useStore()
+  const { createUser, updateUser, resetUserPassword, users } = useStore()
   const isEdit = !!user
   const initialRole: Role = user?.role ?? defaultRole ?? 'ASSOCIATE'
   const initialTeam: EmployeeTeam | null = user
@@ -186,24 +188,10 @@ function UserModal({ user, defaultRole, defaultTeam, defaultManagerId, onClose }
     managerId: initialManagerId,
     status: user?.status ?? 'active',
     password: '',
-    forceFirstLogin: user ? false : true,
+    forceFirstLogin: false,
   })
   const [showPassword, setShowPassword] = useState(false)
-  const [mfaBusy, setMfaBusy] = useState(false)
-
-  // Live user reference so the 2FA panel reflects state after admin actions.
-  const liveUser = user ? users.find(u => u.id === user.id) ?? user : null
-  const mfaEnabled = !!liveUser?.mfaEnabled
-
-  const handleResetMfa = async () => {
-    if (!user) return
-    if (!window.confirm(`Disable 2FA for ${user.name}? They will have to enroll a new authenticator on their next sign-in.`)) return
-    setMfaBusy(true)
-    const ok = await adminResetMfa(user.id)
-    setMfaBusy(false)
-    if (ok) toast.success(`2FA disabled for ${user.name}.`)
-    else toast.error('Could not reset 2FA. Try again.')
-  }
+  const [saving, setSaving] = useState(false)
 
   // When role changes, snap team and clear an invalid parent.
   const handleRoleChange = (r: Role) => {
@@ -237,9 +225,19 @@ function UserModal({ user, defaultRole, defaultTeam, defaultManagerId, onClose }
       })
     : []
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!form.name || !form.email) return
+    if (!isEdit && !passwordMeetsPolicy(form.password)) {
+      toast.error(PASSWORD_POLICY_MESSAGE)
+      return
+    }
+    const wantsPasswordReset = isEdit && (form.forceFirstLogin || form.password.length > 0)
+    if (wantsPasswordReset && !passwordMeetsPolicy(form.password)) {
+      toast.error(PASSWORD_POLICY_MESSAGE)
+      return
+    }
+    setSaving(true)
     const username = form.email.split('@')[0]
     const team = teamForRole(form.role, form.team)
     const managerId = managerNeeded ? form.managerId : null
@@ -253,30 +251,30 @@ function UserModal({ user, defaultRole, defaultTeam, defaultManagerId, onClose }
         team: team ?? undefined,
         managerId,
       }
-      if (form.password.trim()) patch.password = form.password
-      if (form.forceFirstLogin) {
-        patch.firstLogin = true
-        patch.password = '' // clear so any password works on next login until they set a new one
+      const updated = await updateUser(user!.id, patch)
+      if (!updated) { setSaving(false); return }
+      if (wantsPasswordReset) {
+        const reset = await resetUserPassword(user!.id, form.password)
+        if (!reset) { setSaving(false); return }
       }
-      updateUser(user!.id, patch)
       toast.success('User updated')
     } else {
-      createUser({
+      const created = await createUser({
         name: form.name,
         email: form.email,
         username,
         role: form.role,
         status: form.status,
         avatar: form.name.split(' ').map(p => p[0]).join('').slice(0, 3).toUpperCase(),
-        firstLogin: form.forceFirstLogin,
+        firstLogin: true,
         team: team ?? undefined,
         managerId,
-        password: form.password.trim() || undefined,
+        password: form.password,
       })
-      toast.success(form.password.trim()
-        ? 'User created with initial password.'
-        : `User created. They'll set their password on first login.`)
+      if (!created) { setSaving(false); return }
+      toast.success('User created with an initial password.')
     }
+    setSaving(false)
     onClose()
   }
 
@@ -301,7 +299,7 @@ function UserModal({ user, defaultRole, defaultTeam, defaultManagerId, onClose }
             <div className="p-3 rounded-xl border border-indigo-500/15 bg-indigo-500/5 mb-4">
               <p className="text-[11px] text-slate-400">
                 The username will be auto-set from the email (part before @).
-                Leave the password blank to require the user to set one on first login.
+                Set a temporary password. The user must replace it on first login.
               </p>
             </div>
           )}
@@ -404,7 +402,7 @@ function UserModal({ user, defaultRole, defaultTeam, defaultManagerId, onClose }
 
               <div>
                 <label className="text-xs text-slate-500 block mb-1">
-                  {isEdit ? 'Set new password' : 'Initial password (optional)'}
+                  {isEdit ? 'Temporary password for reset' : 'Initial password'}
                 </label>
                 <div className="relative">
                   <input
@@ -412,8 +410,10 @@ function UserModal({ user, defaultRole, defaultTeam, defaultManagerId, onClose }
                     value={form.password}
                     onChange={e => setForm(p => ({ ...p, password: e.target.value }))}
                     className="input-field pr-9"
-                    placeholder={isEdit ? 'Leave blank to keep current' : 'Leave blank — user sets on first login'}
+                    placeholder={isEdit ? 'Required only when forcing a reset' : '8+ chars, uppercase, number & special'}
                     autoComplete="new-password"
+                    minLength={8}
+                    required={!isEdit}
                   />
                   <button
                     type="button"
@@ -424,61 +424,41 @@ function UserModal({ user, defaultRole, defaultTeam, defaultManagerId, onClose }
                 </div>
               </div>
 
-              <label className="flex items-start gap-2 cursor-pointer text-xs text-slate-300">
-                <input
-                  type="checkbox"
-                  checked={form.forceFirstLogin}
-                  onChange={e => setForm(p => ({ ...p, forceFirstLogin: e.target.checked }))}
-                  className="mt-0.5 accent-amber-400"
-                />
-                <span className="flex-1">
-                  <span className="flex items-center gap-1.5 font-semibold">
-                    <RotateCcw size={11} className="text-amber-300" />
-                    {isEdit ? 'Force password reset on next login' : 'Require password change on first login'}
+              {isEdit ? (
+                <label className="flex items-start gap-2 cursor-pointer text-xs text-slate-300">
+                  <input
+                    type="checkbox"
+                    checked={form.forceFirstLogin}
+                    onChange={e => setForm(p => ({ ...p, forceFirstLogin: e.target.checked }))}
+                    className="mt-0.5 accent-amber-400"
+                  />
+                  <span className="flex-1">
+                    <span className="flex items-center gap-1.5 font-semibold">
+                      <RotateCcw size={11} className="text-amber-300" />
+                      Force password reset on next login
+                    </span>
+                    <span className="text-[10px] text-slate-500 block mt-0.5">
+                      Sets the temporary password above and requires the user to replace it after signing in.
+                    </span>
                   </span>
-                  <span className="text-[10px] text-slate-500 block mt-0.5">
-                    {isEdit
-                      ? 'Clears their password and routes them to the first-login flow next time they sign in.'
-                      : 'User will be sent through the first-login flow to pick their own password.'}
+                </label>
+              ) : (
+                <div className="flex items-start gap-2 text-xs text-slate-300">
+                  <RotateCcw size={11} className="mt-0.5 text-amber-300" />
+                  <span className="flex-1">
+                    <span className="font-semibold">Password change required on first login</span>
+                    <span className="text-[10px] text-slate-500 block mt-0.5">
+                      Every new user must replace the temporary password after signing in.
+                    </span>
                   </span>
-                </span>
-              </label>
+                </div>
+              )}
             </div>
-
-            {isEdit && (
-              <div className="rounded-xl border border-indigo-500/15 bg-indigo-500/5 p-3 space-y-2">
-                <div className="flex items-center gap-1.5">
-                  <Shield size={12} className="text-indigo-300" />
-                  <h3 className="text-[11px] font-bold uppercase tracking-wide text-indigo-300">Two-Factor Authentication</h3>
-                </div>
-                <div className="flex items-center justify-between gap-2">
-                  <div className="text-xs">
-                    {mfaEnabled ? (
-                      <span className="text-emerald-300 font-semibold">Enrolled — authenticator active</span>
-                    ) : (
-                      <span className="text-slate-400">Not enrolled — user will be prompted on next sign-in</span>
-                    )}
-                  </div>
-                  {mfaEnabled && (
-                    <button
-                      type="button"
-                      onClick={handleResetMfa}
-                      disabled={mfaBusy}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold border border-amber-500/30 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 disabled:opacity-50">
-                      <ShieldOff size={11} /> {mfaBusy ? 'Resetting…' : 'Reset 2FA'}
-                    </button>
-                  )}
-                </div>
-                <p className="text-[10px] text-slate-500">
-                  Use this when a user loses their phone, drops it, or switches devices. Their authenticator secret and recovery codes are cleared, and they must re-enroll from scratch on their next sign-in.
-                </p>
-              </div>
-            )}
 
             <div className="flex gap-2 pt-2">
               <button type="button" onClick={onClose} className="btn-secondary flex-1 justify-center">Cancel</button>
-              <button type="submit" className="btn-primary flex-1 justify-center">
-                <Check size={13} /> {isEdit ? 'Save Changes' : 'Create User'}
+              <button type="submit" disabled={saving} className="btn-primary flex-1 justify-center disabled:opacity-50">
+                <Check size={13} /> {saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Create User'}
               </button>
             </div>
           </form>
@@ -494,7 +474,6 @@ export default function AdminPage() {
     users,
     deleteUser,
     updateUser,
-    adminResetMfa,
     currentUser,
     requireAssociateForActivePipeline,
     setRequireAssociateForActivePipeline,
@@ -547,9 +526,6 @@ export default function AdminPage() {
     createGoal,
     updateGoal,
     deleteGoal,
-    appSettings,
-    appSettingsSyncStatus,
-    setAppSetting,
   } = useStore()
   const [search, setSearch] = useState('')
   const [modal, setModal] = useState<'create' | User | null>(null)
@@ -584,12 +560,18 @@ export default function AdminPage() {
   // Workspace snapshot
   const [snapshotBusy, setSnapshotBusy] = useState(false)
 
-  // Integrations tab
-  const storedSamKey = appSettings?.['sam_gov_api_key'] ?? ''
-  const [samKeyDraft, setSamKeyDraft] = useState(storedSamKey)
-  const [showSamKey, setShowSamKey] = useState(false)
-  const [savingSamKey, setSavingSamKey] = useState(false)
-  useEffect(() => { setSamKeyDraft(storedSamKey) }, [storedSamKey])
+  // Integrations tab. Only the configured/not-configured bit crosses the Edge
+  // Function boundary; the SAM.gov credential remains server-side.
+  const [samGovStatus, setSamGovStatus] = useState<'idle' | 'loading' | 'configured' | 'missing' | 'error'>('idle')
+  const refreshSamGovStatus = useCallback(async () => {
+    setSamGovStatus('loading')
+    try {
+      const configured = await getSamGovImportStatus()
+      setSamGovStatus(configured ? 'configured' : 'missing')
+    } catch {
+      setSamGovStatus('error')
+    }
+  }, [])
 
   const refreshRemoteCounts = useCallback(async () => {
     if (!isSupabaseConnected) {
@@ -610,6 +592,10 @@ export default function AdminPage() {
       void refreshRemoteCounts()
     }
   }, [healthOpen, remoteCounts, refreshRemoteCounts])
+
+  useEffect(() => {
+    if (activeTab === 'integrations') void refreshSamGovStatus()
+  }, [activeTab, refreshSamGovStatus])
 
   if (!hasPermission(currentUser, 'admin:manageUsers')) {
     return (
@@ -651,16 +637,10 @@ export default function AdminPage() {
     }
   }
 
-  const handleDelete = (u: User) => {
+  const handleDelete = async (u: User) => {
     if (u.id === currentUser?.id) { toast.error("You can't delete your own account."); return }
-    deleteUser(u.id)
-    toast.success(`${u.name} removed.`)
-  }
-
-  const handleResetMfa = async (u: User) => {
-    if (!window.confirm(`Disable 2FA for ${u.name}? They will have to enroll a new authenticator on their next sign-in.`)) return
-    const ok = await adminResetMfa(u.id)
-    if (ok) toast.success(`2FA disabled for ${u.name}.`)
+    const removed = await deleteUser(u.id)
+    if (removed) toast.success(`${u.name} removed.`)
   }
 
   const openCreate = (role?: Role, team?: EmployeeTeam | null, managerId?: string | null) => {
@@ -713,7 +693,7 @@ export default function AdminPage() {
       (user.managerId ?? null) === next.managerId
     ) return
 
-    updateUser(user.id, {
+    void updateUser(user.id, {
       role: next.role,
       team: next.team ?? undefined,
       managerId: next.managerId,
@@ -723,7 +703,7 @@ export default function AdminPage() {
       for (const did of desc) {
         const d = users.find(u => u.id === did)
         if (d && (d.team ?? 'BD') !== next.team) {
-          updateUser(did, { team: next.team })
+          void updateUser(did, { team: next.team })
         }
       }
     }
@@ -1070,7 +1050,7 @@ export default function AdminPage() {
           <thead>
             <tr>
               <th>User</th><th>Username</th><th>Email</th><th>Role</th><th>Team</th>
-              <th>Status</th><th>First Login</th><th>2FA</th><th>Last seen</th><th>Created</th><th>Actions</th>
+              <th>Status</th><th>First Login</th><th>Last seen</th><th>Created</th><th>Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -1114,17 +1094,6 @@ export default function AdminPage() {
                       {u.firstLogin ? 'Pending' : 'Complete'}
                     </span>
                   </td>
-                  <td>
-                    {u.mfaEnabled ? (
-                      <span className="badge border text-[10px] bg-emerald-500/15 text-emerald-400 border-emerald-500/25 inline-flex items-center gap-1">
-                        <Shield size={10} /> On
-                      </span>
-                    ) : (
-                      <span className="badge border text-[10px] bg-slate-500/10 text-slate-500 border-slate-500/20">
-                        Off
-                      </span>
-                    )}
-                  </td>
                   <td className="text-slate-400 text-xs" title={userSessions[u.id]?.lastLoginAt ?? 'Never logged in on this browser'}>
                     {formatRelative(userSessions[u.id]?.lastLoginAt)}
                   </td>
@@ -1134,12 +1103,7 @@ export default function AdminPage() {
                       <button onClick={() => setModal(u)} className="btn-ghost p-1.5 rounded-lg text-slate-400 hover:text-indigo-400" title="Edit user">
                         <Pencil size={12} />
                       </button>
-                      {u.mfaEnabled && (
-                        <button onClick={() => handleResetMfa(u)} className="btn-ghost p-1.5 rounded-lg text-slate-400 hover:text-amber-400" title="Reset 2FA (force re-enrollment)">
-                          <ShieldOff size={12} />
-                        </button>
-                      )}
-                      <button onClick={() => handleDelete(u)} className="btn-ghost p-1.5 rounded-lg text-slate-400 hover:text-rose-400" title="Delete user">
+                      <button onClick={() => { void handleDelete(u) }} className="btn-ghost p-1.5 rounded-lg text-slate-400 hover:text-rose-400" title="Delete user">
                         <Trash2 size={12} />
                       </button>
                     </div>
@@ -1507,23 +1471,20 @@ export default function AdminPage() {
 
       {activeTab === 'integrations' && (<>
       <div className="mt-2">
-        <SectionHeader icon={<KeyRound size={14} />} label="Integration keys" accent="sky" />
+        <SectionHeader icon={<KeyRound size={14} />} label="Server integrations" accent="sky" />
 
         <div
           className="rounded-2xl p-4 mb-4"
           style={{
-            background: 'rgba(245,158,11,0.06)',
-            border: '1px solid rgba(245,158,11,0.28)',
+            background: 'rgba(14,165,233,0.06)',
+            border: '1px solid rgba(14,165,233,0.24)',
           }}
         >
           <div className="flex items-start gap-2">
-            <AlertTriangle size={14} className="text-amber-300 mt-0.5 flex-shrink-0" />
-            <p className="text-[11px] text-amber-100 leading-relaxed">
-              These keys are fetched by the browser and used in outbound requests. They are
-              <span className="font-semibold"> not end-to-end secret</span>: any signed-in user with DevTools open
-              can read them. Storing them here is still safer than baking them into the JavaScript bundle
-              via <code className="px-1 rounded bg-black/30">VITE_*</code> env vars (which are visible to every
-              anonymous visitor) and lets you rotate keys without a redeploy.
+            <Lock size={14} className="text-sky-300 mt-0.5 flex-shrink-0" />
+            <p className="text-[11px] text-sky-100 leading-relaxed">
+              Integration credentials are stored in the server environment and are never sent to this browser.
+              This page reports configuration status only.
             </p>
           </div>
         </div>
@@ -1532,10 +1493,10 @@ export default function AdminPage() {
           <div className="flex items-start justify-between gap-3 mb-3">
             <div>
               <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                <KeyRound size={14} className="text-sky-300" /> SAM.gov API key
+                <KeyRound size={14} className="text-sky-300" /> SAM.gov opportunity import
               </h3>
               <p className="text-[11px] text-slate-400 mt-1">
-                Used by the Pipeline → Create → Import from SAM.gov URL flow. Get a key from{' '}
+                Used by the Pipeline → Create → Import from SAM.gov URL flow. The server administrator can obtain credentials from{' '}
                 <a
                   href="https://open.gsa.gov/api/get-opportunities-public-api/"
                   target="_blank" rel="noopener noreferrer"
@@ -1548,78 +1509,32 @@ export default function AdminPage() {
             <span
               className="text-[10px] font-semibold uppercase tracking-wide px-2 py-1 rounded-md whitespace-nowrap"
               style={
-                appSettingsSyncStatus === 'synced'
+                samGovStatus === 'configured'
                   ? { background: 'rgba(16,185,129,0.14)', color: '#6ee7b7', border: '1px solid rgba(16,185,129,0.28)' }
-                  : appSettingsSyncStatus === 'local'
+                  : samGovStatus === 'missing' || samGovStatus === 'error'
                     ? { background: 'rgba(245,158,11,0.14)', color: '#fcd34d', border: '1px solid rgba(245,158,11,0.28)' }
                     : { background: 'rgba(148,163,184,0.14)', color: '#cbd5e1', border: '1px solid rgba(148,163,184,0.28)' }
               }
             >
-              {appSettingsSyncStatus === 'synced' && (isSupabaseConnected ? <>Synced <Wifi size={10} className="inline ml-1" /></> : 'Synced')}
-              {appSettingsSyncStatus === 'local'  && <>Local only <WifiOff size={10} className="inline ml-1" /></>}
-              {appSettingsSyncStatus === 'unknown' && 'Not fetched'}
+              {samGovStatus === 'configured' && 'Configured'}
+              {samGovStatus === 'missing' && 'Not configured'}
+              {samGovStatus === 'error' && 'Status unavailable'}
+              {(samGovStatus === 'idle' || samGovStatus === 'loading') && 'Checking…'}
             </span>
           </div>
 
-          {appSettingsSyncStatus === 'local' && (
-            <p className="text-[11px] text-amber-300 mb-3">
-              The <code className="px-1 rounded bg-black/30">app_settings</code> table doesn't exist yet.
-              Apply migration <code className="px-1 rounded bg-black/30">025_add_app_settings.sql</code> so
-              saves reach the database.
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-[11px] text-slate-400">
+              Set <code className="rounded bg-black/30 px-1 text-sky-200">SAM_GOV_API_KEY</code> in the Edge Runtime environment, then refresh this status.
             </p>
-          )}
-
-          <div className="flex flex-col sm:flex-row gap-2">
-            <div className="relative flex-1">
-              <input
-                type={showSamKey ? 'text' : 'password'}
-                value={samKeyDraft}
-                onChange={e => setSamKeyDraft(e.target.value)}
-                placeholder={storedSamKey ? '••••••••' : 'Paste SAM.gov API key'}
-                autoComplete="off"
-                spellCheck={false}
-                className="w-full text-xs px-3 py-2 pr-9 rounded-lg bg-slate-900/60 border border-slate-700/60 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-sky-500/60"
-              />
-              <button
-                type="button"
-                onClick={() => setShowSamKey(v => !v)}
-                aria-label={showSamKey ? 'Hide key' : 'Show key'}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200"
-              >
-                {showSamKey ? <EyeOff size={14} /> : <Eye size={14} />}
-              </button>
-            </div>
             <button
               type="button"
-              disabled={savingSamKey || samKeyDraft === storedSamKey}
-              onClick={async () => {
-                setSavingSamKey(true)
-                try {
-                  const r = await setAppSetting('sam_gov_api_key', samKeyDraft)
-                  if (r.ok) {
-                    toast.success(isSupabaseConnected ? 'SAM.gov key saved to database' : 'SAM.gov key saved locally')
-                  } else if (r.missingTable) {
-                    toast.error('Database table missing — apply migration 025 first. Value kept locally.')
-                  } else {
-                    toast.error('Could not save SAM.gov key')
-                  }
-                } finally {
-                  setSavingSamKey(false)
-                }
-              }}
-              className="btn-primary text-xs px-3 py-2 disabled:opacity-40 disabled:cursor-not-allowed"
+              disabled={samGovStatus === 'loading'}
+              onClick={() => { void refreshSamGovStatus() }}
+              className="btn-secondary flex-shrink-0 text-xs disabled:opacity-40"
             >
-              <Save size={12} /> {savingSamKey ? 'Saving…' : 'Save'}
+              <RefreshCw size={12} className={samGovStatus === 'loading' ? 'animate-spin' : ''} /> Refresh status
             </button>
-            {samKeyDraft !== storedSamKey && (
-              <button
-                type="button"
-                onClick={() => setSamKeyDraft(storedSamKey)}
-                className="text-xs px-3 py-2 rounded-lg border border-slate-700/60 text-slate-300 hover:bg-slate-800/60"
-              >
-                Revert
-              </button>
-            )}
           </div>
         </div>
       </div>

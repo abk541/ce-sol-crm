@@ -24,6 +24,8 @@ export type Role =
 
 export interface User {
   id: string
+  /** Supabase Auth identity linked to this public application profile. */
+  authUserId?: string
   name: string
   email: string
   username: string
@@ -73,8 +75,8 @@ export interface FileAttachment {
   attachedAt: string
   uploadedBy: string
   dataUrl?: string        // legacy / small-file inline base64 fallback
-  url?: string            // Supabase Storage public URL (preferred for large files)
-  storagePath?: string    // path inside the Supabase Storage bucket
+  url?: string            // legacy public URL; new uploads never create one
+  storagePath?: string    // preferred path inside the private Storage bucket
   mimeType?: string
   size?: number
 }

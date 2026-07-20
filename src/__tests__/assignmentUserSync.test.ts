@@ -38,6 +38,24 @@ vi.mock('../lib/db', () => ({
   deleteBDSubmissionRecord: vi.fn(),
 }))
 
+vi.mock('../lib/userManagement', () => ({
+  invokeManageUsers: vi.fn(async (request: Record<string, any>) => {
+    if (request.action === 'create') {
+      return {
+        ok: true,
+        user: {
+          ...request.user,
+          password: undefined,
+          id: 'u-new-bd',
+          authUserId: 'auth-new-bd',
+          createdAt: '2026-01-01',
+        },
+      }
+    }
+    return { ok: true }
+  }),
+}))
+
 import { useStore } from '../store/useStore'
 
 const captureManager: User = {
@@ -158,8 +176,8 @@ describe('assignment users and department scope', () => {
     expect(assignableEmployeesForUser(employees, captureManager, 'OPS').map(employee => employee.id)).toEqual(['u-ops-manager'])
   })
 
-  it('mirrors admin-created users into assignment employees and removes deleted users', () => {
-    useStore.getState().createUser({
+  it('mirrors admin-created users into assignment employees and removes deleted users', async () => {
+    await useStore.getState().createUser({
       name: 'New BD Associate',
       email: 'new.bd@example.com',
       username: 'new.bd',
@@ -169,13 +187,14 @@ describe('assignment users and department scope', () => {
       firstLogin: false,
       team: 'BD',
       managerId: 'u-bd-manager',
+      password: 'Temporary1!',
     })
 
     const created = useStore.getState().users.find(user => user.email === 'new.bd@example.com')
     expect(created).toBeTruthy()
     expect(useStore.getState().employees.find(employee => employee.id === created?.id)?.team).toBe('BD')
 
-    useStore.getState().deleteUser(created!.id)
+    await useStore.getState().deleteUser(created!.id)
     expect(useStore.getState().employees.some(employee => employee.id === created?.id)).toBe(false)
   })
 
