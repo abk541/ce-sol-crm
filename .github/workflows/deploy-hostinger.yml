@@ -74,3 +74,34 @@ jobs:
           mirror -R --verbose --parallel=4 --exclude-glob .ftp-deploy-sync-state.json ./dist/ '$FTP_PATH';
           bye;
           "
+
+      - name: Verify the public CRM serves this build
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected_js="$(find dist/assets -maxdepth 1 -type f -name 'index-*.js' -printf '%f\n' | head -n 1)"
+          if [ -z "$expected_js" ]; then
+            echo 'The build produced no hashed application JavaScript file.' >&2
+            exit 1
+          fi
+
+          public_js=''
+          for attempt in {1..6}; do
+            html="$(curl -fsSL -H 'Cache-Control: no-cache' "https://crm.cesolutionplus.com/?release=${GITHUB_SHA}-${attempt}" || true)"
+            public_js="$(printf '%s\n' "$html" | grep -oE 'assets/index-[A-Za-z0-9_-]+\.js' | head -n 1 || true)"
+            if [ "$public_js" = "assets/$expected_js" ]; then
+              curl -fsSL -H 'Cache-Control: no-cache' \
+                "https://crm.cesolutionplus.com/${public_js}?release=${GITHUB_SHA}-${attempt}" \
+                -o /tmp/public-crm.js
+              if grep -Fq 'vmi3454103.contaboserver.net' /tmp/public-crm.js \
+                && ! grep -Fq 'api.sam.gov' /tmp/public-crm.js \
+                && ! grep -Fq 'VITE_SAM_GOV_API_KEY' /tmp/public-crm.js; then
+                echo "Verified public release asset: $public_js"
+                exit 0
+              fi
+            fi
+            sleep 10
+          done
+
+          echo "Expected public asset assets/$expected_js, received ${public_js:-none}." >&2
+          exit 1
