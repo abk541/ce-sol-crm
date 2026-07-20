@@ -24,7 +24,7 @@ import CertificationsPage from './pages/CertificationsPage'
 import PlaceholderPage from './pages/PlaceholderPage'
 import { hasAnyPermission, hasPermission, type Permission } from './lib/permissions'
 import { subscribeToDataChanges } from './lib/db'
-import { isSupabaseConnected } from './lib/supabase'
+import { isApiConnected } from './lib/api'
 import { subscribeToAuthSessionChanges } from './lib/auth'
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
@@ -74,20 +74,20 @@ export default function App() {
   const initializeStore = useStore(s => s.initializeStore)
   const refreshFromDb = useStore(s => s.refreshFromDb)
 
-  // Restore only the Supabase Auth session and its linked safe profile. Full
+  // Restore only the API session and its linked safe profile. Full
   // workspace data is not requested until the session has been accepted.
   useEffect(() => {
     void restoreAuthSession()
   }, [restoreAuthSession])
 
-  // The auth helper defers handlers outside Supabase's auth callback lock.
-  // This lets USER_UPDATED/TOKEN_REFRESHED safely revalidate through Auth and
+  // The auth helper defers cross-tab handlers to the next task. This lets
+  // USER_UPDATED/TOKEN_REFRESHED safely revalidate through the API and
   // ensures cross-tab SIGNED_OUT events purge the in-memory workspace.
   useEffect(() => subscribeToAuthSessionChanges((event, session) => {
     void useStore.getState().handleAuthSessionEvent(event, session)
   }), [])
 
-  // Re-run every time the user logs in so Supabase data always wins over stale localStorage
+  // Re-run every time the user logs in so server data wins over stale localStorage.
   useEffect(() => {
     if (isAuthenticated) void initializeStore()
   }, [isAuthenticated, initializeStore])
@@ -119,12 +119,11 @@ export default function App() {
   // new opportunity, HR request, assignment or notification created by another
   // user shows up without a manual page refresh. Three triggers, all backstops
   // for one another:
-  //   1. Supabase Realtime  — instant push when a row changes (if the migration
-  //      that adds tables to the realtime publication has been applied).
-  //   2. A 20s poll         — catches everything even when Realtime is off.
+  //   1. Authenticated SSE  — instant push after a transaction commits.
+  //   2. A 20s poll         — catches everything if the event stream is down.
   //   3. Tab focus / visibility — an immediate pull the moment the user returns.
   useEffect(() => {
-    if (!isAuthenticated || !isSupabaseConnected) return
+    if (!isAuthenticated || !isApiConnected) return
 
     let debounce: ReturnType<typeof setTimeout> | null = null
     const scheduleRefresh = () => {

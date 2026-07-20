@@ -3,6 +3,7 @@ import type { Opportunity, User } from '../types'
 
 const mocks = vi.hoisted(() => ({
   revalidateAuthenticatedProfile: vi.fn(),
+  restoreAuthenticatedProfile: vi.fn(),
   signOutCurrentSession: vi.fn().mockResolvedValue(undefined),
   loadAllData: vi.fn(),
   fetchNotifications: vi.fn(),
@@ -12,16 +13,16 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('../lib/auth', () => ({
   authenticateWithPassword: vi.fn(),
-  completeSupabaseFirstLogin: vi.fn(),
+  completeFirstLoginPassword: vi.fn(),
   revalidateAuthenticatedProfile: mocks.revalidateAuthenticatedProfile,
-  restoreAuthenticatedProfile: vi.fn(),
+  restoreAuthenticatedProfile: mocks.restoreAuthenticatedProfile,
   sessionStartedAt: vi.fn((_session, fallback = Date.now()) => fallback),
   signOutCurrentSession: mocks.signOutCurrentSession,
 }))
 
-vi.mock('../lib/supabase', () => ({
-  isSupabaseConnected: true,
-  supabase: null,
+vi.mock('../lib/api', () => ({
+  isApiConnected: true,
+  api: null,
 }))
 
 vi.mock('../lib/db', async (importOriginal) => {
@@ -75,6 +76,7 @@ describe('background profile revalidation', () => {
     vi.clearAllMocks()
     sessionStorage.clear()
     mocks.loadAllData.mockResolvedValue(null)
+    mocks.restoreAuthenticatedProfile.mockResolvedValue({ initialized: true, profile: null })
     mocks.fetchNotifications.mockResolvedValue({ ok: false })
     mocks.fetchEmployeeRequests.mockResolvedValue({ ok: false })
     mocks.fetchActivityLogs.mockResolvedValue({ ok: false })
@@ -181,5 +183,32 @@ describe('background profile revalidation', () => {
       loginTimestamp: startedAt,
       accessNoticeAccepted: true,
     })
+  })
+
+  it('switches to a different account opened in another tab without revoking its session', async () => {
+    const otherUser: User = {
+      ...user,
+      id: 'profile-2',
+      authUserId: 'auth-2',
+      email: 'other@example.com',
+      username: 'other',
+    }
+    mocks.restoreAuthenticatedProfile.mockResolvedValue({
+      initialized: true,
+      profile: otherUser,
+      session: { user: { id: 'auth-2' } },
+    })
+
+    await useStore.getState().handleAuthSessionEvent('TOKEN_REFRESHED', {
+      user: { id: 'auth-2' },
+    })
+
+    expect(mocks.revalidateAuthenticatedProfile).not.toHaveBeenCalled()
+    expect(mocks.signOutCurrentSession).not.toHaveBeenCalled()
+    expect(useStore.getState()).toMatchObject({
+      currentUser: otherUser,
+      isAuthenticated: true,
+    })
+    expect(useStore.getState().opportunities).toEqual([])
   })
 })

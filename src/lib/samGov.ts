@@ -1,6 +1,6 @@
 import type { Opportunity, SamGovContact } from '../types'
 import { TIMEZONES } from '../data/mock'
-import { isSupabaseConnected, supabase } from './supabase'
+import { apiRequest, envelopeData } from './api'
 import {
   formatTime12h,
   ianaTimeZoneFromOffset,
@@ -32,8 +32,6 @@ const SAM_TIMEZONE_ALIASES: Record<string, string> = {
   'HAWAII STANDARD TIME': 'Pacific/Honolulu',
   'GREENWICH MEAN TIME': 'Europe/London',
 }
-
-const SAM_GOV_FUNCTION = 'sam-gov-import'
 
 export interface SamGovOpportunityReference {
   noticeId?: string
@@ -82,32 +80,12 @@ export function parseSamGovOpportunityReference(url: string): SamGovOpportunityR
   return { solicitationNumber }
 }
 
-async function functionErrorMessage(error: unknown): Promise<string> {
-  const context = (error as { context?: unknown } | null)?.context
-  if (typeof Response !== 'undefined' && context instanceof Response) {
-    try {
-      const payload = await context.clone().json() as {
-        error?: { message?: unknown }
-        message?: unknown
-      }
-      const message = payload.error?.message ?? payload.message
-      if (typeof message === 'string' && message.trim()) return message.trim()
-    } catch {
-      // Fall back to the SDK's generic error below.
-    }
-  }
-
-  if (error instanceof Error && error.message.trim()) return error.message
-  return 'The SAM.gov integration request failed.'
-}
-
-async function invokeSamGovFunction(body: Record<string, unknown>): Promise<Record<string, unknown>> {
-  if (!isSupabaseConnected || !supabase) {
-    throw new Error('Supabase is not connected. Sign in to use the SAM.gov integration.')
-  }
-
-  const { data, error } = await supabase.functions.invoke(SAM_GOV_FUNCTION, { body })
-  if (error) throw new Error(await functionErrorMessage(error))
+async function requestSamGov(
+  path: '/integrations/sam/status' | '/integrations/sam/import',
+  init: RequestInit = {},
+): Promise<Record<string, unknown>> {
+  const response = await apiRequest<unknown>(path, init)
+  const data = envelopeData<unknown>(response)
   if (!data || typeof data !== 'object' || Array.isArray(data)) {
     throw new Error('The SAM.gov integration returned an invalid response.')
   }
@@ -116,7 +94,7 @@ async function invokeSamGovFunction(body: Record<string, unknown>): Promise<Reco
 
 /** Returns only whether the server secret exists; the secret never reaches the browser. */
 export async function getSamGovImportStatus(): Promise<boolean> {
-  const data = await invokeSamGovFunction({ action: 'status' })
+  const data = await requestSamGov('/integrations/sam/status')
   return data.configured === true
 }
 
@@ -125,7 +103,10 @@ export async function importSamGovOpportunity(url: string): Promise<Record<strin
   const trimmedUrl = url.trim()
   parseSamGovOpportunityReference(trimmedUrl)
 
-  const data = await invokeSamGovFunction({ action: 'import', url: trimmedUrl })
+  const data = await requestSamGov('/integrations/sam/import', {
+    method: 'POST',
+    body: JSON.stringify({ url: trimmedUrl }),
+  })
   const opportunity = data.opportunity
   if (!opportunity || typeof opportunity !== 'object' || Array.isArray(opportunity)) {
     throw new Error('Opportunity not found on SAM.gov. Check the URL.')

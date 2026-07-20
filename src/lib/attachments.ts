@@ -1,33 +1,8 @@
 import type { FileAttachment } from '../types'
-import { supabase, isSupabaseConnected } from './supabase'
-
-// Name of the Supabase Storage bucket that holds uploaded files (proposals,
-// quotes, COIs, W9s, etc.). Create it once via the migration in
-// supabase/migrations (see 20260710120000_create_attachments_bucket.sql).
-export const ATTACHMENTS_BUCKET = 'attachments'
-
-// Files at or below this size may fall back to inline base64 (data URL) when
-// Supabase Storage is unavailable. Larger files MUST go to Storage because the
-// persisted Zustand store lives in localStorage (~5MB per-origin cap) and
-// base64 inflates payloads ~33%.
-const INLINE_FALLBACK_LIMIT = 1_500_000 // ~1.5 MB
-
-function sanitizeName(name: string): string {
-  const cleaned = name.replace(/[^\w.\-]+/g, '_')
-  return cleaned.length > 120 ? cleaned.slice(-120) : cleaned
-}
-
-function readAsDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '')
-    reader.onerror = () => reject(new Error('File could not be read.'))
-    reader.readAsDataURL(file)
-  })
-}
+import { apiRequest, envelopeData } from './api'
 
 export interface UploadAttachmentOptions {
-  /** Logical folder inside the bucket, e.g. 'proposals' or 'quotes'. */
+  /** Logical category used by the private file service. */
   folder?: string
   /** Username recorded on the attachment. */
   uploadedBy?: string
@@ -38,10 +13,9 @@ export interface UploadAttachmentOptions {
 }
 
 /**
- * Uploads a file to Supabase Storage and returns a lightweight FileAttachment
- * referencing the private object by path (no base64 payload or public URL).
- * Falls back to inline base64 for small files when Storage is unavailable so
- * offline/dev still works.
+ * Uploads a file to the authenticated private file API. New uploads never fall
+ * back to browser-local base64, so every durable attachment has one source of
+ * truth and remains available to authorized users on every device.
  */
 export async function uploadAttachment(
   file: File,
@@ -51,41 +25,21 @@ export async function uploadAttachment(
   const attachedAt = opts.attachedAt
     ? new Date(opts.attachedAt).toISOString()
     : new Date().toISOString()
-  const base: FileAttachment = {
-    id,
-    name: file.name,
-    attachedAt,
-    uploadedBy: opts.uploadedBy ?? '',
-    mimeType: file.type || undefined,
-    size: file.size,
-  }
+  const form = new FormData()
+  form.set('file', file, file.name)
+  form.set('id', id)
+  form.set('attachedAt', attachedAt)
+  if (opts.folder) form.set('folder', opts.folder)
 
-  if (isSupabaseConnected && supabase) {
-    const folder = (opts.folder ?? 'misc').replace(/[^\w\-]+/g, '_')
-    const path = `${folder}/${id}-${sanitizeName(file.name)}`
-    const { error } = await supabase.storage.from(ATTACHMENTS_BUCKET).upload(path, file, {
-      cacheControl: '3600',
-      upsert: true,
-      contentType: file.type || undefined,
-    })
-    if (!error) {
-      return { ...base, storagePath: path }
-    }
-    // Storage upload failed. Only small files can safely fall back to inline base64.
-    if (file.size > INLINE_FALLBACK_LIMIT) {
-      throw new Error(
-        `Upload failed: ${error.message}. Make sure the "${ATTACHMENTS_BUCKET}" storage bucket exists and allows uploads.`,
-      )
-    }
-  } else if (file.size > INLINE_FALLBACK_LIMIT) {
-    throw new Error(
-      'This file is too large to store offline. Connect to Supabase (with the "attachments" bucket) to upload it.',
-    )
+  const response = await apiRequest<unknown>('/files', {
+    method: 'POST',
+    body: form,
+  })
+  const attachment = envelopeData<FileAttachment>(response)
+  if (!attachment?.id || !attachment.storagePath) {
+    throw new Error('The file service returned an invalid upload response.')
   }
-
-  // Inline fallback for small files / offline mode.
-  const dataUrl = await readAsDataUrl(file)
-  return { ...base, dataUrl }
+  return attachment
 }
 
 function resolveLegacyAttachmentSource(file: Pick<FileAttachment, 'url' | 'dataUrl'>): string {
@@ -98,7 +52,7 @@ export function hasAttachmentSource(file: Pick<FileAttachment, 'storagePath' | '
 }
 
 /**
- * Loads attachment bytes, preferring the authenticated private Storage path.
+ * Loads attachment bytes, preferring the authenticated private file API.
  * Legacy public URLs and inline data URLs remain read-only fallbacks for old
  * records created before the private-bucket migration.
  */
@@ -106,14 +60,9 @@ export async function loadAttachmentBlob(
   file: Pick<FileAttachment, 'storagePath' | 'url' | 'dataUrl'>,
 ): Promise<Blob> {
   if (file.storagePath) {
-    if (!isSupabaseConnected || !supabase) {
-      throw new Error('Connect to Supabase and sign in to download this private attachment.')
-    }
-    const { data, error } = await supabase.storage
-      .from(ATTACHMENTS_BUCKET)
-      .download(file.storagePath)
-    if (!error && data) return data
-    throw new Error(error?.message || 'The private Storage object could not be downloaded.')
+    return apiRequest<Blob>(`/files/${encodeURIComponent(file.storagePath)}`, {}, {
+      responseType: 'blob',
+    })
   }
 
   const source = resolveLegacyAttachmentSource(file)

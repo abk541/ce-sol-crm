@@ -26,11 +26,20 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Validate API endpoint
+        shell: bash
+        env:
+          VITE_API_URL: ${{ secrets.VITE_API_URL }}
+        run: |
+          case "$VITE_API_URL" in
+            https://*/api/v1) ;;
+            *) echo 'VITE_API_URL must be an HTTPS URL ending in /api/v1.' >&2; exit 1 ;;
+          esac
+
       - name: Build
         run: npm run build
         env:
-          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL || secrets.SUPABASE_URL }}
-          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY || secrets.VITE_SUPABASE_PUBLISHABLE_KEY || secrets.SUPABASE_PUBLISHABLE_KEY || secrets.SUPABASE_ANON_KEY }}
+          VITE_API_URL: ${{ secrets.VITE_API_URL }}
 
       # Strip any ftp:// / ftps:// / sftp:// scheme from the host secret so the
       # FTP action gets a bare hostname or IP (basic-ftp under the hood rejects
@@ -77,8 +86,15 @@ jobs:
 
       - name: Verify the public CRM serves this build
         shell: bash
+        env:
+          EXPECTED_API_URL: ${{ secrets.VITE_API_URL }}
         run: |
           set -euo pipefail
+          if [ -z "$EXPECTED_API_URL" ]; then
+            echo 'VITE_API_URL must be configured for the production deployment.' >&2
+            exit 1
+          fi
+          expected_api_host="$(printf '%s' "$EXPECTED_API_URL" | sed -E 's#^https?://([^/]+).*$#\1#')"
           expected_js="$(find dist/assets -maxdepth 1 -type f -name 'index-*.js' -printf '%f\n' | head -n 1)"
           if [ -z "$expected_js" ]; then
             echo 'The build produced no hashed application JavaScript file.' >&2
@@ -93,7 +109,10 @@ jobs:
               curl -fsSL -H 'Cache-Control: no-cache' \
                 "https://crm.cesolutionplus.com/${public_js}?release=${GITHUB_SHA}-${attempt}" \
                 -o /tmp/public-crm.js
-              if grep -Fq 'vmi3454103.contaboserver.net' /tmp/public-crm.js \
+              if grep -Fq "$expected_api_host" /tmp/public-crm.js \
+                && ! grep -Fq 'supabase.co' /tmp/public-crm.js \
+                && ! grep -Fq '/rest/v1' /tmp/public-crm.js \
+                && ! grep -Fq '/auth/v1' /tmp/public-crm.js \
                 && ! grep -Fq 'api.sam.gov' /tmp/public-crm.js \
                 && ! grep -Fq 'VITE_SAM_GOV_API_KEY' /tmp/public-crm.js; then
                 echo "Verified public release asset: $public_js"

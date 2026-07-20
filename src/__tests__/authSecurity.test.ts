@@ -1,52 +1,57 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { mapSafeUserRow, SAFE_USER_COLUMNS } from '../lib/userProfile'
+import { mapSafeUserRow } from '../lib/userProfile'
 
 const mocks = vi.hoisted(() => {
-  const maybeSingle = vi.fn()
-  const profileEq = vi.fn(() => ({ maybeSingle }))
-  const profileSelect = vi.fn(() => ({ eq: profileEq }))
-  const from = vi.fn(() => ({ select: profileSelect }))
-  const signInWithPassword = vi.fn()
-  const getSession = vi.fn()
-  const getUser = vi.fn()
-  const signOut = vi.fn()
+  class MockApiRequestError extends Error {
+    code: string
+    status: number
+    constructor(message: string, code: string, status: number) {
+      super(message)
+      this.code = code
+      this.status = status
+    }
+  }
+  const apiRequest = vi.fn()
+  const clearApiSession = vi.fn()
+  const storeApiSession = vi.fn()
+  const getApiAccessToken = vi.fn(() => 'opaque-token')
+  const getStoredApiSession = vi.fn(() => null)
   const unsubscribe = vi.fn()
   let authCallback: ((event: string, session: unknown) => void) | null = null
-  const onAuthStateChange = vi.fn((callback: (event: string, session: unknown) => void) => {
+  const subscribeToApiAuthEvents = vi.fn((callback: (event: string, session: unknown) => void) => {
     authCallback = callback
-    return { data: { subscription: { unsubscribe } } }
+    return unsubscribe
   })
   const emitAuth = (event: string, session: unknown) => authCallback?.(event, session)
   const invokeFirstLoginCompletion = vi.fn()
-
   return {
-    maybeSingle,
-    profileEq,
-    profileSelect,
-    from,
-    signInWithPassword,
-    getSession,
-    getUser,
-    signOut,
+    MockApiRequestError,
+    apiRequest,
+    clearApiSession,
+    storeApiSession,
+    getApiAccessToken,
+    getStoredApiSession,
+    subscribeToApiAuthEvents,
     unsubscribe,
-    onAuthStateChange,
     emitAuth,
     invokeFirstLoginCompletion,
   }
 })
 
-vi.mock('../lib/supabase', () => ({
-  isSupabaseConnected: true,
-  supabase: {
-    auth: {
-      signInWithPassword: mocks.signInWithPassword,
-      getSession: mocks.getSession,
-      getUser: mocks.getUser,
-      signOut: mocks.signOut,
-      onAuthStateChange: mocks.onAuthStateChange,
-    },
-    from: mocks.from,
-  },
+vi.mock('../lib/api', () => ({
+  ApiRequestError: mocks.MockApiRequestError,
+  apiRequest: mocks.apiRequest,
+  clearApiSession: mocks.clearApiSession,
+  envelopeData: (payload: unknown) => (
+    payload && typeof payload === 'object' && 'data' in payload
+      ? (payload as { data: unknown }).data
+      : payload
+  ),
+  getApiAccessToken: mocks.getApiAccessToken,
+  getStoredApiSession: mocks.getStoredApiSession,
+  isApiConnected: true,
+  storeApiSession: mocks.storeApiSession,
+  subscribeToApiAuthEvents: mocks.subscribeToApiAuthEvents,
 }))
 
 vi.mock('../lib/userManagement', () => ({
@@ -55,7 +60,7 @@ vi.mock('../lib/userManagement', () => ({
 
 import {
   authenticateWithPassword,
-  completeSupabaseFirstLogin,
+  completeFirstLoginPassword,
   revalidateAuthenticatedProfile,
   restoreAuthenticatedProfile,
   sessionStartedAt,
@@ -77,12 +82,17 @@ const safeRow = {
   created_at: '2026-07-20T00:00:00Z',
 }
 
-describe('Supabase Auth boundary', () => {
+const apiSession = {
+  access_token: 'new-opaque-token',
+  expires_at: '2026-07-21T00:00:00Z',
+  user: { id: 'auth-1', last_sign_in_at: '2026-07-20T00:00:00Z' },
+}
+
+describe('private API authentication boundary', () => {
   beforeEach(() => {
     vi.useRealTimers()
     vi.clearAllMocks()
-    mocks.signOut.mockResolvedValue({ error: null })
-    mocks.maybeSingle.mockResolvedValue({ data: safeRow, error: null })
+    mocks.getApiAccessToken.mockReturnValue('opaque-token')
     mocks.invokeFirstLoginCompletion.mockResolvedValue({
       ok: true,
       profile: mapSafeUserRow({ ...safeRow, first_login: false }),
@@ -90,94 +100,82 @@ describe('Supabase Auth boundary', () => {
     })
   })
 
-  it('authenticates with Supabase and loads only the linked safe profile', async () => {
-    mocks.signInWithPassword.mockResolvedValue({
-      data: { user: { id: 'auth-1' }, session: { user: { id: 'auth-1' } } },
-      error: null,
-    })
+  it('authenticates through the private API and persists only its opaque session', async () => {
+    mocks.apiRequest.mockResolvedValue({ data: { user: safeRow, session: apiSession } })
 
-    const result = await authenticateWithPassword('user@example.com', 'not-logged')
+    const result = await authenticateWithPassword(' user@example.com ', 'not-logged')
 
     expect(result.ok).toBe(true)
-    expect(mocks.signInWithPassword).toHaveBeenCalledWith({
-      email: 'user@example.com',
-      password: 'not-logged',
-    })
-    expect(mocks.from).toHaveBeenCalledWith('users')
-    expect(mocks.profileSelect).toHaveBeenCalledWith(SAFE_USER_COLUMNS)
-    expect(mocks.profileEq).toHaveBeenCalledWith('auth_user_id', 'auth-1')
+    expect(mocks.apiRequest).toHaveBeenCalledWith('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ email: 'user@example.com', password: 'not-logged' }),
+    }, { auth: false })
+    expect(mocks.storeApiSession).toHaveBeenCalledWith(apiSession)
     expect(result.ok && result.profile).not.toHaveProperty('password')
     expect(result.ok && result.profile).not.toHaveProperty('mfaSecret')
   })
 
-  it('restores an existing Auth session before loading the profile', async () => {
-    mocks.getSession.mockResolvedValue({
-      data: { session: { user: { id: 'auth-1' } } },
-      error: null,
-    })
+  it('restores an existing API session and safe profile', async () => {
+    mocks.apiRequest.mockResolvedValue({ data: { user: safeRow, session: apiSession } })
 
     const result = await restoreAuthenticatedProfile()
 
+    expect(mocks.apiRequest).toHaveBeenCalledWith('/auth/session')
     expect(result.profile?.authUserId).toBe('auth-1')
-    expect(mocks.profileEq).toHaveBeenCalledWith('auth_user_id', 'auth-1')
   })
 
   it('derives the absolute session start from last_sign_in_at', () => {
     const lastSignIn = '2026-07-19T10:15:30.000Z'
     expect(sessionStartedAt({
-      user: { last_sign_in_at: lastSignIn },
-    } as never, 123)).toBe(Date.parse(lastSignIn))
-    expect(sessionStartedAt({ user: {} } as never, 123)).toBe(123)
+      user: { id: 'auth-1', last_sign_in_at: lastSignIn },
+    }, 123)).toBe(Date.parse(lastSignIn))
+    expect(sessionStartedAt({ user: { id: 'auth-1' } }, 123)).toBe(123)
   })
 
-  it('revalidates the Auth user remotely before loading its profile', async () => {
-    mocks.getUser.mockResolvedValue({ data: { user: { id: 'auth-1' } }, error: null })
+  it('revalidates remotely and rejects an unexpected account switch', async () => {
+    mocks.apiRequest.mockResolvedValue({ data: { user: safeRow, session: apiSession } })
 
-    const result = await revalidateAuthenticatedProfile('auth-1')
-
-    expect(result.ok).toBe(true)
-    expect(mocks.getUser).toHaveBeenCalledOnce()
-    expect(mocks.profileEq).toHaveBeenCalledWith('auth_user_id', 'auth-1')
-  })
-
-  it('marks only explicit transient profile failures as retryable', async () => {
-    mocks.getUser.mockResolvedValue({ data: { user: { id: 'auth-1' } }, error: null })
-    mocks.maybeSingle.mockResolvedValue({
-      data: null,
-      error: { code: 'PGRST000', message: 'Database connection unavailable' },
+    await expect(revalidateAuthenticatedProfile('auth-1')).resolves.toMatchObject({ ok: true })
+    await expect(revalidateAuthenticatedProfile('another-auth-user')).resolves.toMatchObject({
+      ok: false,
+      code: 'session_user_changed',
     })
+  })
+
+  it('marks transient API failures as retryable', async () => {
+    mocks.apiRequest.mockRejectedValue(
+      new mocks.MockApiRequestError('Database temporarily unavailable', 'service_unavailable', 503),
+    )
 
     await expect(revalidateAuthenticatedProfile('auth-1')).resolves.toMatchObject({
       ok: false,
-      code: 'profile_temporarily_unavailable',
+      code: 'auth_temporarily_unavailable',
       retryable: true,
     })
   })
 
-  it('defers auth event work and unsubscribes without leaving queued handlers', async () => {
+  it('defers cross-tab auth work and unsubscribes without queued handlers', async () => {
     vi.useFakeTimers()
     const handler = vi.fn()
     const unsubscribe = subscribeToAuthSessionChanges(handler)
-    const session = { user: { id: 'auth-1' } }
 
-    mocks.emitAuth('TOKEN_REFRESHED', session)
+    mocks.emitAuth('TOKEN_REFRESHED', apiSession)
     expect(handler).not.toHaveBeenCalled()
     await vi.runAllTimersAsync()
-    expect(handler).toHaveBeenCalledWith('TOKEN_REFRESHED', session)
+    expect(handler).toHaveBeenCalledWith('TOKEN_REFRESHED', apiSession)
 
-    mocks.emitAuth('USER_UPDATED', session)
+    mocks.emitAuth('USER_UPDATED', apiSession)
     unsubscribe()
     await vi.runAllTimersAsync()
     expect(handler).toHaveBeenCalledTimes(1)
     expect(mocks.unsubscribe).toHaveBeenCalledOnce()
   })
 
-  it('delegates first-login completion to the protected server action', async () => {
-    const result = await completeSupabaseFirstLogin('NewPassword1!')
+  it('delegates first-login completion to the protected API action', async () => {
+    const result = await completeFirstLoginPassword('NewPassword1!')
 
     expect(result.ok).toBe(true)
     expect(mocks.invokeFirstLoginCompletion).toHaveBeenCalledWith('NewPassword1!')
-    expect(mocks.from).not.toHaveBeenCalled()
   })
 
   it('preserves an explicit retryable partial-completion contract', async () => {
@@ -188,39 +186,11 @@ describe('Supabase Auth boundary', () => {
       retryable: true,
     })
 
-    await expect(completeSupabaseFirstLogin('NewPassword1!')).resolves.toEqual({
+    await expect(completeFirstLoginPassword('NewPassword1!')).resolves.toEqual({
       ok: false,
       code: 'setup_incomplete',
       error: 'Retry with the same new password.',
       retryable: true,
     })
-  })
-
-  it('maps camelCase Edge Function profiles without accepting sensitive fields', () => {
-    const profile = mapSafeUserRow({
-      id: 'profile-2',
-      authUserId: 'auth-2',
-      name: 'Managed User',
-      email: 'managed@example.com',
-      username: 'managed',
-      role: 'TEAM_LEAD',
-      avatar: 'MU',
-      status: 'active',
-      firstLogin: true,
-      team: 'OPS',
-      managerId: 'profile-1',
-      createdAt: '2026-07-20',
-      password: 'ignored',
-      mfaSecret: 'ignored',
-    })
-
-    expect(profile).toMatchObject({
-      authUserId: 'auth-2',
-      firstLogin: true,
-      managerId: 'profile-1',
-      createdAt: '2026-07-20',
-    })
-    expect(profile).not.toHaveProperty('password')
-    expect(profile).not.toHaveProperty('mfaSecret')
   })
 })

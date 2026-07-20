@@ -1,16 +1,32 @@
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const mocks = vi.hoisted(() => ({
-  invoke: vi.fn(),
-}))
+const mocks = vi.hoisted(() => {
+  class MockApiRequestError extends Error {
+    code: string
+    status: number
+    constructor(message: string, code: string, status = 400) {
+      super(message)
+      this.code = code
+      this.status = status
+    }
+  }
+  return {
+    MockApiRequestError,
+    apiRequest: vi.fn(),
+    storeApiSession: vi.fn(),
+  }
+})
 
-vi.mock('../lib/supabase', () => ({
-  isSupabaseConnected: true,
-  supabase: {
-    functions: { invoke: mocks.invoke },
-  },
+vi.mock('../lib/api', () => ({
+  ApiRequestError: mocks.MockApiRequestError,
+  apiRequest: mocks.apiRequest,
+  envelopeData: (payload: unknown) => (
+    payload && typeof payload === 'object' && 'data' in payload
+      ? (payload as { data: unknown }).data
+      : payload
+  ),
+  isApiConnected: true,
+  storeApiSession: mocks.storeApiSession,
 }))
 
 import { invokeFirstLoginCompletion } from '../lib/userManagement'
@@ -30,15 +46,18 @@ const completedProfile = {
   createdAt: '2026-07-20',
 }
 
-describe('first-login Edge action client contract', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-  })
+const rotatedSession = {
+  access_token: 'rotated-opaque-token',
+  expires_at: '2026-07-21T00:00:00Z',
+  user: { id: 'auth-1', last_sign_in_at: '2026-07-20T00:00:00Z' },
+}
 
-  it('invokes only the protected completion action and accepts an idempotent retry', async () => {
-    mocks.invoke.mockResolvedValue({
-      data: { user: completedProfile, alreadyComplete: true },
-      error: null,
+describe('first-login API action client contract', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('invokes only the protected completion action and persists its rotated session', async () => {
+    mocks.apiRequest.mockResolvedValue({
+      data: { user: completedProfile, alreadyComplete: true, session: rotatedSession },
     })
 
     await expect(invokeFirstLoginCompletion('NewPassword1!')).resolves.toEqual({
@@ -46,21 +65,17 @@ describe('first-login Edge action client contract', () => {
       profile: completedProfile,
       alreadyComplete: true,
     })
-    expect(mocks.invoke).toHaveBeenCalledWith('manage-users', {
-      body: { action: 'complete-first-login', password: 'NewPassword1!' },
+    expect(mocks.apiRequest).toHaveBeenCalledWith('/auth/first-login', {
+      method: 'POST',
+      body: JSON.stringify({ password: 'NewPassword1!' }),
     })
+    expect(mocks.storeApiSession).toHaveBeenCalledWith(rotatedSession, 'USER_UPDATED')
   })
 
   it('preserves the server error code and retryability contract', async () => {
-    mocks.invoke.mockResolvedValue({
-      data: {
-        error: {
-          code: 'setup_incomplete',
-          message: 'Retry with the same new password.',
-        },
-      },
-      error: null,
-    })
+    mocks.apiRequest.mockRejectedValue(
+      new mocks.MockApiRequestError('Retry with the same new password.', 'setup_incomplete', 409),
+    )
 
     await expect(invokeFirstLoginCompletion('NewPassword1!')).resolves.toEqual({
       ok: false,
@@ -71,9 +86,8 @@ describe('first-login Edge action client contract', () => {
   })
 
   it('fails closed when the service returns a still-pending profile', async () => {
-    mocks.invoke.mockResolvedValue({
-      data: { user: { ...completedProfile, firstLogin: true } },
-      error: null,
+    mocks.apiRequest.mockResolvedValue({
+      data: { user: { ...completedProfile, firstLogin: true }, session: rotatedSession },
     })
 
     await expect(invokeFirstLoginCompletion('NewPassword1!')).resolves.toMatchObject({
@@ -81,30 +95,5 @@ describe('first-login Edge action client contract', () => {
       code: 'setup_incomplete',
       retryable: true,
     })
-  })
-})
-
-describe('first-login database and function gate', () => {
-  const migration = readFileSync(
-    join(process.cwd(), 'supabase/migrations/20260720190000_enforce_first_login_gate.sql'),
-    'utf8',
-  )
-  const edgeFunction = readFileSync(
-    join(process.cwd(), 'supabase/functions/manage-users/index.ts'),
-    'utf8',
-  )
-
-  it('requires completed setup in shared business/admin predicates', () => {
-    expect(migration).toMatch(/profile\.first_login is false/g)
-    expect(migration).toContain('users_select_own_pending_first_login')
-    expect(migration).toContain('drop policy if exists users_update_own_first_login')
-    expect(migration).toContain('revoke update (first_login) on public.users from anon, authenticated')
-  })
-
-  it('rejects pending callers from admin actions and coordinates completion server-side', () => {
-    expect(edgeFunction).toContain('callerProfile.first_login !== false')
-    expect(edgeFunction).toContain('admin.auth.admin.updateUserById')
-    expect(edgeFunction).toContain('.update({ first_login: false })')
-    expect(edgeFunction).toContain('"setup_incomplete"')
   })
 })

@@ -11,7 +11,8 @@ describe('SAM.gov server-side integration boundary', () => {
   it('keeps the upstream endpoint and credential out of client code', () => {
     expect(client).not.toContain('api.sam.gov')
     expect(client).not.toContain('api_key')
-    expect(client).toContain("supabase.functions.invoke(SAM_GOV_FUNCTION")
+    expect(client).toContain("requestSamGov('/integrations/sam/status')")
+    expect(client).toContain("requestSamGov('/integrations/sam/import'")
   })
 
   it('requires a completed active profile and exposes status without the secret', () => {

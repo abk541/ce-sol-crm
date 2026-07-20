@@ -2,9 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Contract, Employee, Opportunity, User } from '../types'
 import { assignableEmployeesForUser } from '../lib/team'
 
-vi.mock('../lib/supabase', () => ({
-  isSupabaseConnected: false,
-  supabase: null,
+vi.mock('../lib/api', () => ({
+  isApiConnected: false,
+  api: null,
 }))
 
 vi.mock('../lib/db', () => ({

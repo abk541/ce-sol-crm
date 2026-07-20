@@ -10,9 +10,9 @@ const { fromMock } = vi.hoisted(() => ({
   })),
 }))
 
-vi.mock('../lib/supabase', () => ({
-  isSupabaseConnected: true,
-  supabase: { from: fromMock },
+vi.mock('../lib/api', () => ({
+  isApiConnected: true,
+  api: { from: fromMock },
 }))
 
 import { loadAllData } from '../lib/db'

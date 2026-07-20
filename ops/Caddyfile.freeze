@@ -1,0 +1,4 @@
+{$PROXY_DOMAIN} {
+    respond "CE CRM database migration in progress" 503
+    header -Server
+}

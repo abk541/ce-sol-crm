@@ -24,7 +24,7 @@ import {
   type Permission,
 } from '../lib/permissions'
 import { fetchRemoteRowCounts, REMOTE_COUNT_TABLES, type RemoteCountTable } from '../lib/db'
-import { isSupabaseConnected, supabaseHost } from '../lib/supabase'
+import { isApiConnected, apiHost } from '../lib/api'
 import { getSamGovImportStatus } from '../lib/samGov'
 import { PASSWORD_POLICY_MESSAGE, passwordMeetsPolicy } from '../lib/passwordPolicy'
 import toast from 'react-hot-toast'
@@ -574,7 +574,7 @@ export default function AdminPage() {
   }, [])
 
   const refreshRemoteCounts = useCallback(async () => {
-    if (!isSupabaseConnected) {
+    if (!isApiConnected) {
       setRemoteCounts(null)
       return
     }
@@ -588,7 +588,7 @@ export default function AdminPage() {
   }, [])
 
   useEffect(() => {
-    if (isSupabaseConnected && healthOpen && remoteCounts == null) {
+    if (isApiConnected && healthOpen && remoteCounts == null) {
       void refreshRemoteCounts()
     }
   }, [healthOpen, remoteCounts, refreshRemoteCounts])
@@ -725,7 +725,7 @@ export default function AdminPage() {
               {activeTab === 'goals'     && 'Set monthly submission, win, and win-rate targets per team or employee'}
               {activeTab === 'integrations' && 'Runtime API keys and third-party integration settings'}
               {activeTab === 'workspace' && 'Settings, snapshots, and import / export'}
-              {activeTab === 'health'    && 'Local vs Supabase drift across every business table'}
+              {activeTab === 'health'    && 'Browser cache vs PostgreSQL across every business table'}
               {activeTab === 'danger'    && 'Reset and wipe operations — irreversible'}
             </p>
           </div>
@@ -825,7 +825,7 @@ export default function AdminPage() {
       <div className="glass rounded-2xl p-4 mb-6">
         <div className="flex items-start justify-between gap-3 mb-3">
           <div className="flex items-center gap-2">
-            {isSupabaseConnected ? (
+            {isApiConnected ? (
               <Wifi size={16} className="text-emerald-400" />
             ) : (
               <WifiOff size={16} className="text-amber-400" />
@@ -833,10 +833,10 @@ export default function AdminPage() {
             <div>
               <div className="flex items-center gap-2">
                 <span className="text-xs font-semibold text-slate-200">
-                  Supabase {isSupabaseConnected ? 'connected' : 'offline (local-only mode)'}
+                  Private API {isApiConnected ? 'configured' : 'not configured'}
                 </span>
-                {isSupabaseConnected && supabaseHost && (
-                  <span className="text-[10px] text-slate-500 font-mono">{supabaseHost}</span>
+                {isApiConnected && apiHost && (
+                  <span className="text-[10px] text-slate-500 font-mono">{apiHost}</span>
                 )}
               </div>
               <p className="text-[11px] text-slate-500 mt-0.5">
@@ -852,7 +852,7 @@ export default function AdminPage() {
               {healthOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
               {healthOpen ? 'Hide' : 'Show'} tables
             </button>
-            {isSupabaseConnected && (
+            {isApiConnected && (
               <button
                 onClick={() => void refreshRemoteCounts()}
                 disabled={remoteCountsLoading}
@@ -866,11 +866,10 @@ export default function AdminPage() {
         </div>
         {healthOpen && (
           <>
-            {!isSupabaseConnected ? (
+            {!isApiConnected ? (
               <div className="text-xs text-slate-400 bg-amber-500/5 border border-amber-500/15 rounded-lg p-3">
-                Supabase credentials are not configured. The app is reading and writing only to this browser's
-                local storage. Set <code className="font-mono text-amber-300">VITE_SUPABASE_URL</code> and
-                <code className="font-mono text-amber-300"> VITE_SUPABASE_ANON_KEY</code> to enable sync.
+                The private API is not configured. Set
+                <code className="font-mono text-amber-300"> VITE_API_URL</code> to the HTTPS API endpoint.
               </div>
             ) : (
               <div className="overflow-x-auto">
@@ -1133,20 +1132,20 @@ export default function AdminPage() {
                 </span>
                 {permissionOverridesSyncStatus === 'synced' && (
                   <span className="badge bg-emerald-500/15 text-emerald-300 border-emerald-500/25 border text-[10px] inline-flex items-center gap-1">
-                    <Check size={10} /> Synced to Supabase
+                    <Check size={10} /> Synced to PostgreSQL
                   </span>
                 )}
                 {permissionOverridesSyncStatus === 'local' && (
                   <span
                     className="badge bg-amber-500/15 text-amber-300 border-amber-500/25 border text-[10px] inline-flex items-center gap-1"
-                    title="Apply supabase/migrations/019_permission_overrides.sql to share these edits across browsers."
+                    title="The server could not persist these permission edits."
                   >
-                    <AlertTriangle size={10} /> Local-only (apply migration 019)
+                    <AlertTriangle size={10} /> Not synced
                   </span>
                 )}
-                {permissionOverridesSyncStatus === 'unknown' && !isSupabaseConnected && (
+                {permissionOverridesSyncStatus === 'unknown' && !isApiConnected && (
                   <span className="badge bg-slate-500/15 text-slate-300 border-slate-500/25 border text-[10px]">
-                    Offline — local-only
+                    API unavailable
                   </span>
                 )}
               </div>
@@ -1525,7 +1524,7 @@ export default function AdminPage() {
 
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-[11px] text-slate-400">
-              Set <code className="rounded bg-black/30 px-1 text-sky-200">SAM_GOV_API_KEY</code> in the Edge Runtime environment, then refresh this status.
+              Set <code className="rounded bg-black/30 px-1 text-sky-200">SAM_GOV_API_KEY</code> in the native API server environment, then refresh this status.
             </p>
             <button
               type="button"
@@ -1550,9 +1549,9 @@ export default function AdminPage() {
                 Download a JSON snapshot of every record currently in this browser, or restore a previous snapshot.
                 Use this to back up before risky changes, or to copy a working dataset onto another browser.
               </p>
-              {isSupabaseConnected && (
+              {isApiConnected && (
                 <p className="text-[11px] text-amber-300 mt-2">
-                  Restoring only rewrites local state — Supabase tables are not touched. If you want a clean
+                  Restoring only rewrites local state — API server tables are not touched. If you want a clean
                   database first, use <span className="font-semibold">Reset entire workspace</span> below.
                 </p>
               )}

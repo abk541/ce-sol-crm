@@ -1,0 +1,18 @@
+[Unit]
+Description=Encrypted CE CRM PostgreSQL and attachment backup
+After=postgresql@17-cecrm.service
+Requires=postgresql@17-cecrm.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+EnvironmentFile=/etc/ce-crm/backup.env
+ExecStart=/usr/local/sbin/ce-crm-backup
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/backups/ce-crm

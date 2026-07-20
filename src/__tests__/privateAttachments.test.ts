@@ -1,18 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const storageMocks = vi.hoisted(() => ({
-  upload: vi.fn(),
-  download: vi.fn(),
-  getPublicUrl: vi.fn(),
-}))
+const apiRequest = vi.hoisted(() => vi.fn())
 
-vi.mock('../lib/supabase', () => ({
-  isSupabaseConnected: true,
-  supabase: {
-    storage: {
-      from: vi.fn(() => storageMocks),
-    },
-  },
+vi.mock('../lib/api', () => ({
+  isApiConnected: true,
+  apiRequest,
+  envelopeData: (payload: unknown) => (
+    payload && typeof payload === 'object' && 'data' in payload
+      ? (payload as { data: unknown }).data
+      : payload
+  ),
 }))
 
 import {
@@ -28,18 +25,26 @@ import {
 describe('private attachment storage', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
-    storageMocks.upload.mockReset()
-    storageMocks.download.mockReset()
-    storageMocks.getPublicUrl.mockReset()
+    apiRequest.mockReset()
   })
 
   it('treats a private storagePath as downloadable content', () => {
     expect(hasAttachmentSource({ storagePath: 'proposals/example.pdf' })).toBe(true)
   })
 
-  it('persists only storagePath for new uploads and never creates a public URL', async () => {
-    storageMocks.upload.mockResolvedValue({ error: null })
+  it('uploads through the authenticated file API and persists only its private path', async () => {
     const file = new File(['proposal'], 'client proposal.pdf', { type: 'application/pdf' })
+    apiRequest.mockResolvedValue({
+      data: {
+        id: 'fixed-id',
+        name: 'client proposal.pdf',
+        attachedAt: '2026-07-20T12:00:00.000Z',
+        uploadedBy: 'tester',
+        mimeType: 'application/pdf',
+        size: file.size,
+        storagePath: 'client_proposals/fixed-id-client_proposal.pdf',
+      },
+    })
 
     const attachment = await uploadAttachment(file, {
       folder: 'client proposals',
@@ -48,19 +53,21 @@ describe('private attachment storage', () => {
       attachedAt: '2026-07-20T12:00:00.000Z',
     })
 
-    expect(storageMocks.upload).toHaveBeenCalledWith(
-      'client_proposals/fixed-id-client_proposal.pdf',
-      file,
-      expect.objectContaining({ upsert: true, contentType: 'application/pdf' }),
-    )
+    expect(apiRequest).toHaveBeenCalledWith('/files', expect.objectContaining({
+      method: 'POST',
+      body: expect.any(FormData),
+    }))
+    const form = (apiRequest.mock.calls[0][1] as RequestInit).body as FormData
+    expect(form.get('file')).toBe(file)
+    expect(form.get('folder')).toBe('client proposals')
+    expect(form.get('id')).toBe('fixed-id')
     expect(attachment.storagePath).toBe('client_proposals/fixed-id-client_proposal.pdf')
     expect(attachment.url).toBeUndefined()
-    expect(storageMocks.getPublicUrl).not.toHaveBeenCalled()
   })
 
-  it('uses authenticated Storage download before any legacy URL fallback', async () => {
+  it('uses authenticated file download before any legacy URL fallback', async () => {
     const privateBlob = new Blob(['private bytes'], { type: 'application/pdf' })
-    storageMocks.download.mockResolvedValue({ data: privateBlob, error: null })
+    apiRequest.mockResolvedValue(privateBlob)
     const fetchSpy = vi.spyOn(globalThis, 'fetch')
 
     const result = await loadAttachmentBlob({
@@ -68,16 +75,15 @@ describe('private attachment storage', () => {
       url: 'https://legacy.example/private.pdf',
     })
 
-    expect(storageMocks.download).toHaveBeenCalledWith('contracts/private.pdf')
+    expect(apiRequest).toHaveBeenCalledWith('/files/contracts%2Fprivate.pdf', {}, {
+      responseType: 'blob',
+    })
     expect(fetchSpy).not.toHaveBeenCalled()
     expect(result).toBe(privateBlob)
   })
 
   it('never falls back to a stale legacy URL when storagePath is present', async () => {
-    storageMocks.download.mockResolvedValue({
-      data: null,
-      error: { message: 'Object not found' },
-    })
+    apiRequest.mockRejectedValue(new Error('Object not found'))
     const fetchSpy = vi.spyOn(globalThis, 'fetch')
 
     await expect(loadAttachmentBlob({
@@ -126,10 +132,9 @@ describe('private attachment storage', () => {
   })
 
   it('never opens an active attachment preview and downloads it as octet-stream', async () => {
-    storageMocks.download.mockResolvedValue({
-      data: new Blob(['<svg><script>alert(1)</script></svg>'], { type: 'image/svg+xml' }),
-      error: null,
-    })
+    apiRequest.mockResolvedValue(
+      new Blob(['<svg><script>alert(1)</script></svg>'], { type: 'image/svg+xml' }),
+    )
     const openSpy = vi.spyOn(window, 'open')
     const objectUrlSpy = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:download-only')
     vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined)
@@ -150,10 +155,9 @@ describe('private attachment storage', () => {
   })
 
   it('forces the explicit download helper to strip active MIME types', async () => {
-    storageMocks.download.mockResolvedValue({
-      data: new Blob(['<html><script>alert(1)</script></html>'], { type: 'text/html' }),
-      error: null,
-    })
+    apiRequest.mockResolvedValue(
+      new Blob(['<html><script>alert(1)</script></html>'], { type: 'text/html' }),
+    )
     const objectUrlSpy = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:forced-download')
     vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined)
     vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined)

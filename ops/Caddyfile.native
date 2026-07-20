@@ -1,0 +1,16 @@
+vmi3454103.contaboserver.net {
+    @api path /api/v1/*
+    handle @api {
+        reverse_proxy 127.0.0.1:3001
+    }
+
+    handle {
+        respond "Not found" 404
+    }
+
+    header {
+        -Server
+        X-Content-Type-Options nosniff
+        Referrer-Policy no-referrer
+    }
+}

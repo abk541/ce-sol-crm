@@ -17,7 +17,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
-// ── Mock DB + Supabase so no network calls happen ─────────────────────
+// ── Mock DB + API server so no network calls happen ─────────────────────
 vi.mock('../lib/db', () => ({
   loadAllData: vi.fn().mockResolvedValue(null),
   seedIfEmpty: vi.fn().mockResolvedValue(null),
@@ -45,9 +45,9 @@ vi.mock('../lib/db', () => ({
   deleteBDSubmissionRecord: vi.fn().mockResolvedValue(null),
 }))
 
-vi.mock('../lib/supabase', () => ({
-  isSupabaseConnected: false,
-  supabase: null,
+vi.mock('../lib/api', () => ({
+  isApiConnected: false,
+  api: null,
 }))
 
 import { useStore } from '../store/useStore'
@@ -264,7 +264,7 @@ describe('createOpportunity duplicate guard', () => {
     expect(useStore.getState().opportunities.filter(o => !o.isDeleted && o.solicitationId === 'FA4890-26-R-0001')).toHaveLength(1)
   })
 
-  it('blocks creation when Supabase already has an active solicitation ID', async () => {
+  it('blocks creation when API server already has an active solicitation ID', async () => {
     vi.mocked(findActiveOpportunityDuplicate).mockResolvedValueOnce({ ok: true, duplicate: true, opportunityId: 'remote-opp' })
 
     const saved = await useStore.getState().createOpportunity(makeOpp({

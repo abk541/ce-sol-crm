@@ -1,4 +1,4 @@
-import { supabase, isSupabaseConnected } from './supabase'
+import { api, isApiConnected, subscribeToApiEvents } from './api'
 import type {
   ActivityLog,
   BDSubmission,
@@ -28,6 +28,7 @@ import type {
   SamGovContact,
   Subcontractor,
   SubcontractorContact,
+  SubkDatabaseEntry,
   User,
 } from '../types'
 import type { Permission } from './permissions'
@@ -209,7 +210,7 @@ export async function findActiveOpportunityDuplicate(
   solicitationId: string,
   excludeOpportunityId?: string,
 ): Promise<OpportunityDuplicateCheckResult> {
-  if (!isSupabaseConnected || !supabase) {
+  if (!isApiConnected || !api) {
     return { ok: true, duplicate: false }
   }
 
@@ -217,7 +218,7 @@ export async function findActiveOpportunityDuplicate(
   if (!normalized) return { ok: true, duplicate: false }
 
   try {
-    let query = supabase
+    let query = api
       .from('opportunities')
       .select('id, solicitation_id, is_deleted')
       .ilike('solicitation_id', normalized)
@@ -952,6 +953,76 @@ function dbToPP(row: Record<string, unknown>): Partial<PastPerformance> {
   }
 }
 
+// ── Subcontractor database mappers ──────────────────────────────────────────
+
+const SUBK_DATABASE_META_PREFIX = '__SUBK_DATABASE_META__:'
+
+function subkDatabaseToDb(entry: SubkDatabaseEntry): Record<string, unknown> {
+  // The restored table predates these UI fields. Keep them durable in a
+  // namespaced notes envelope until a schema migration gives them columns.
+  const notes = serializeJsonMeta(SUBK_DATABASE_META_PREFIX, {
+    notes: entry.notes,
+    location: entry.location ?? null,
+    pastProjects: entry.pastProjects,
+    quoteFile: entry.quoteFile ?? null,
+  })
+  return {
+    id: entry.id,
+    company_name: entry.companyName,
+    contact_name: entry.contactName,
+    email: entry.email,
+    phone: entry.phone,
+    naics_codes: entry.naicsCodes,
+    set_aside: entry.setAside,
+    notes,
+    total_contracts_worked: entry.totalContractsWorked,
+    created_at: entry.createdAt,
+    created_by: entry.createdBy,
+  }
+}
+
+function normalizeStringArray(value: unknown): string[] {
+  if (Array.isArray(value)) return value.filter((item): item is string => typeof item === 'string')
+  if (typeof value !== 'string' || !value.trim()) return []
+  try {
+    const parsed = JSON.parse(value) as unknown
+    if (Array.isArray(parsed)) return parsed.filter((item): item is string => typeof item === 'string')
+  } catch {
+    // Older text exports may contain a comma-separated value instead of JSON.
+  }
+  return value.split(',').map(item => item.trim()).filter(Boolean)
+}
+
+function dbToSubkDatabaseEntry(row: Record<string, unknown>): SubkDatabaseEntry {
+  const meta = parseJsonMeta<{
+    notes?: unknown
+    location?: unknown
+    pastProjects?: unknown
+    quoteFile?: unknown
+  }>(SUBK_DATABASE_META_PREFIX, row.notes)
+  const pastProjects = Array.isArray(meta?.pastProjects)
+    ? meta.pastProjects.filter(project => project && typeof project === 'object') as SubkDatabaseEntry['pastProjects']
+    : []
+  return {
+    id: String(row.id ?? ''),
+    companyName: typeof row.company_name === 'string' ? row.company_name : '',
+    contactName: typeof row.contact_name === 'string' ? row.contact_name : '',
+    email: typeof row.email === 'string' ? row.email : '',
+    phone: typeof row.phone === 'string' ? row.phone : '',
+    naicsCodes: normalizeStringArray(row.naics_codes),
+    setAside: typeof row.set_aside === 'string' ? row.set_aside : '',
+    location: typeof meta?.location === 'string' ? meta.location : undefined,
+    pastProjects,
+    quoteFile: typeof meta?.quoteFile === 'string' ? meta.quoteFile : undefined,
+    notes: typeof meta?.notes === 'string'
+      ? meta.notes
+      : typeof row.notes === 'string' ? row.notes : '',
+    totalContractsWorked: Number(row.total_contracts_worked ?? 0),
+    createdAt: typeof row.created_at === 'string' ? row.created_at : '',
+    createdBy: typeof row.created_by === 'string' ? row.created_by : '',
+  }
+}
+
 // ── Employee mapper ──────────────────────────────────────────────────────────
 
 function empToDb(e: Employee): Record<string, unknown> {
@@ -1021,14 +1092,14 @@ async function releaseEmployeeEmailConflicts(
   row: Record<string, unknown>,
   existingByEmail: Map<string, ExistingEmployeeIdentity[]>,
 ): Promise<boolean> {
-  if (!supabase) return false
+  if (!api) return false
   const email = String(row.email ?? '')
   const desiredId = String(row.id ?? '')
   const conflicts = (existingByEmail.get(email) ?? []).filter(employee => employee.id !== desiredId)
   if (conflicts.length === 0) return false
 
   for (const conflict of conflicts) {
-    const { error } = await supabase
+    const { error } = await api
       .from('employees')
       .update({ email: legacyEmployeeEmail(conflict.email, conflict.id) })
       .eq('id', conflict.id)
@@ -1046,15 +1117,15 @@ async function upsertEmployeeRowForSync(
   row: Record<string, unknown>,
   existingByEmail: Map<string, ExistingEmployeeIdentity[]>,
 ): Promise<boolean> {
-  if (!supabase) return false
+  if (!api) return false
 
-  let { error } = await supabase.from('employees').upsert(row, { onConflict: 'id' }).select()
+  let { error } = await api.from('employees').upsert(row, { onConflict: 'id' }).select()
   if (!error) return true
 
   if (isDuplicateEmployeeEmailError(error)) {
     const released = await releaseEmployeeEmailConflicts(row, existingByEmail)
     if (released) {
-      const retry = await supabase.from('employees').upsert(row, { onConflict: 'id' }).select()
+      const retry = await api.from('employees').upsert(row, { onConflict: 'id' }).select()
       error = retry.error
       if (!error) return true
     }
@@ -1205,8 +1276,9 @@ export async function loadAllData(): Promise<{
   nonSubReports: NonSubmissionReport[]
   deletionRequests: DeletionRequest[]
   bdSubmissions: BDSubmission[]
+  subkDatabase: SubkDatabaseEntry[]
 } | null> {
-  if (!isSupabaseConnected || !supabase) return null
+  if (!isApiConnected || !api) return null
 
   try {
     const [
@@ -1227,24 +1299,26 @@ export async function loadAllData(): Promise<{
       nonSubRes,
       deletionRes,
       bdRes,
+      subkDatabaseRes,
     ] = await Promise.all([
-      supabase.from('users').select(SAFE_USER_COLUMNS),
-      supabase.from('employees').select('*'),
-      supabase.from('opportunities').select('*'),
-      supabase.from('comments').select('*'),
-      supabase.from('subcontractors').select('*'),
-      supabase.from('contracts').select('*'),
-      supabase.from('contract_pocs').select('*'),
-      supabase.from('contract_invoices').select('*'),
-      supabase.from('locked_subcontractors').select('*'),
-      supabase.from('government_warnings').select('*'),
-      supabase.from('contract_line_items').select('*'),
-      supabase.from('contract_vehicle_orders').select('*'),
-      supabase.from('fresh_awards').select('*'),
-      supabase.from('past_performances').select('*'),
-      supabase.from('non_submission_reports').select('*'),
-      supabase.from('deletion_requests').select('*'),
-      supabase.from('bd_submissions').select('*'),
+      api.from('users').select(SAFE_USER_COLUMNS),
+      api.from('employees').select('*'),
+      api.from('opportunities').select('*'),
+      api.from('comments').select('*'),
+      api.from('subcontractors').select('*'),
+      api.from('contracts').select('*'),
+      api.from('contract_pocs').select('*'),
+      api.from('contract_invoices').select('*'),
+      api.from('locked_subcontractors').select('*'),
+      api.from('government_warnings').select('*'),
+      api.from('contract_line_items').select('*'),
+      api.from('contract_vehicle_orders').select('*'),
+      api.from('fresh_awards').select('*'),
+      api.from('past_performances').select('*'),
+      api.from('non_submission_reports').select('*'),
+      api.from('deletion_requests').select('*'),
+      api.from('bd_submissions').select('*'),
+      api.from('subk_database').select('*'),
     ])
 
     if (userRes.error) console.error('[db] users load error', userRes.error)
@@ -1264,6 +1338,7 @@ export async function loadAllData(): Promise<{
     if (nonSubRes.error) console.error('[db] non_submission_reports load error', nonSubRes.error)
     if (deletionRes.error) console.error('[db] deletion_requests load error', deletionRes.error)
     if (bdRes.error) console.error('[db] bd_submissions load error', bdRes.error)
+    if (subkDatabaseRes.error) console.error('[db] subk_database load error', subkDatabaseRes.error)
 
     // A failed request is not an empty table. Returning partially empty data
     // here would make the store overwrite its last known-good snapshot during
@@ -1286,6 +1361,7 @@ export async function loadAllData(): Promise<{
       nonSubRes.error,
       deletionRes.error,
       bdRes.error,
+      subkDatabaseRes.error,
     ].some(Boolean)) {
       console.error('[db] loadAllData aborted; preserving the last known-good local snapshot')
       return null
@@ -1329,6 +1405,8 @@ export async function loadAllData(): Promise<{
     const nonSubReports: NonSubmissionReport[] = (nonSubRes.data ?? []).map(r => dbToNonSubReport(r as Record<string, unknown>))
     const deletionRequests: DeletionRequest[] = (deletionRes.data ?? []).map(r => dbToDeletionRequest(r as Record<string, unknown>))
     const bdSubmissions: BDSubmission[] = (bdRes.data ?? []).map(r => dbToBDSubmission(r as Record<string, unknown>))
+    const subkDatabase: SubkDatabaseEntry[] = (subkDatabaseRes.data ?? [])
+      .map(r => dbToSubkDatabaseEntry(r as Record<string, unknown>))
 
     return {
       users,
@@ -1341,6 +1419,7 @@ export async function loadAllData(): Promise<{
       nonSubReports,
       deletionRequests,
       bdSubmissions,
+      subkDatabase,
     }
   } catch (err) {
     console.error('[db] loadAllData failed', err)
@@ -1351,14 +1430,14 @@ export async function loadAllData(): Promise<{
 // ── Upsert helpers ───────────────────────────────────────────────────────────
 
 export async function upsertOpportunity(o: Opportunity): Promise<boolean> {
-  if (!isSupabaseConnected || !supabase) {
-    console.error('[db] upsertOpportunity skipped: Supabase is not configured')
+  if (!isApiConnected || !api) {
+    console.error('[db] upsertOpportunity skipped: API is not configured')
     return false
   }
   try {
-    let { error } = await supabase.from('opportunities').upsert(oppToDb(o))
+    let { error } = await api.from('opportunities').upsert(oppToDb(o))
     if (error && String(error.message ?? '').includes('sam_gov_contacts')) {
-      const retry = await supabase.from('opportunities').upsert(oppToDb(o, { includeSamGovContacts: false }))
+      const retry = await api.from('opportunities').upsert(oppToDb(o, { includeSamGovContacts: false }))
       error = retry.error
     }
     if (error) {
@@ -1366,7 +1445,7 @@ export async function upsertOpportunity(o: Opportunity): Promise<boolean> {
       return false
     }
     if (!error && Array.isArray(o.comments)) {
-      const deleteRes = await supabase.from('comments').delete().eq('opportunity_id', o.id)
+      const deleteRes = await api.from('comments').delete().eq('opportunity_id', o.id)
       if (deleteRes.error) {
         console.error('[db] sync comments delete error', deleteRes.error)
         return false
@@ -1384,12 +1463,12 @@ export async function upsertOpportunity(o: Opportunity): Promise<boolean> {
 }
 
 export async function deleteOpportunityRecord(id: string): Promise<boolean> {
-  if (!isSupabaseConnected || !supabase) {
-    console.error('[db] deleteOpportunityRecord skipped: Supabase is not configured')
+  if (!isApiConnected || !api) {
+    console.error('[db] deleteOpportunityRecord skipped: API is not configured')
     return false
   }
   try {
-    const { error } = await supabase.from('opportunities').delete().eq('id', id)
+    const { error } = await api.from('opportunities').delete().eq('id', id)
     if (error) {
       console.error('[db] deleteOpportunityRecord error', error)
       return false
@@ -1402,11 +1481,11 @@ export async function deleteOpportunityRecord(id: string): Promise<boolean> {
 }
 
 export async function upsertSubcontractor(sub: Subcontractor): Promise<void> {
-  if (!isSupabaseConnected || !supabase) return
+  if (!isApiConnected || !api) return
   try {
-    let { error } = await supabase.from('subcontractors').upsert(subcontractorToDb(sub))
+    let { error } = await api.from('subcontractors').upsert(subcontractorToDb(sub))
     if (error && String(error.message ?? '').includes('contacts')) {
-      const retry = await supabase.from('subcontractors').upsert(subcontractorToDb(sub, { includeContacts: false }))
+      const retry = await api.from('subcontractors').upsert(subcontractorToDb(sub, { includeContacts: false }))
       error = retry.error
     }
     if (error) console.error('[db] upsertSubcontractor error', error)
@@ -1416,9 +1495,9 @@ export async function upsertSubcontractor(sub: Subcontractor): Promise<void> {
 }
 
 export async function deleteSubcontractorRecord(id: string): Promise<void> {
-  if (!isSupabaseConnected || !supabase) return
+  if (!isApiConnected || !api) return
   try {
-    const { error } = await supabase.from('subcontractors').delete().eq('id', id)
+    const { error } = await api.from('subcontractors').delete().eq('id', id)
     if (error) console.error('[db] deleteSubcontractorRecord error', error)
   } catch (err) {
     console.error('[db] deleteSubcontractorRecord failed', err)
@@ -1426,8 +1505,8 @@ export async function deleteSubcontractorRecord(id: string): Promise<void> {
 }
 
 export async function upsertContract(c: Contract): Promise<boolean> {
-  if (!isSupabaseConnected || !supabase) {
-    console.error('[db] upsertContract skipped: Supabase is not configured')
+  if (!isApiConnected || !api) {
+    console.error('[db] upsertContract skipped: API is not configured')
     return false
   }
   try {
@@ -1435,16 +1514,18 @@ export async function upsertContract(c: Contract): Promise<boolean> {
     const stripped: string[] = []
     // Up to 4 retries — strip any column the schema cache doesn't know about and try again.
     for (let attempt = 0; attempt < 5; attempt++) {
-      const { error } = await supabase.from('contracts').upsert(payload)
+      const { error } = await api.from('contracts').upsert(payload)
       if (!error) {
         if (stripped.length) {
-          console.warn(`[db] contracts row saved without missing column(s): ${stripped.join(', ')}. Run the matching SQL migration in Supabase to enable remote persistence.`)
+          console.warn(`[db] contracts row saved without missing column(s): ${stripped.join(', ')}. Run the matching database migration to enable persistence.`)
         }
         return true
       }
-      // PGRST204 = "Could not find the 'X' column of 'contracts' in the schema cache"
+      // PostgREST reports PGRST204; the native API reports column_not_allowed.
       const message = `${error.message ?? ''} ${error.details ?? ''}`
-      const missing = error.code === 'PGRST204' ? message.match(/'([a-z0-9_]+)'/i)?.[1] : null
+      const missing = ['PGRST204', 'column_not_allowed'].includes(error.code)
+        ? message.match(/["']([a-z0-9_]+)["']/i)?.[1]
+        : null
       if (missing && missing in payload) {
         const { [missing]: _drop, ...rest } = payload
         void _drop
@@ -1464,9 +1545,9 @@ export async function upsertContract(c: Contract): Promise<boolean> {
 }
 
 export async function upsertContractPoC(poc: ContractPoC): Promise<void> {
-  if (!isSupabaseConnected || !supabase) return
+  if (!isApiConnected || !api) return
   try {
-    const { error } = await supabase.from('contract_pocs').upsert(pocToDb(poc))
+    const { error } = await api.from('contract_pocs').upsert(pocToDb(poc))
     if (error) console.error('[db] upsertContractPoC error', error)
   } catch (err) {
     console.error('[db] upsertContractPoC failed', err)
@@ -1474,9 +1555,9 @@ export async function upsertContractPoC(poc: ContractPoC): Promise<void> {
 }
 
 export async function deleteContractPoC(id: string): Promise<void> {
-  if (!isSupabaseConnected || !supabase) return
+  if (!isApiConnected || !api) return
   try {
-    const { error } = await supabase.from('contract_pocs').delete().eq('id', id)
+    const { error } = await api.from('contract_pocs').delete().eq('id', id)
     if (error) console.error('[db] deleteContractPoC error', error)
   } catch (err) {
     console.error('[db] deleteContractPoC failed', err)
@@ -1484,20 +1565,22 @@ export async function deleteContractPoC(id: string): Promise<void> {
 }
 
 export async function upsertContractInvoice(invoice: ContractInvoice): Promise<void> {
-  if (!isSupabaseConnected || !supabase) return
+  if (!isApiConnected || !api) return
   try {
     let payload: Record<string, unknown> = invoiceToDb(invoice)
     const stripped: string[] = []
     for (let attempt = 0; attempt < 5; attempt++) {
-      const { error } = await supabase.from('contract_invoices').upsert(payload)
+      const { error } = await api.from('contract_invoices').upsert(payload)
       if (!error) {
         if (stripped.length) {
-          console.warn(`[db] contract invoice saved without missing column(s): ${stripped.join(', ')}. Run the matching SQL migration in Supabase to enable full invoice persistence.`)
+          console.warn(`[db] contract invoice saved without missing column(s): ${stripped.join(', ')}. Run the matching database migration to enable full persistence.`)
         }
         return
       }
       const message = `${error.message ?? ''} ${error.details ?? ''}`
-      const missing = error.code === 'PGRST204' ? message.match(/'([a-z0-9_]+)'/i)?.[1] : null
+      const missing = ['PGRST204', 'column_not_allowed'].includes(error.code)
+        ? message.match(/["']([a-z0-9_]+)["']/i)?.[1]
+        : null
       if (missing && missing in payload) {
         const { [missing]: _drop, ...rest } = payload
         void _drop
@@ -1515,9 +1598,9 @@ export async function upsertContractInvoice(invoice: ContractInvoice): Promise<v
 }
 
 export async function deleteContractInvoice(id: string): Promise<void> {
-  if (!isSupabaseConnected || !supabase) return
+  if (!isApiConnected || !api) return
   try {
-    const { error } = await supabase.from('contract_invoices').delete().eq('id', id)
+    const { error } = await api.from('contract_invoices').delete().eq('id', id)
     if (error) console.error('[db] deleteContractInvoice error', error)
   } catch (err) {
     console.error('[db] deleteContractInvoice failed', err)
@@ -1525,9 +1608,9 @@ export async function deleteContractInvoice(id: string): Promise<void> {
 }
 
 export async function upsertLockedSubcontractor(sub: LockedSubcontractor): Promise<void> {
-  if (!isSupabaseConnected || !supabase) return
+  if (!isApiConnected || !api) return
   try {
-    const { error } = await supabase.from('locked_subcontractors').upsert(lockedSubToDb(sub))
+    const { error } = await api.from('locked_subcontractors').upsert(lockedSubToDb(sub))
     if (error) console.error('[db] upsertLockedSubcontractor error', error)
   } catch (err) {
     console.error('[db] upsertLockedSubcontractor failed', err)
@@ -1535,9 +1618,9 @@ export async function upsertLockedSubcontractor(sub: LockedSubcontractor): Promi
 }
 
 export async function upsertGovernmentWarning(warning: GovernmentWarning): Promise<void> {
-  if (!isSupabaseConnected || !supabase) return
+  if (!isApiConnected || !api) return
   try {
-    const { error } = await supabase.from('government_warnings').upsert(warningToDb(warning))
+    const { error } = await api.from('government_warnings').upsert(warningToDb(warning))
     if (error) console.error('[db] upsertGovernmentWarning error', error)
   } catch (err) {
     console.error('[db] upsertGovernmentWarning failed', err)
@@ -1545,9 +1628,9 @@ export async function upsertGovernmentWarning(warning: GovernmentWarning): Promi
 }
 
 export async function deleteGovernmentWarningRecord(id: string): Promise<void> {
-  if (!isSupabaseConnected || !supabase) return
+  if (!isApiConnected || !api) return
   try {
-    const { error } = await supabase.from('government_warnings').delete().eq('id', id)
+    const { error } = await api.from('government_warnings').delete().eq('id', id)
     if (error) console.error('[db] deleteGovernmentWarning error', error)
   } catch (err) {
     console.error('[db] deleteGovernmentWarning failed', err)
@@ -1555,9 +1638,9 @@ export async function deleteGovernmentWarningRecord(id: string): Promise<void> {
 }
 
 export async function upsertContractLineItem(line: ContractLineItem): Promise<void> {
-  if (!isSupabaseConnected || !supabase) return
+  if (!isApiConnected || !api) return
   try {
-    const { error } = await supabase.from('contract_line_items').upsert(lineItemToDb(line))
+    const { error } = await api.from('contract_line_items').upsert(lineItemToDb(line))
     if (error) console.error('[db] upsertContractLineItem error', error)
   } catch (err) {
     console.error('[db] upsertContractLineItem failed', err)
@@ -1565,9 +1648,9 @@ export async function upsertContractLineItem(line: ContractLineItem): Promise<vo
 }
 
 export async function deleteContractLineItemRecord(id: string): Promise<void> {
-  if (!isSupabaseConnected || !supabase) return
+  if (!isApiConnected || !api) return
   try {
-    const { error } = await supabase.from('contract_line_items').delete().eq('id', id)
+    const { error } = await api.from('contract_line_items').delete().eq('id', id)
     if (error) console.error('[db] deleteContractLineItem error', error)
   } catch (err) {
     console.error('[db] deleteContractLineItem failed', err)
@@ -1575,9 +1658,9 @@ export async function deleteContractLineItemRecord(id: string): Promise<void> {
 }
 
 export async function upsertContractVehicleOrder(order: ContractVehicleOrder): Promise<void> {
-  if (!isSupabaseConnected || !supabase) return
+  if (!isApiConnected || !api) return
   try {
-    const { error } = await supabase.from('contract_vehicle_orders').upsert(vehicleOrderToDb(order))
+    const { error } = await api.from('contract_vehicle_orders').upsert(vehicleOrderToDb(order))
     if (error) console.error('[db] upsertContractVehicleOrder error', error)
   } catch (err) {
     console.error('[db] upsertContractVehicleOrder failed', err)
@@ -1585,9 +1668,9 @@ export async function upsertContractVehicleOrder(order: ContractVehicleOrder): P
 }
 
 export async function deleteContractVehicleOrderRecord(id: string): Promise<void> {
-  if (!isSupabaseConnected || !supabase) return
+  if (!isApiConnected || !api) return
   try {
-    const { error } = await supabase.from('contract_vehicle_orders').delete().eq('id', id)
+    const { error } = await api.from('contract_vehicle_orders').delete().eq('id', id)
     if (error) console.error('[db] deleteContractVehicleOrder error', error)
   } catch (err) {
     console.error('[db] deleteContractVehicleOrder failed', err)
@@ -1595,9 +1678,9 @@ export async function deleteContractVehicleOrderRecord(id: string): Promise<void
 }
 
 export async function upsertFreshAward(fa: FreshAward): Promise<void> {
-  if (!isSupabaseConnected || !supabase) return
+  if (!isApiConnected || !api) return
   try {
-    const { error } = await supabase.from('fresh_awards').upsert(freshAwardToDb(fa))
+    const { error } = await api.from('fresh_awards').upsert(freshAwardToDb(fa))
     if (error) console.error('[db] upsertFreshAward error', error)
   } catch (err) {
     console.error('[db] upsertFreshAward failed', err)
@@ -1605,9 +1688,9 @@ export async function upsertFreshAward(fa: FreshAward): Promise<void> {
 }
 
 export async function deleteFreshAwardRecord(id: string): Promise<void> {
-  if (!isSupabaseConnected || !supabase) return
+  if (!isApiConnected || !api) return
   try {
-    const { error } = await supabase.from('fresh_awards').delete().eq('id', id)
+    const { error } = await api.from('fresh_awards').delete().eq('id', id)
     if (error) console.error('[db] deleteFreshAwardRecord error', error)
   } catch (err) {
     console.error('[db] deleteFreshAwardRecord failed', err)
@@ -1615,9 +1698,9 @@ export async function deleteFreshAwardRecord(id: string): Promise<void> {
 }
 
 export async function upsertPastPerformance(pp: PastPerformance): Promise<void> {
-  if (!isSupabaseConnected || !supabase) return
+  if (!isApiConnected || !api) return
   try {
-    const { error } = await supabase.from('past_performances').upsert(ppToDb(pp))
+    const { error } = await api.from('past_performances').upsert(ppToDb(pp))
     if (error) console.error('[db] upsertPastPerformance error', error)
   } catch (err) {
     console.error('[db] upsertPastPerformance failed', err)
@@ -1626,10 +1709,40 @@ export async function upsertPastPerformance(pp: PastPerformance): Promise<void> 
 
 // ── Clear all business data ──────────────────────────────────────────────────
 
-export async function upsertNonSubReport(report: NonSubmissionReport): Promise<void> {
-  if (!isSupabaseConnected || !supabase) return
+export async function upsertSubkDatabaseEntry(entry: SubkDatabaseEntry): Promise<boolean> {
+  if (!isApiConnected || !api) return false
   try {
-    const { error } = await supabase.from('non_submission_reports').upsert(nonSubReportToDb(report))
+    const { error } = await api.from('subk_database').upsert(subkDatabaseToDb(entry))
+    if (error) {
+      console.error('[db] upsertSubkDatabaseEntry error', error)
+      return false
+    }
+    return true
+  } catch (err) {
+    console.error('[db] upsertSubkDatabaseEntry failed', err)
+    return false
+  }
+}
+
+export async function deleteSubkDatabaseEntryRecord(id: string): Promise<boolean> {
+  if (!isApiConnected || !api) return false
+  try {
+    const { error } = await api.from('subk_database').delete().eq('id', id)
+    if (error) {
+      console.error('[db] deleteSubkDatabaseEntryRecord error', error)
+      return false
+    }
+    return true
+  } catch (err) {
+    console.error('[db] deleteSubkDatabaseEntryRecord failed', err)
+    return false
+  }
+}
+
+export async function upsertNonSubReport(report: NonSubmissionReport): Promise<void> {
+  if (!isApiConnected || !api) return
+  try {
+    const { error } = await api.from('non_submission_reports').upsert(nonSubReportToDb(report))
     if (error) console.error('[db] upsertNonSubReport error', error)
   } catch (err) {
     console.error('[db] upsertNonSubReport failed', err)
@@ -1637,9 +1750,9 @@ export async function upsertNonSubReport(report: NonSubmissionReport): Promise<v
 }
 
 export async function upsertDeletionRequest(req: DeletionRequest): Promise<void> {
-  if (!isSupabaseConnected || !supabase) return
+  if (!isApiConnected || !api) return
   try {
-    const { error } = await supabase.from('deletion_requests').upsert(deletionRequestToDb(req))
+    const { error } = await api.from('deletion_requests').upsert(deletionRequestToDb(req))
     if (error) console.error('[db] upsertDeletionRequest error', error)
   } catch (err) {
     console.error('[db] upsertDeletionRequest failed', err)
@@ -1647,9 +1760,9 @@ export async function upsertDeletionRequest(req: DeletionRequest): Promise<void>
 }
 
 export async function upsertBDSubmission(submission: BDSubmission): Promise<void> {
-  if (!isSupabaseConnected || !supabase) return
+  if (!isApiConnected || !api) return
   try {
-    const { error } = await supabase.from('bd_submissions').upsert(bdSubmissionToDb(submission))
+    const { error } = await api.from('bd_submissions').upsert(bdSubmissionToDb(submission))
     if (error) console.error('[db] upsertBDSubmission error', error)
   } catch (err) {
     console.error('[db] upsertBDSubmission failed', err)
@@ -1657,9 +1770,9 @@ export async function upsertBDSubmission(submission: BDSubmission): Promise<void
 }
 
 export async function deleteBDSubmissionRecord(id: number): Promise<void> {
-  if (!isSupabaseConnected || !supabase) return
+  if (!isApiConnected || !api) return
   try {
-    const { error } = await supabase.from('bd_submissions').delete().eq('id', id)
+    const { error } = await api.from('bd_submissions').delete().eq('id', id)
     if (error) console.error('[db] deleteBDSubmissionRecord error', error)
   } catch (err) {
     console.error('[db] deleteBDSubmissionRecord failed', err)
@@ -1667,7 +1780,7 @@ export async function deleteBDSubmissionRecord(id: number): Promise<void> {
 }
 
 export async function clearBusinessData(): Promise<void> {
-  if (!isSupabaseConnected || !supabase) return
+  if (!isApiConnected || !api) return
   try {
     for (const table of [
       'contract_pocs',
@@ -1688,10 +1801,10 @@ export async function clearBusinessData(): Promise<void> {
       'contracts',
       'opportunities',
     ]) {
-      const { error } = await supabase.from(table).delete().not('id', 'is', null)
+      const { error } = await api.from(table).delete().not('id', 'is', null)
       if (error) console.error(`[db] clear ${table} error`, error)
     }
-    console.log('[db] All business data cleared from Supabase.')
+    console.log('[db] All business data cleared from API.')
   } catch (err) {
     console.error('[db] clearBusinessData failed', err)
   }
@@ -1701,9 +1814,9 @@ export async function bulkDeleteFromTable(
   table: string,
   filter?: { column: string; value: string | number | boolean },
 ): Promise<boolean> {
-  if (!isSupabaseConnected || !supabase) return true
+  if (!isApiConnected || !api) return true
   try {
-    let query = supabase.from(table).delete()
+    let query = api.from(table).delete()
     query = filter ? query.eq(filter.column, filter.value) : query.not('id', 'is', null)
     const { error } = await query
     if (error) {
@@ -1740,10 +1853,10 @@ export type RemoteCountTable = typeof REMOTE_COUNT_TABLES[number]
 export async function fetchRemoteRowCounts(): Promise<Record<RemoteCountTable, number | null>> {
   const out = {} as Record<RemoteCountTable, number | null>
   for (const table of REMOTE_COUNT_TABLES) out[table] = null
-  if (!isSupabaseConnected || !supabase) return out
+  if (!isApiConnected || !api) return out
   await Promise.all(REMOTE_COUNT_TABLES.map(async table => {
     try {
-      const { count, error } = await supabase!.from(table).select('*', { count: 'exact', head: true })
+      const { count, error } = await api!.from(table).select('*', { count: 'exact', head: true })
       if (error) {
         console.error(`[db] fetchRemoteRowCounts ${table} error`, error)
         out[table] = null
@@ -1777,7 +1890,7 @@ export interface PermissionOverridesPayload {
 function isMissingTableError(err: unknown): boolean {
   if (!err || typeof err !== 'object') return false
   const e = err as { code?: string; message?: string }
-  if (e.code === '42P01') return true
+  if (e.code === '42P01' || e.code === 'table_not_allowed') return true
   if (typeof e.message === 'string' && /relation .* does not exist/i.test(e.message)) return true
   return false
 }
@@ -1789,13 +1902,13 @@ export interface PermissionOverridesResult {
 }
 
 export async function fetchPermissionOverrides(): Promise<PermissionOverridesResult> {
-  if (!isSupabaseConnected || !supabase) {
+  if (!isApiConnected || !api) {
     return { ok: false, missingTable: false }
   }
   try {
     const [rolesRes, usersRes] = await Promise.all([
-      supabase.from('role_permission_overrides').select('role, permissions'),
-      supabase.from('user_permission_overrides').select('user_id, grants, revokes'),
+      api.from('role_permission_overrides').select('role, permissions'),
+      api.from('user_permission_overrides').select('user_id, grants, revokes'),
     ])
     if (rolesRes.error && isMissingTableError(rolesRes.error)) {
       return { ok: false, missingTable: true }
@@ -1832,10 +1945,10 @@ export async function fetchPermissionOverrides(): Promise<PermissionOverridesRes
 }
 
 export async function saveRolePermissionOverride(role: Role, permissions: Permission[] | null): Promise<PermissionOverridesResult> {
-  if (!isSupabaseConnected || !supabase) return { ok: false, missingTable: false }
+  if (!isApiConnected || !api) return { ok: false, missingTable: false }
   try {
     if (permissions == null) {
-      const { error } = await supabase.from('role_permission_overrides').delete().eq('role', role)
+      const { error } = await api.from('role_permission_overrides').delete().eq('role', role)
       if (error) {
         if (isMissingTableError(error)) return { ok: false, missingTable: true }
         console.error('[db] saveRolePermissionOverride delete error', error)
@@ -1843,7 +1956,7 @@ export async function saveRolePermissionOverride(role: Role, permissions: Permis
       }
       return { ok: true, missingTable: false }
     }
-    const { error } = await supabase
+    const { error } = await api
       .from('role_permission_overrides')
       .upsert({ role, permissions, updated_at: new Date().toISOString() }, { onConflict: 'role' })
     if (error) {
@@ -1864,10 +1977,10 @@ export async function saveUserPermissionOverride(
   grants: Permission[],
   revokes: Permission[],
 ): Promise<PermissionOverridesResult> {
-  if (!isSupabaseConnected || !supabase) return { ok: false, missingTable: false }
+  if (!isApiConnected || !api) return { ok: false, missingTable: false }
   try {
     if (grants.length === 0 && revokes.length === 0) {
-      const { error } = await supabase.from('user_permission_overrides').delete().eq('user_id', userId)
+      const { error } = await api.from('user_permission_overrides').delete().eq('user_id', userId)
       if (error) {
         if (isMissingTableError(error)) return { ok: false, missingTable: true }
         console.error('[db] saveUserPermissionOverride delete error', error)
@@ -1875,7 +1988,7 @@ export async function saveUserPermissionOverride(
       }
       return { ok: true, missingTable: false }
     }
-    const { error } = await supabase
+    const { error } = await api
       .from('user_permission_overrides')
       .upsert(
         { user_id: userId, grants, revokes, updated_at: new Date().toISOString() },
@@ -1895,11 +2008,11 @@ export async function saveUserPermissionOverride(
 }
 
 export async function clearAllPermissionOverrides(): Promise<PermissionOverridesResult> {
-  if (!isSupabaseConnected || !supabase) return { ok: false, missingTable: false }
+  if (!isApiConnected || !api) return { ok: false, missingTable: false }
   try {
     const [r1, r2] = await Promise.all([
-      supabase.from('role_permission_overrides').delete().neq('role', '__never__'),
-      supabase.from('user_permission_overrides').delete().neq('user_id', '__never__'),
+      api.from('role_permission_overrides').delete().neq('role', '__never__'),
+      api.from('user_permission_overrides').delete().neq('user_id', '__never__'),
     ])
     if (r1.error && isMissingTableError(r1.error)) return { ok: false, missingTable: true }
     if (r2.error && isMissingTableError(r2.error)) return { ok: false, missingTable: true }
@@ -1935,11 +2048,11 @@ export interface AppSettingsResult {
 }
 
 export async function fetchAppSettings(): Promise<AppSettingsResult> {
-  if (!isSupabaseConnected || !supabase) {
+  if (!isApiConnected || !api) {
     return { ok: false, missingTable: false }
   }
   try {
-    const { data, error } = await supabase.from('app_settings').select('key, value')
+    const { data, error } = await api.from('app_settings').select('key, value')
     if (error) {
       if (isMissingTableError(error)) return { ok: false, missingTable: true }
       console.error('[db] fetchAppSettings error', error)
@@ -1965,10 +2078,10 @@ export async function fetchAppSettings(): Promise<AppSettingsResult> {
 }
 
 export async function saveAppSetting(key: string, value: string): Promise<AppSettingsResult> {
-  if (!isSupabaseConnected || !supabase) return { ok: false, missingTable: false }
+  if (!isApiConnected || !api) return { ok: false, missingTable: false }
   if (!KNOWN_NON_SECRET_APP_SETTINGS.has(key)) return { ok: false, missingTable: false }
   try {
-    const { error } = await supabase
+    const { error } = await api
       .from('app_settings')
       .upsert({ key, value, updated_at: new Date().toISOString() }, { onConflict: 'key' })
     if (error) {
@@ -2028,9 +2141,9 @@ export interface NotificationsResult {
 }
 
 export async function fetchNotifications(): Promise<NotificationsResult> {
-  if (!isSupabaseConnected || !supabase) return { ok: false, missingTable: false }
+  if (!isApiConnected || !api) return { ok: false, missingTable: false }
   try {
-    const { data, error } = await supabase
+    const { data, error } = await api
       .from('notifications')
       .select('*')
       .order('created_at', { ascending: false })
@@ -2050,9 +2163,9 @@ export async function fetchNotifications(): Promise<NotificationsResult> {
 }
 
 export async function upsertNotification(n: Notification): Promise<boolean> {
-  if (!isSupabaseConnected || !supabase) return false
+  if (!isApiConnected || !api) return false
   try {
-    const { error } = await supabase.from('notifications').upsert(notificationToDb(n))
+    const { error } = await api.from('notifications').upsert(notificationToDb(n))
     if (error) {
       if (!isMissingTableError(error)) console.error('[db] upsertNotification error', error)
       return false
@@ -2069,7 +2182,7 @@ export async function upsertNotification(n: Notification): Promise<boolean> {
 // Backed by the `activity_logs` table (migration
 // 20260715120000_add_activity_logs.sql). Previously activity logs lived only in
 // each browser's localStorage, so the admin/Capture Manager only ever saw their
-// OWN actions. Promoting them to Supabase makes the audit trail workspace-wide.
+// OWN actions. Promoting them to API makes the audit trail workspace-wide.
 // The `user` field is stored in a non-reserved column (`actor`) to avoid any
 // quoting pitfalls.
 
@@ -2106,9 +2219,9 @@ export interface ActivityLogsResult {
 }
 
 export async function fetchActivityLogs(): Promise<ActivityLogsResult> {
-  if (!isSupabaseConnected || !supabase) return { ok: false, missingTable: false }
+  if (!isApiConnected || !api) return { ok: false, missingTable: false }
   try {
-    const { data, error } = await supabase
+    const { data, error } = await api
       .from('activity_logs')
       .select('*')
       .order('created_at', { ascending: false })
@@ -2128,9 +2241,9 @@ export async function fetchActivityLogs(): Promise<ActivityLogsResult> {
 }
 
 export async function upsertActivityLog(l: ActivityLog): Promise<boolean> {
-  if (!isSupabaseConnected || !supabase) return false
+  if (!isApiConnected || !api) return false
   try {
-    const { error } = await supabase.from('activity_logs').upsert(activityLogToDb(l))
+    const { error } = await api.from('activity_logs').upsert(activityLogToDb(l))
     if (error) {
       if (!isMissingTableError(error)) console.error('[db] upsertActivityLog error', error)
       return false
@@ -2198,9 +2311,9 @@ export interface EmployeeRequestsResult {
 }
 
 export async function fetchEmployeeRequests(): Promise<EmployeeRequestsResult> {
-  if (!isSupabaseConnected || !supabase) return { ok: false, missingTable: false }
+  if (!isApiConnected || !api) return { ok: false, missingTable: false }
   try {
-    const { data, error } = await supabase
+    const { data, error } = await api
       .from('employee_requests')
       .select('*')
       .order('submitted_at', { ascending: false })
@@ -2219,59 +2332,25 @@ export async function fetchEmployeeRequests(): Promise<EmployeeRequestsResult> {
 }
 
 export async function upsertEmployeeRequest(r: EmployeeRequest): Promise<void> {
-  if (!isSupabaseConnected || !supabase) return
+  if (!isApiConnected || !api) return
   try {
-    const { error } = await supabase.from('employee_requests').upsert(employeeRequestToDb(r))
+    const { error } = await api.from('employee_requests').upsert(employeeRequestToDb(r))
     if (error && !isMissingTableError(error)) console.error('[db] upsertEmployeeRequest error', error)
   } catch (err) {
     if (!isMissingTableError(err)) console.error('[db] upsertEmployeeRequest failed', err)
   }
 }
 
-// ── Realtime ─────────────────────────────────────────────────────────────────
+// ── Live change events ───────────────────────────────────────────────────────
 //
-// Best-effort live-change signal. Subscribes to Postgres changes on the shared
-// business tables and invokes `onChange` whenever any row is inserted, updated
-// or deleted by another session. The caller debounces and reacts by re-pulling
-// data (see the store's refreshFromDb). If Realtime is not enabled on the
-// project the subscription simply never fires and the client-side poll remains
-// the source of freshness. Returns an unsubscribe function.
-
-const REALTIME_TABLES = [
-  'notifications',
-  'employee_requests',
-  'opportunities',
-  'contracts',
-  'fresh_awards',
-  'past_performances',
-  'non_submission_reports',
-  'deletion_requests',
-  'bd_submissions',
-  'comments',
-  'subcontractors',
-  'activity_logs',
-] as const
+// Best-effort live-change signal. The authenticated API emits a small SSE
+// notification after a transaction commits; callers debounce and re-pull the
+// authoritative snapshot. The 20-second client poll remains the fallback.
 
 export function subscribeToDataChanges(onChange: () => void): () => void {
-  if (!isSupabaseConnected || !supabase) return () => {}
+  if (!isApiConnected) return () => {}
   try {
-    const client = supabase
-    const channel = client.channel('workspace-data-changes')
-    for (const table of REALTIME_TABLES) {
-      channel.on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table },
-        () => onChange(),
-      )
-    }
-    channel.subscribe()
-    return () => {
-      try {
-        void client.removeChannel(channel)
-      } catch (err) {
-        console.error('[db] removeChannel failed', err)
-      }
-    }
+    return subscribeToApiEvents(onChange)
   } catch (err) {
     console.error('[db] subscribeToDataChanges failed', err)
     return () => {}
@@ -2281,10 +2360,10 @@ export function subscribeToDataChanges(onChange: () => void): () => void {
 // ── Seed if empty ────────────────────────────────────────────────────────────
 
 export async function seedEmployeesIfEmpty(employees: Employee[]): Promise<boolean> {
-  if (!isSupabaseConnected || !supabase || employees.length === 0) return true
+  if (!isApiConnected || !api || employees.length === 0) return true
 
   try {
-    const { data: existing, error: fetchError } = await supabase
+    const { data: existing, error: fetchError } = await api
       .from('employees')
       .select('id, email')
     if (fetchError) {
@@ -2302,7 +2381,7 @@ export async function seedEmployeesIfEmpty(employees: Employee[]): Promise<boole
 
     const synced = await upsertBatched('employees', rows)
     if (synced) {
-      console.log('[db] Synced employee hierarchy in Supabase.')
+      console.log('[db] Synced employee hierarchy in API.')
       return true
     }
 
@@ -2314,7 +2393,7 @@ export async function seedEmployeesIfEmpty(employees: Employee[]): Promise<boole
       const ok = await upsertEmployeeRowForSync(row, existingByEmail)
       if (!ok) allSynced = false
     }
-    if (allSynced) console.log('[db] Synced employee hierarchy in Supabase.')
+    if (allSynced) console.log('[db] Synced employee hierarchy in API.')
     return allSynced
   } catch (err) {
     console.error('[db] seedEmployeesIfEmpty failed', err)
@@ -2327,10 +2406,10 @@ async function insertBatched<T>(
   rows: Record<string, unknown>[],
   batchSize = 20,
 ): Promise<boolean> {
-  if (!supabase) return false
+  if (!api) return false
   for (let i = 0; i < rows.length; i += batchSize) {
     const batch = rows.slice(i, i + batchSize)
-    const { error } = await supabase.from(table).insert(batch).select()
+    const { error } = await api.from(table).insert(batch).select()
     if (error) {
       console.error(`[db] insert batch into ${table} error`, error)
       return false
@@ -2344,10 +2423,10 @@ async function upsertBatched(
   rows: Record<string, unknown>[],
   batchSize = 20,
 ): Promise<boolean> {
-  if (!supabase) return false
+  if (!api) return false
   for (let i = 0; i < rows.length; i += batchSize) {
     const batch = rows.slice(i, i + batchSize)
-    const { error } = await supabase.from(table).upsert(batch, { onConflict: 'id' }).select()
+    const { error } = await api.from(table).upsert(batch, { onConflict: 'id' }).select()
     if (error) {
       console.error(`[db] upsert batch into ${table} error`, error)
       return false
@@ -2362,11 +2441,11 @@ export async function seedIfEmpty(mockData: {
   freshAwards: FreshAward[]
   pastPerformances: PastPerformance[]
 }): Promise<void> {
-  if (!isSupabaseConnected || !supabase) return
+  if (!isApiConnected || !api) return
 
   try {
     // Check if opportunities table is already seeded
-    const { count, error } = await supabase
+    const { count, error } = await api
       .from('opportunities')
       .select('*', { count: 'exact', head: true })
 
@@ -2377,7 +2456,7 @@ export async function seedIfEmpty(mockData: {
 
     if ((count ?? 0) > 0) return // already seeded
 
-    console.log('[db] Seeding Supabase with mock data...')
+    console.log('[db] Seeding API with mock data...')
 
     await insertBatched(
       'opportunities',

@@ -1,5 +1,12 @@
 import type { User } from '../types'
-import { isSupabaseConnected, supabase } from './supabase'
+import {
+  ApiRequestError,
+  apiRequest,
+  envelopeData,
+  isApiConnected,
+  storeApiSession,
+  type ApiSession,
+} from './api'
 import { mapSafeUserRow } from './userProfile'
 
 export type ManagedUserCreate = Omit<User, 'id' | 'createdAt' | 'authUserId' | 'mfaEnabled' | 'mfaSecret' | 'mfaRecoveryCodes' | 'firstLogin'> & {
@@ -27,6 +34,7 @@ type ManageUsersResponse = {
   user?: Record<string, unknown>
   users?: Record<string, unknown>[]
   alreadyComplete?: boolean
+  session?: ApiSession
   error?: ServiceError | string
 }
 
@@ -72,37 +80,13 @@ function serviceFailure(
 }
 
 function serviceErrorFromPayload(value: unknown): ServiceError | null {
-  if (typeof value === 'string' && value.trim()) {
-    return { message: value.trim() }
-  }
+  if (typeof value === 'string' && value.trim()) return { message: value.trim() }
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const record = value as Record<string, unknown>
-  const nested = record.error
-  if (nested !== undefined && nested !== value) {
-    return serviceErrorFromPayload(nested)
-  }
+  if (record.error !== undefined && record.error !== value) return serviceErrorFromPayload(record.error)
   return {
     code: typeof record.code === 'string' ? record.code : undefined,
     message: typeof record.message === 'string' ? record.message : undefined,
-  }
-}
-
-async function serviceErrorFromInvoke(error: unknown): Promise<ServiceError | null> {
-  if (!error || typeof error !== 'object') return null
-  const context = (error as { context?: unknown }).context
-  if (!context || typeof context !== 'object') return null
-
-  const response = context as {
-    clone?: () => { json?: () => Promise<unknown> }
-    json?: () => Promise<unknown>
-  }
-
-  try {
-    const readable = typeof response.clone === 'function' ? response.clone() : response
-    if (typeof readable.json !== 'function') return null
-    return serviceErrorFromPayload(await readable.json())
-  } catch {
-    return null
   }
 }
 
@@ -110,36 +94,31 @@ async function invokeUserService(request: ManageUsersRequest): Promise<
   | { ok: true; response: ManageUsersResponse }
   | ServiceFailure
 > {
-  if (!isSupabaseConnected || !supabase) {
-    return serviceFailure(
-      'service_not_configured',
-      'User management is not configured.',
-      false,
-    )
+  if (!isApiConnected) {
+    return serviceFailure('service_not_configured', 'User management is not configured.', false)
   }
 
-  try {
-    const { data, error } = await supabase.functions.invoke<ManageUsersResponse>('manage-users', {
-      body: request,
-    })
+  const firstLogin = request.action === 'complete-first-login'
+  const path = firstLogin ? '/auth/first-login' : '/admin/users/actions'
+  const body = firstLogin ? { password: request.password } : request
 
-    const payloadError = serviceErrorFromPayload(data?.error)
+  try {
+    const raw = await apiRequest<unknown>(path, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    })
+    const response = envelopeData<ManageUsersResponse>(raw) ?? {}
+    const payloadError = serviceErrorFromPayload(response.error)
     if (payloadError) {
       const code = payloadError.code || 'request_failed'
       return serviceFailure(code, payloadError.message || 'The user-management request failed.')
     }
-
-    if (error) {
-      const functionError = await serviceErrorFromInvoke(error)
-      const code = functionError?.code || 'service_unavailable'
-      return serviceFailure(
-        code,
-        functionError?.message || 'The user-management service could not complete the request.',
-      )
+    if (firstLogin && response.session) storeApiSession(response.session, 'USER_UPDATED')
+    return { ok: true, response }
+  } catch (error) {
+    if (error instanceof ApiRequestError) {
+      return serviceFailure(error.code, error.message)
     }
-
-    return { ok: true, response: data ?? {} }
-  } catch {
     return serviceFailure(
       'service_unavailable',
       'The user-management service could not be reached. Please retry.',

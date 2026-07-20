@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+const dbMocks = vi.hoisted(() => ({
+  bulkDeleteFromTable: vi.fn().mockResolvedValue(true),
+}))
+
 vi.mock('../lib/db', () => ({
   loadAllData: vi.fn().mockResolvedValue(null),
   seedIfEmpty: vi.fn().mockResolvedValue(null),
@@ -22,13 +26,15 @@ vi.mock('../lib/db', () => ({
   upsertDeletionRequest: vi.fn().mockResolvedValue(null),
   upsertBDSubmission: vi.fn().mockResolvedValue(null),
   deleteBDSubmissionRecord: vi.fn().mockResolvedValue(null),
-  bulkDeleteFromTable: vi.fn().mockResolvedValue(true),
+  bulkDeleteFromTable: dbMocks.bulkDeleteFromTable,
   upsertEmployeeRequest: vi.fn().mockResolvedValue(undefined),
+  upsertNotification: vi.fn().mockResolvedValue(undefined),
+  upsertActivityLog: vi.fn().mockResolvedValue(undefined),
 }))
 
-vi.mock('../lib/supabase', () => ({
-  isSupabaseConnected: false,
-  supabase: null,
+vi.mock('../lib/api', () => ({
+  isApiConnected: true,
+  api: null,
 }))
 
 import { useStore } from '../store/useStore'
@@ -188,5 +194,40 @@ describe('HR store actions', () => {
     useStore.getState().deleteEmployeeRequest(request.id)
     await Promise.resolve()
     expect(useStore.getState().employeeRequests).toHaveLength(0)
+  })
+
+  it('wipes employee requests from the shared database as well as local state', async () => {
+    useStore.setState({
+      employeeRequests: [{
+        id: 'request-1',
+        requesterId: ASSOCIATE.id,
+        requesterName: ASSOCIATE.name,
+        requesterEmail: ASSOCIATE.email,
+        requesterRole: ASSOCIATE.role,
+        type: 'DOCUMENT',
+        priority: 'MEDIUM',
+        title: 'Employment letter',
+        details: 'Please provide a letter.',
+        status: 'PENDING',
+        submittedAt: '2026-07-20T12:00:00.000Z',
+        attachments: [],
+      }],
+    })
+
+    await expect(useStore.getState().wipeEmployeeRequests()).resolves.toBe(1)
+    expect(useStore.getState().employeeRequests).toEqual([])
+    expect(dbMocks.bulkDeleteFromTable).toHaveBeenCalledWith('employee_requests')
+  })
+
+  it('includes employee requests in a complete workspace reset', async () => {
+    useStore.setState({
+      users: [CAPTURE_MANAGER],
+      employees: [],
+      employeeRequests: [],
+    })
+
+    await useStore.getState().resetEntireWorkspace()
+
+    expect(dbMocks.bulkDeleteFromTable).toHaveBeenCalledWith('employee_requests')
   })
 })

@@ -1,6 +1,6 @@
 # Copilot Instructions — ce-sol-crm
 
-Project: React 18 + TypeScript 5 + Vite SPA, TailwindCSS 3, framer-motion 11, Zustand, HashRouter. Backend stub via Supabase.
+Project: React 18 + TypeScript 5 + Vite SPA, TailwindCSS 3, framer-motion 11, Zustand, HashRouter. Private TypeScript API backed by PostgreSQL.
 
 ## Modal / overlay rules (mandatory)
 

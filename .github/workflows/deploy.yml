@@ -34,11 +34,20 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Validate API endpoint
+        shell: bash
+        env:
+          VITE_API_URL: ${{ secrets.VITE_API_URL }}
+        run: |
+          case "$VITE_API_URL" in
+            https://*/api/v1) ;;
+            *) echo 'VITE_API_URL must be an HTTPS URL ending in /api/v1.' >&2; exit 1 ;;
+          esac
+
       - name: Build
         run: npm run build
         env:
-          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL || secrets.SUPABASE_URL }}
-          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY || secrets.VITE_SUPABASE_PUBLISHABLE_KEY || secrets.SUPABASE_PUBLISHABLE_KEY || secrets.SUPABASE_ANON_KEY }}
+          VITE_API_URL: ${{ secrets.VITE_API_URL }}
 
       - name: Setup Pages
         uses: actions/configure-pages@v6

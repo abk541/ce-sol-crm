@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import toast from 'react-hot-toast'
-import type { Session } from '@supabase/supabase-js'
+import type { ApiSession } from '../lib/api'
 import type {
   User, Opportunity, Contract, Notification, Subcontractor,
   NonSubmissionReport, DeletionRequest, FreshAward,
@@ -20,7 +20,7 @@ import {
   MOCK_SUBK_DATABASE, MOCK_ACTIVITY_LOGS,
   MOCK_BD_SUBMISSIONS, MOCK_COMPANY_CERTIFICATIONS, MOCK_EMPLOYEE_REQUESTS,
 } from '../data/mock'
-import { isSupabaseConnected } from '../lib/supabase'
+import { isApiConnected } from '../lib/api'
 import { opportunityDeadlineTimeMs } from '../lib/timezone'
 import {
   loadAllData,
@@ -46,6 +46,8 @@ import {
   upsertFreshAward,
   deleteFreshAwardRecord,
   upsertPastPerformance,
+  upsertSubkDatabaseEntry,
+  deleteSubkDatabaseEntryRecord,
   upsertNonSubReport,
   upsertDeletionRequest,
   upsertBDSubmission,
@@ -70,7 +72,7 @@ import { nextInvoiceSequenceFromContracts } from '../lib/invoiceNumbers'
 import { hasSourcingQuote } from '../lib/subcontractorQuotes'
 import {
   authenticateWithPassword,
-  completeSupabaseFirstLogin,
+  completeFirstLoginPassword,
   revalidateAuthenticatedProfile,
   restoreAuthenticatedProfile,
   sessionStartedAt,
@@ -113,7 +115,7 @@ interface AppState {
   employeeRequests: EmployeeRequest[]
   goals: Goal[]
 
-  // Per-user session metadata (browser-local; not synced to Supabase).
+  // Per-user session metadata (browser-local; not synced to API server).
   // Tracks last login per user account so admins can spot dormant accounts.
   userSessions: Record<string, { lastLoginAt?: string }>
 
@@ -134,7 +136,7 @@ interface AppState {
   rolePermissionOverrides: Partial<Record<Role, Permission[]>>
   userPermissionGrants: Record<string, Permission[]>
   userPermissionRevokes: Record<string, Permission[]>
-  // 'synced' = pushed to Supabase, 'local' = only in localStorage,
+  // 'synced' = pushed to API server, 'local' = only in localStorage,
   // 'unknown' = haven't tried yet this session.
   permissionOverridesSyncStatus: 'synced' | 'local' | 'unknown'
 
@@ -165,10 +167,10 @@ interface AppState {
     needsMfaVerify?: boolean
   }>
   restoreAuthSession: () => Promise<void>
-  handleAuthSessionEvent: (event: ResilientAuthEvent, session: Session | null) => Promise<void>
+  handleAuthSessionEvent: (event: ResilientAuthEvent, session: ApiSession | null) => Promise<void>
   logout: () => Promise<void>
   acceptAccessNotice: () => void
-  // Returns false when the Supabase write fails so callers can stay on
+  // Returns false when the API server write fails so callers can stay on
   // the page and let the user retry instead of advancing with unsaved auth
   // progress. Local-only / offline mode resolves true immediately.
   // The returned flag tells the caller whether it should now navigate to
@@ -411,7 +413,7 @@ function normalizeOpportunityAssignmentStatus(
 }
 
 // app_settings keys for the workspace-wide non-submission grace window.
-// Persisted to Supabase (migration 025) so every user's sweep uses the same
+// Persisted to API server (migration 025) so every user's sweep uses the same
 // window; without this the setting lived only in each browser's localStorage,
 // so any session still on the default fired reports early and the configured
 // value looked ignored.
@@ -487,7 +489,7 @@ function bdSubmissionFromOpportunity(
 }
 
 function showDatabaseSaveError(recordLabel: string) {
-  toast.error(`${recordLabel} was not saved to the database. Check Supabase connection and try again.`)
+  toast.error(`${recordLabel} was not saved to the database. Check API server connection and try again.`)
 }
 
 async function ensureAssignmentEmployeesSynced(employees: Employee[]): Promise<boolean> {
@@ -673,7 +675,7 @@ async function canUseSolicitationId(solicitationId: string, opportunities: Oppor
 // Two-factor auth is temporarily disabled. Flip this back to `true` to
 // fully re-enable enrollment + verification — every MFA code path below
 // remains intact and is simply gated on this flag.
-// Legacy app-managed MFA remains disabled; Supabase Auth owns the session.
+// Legacy app-managed MFA remains disabled; the private API owns the session.
 
 const AUTH_SESSION_META_KEY = 'ces-crm-auth-session-meta'
 
@@ -955,11 +957,30 @@ export const useStore = create<AppState>()(
           return
         }
 
+        // localStorage is shared by tabs. A successful login as another
+        // account must switch this tab to that session, never revoke the new
+        // token while trying to revalidate the account that used to be here.
+        if (
+          state.currentUser.authUserId &&
+          state.currentUser.authUserId !== session.user.id
+        ) {
+          clearAuthSessionMeta()
+          set(clearedAuthState())
+          await get().restoreAuthSession()
+          return
+        }
+
         const result = await revalidateAuthenticatedProfile(
           state.currentUser.authUserId ?? session.user.id,
         )
         if (!result.ok) {
           if (result.retryable) return
+          if (result.code === 'session_user_changed') {
+            clearAuthSessionMeta()
+            set(clearedAuthState())
+            await get().restoreAuthSession()
+            return
+          }
           clearAuthSessionMeta()
           set(clearedAuthState())
           try {
@@ -1018,7 +1039,7 @@ export const useStore = create<AppState>()(
       completeFirstLogin: async (password) => {
         const u = get().currentUser
         if (!u) return { ok: false }
-        const result = await completeSupabaseFirstLogin(password)
+        const result = await completeFirstLoginPassword(password)
         if (!result.ok) {
           toast.error(result.error)
           return { ok: false }
@@ -1365,7 +1386,7 @@ export const useStore = create<AppState>()(
         set(s => ({ employeeRequests: [request, ...s.employeeRequests] }))
         // Promote to the shared table so the Capture Manager receives it in
         // their own session instead of it living only in this browser.
-        if (isSupabaseConnected) void upsertEmployeeRequest(request)
+        if (isApiConnected) void upsertEmployeeRequest(request)
         get().addNotification({
           type: 'SYSTEM',
           title: 'HR request submitted',
@@ -1397,7 +1418,7 @@ export const useStore = create<AppState>()(
             request.id === id ? updated : request
           )
         }))
-        if (isSupabaseConnected) void upsertEmployeeRequest(updated)
+        if (isApiConnected) void upsertEmployeeRequest(updated)
         // Notify the associate who submitted it so the decision + reply show up
         // immediately in their own session (directed at that specific user).
         const decision =
@@ -1429,7 +1450,7 @@ export const useStore = create<AppState>()(
         }))
         const updated = get().employeeRequests.find(r => r.id === id)
         if (updated) {
-          if (isSupabaseConnected) void upsertEmployeeRequest(updated)
+          if (isApiConnected) void upsertEmployeeRequest(updated)
           recordStoreActivity(get, `Edited HR request: ${updated.title}`, 'hr', updated.id, updated.title)
         }
       },
@@ -2909,21 +2930,28 @@ export const useStore = create<AppState>()(
       })),
 
       // ── Subk Database ───────────────────────────────────────────────
-      addSubkDatabaseEntry: (entry) => set(s => ({
-        subkDatabase: [{
+      addSubkDatabaseEntry: (entry) => {
+        const created: SubkDatabaseEntry = {
           ...entry,
           id: `skdb${Date.now()}`,
           createdAt: new Date().toISOString(),
-        }, ...s.subkDatabase]
-      })),
+        }
+        set(s => ({ subkDatabase: [created, ...s.subkDatabase] }))
+        void upsertSubkDatabaseEntry(created)
+      },
 
-      updateSubkDatabaseEntry: (id, data) => set(s => ({
-        subkDatabase: s.subkDatabase.map(e => e.id === id ? { ...e, ...data } : e)
-      })),
+      updateSubkDatabaseEntry: (id, data) => {
+        set(s => ({
+          subkDatabase: s.subkDatabase.map(e => e.id === id ? { ...e, ...data } : e)
+        }))
+        const updated = get().subkDatabase.find(entry => entry.id === id)
+        if (updated) void upsertSubkDatabaseEntry(updated)
+      },
 
-      deleteSubkDatabaseEntry: (id) => set(s => ({
-        subkDatabase: s.subkDatabase.filter(e => e.id !== id)
-      })),
+      deleteSubkDatabaseEntry: (id) => {
+        set(s => ({ subkDatabase: s.subkDatabase.filter(e => e.id !== id) }))
+        void deleteSubkDatabaseEntryRecord(id)
+      },
 
       // ── BD Submissions ──────────────────────────────────────────────
       updateBDSubmission: (id, status) => {
@@ -3040,9 +3068,9 @@ export const useStore = create<AppState>()(
         }
         set(s => ({ activityLogs: [log, ...s.activityLogs] }))
         // Promote to the shared table so every user's actions show up in the
-        // workspace-wide audit trail. Silent no-op when Supabase or the
+        // workspace-wide audit trail. Silent no-op when API server or the
         // activity_logs table is unavailable.
-        if (isSupabaseConnected) void upsertActivityLog(log)
+        if (isApiConnected) void upsertActivityLog(log)
       },
 
       // ── Non-submission reports ──────────────────────────────────────
@@ -3306,8 +3334,8 @@ export const useStore = create<AppState>()(
         set(s => ({ notifications: [notification, ...s.notifications] }))
         // Promote to the shared table so the concerned user receives it in
         // their own session (poll / realtime picks it up). No-op + silent when
-        // Supabase or the notifications table is unavailable.
-        if (isSupabaseConnected) void upsertNotification(notification)
+        // API server or the notifications table is unavailable.
+        if (isApiConnected) void upsertNotification(notification)
       },
 
       // ── Employee assignment ─────────────────────────────────────────
@@ -3393,7 +3421,7 @@ export const useStore = create<AppState>()(
 
       // ── DB ──────────────────────────────────────────────────────────
       syncUsersFromDb: async () => {
-        if (!isSupabaseConnected || !get().isAuthenticated) return
+        if (!isApiConnected || !get().isAuthenticated) return
         try {
           const data = await loadAllData()
           if (!data) return
@@ -3401,7 +3429,7 @@ export const useStore = create<AppState>()(
 
           set(s => {
             const dbUsers = data.users
-            // When Supabase has users, it is the source of truth. Do not
+            // When API server has users, it is the source of truth. Do not
             // preserve stale local-only users after an admin/database reset.
             const merged = dbUsers
             // Auth flags on the active user are monotonic forward (firstLogin:
@@ -3444,7 +3472,7 @@ export const useStore = create<AppState>()(
       },
 
       initializeStore: async () => {
-        if (!isSupabaseConnected || !get().isAuthenticated) return
+        if (!isApiConnected || !get().isAuthenticated) return
         if (get().dbReady) return
 
         try {
@@ -3512,6 +3540,7 @@ export const useStore = create<AppState>()(
               freshAwards: data.freshAwards,
               pastPerformances: data.pastPerformances,
               subcontractors: data.subcontractors,
+              subkDatabase: data.subkDatabase,
               nonSubReports: dedupeNonSubReports(data.nonSubReports.filter(r => !canceledIds.has(r.opportunityId))),
               deletionRequests: data.deletionRequests.filter(r => !canceledIds.has(r.opportunityId)),
               bdSubmissions,
@@ -3529,7 +3558,7 @@ export const useStore = create<AppState>()(
             set({ dbReady: true })
           }
 
-          // Pull permission overrides from Supabase if available; falls back
+          // Pull permission overrides from API server if available; falls back
           // to whatever rehydrated from localStorage otherwise.
           try {
             const r = await fetchPermissionOverrides()
@@ -3548,7 +3577,7 @@ export const useStore = create<AppState>()(
           }
 
           // Pull runtime app settings (integration keys + the shared
-          // non-submission grace window) from Supabase.
+          // non-submission grace window) from API server.
           try {
             const s = await fetchAppSettings()
             if (s.ok && s.payload) {
@@ -3600,7 +3629,7 @@ export const useStore = create<AppState>()(
             console.error('[Store] collaboration sync failed', err)
           }
         } catch (err) {
-          console.error('[Store] Supabase init failed, using local data', err)
+          console.error('[Store] API initialization failed; retaining the last cached snapshot', err)
           set({ dbReady: true })
         }
       },
@@ -3614,7 +3643,7 @@ export const useStore = create<AppState>()(
       refreshFromDb: async () => {
         const initial = get()
         if (
-          !isSupabaseConnected ||
+          !isApiConnected ||
           !initial.dbReady ||
           !initial.isAuthenticated ||
           !initial.currentUser ||
@@ -3630,6 +3659,12 @@ export const useStore = create<AppState>()(
           )
           if (!profileResult.ok) {
             if (profileResult.retryable) return
+            if (profileResult.code === 'session_user_changed') {
+              clearAuthSessionMeta()
+              set(clearedAuthState())
+              await get().restoreAuthSession()
+              return
+            }
             clearAuthSessionMeta()
             set(clearedAuthState())
             try {
@@ -3691,6 +3726,7 @@ export const useStore = create<AppState>()(
               freshAwards: data.freshAwards,
               pastPerformances: data.pastPerformances,
               subcontractors: data.subcontractors,
+              subkDatabase: data.subkDatabase,
               nonSubReports: dedupeNonSubReports(data.nonSubReports.filter(r => !canceledIds.has(r.opportunityId))),
               deletionRequests: data.deletionRequests.filter(r => !canceledIds.has(r.opportunityId)),
               bdSubmissions: data.bdSubmissions,
@@ -3751,7 +3787,7 @@ export const useStore = create<AppState>()(
         // Persist to the shared app_settings table so the grace window is
         // workspace-wide, not just this browser's localStorage. Fire-and-forget
         // to keep the action synchronous; localStorage remains the fallback.
-        if (isSupabaseConnected) {
+        if (isApiConnected) {
           void saveAppSetting(NON_SUB_GRACE_HOURS_KEY, String(cleanHours))
           void saveAppSetting(NON_SUB_GRACE_MINUTES_KEY, String(cleanMinutes))
         }
@@ -3783,7 +3819,7 @@ export const useStore = create<AppState>()(
           return updated
         })
         set({ requireAssociateForActivePipeline: next, opportunities: renormalized })
-        if (changed.length > 0 && isSupabaseConnected) {
+        if (changed.length > 0 && isApiConnected) {
           void ensureAssignmentEmployeesSynced(employees).then(synced => {
             if (!synced) return
             void Promise.all(changed.map(opp => upsertOpportunity(opp))).then(results => {
@@ -3804,7 +3840,7 @@ export const useStore = create<AppState>()(
 
       // ── Permission editor ────────────────────────────────────────────
       // Every mutator updates local Zustand state synchronously, then fires a
-      // best-effort save to Supabase. If the migration hasn't been applied
+      // best-effort save to API server. If the migration hasn't been applied
       // (missingTable === true) we flip permissionOverridesSyncStatus to
       // 'local' so the UI can show that state without nagging the user.
       setRolePermissions: async (role, permissions) => {
@@ -3905,12 +3941,12 @@ export const useStore = create<AppState>()(
 
       // ── Admin bulk operations (destructive) ──────────────────────────
       // Each wipe* clears the matching local slice immediately and best-effort
-      // mirrors the deletion in Supabase. Local-only mode still resolves and
+      // mirrors the deletion in API server. Local-only mode still resolves and
       // returns the count that was removed locally.
       wipeOpportunities: async () => {
         const count = get().opportunities.length
         set({ opportunities: [], bdSubmissions: [], nonSubReports: [], deletionRequests: [] })
-        if (isSupabaseConnected) {
+        if (isApiConnected) {
           // FK ON DELETE CASCADE handles comments/subcontractors/non_sub_reports
           // children automatically, but bd_submissions/deletion_requests live
           // in a separate table that may carry orphan refs — wipe them too.
@@ -3937,7 +3973,7 @@ export const useStore = create<AppState>()(
         set({
           contracts: clientFilter ? all.filter(c => !targetIds.has(c.id)) : [],
         })
-        if (isSupabaseConnected) {
+        if (isApiConnected) {
           // Cascade deletes invoices/line items/POCs/locked subs/warnings
           const ok = clientFilter
             ? await bulkDeleteFromTable('contracts', { column: 'client', value: clientFilter })
@@ -3959,7 +3995,7 @@ export const useStore = create<AppState>()(
       wipeFreshAwards: async () => {
         const count = get().freshAwards.length
         set({ freshAwards: [] })
-        if (isSupabaseConnected) {
+        if (isApiConnected) {
           const ok = await bulkDeleteFromTable('fresh_awards')
           if (!ok) toast.error('Fresh awards were cleared locally but the database wipe failed.')
         }
@@ -3969,7 +4005,7 @@ export const useStore = create<AppState>()(
       wipePastPerformances: async () => {
         const count = get().pastPerformances.length
         set({ pastPerformances: [] })
-        if (isSupabaseConnected) {
+        if (isApiConnected) {
           const ok = await bulkDeleteFromTable('past_performances')
           if (!ok) toast.error('Past performances were cleared locally but the database wipe failed.')
         }
@@ -3979,7 +4015,7 @@ export const useStore = create<AppState>()(
       wipeSubcontractors: async () => {
         const count = get().subcontractors.length
         set({ subcontractors: [] })
-        if (isSupabaseConnected) {
+        if (isApiConnected) {
           const ok = await bulkDeleteFromTable('subcontractors')
           if (!ok) toast.error('Subcontractors were cleared locally but the database wipe failed.')
         }
@@ -3989,7 +4025,7 @@ export const useStore = create<AppState>()(
       wipeSubkDatabase: async () => {
         const count = get().subkDatabase.length
         set({ subkDatabase: [] })
-        if (isSupabaseConnected) {
+        if (isApiConnected) {
           const ok = await bulkDeleteFromTable('subk_database')
           if (!ok) toast.error('Sourcing entries were cleared locally but the database wipe failed.')
         }
@@ -3999,7 +4035,7 @@ export const useStore = create<AppState>()(
       wipeBDSubmissions: async () => {
         const count = get().bdSubmissions.length
         set({ bdSubmissions: [] })
-        if (isSupabaseConnected) {
+        if (isApiConnected) {
           const ok = await bulkDeleteFromTable('bd_submissions')
           if (!ok) toast.error('BD tracker entries were cleared locally but the database wipe failed.')
         }
@@ -4009,7 +4045,7 @@ export const useStore = create<AppState>()(
       wipeNonSubReports: async () => {
         const count = get().nonSubReports.length
         set({ nonSubReports: [] })
-        if (isSupabaseConnected) {
+        if (isApiConnected) {
           const ok = await bulkDeleteFromTable('non_submission_reports')
           if (!ok) toast.error('Non-submission reports were cleared locally but the database wipe failed.')
         }
@@ -4019,7 +4055,7 @@ export const useStore = create<AppState>()(
       wipeDeletionRequests: async () => {
         const count = get().deletionRequests.length
         set({ deletionRequests: [] })
-        if (isSupabaseConnected) {
+        if (isApiConnected) {
           const ok = await bulkDeleteFromTable('deletion_requests')
           if (!ok) toast.error('Deletion requests were cleared locally but the database wipe failed.')
         }
@@ -4029,7 +4065,7 @@ export const useStore = create<AppState>()(
       wipeNotifications: async () => {
         const count = get().notifications.length
         set({ notifications: [] })
-        if (isSupabaseConnected) {
+        if (isApiConnected) {
           const ok = await bulkDeleteFromTable('notifications')
           if (!ok) toast.error('Notifications were cleared locally but the database wipe failed.')
         }
@@ -4039,7 +4075,7 @@ export const useStore = create<AppState>()(
       wipeActivityLogs: async () => {
         const count = get().activityLogs.length
         set({ activityLogs: [] })
-        if (isSupabaseConnected) {
+        if (isApiConnected) {
           const ok = await bulkDeleteFromTable('activity_logs')
           if (!ok) toast.error('Activity logs were cleared locally but the database wipe failed.')
         }
@@ -4055,6 +4091,10 @@ export const useStore = create<AppState>()(
       wipeEmployeeRequests: async () => {
         const count = get().employeeRequests.length
         set({ employeeRequests: [] })
+        if (isApiConnected) {
+          const ok = await bulkDeleteFromTable('employee_requests')
+          if (!ok) toast.error('Employee requests were cleared locally but the database wipe failed.')
+        }
         return count
       },
 
@@ -4065,7 +4105,7 @@ export const useStore = create<AppState>()(
           get().nonSubReports.length +
           get().deletionRequests.length
         set({ opportunities: [], bdSubmissions: [], nonSubReports: [], deletionRequests: [] })
-        if (isSupabaseConnected) {
+        if (isApiConnected) {
           await bulkDeleteFromTable('opportunities')
           await bulkDeleteFromTable('bd_submissions')
           await bulkDeleteFromTable('non_submission_reports')
@@ -4087,7 +4127,7 @@ export const useStore = create<AppState>()(
           get().freshAwards.length +
           get().pastPerformances.length
         set({ contracts: [], freshAwards: [], pastPerformances: [] })
-        if (isSupabaseConnected) {
+        if (isApiConnected) {
           await bulkDeleteFromTable('contracts')
           await bulkDeleteFromTable('fresh_awards')
           await bulkDeleteFromTable('past_performances')
@@ -4111,7 +4151,7 @@ export const useStore = create<AppState>()(
           users: survivors,
           employees: syncEmployeesWithUsers(survivors, s.employees),
         }))
-        if (isSupabaseConnected) {
+        if (isApiConnected) {
           // Remove rows one at a time so the existing per-row helper handles
           // any FK side-effects already encoded in deleteUserRecord.
           await Promise.all(removed.map(u => invokeManageUsers({ action: 'delete', userId: u.id })))
@@ -4168,7 +4208,7 @@ export const useStore = create<AppState>()(
           employees: syncEmployeesWithUsers(survivors, s.employees),
         }))
 
-        if (isSupabaseConnected) {
+        if (isApiConnected) {
           // Order matters when not all FKs cascade — go children first.
           await bulkDeleteFromTable('bd_submissions')
           await bulkDeleteFromTable('non_submission_reports')
@@ -4179,6 +4219,7 @@ export const useStore = create<AppState>()(
           await bulkDeleteFromTable('past_performances')
           await bulkDeleteFromTable('subcontractors')
           await bulkDeleteFromTable('subk_database')
+          await bulkDeleteFromTable('employee_requests')
           await bulkDeleteFromTable('notifications')
           await bulkDeleteFromTable('activity_logs')
           await Promise.all(removedUsers.map(u => invokeManageUsers({ action: 'delete', userId: u.id })))
@@ -4318,7 +4359,7 @@ export const useStore = create<AppState>()(
       // v19: track per-user lastLoginAt in a browser-local userSessions slice.
       // v18: introduce requireAssociateForActivePipeline toggle; defaults to true
       // (Mode A = legacy behavior, Associate required before an opp becomes ACTIVE).
-      // v17: reset all persisted app data after database cleanup; Supabase users
+      // v17: reset all persisted app data after database cleanup; API server users
       // are now the source of truth when connected.
       // v16: removed MFA from the auth flow; needsMFASetup is no longer in state.
       // v15: refresh seeded department users to the Moroccan BD/OPS hierarchy.
@@ -4326,7 +4367,7 @@ export const useStore = create<AppState>()(
       // v13: assignment employees are derived strictly from active users so
       // deleted/inactive users disappear from assignment pickers.
       // v22 intentionally discards every legacy auth and workspace snapshot.
-      // Supabase is the data source; only non-sensitive display preferences may
+      // API server is the data source; only non-sensitive display preferences may
       // survive a refresh in this browser.
       version: 22,
       migrate: (persistedState: unknown) => {

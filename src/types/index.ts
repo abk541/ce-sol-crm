@@ -24,7 +24,7 @@ export type Role =
 
 export interface User {
   id: string
-  /** Supabase Auth identity linked to this public application profile. */
+  /** Stable authentication identity linked to this application profile. */
   authUserId?: string
   name: string
   email: string

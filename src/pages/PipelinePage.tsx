@@ -3113,7 +3113,7 @@ function CreateModal({ onClose }: { onClose: () => void }) {
     const saved = await createOpportunity({ ...form, comments, samGovContacts: cleanedContacts } as Omit<Opportunity, 'id'>)
     setSaving(false)
     if (saved) {
-      toast.success('Opportunity created and saved to Supabase.')
+      toast.success('Opportunity created and saved to PostgreSQL.')
       onClose()
     }
   }

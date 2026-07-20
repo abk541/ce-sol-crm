@@ -3,7 +3,7 @@ import type { Opportunity, User } from '../types'
 
 const authMocks = vi.hoisted(() => ({
   authenticateWithPassword: vi.fn(),
-  completeSupabaseFirstLogin: vi.fn(),
+  completeFirstLoginPassword: vi.fn(),
   revalidateAuthenticatedProfile: vi.fn(),
   restoreAuthenticatedProfile: vi.fn(),
   sessionStartedAt: vi.fn((session: { user?: { last_sign_in_at?: string } }, fallback = Date.now()) => {
@@ -15,16 +15,16 @@ const authMocks = vi.hoisted(() => ({
 
 vi.mock('../lib/auth', () => ({
   authenticateWithPassword: authMocks.authenticateWithPassword,
-  completeSupabaseFirstLogin: authMocks.completeSupabaseFirstLogin,
+  completeFirstLoginPassword: authMocks.completeFirstLoginPassword,
   revalidateAuthenticatedProfile: authMocks.revalidateAuthenticatedProfile,
   restoreAuthenticatedProfile: authMocks.restoreAuthenticatedProfile,
   sessionStartedAt: authMocks.sessionStartedAt,
   signOutCurrentSession: authMocks.signOutCurrentSession,
 }))
 
-vi.mock('../lib/supabase', () => ({
-  isSupabaseConnected: false,
-  supabase: null,
+vi.mock('../lib/api', () => ({
+  isApiConnected: false,
+  api: null,
 }))
 
 import { useStore } from '../store/useStore'
@@ -73,7 +73,7 @@ describe('auth memory and persistence boundaries', () => {
     })
   })
 
-  it('signs out through Supabase and purges workspace data from memory', async () => {
+  it('signs out through API server and purges workspace data from memory', async () => {
     useStore.setState({
       currentUser: user,
       isAuthenticated: true,
@@ -145,14 +145,14 @@ describe('auth memory and persistence boundaries', () => {
       accessNoticeAccepted: true,
       dbReady: false,
     })
-    authMocks.completeSupabaseFirstLogin.mockResolvedValue({
+    authMocks.completeFirstLoginPassword.mockResolvedValue({
       ok: true,
       profile: completedUser,
     })
 
     await expect(useStore.getState().completeFirstLogin('NewPassword1!')).resolves.toEqual({ ok: true })
 
-    expect(authMocks.completeSupabaseFirstLogin).toHaveBeenCalledWith('NewPassword1!')
+    expect(authMocks.completeFirstLoginPassword).toHaveBeenCalledWith('NewPassword1!')
     expect(useStore.getState()).toMatchObject({
       currentUser: completedUser,
       users: [completedUser],
@@ -177,7 +177,7 @@ describe('auth memory and persistence boundaries', () => {
     useStore.getState().acceptAccessNotice()
 
     // Simulate a reload: Zustand auth state is gone, but sessionStorage and the
-    // Supabase Auth session both survive.
+    // API server Auth session both survive.
     useStore.setState({
       currentUser: null,
       users: [],

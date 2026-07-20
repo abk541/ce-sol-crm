@@ -8,9 +8,9 @@ const syncState = vi.hoisted(() => ({
   updateCalls: [] as Array<{ payload: unknown; column: string; value: unknown }>,
 }))
 
-vi.mock('../lib/supabase', () => ({
-  isSupabaseConnected: true,
-  supabase: {
+vi.mock('../lib/api', () => ({
+  isApiConnected: true,
+  api: {
     from: vi.fn(() => ({
       select: vi.fn(() => Promise.resolve({ data: syncState.existingEmployees, error: null })),
       upsert: vi.fn((payload: unknown) => {
