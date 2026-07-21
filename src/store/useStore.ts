@@ -28,7 +28,7 @@ import {
   seedEmployeesIfEmpty,
   findActiveOpportunityDuplicate,
   upsertOpportunity,
-  deleteOpportunityRecord,
+  syncOpportunityComments,
   upsertSubcontractor,
   deleteSubcontractorRecord,
   upsertContract,
@@ -50,8 +50,6 @@ import {
   deleteSubkDatabaseEntryRecord,
   upsertNonSubReport,
   upsertDeletionRequest,
-  upsertBDSubmission,
-  deleteBDSubmissionRecord,
   bulkDeleteFromTable,
   fetchPermissionOverrides,
   saveRolePermissionOverride,
@@ -66,7 +64,13 @@ import {
   fetchEmployeeRequests,
   upsertEmployeeRequest,
 } from '../lib/db'
-import { getAssignmentChain, isAssignedToAssociate, findUserForEmployee } from '../lib/team'
+import {
+  findBDSubmissionForOpportunity,
+  findBDSubmissionOpportunity,
+  getAssignmentChain,
+  isAssignedToAssociate,
+  findUserForEmployee,
+} from '../lib/team'
 import { hasPermission, applyPermissionOverrides, type Permission } from '../lib/permissions'
 import { nextInvoiceSequenceFromContracts } from '../lib/invoiceNumbers'
 import { hasSourcingQuote } from '../lib/subcontractorQuotes'
@@ -81,6 +85,14 @@ import {
 } from '../lib/auth'
 import { invokeManageUsers } from '../lib/userManagement'
 import { mergeSafeUser, toSafeUser } from '../lib/userProfile'
+import {
+  deleteOpportunityWorkflow,
+  editOpportunityWorkflow,
+  returnOpportunityToPipelineWorkflow,
+  submitOpportunityWorkflow,
+  transitionOpportunityWorkflow,
+  type OpportunityWorkflowEditValues,
+} from '../lib/opportunityWorkflow'
 
 interface AppState {
   // Auth
@@ -217,9 +229,9 @@ interface AppState {
   createOpportunity: (o: Omit<Opportunity, 'id'>) => Promise<boolean>
   updateOpportunity: (id: string, data: Partial<Opportunity>) => Promise<boolean>
   assignOpportunity: (id: string, bdm: string, bds: string) => void
-  submitOpportunity: (id: string, values?: { contractAmount?: number; baseAmount?: number; monthlyPayment?: number; proposals?: string[]; assignedOpportunities?: string[]; proposalAttachments?: FileAttachment[] }) => void
-  markOpportunityWon: (id: string) => void
-  moveOpportunityToBDTracker: (id: string, status: BDSubmission['status'], comment?: string) => void
+  submitOpportunity: (id: string, values?: { contractAmount?: number; baseAmount?: number; monthlyPayment?: number; proposals?: string[]; assignedOpportunities?: string[]; proposalAttachments?: FileAttachment[] }) => Promise<boolean>
+  markOpportunityWon: (id: string) => Promise<boolean>
+  moveOpportunityToBDTracker: (id: string, status: BDSubmission['status'], comment?: string) => Promise<boolean>
   syncDueOpportunities: () => void
   reconcileNonSubReports: () => void
   scanDeadlineReminders: () => void
@@ -254,15 +266,19 @@ interface AppState {
   removeContractVehicleOrder: (contractId: string, orderId: string) => void
 
   // ── Subcontractor management ───────────────────────────────────────
-  addSubcontractor: (data: Omit<Subcontractor, 'id' | 'createdAt'>) => void
-  updateSubcontractor: (id: string, data: Partial<Subcontractor>) => void
-  deleteSubcontractor: (id: string) => void
+  addSubcontractor: (data: Omit<Subcontractor, 'id' | 'createdAt'>) => Promise<boolean>
+  updateSubcontractor: (id: string, data: Partial<Subcontractor>) => Promise<boolean>
+  deleteSubcontractor: (id: string) => Promise<boolean>
 
   // ── BD Submissions ─────────────────────────────────────────────────
-  updateBDSubmission: (id: number, status: BDSubmission['status']) => void
-  updateBDSubmissionDetails: (id: number, data: Partial<Omit<BDSubmission, 'id' | 'status'>>) => void
-  deleteBDSubmission: (id: number) => void
-  returnBDSubmissionToPipeline: (id: number) => void
+  updateBDSubmission: (id: number, status: BDSubmission['status']) => Promise<boolean>
+  updateBDSubmissionDetails: (
+    id: number,
+    data: Partial<Omit<BDSubmission, 'id' | 'status'>>,
+    opportunityData?: OpportunityWorkflowEditValues,
+  ) => Promise<boolean>
+  deleteBDSubmission: (id: number) => Promise<boolean>
+  returnBDSubmissionToPipeline: (id: number) => Promise<boolean>
 
   // ── Fresh Awards ───────────────────────────────────────────────────
   assignFreshAward: (id: string, assignments: Partial<FreshAward>) => void
@@ -284,8 +300,8 @@ interface AppState {
 
   // ── Non-submission reports ─────────────────────────────────────────
   submitNonSubReport: (data: Omit<NonSubmissionReport, 'id' | 'submittedAt' | 'status'>) => void
-  reviewNonSubReport: (id: string, action: 'APPROVED' | 'DECLINED', reviewNote: string, reviewedBy: string) => void
-  returnNonSubmissionToPipeline: (reportId: string) => void
+  reviewNonSubReport: (id: string, action: 'APPROVED' | 'DECLINED', reviewNote: string, reviewedBy: string) => Promise<boolean>
+  returnNonSubmissionToPipeline: (reportId: string) => Promise<boolean>
   updateNonSubReportReason: (reportId: string, reason: string) => void
   addNonSubReportComment: (reportId: string, text: string) => void
 
@@ -455,36 +471,16 @@ function certificationStatus(expirationDate?: string): CompanyCertificationStatu
   return daysUntilExpiration <= 45 ? 'EXPIRING' : 'ACTIVE'
 }
 
-function bdStatusToOpportunityStatus(status: BDSubmission['status']): Opportunity['status'] {
-  if (status === 'DISCUSSING') return 'DISCUSSION'
-  if (status === 'AWARDED') return 'WON'
-  return status
-}
-
-function bdSubmissionFromOpportunity(
-  opp: Opportunity,
-  status: BDSubmission['status'],
-  existing?: BDSubmission,
-  comment?: string,
-  employees: Employee[] = [],
-): BDSubmission {
-  const chain = getAssignmentChain(employees, opp.assignedTo)
+function mergeCommittedOpportunity(
+  original: Opportunity,
+  committed: Partial<Opportunity> | null,
+): Opportunity {
+  if (!committed) return original
   return {
-    id: existing?.id ?? Date.now(),
-    submittedOn: existing?.submittedOn ?? todayLabel(),
-    solicitationId: opp.solicitationId,
-    setAside: opp.setAside,
-    type: opp.type,
-    solicitation: opp.solicitation,
-    status,
-    dueDate: opp.dueDate,
-    localTime: `${opp.localTime ?? ''}${opp.timezone ? ` ${opp.timezone}` : ''}`.trim(),
-    location: opp.location,
-    bdm: chain.manager?.name || opp.bdm || existing?.bdm || '',
-    bds: chain.teamLead?.name || opp.bds || existing?.bds || '',
-    supportAgent: chain.associate?.name || opp.supportAgent || existing?.supportAgent,
-    value: opp.contractAmount ?? opp.value ?? opp.baseAmount ?? 0,
-    comment: comment ?? existing?.comment,
+    ...original,
+    ...committed,
+    comments: original.comments,
+    subcontractors: original.subcontractors,
   }
 }
 
@@ -1528,8 +1524,7 @@ export const useStore = create<AppState>()(
             toast.error('Only the Capture Manager can cancel opportunities.')
             return false
           }
-          get().moveOpportunityToBDTracker(id, 'CANCELED', 'Canceled')
-          return true
+          return get().moveOpportunityToBDTracker(id, 'CANCELED', 'Canceled')
         }
 
         const changeKeys = Object.keys(data)
@@ -1585,6 +1580,23 @@ export const useStore = create<AppState>()(
           set({ opportunities: previous })
           showDatabaseSaveError('Opportunity update')
           return false
+        }
+
+        const commentsChanged = JSON.stringify(current.comments ?? []) !== JSON.stringify(updated.comments ?? [])
+        if (commentsChanged) {
+          const commentsSaved = await syncOpportunityComments(
+            updated.id,
+            current.comments ?? [],
+            updated.comments ?? [],
+          )
+          if (!commentsSaved) {
+            set(s => ({
+              opportunities: s.opportunities.map(opportunity =>
+                opportunity.id === id ? { ...opportunity, comments: current.comments ?? [] } : opportunity),
+            }))
+            showDatabaseSaveError('Opportunity comment')
+            return false
+          }
         }
 
         const previousCommentIds = new Set((current.comments || []).map(comment => comment.id))
@@ -1660,35 +1672,59 @@ export const useStore = create<AppState>()(
         }
       },
 
-      submitOpportunity: (id, values) => {
+      submitOpportunity: async (id, values) => {
         const actor = get().currentUser
         if (!hasPermission(actor, 'opportunity:submitProposal')) {
           toast.error('You do not have permission to submit proposals.')
-          return
+          return false
         }
+        const original = get().opportunities.find(o => o.id === id)
+        if (!original) return false
+        const pendingReportId = original.nonSubmissionReportId
+          && get().nonSubReports.find(report =>
+            report.id === original.nonSubmissionReportId && report.status === 'PENDING')?.id
+        const opp: Opportunity = {
+          ...original,
+          status: 'SUBMITTED',
+          submittedAt: new Date().toISOString(),
+          ...values,
+        }
+        const existing = findBDSubmissionForOpportunity(get().bdSubmissions, opp, get().opportunities)
+        const committed = await submitOpportunityWorkflow(
+          original.id,
+          original.status,
+          values,
+          existing?.status,
+        )
+        if (!committed) {
+          showDatabaseSaveError('Proposal submission')
+          return false
+        }
+        const committedOpportunity = mergeCommittedOpportunity(original, committed.opportunity)
+        const trackerRow = committed.submission
         set(s => ({
-          opportunities: s.opportunities.map(o =>
-            o.id === id ? { ...o, status: 'SUBMITTED', submittedAt: new Date().toISOString(), ...values } : o
-          )
+          opportunities: s.opportunities.map(o => o.id === id ? committedOpportunity : o),
+          bdSubmissions: existing
+            ? s.bdSubmissions.map(b => b.id === existing.id ? trackerRow : b)
+            : [trackerRow, ...s.bdSubmissions],
+          nonSubReports: pendingReportId
+            ? s.nonSubReports.filter(report => report.id !== pendingReportId)
+            : s.nonSubReports,
         }))
-        const opp = get().opportunities.find(o => o.id === id)
-        if (opp) {
-          const existing = get().bdSubmissions.find(b => b.solicitationId === opp.solicitationId)
-          const trackerRow = bdSubmissionFromOpportunity(opp, 'SUBMITTED', existing, undefined, get().employees)
-          set(s => ({
-            bdSubmissions: existing
-              ? s.bdSubmissions.map(b => b.id === existing.id ? trackerRow : b)
-              : [trackerRow, ...s.bdSubmissions],
-          }))
-          upsertBDSubmission(trackerRow)
-          upsertOpportunity(opp)
           // If a contract already exists for this opportunity (e.g. proposal
           // is being re-uploaded after award), propagate the latest proposal
           // files onto the contract so it stays in sync.
           if (values?.proposalAttachments?.length) {
-            const linkedContracts = get().contracts.filter(c =>
-              c.opportunityId === opp.id || c.contractId === opp.solicitationId
-            )
+            const normalizedSolicitation = normalizedSolicitationId(committedOpportunity.solicitationId)
+            const solicitationMatches = get().opportunities.filter(candidate =>
+              normalizedSolicitationId(candidate.solicitationId) === normalizedSolicitation)
+            const unambiguousLegacyContractLink = normalizedSolicitation !== ''
+              && solicitationMatches.length === 1
+              && solicitationMatches[0]?.id === committedOpportunity.id
+            const linkedContracts = get().contracts.filter(contract => contract.opportunityId
+              ? contract.opportunityId === committedOpportunity.id
+              : unambiguousLegacyContractLink
+                && normalizedSolicitationId(contract.contractId) === normalizedSolicitation)
             if (linkedContracts.length) {
               set(s => ({
                 contracts: s.contracts.map(c =>
@@ -1704,7 +1740,7 @@ export const useStore = create<AppState>()(
             }
             // Also propagate to any in-flight FreshAward so the file follows
             // the opportunity through the award handoff.
-            const linkedAwards = get().freshAwards.filter(fa => fa.opportunityId === opp.id)
+            const linkedAwards = get().freshAwards.filter(fa => fa.opportunityId === committedOpportunity.id)
             if (linkedAwards.length) {
               set(s => ({
                 freshAwards: s.freshAwards.map(fa =>
@@ -1722,44 +1758,59 @@ export const useStore = create<AppState>()(
           get().addNotification({
             type: 'CONTRACT_SUBMITTED',
             title: 'Proposal submitted',
-            message: `${opp.solicitation} has been submitted.`,
+            message: `${committedOpportunity.solicitation} has been submitted.`,
             read: false,
             relatedId: id,
           })
           get().logActivity({
-            action: `Submitted proposal for ${opp.solicitation}${values?.contractAmount ? ` ($${Number(values.contractAmount).toLocaleString()})` : ''}`,
+            action: `Submitted proposal for ${committedOpportunity.solicitation}${values?.contractAmount ? ` ($${Number(values.contractAmount).toLocaleString()})` : ''}`,
             user: actor?.name || 'System',
             userRole: actor?.role || 'CAPTURE_MANAGER',
             entityType: 'opportunity',
-            entityId: opp.id,
-            entityName: opp.solicitation,
+            entityId: committedOpportunity.id,
+            entityName: committedOpportunity.solicitation,
           })
-        }
+        return true
       },
 
-      moveOpportunityToBDTracker: (id, status, comment) => {
+      moveOpportunityToBDTracker: async (id, status, comment) => {
         const actor = get().currentUser
         if (status === 'CANCELED' && !hasPermission(actor, 'opportunity:cancel')) {
           toast.error('Only the Capture Manager can cancel contract opportunities.')
-          return
+          return false
         }
         const opp = get().opportunities.find(o => o.id === id)
-        if (!opp) return
+        if (!opp) return false
+        const pendingReportId = opp.nonSubmissionReportId
+          && get().nonSubReports.find(report =>
+            report.id === opp.nonSubmissionReportId && report.status === 'PENDING')?.id
 
-        const existing = get().bdSubmissions.find(b => b.solicitationId === opp.solicitationId)
+        const existing = findBDSubmissionForOpportunity(get().bdSubmissions, opp, get().opportunities)
+        const committed = await transitionOpportunityWorkflow({
+          opportunityId: opp.id,
+          status,
+          expectedOpportunityStatus: opp.status,
+          expectedSubmissionStatus: existing?.status,
+          ...(comment !== undefined ? { comment } : {}),
+        })
+        if (!committed) {
+          showDatabaseSaveError('BD Tracker status')
+          return false
+        }
+        const updatedOpp = mergeCommittedOpportunity(opp, committed.opportunity)
+        const trackerRow = committed.submission
+
+        set(s => ({
+          opportunities: s.opportunities.map(o => o.id === id ? updatedOpp : o),
+          bdSubmissions: existing
+            ? s.bdSubmissions.map(b => b.id === existing.id ? trackerRow : b)
+            : [trackerRow, ...s.bdSubmissions],
+          nonSubReports: pendingReportId
+            ? s.nonSubReports.filter(report => report.id !== pendingReportId)
+            : s.nonSubReports,
+        }))
 
         if (status === 'CANCELED') {
-          const trackerRow = bdSubmissionFromOpportunity(opp, 'CANCELED', existing, comment, get().employees)
-          set(s => ({
-            opportunities: s.opportunities.filter(o => o.id !== id),
-            nonSubReports: s.nonSubReports.filter(r => r.opportunityId !== id),
-            deletionRequests: s.deletionRequests.filter(r => r.opportunityId !== id),
-            bdSubmissions: existing
-              ? s.bdSubmissions.map(b => b.id === existing.id ? trackerRow : b)
-              : [trackerRow, ...s.bdSubmissions],
-          }))
-          upsertBDSubmission(trackerRow)
-          deleteOpportunityRecord(id)
           get().logActivity({
             action: `Canceled opportunity ${opp.solicitation}${comment ? ` — ${comment}` : ''}`,
             user: actor?.name || 'System',
@@ -1775,28 +1826,8 @@ export const useStore = create<AppState>()(
             read: false,
             relatedId: opp.solicitationId,
           })
-          return
+          return true
         }
-
-        const opportunityStatus = bdStatusToOpportunityStatus(status)
-        set(s => ({
-          opportunities: s.opportunities.map(o =>
-            o.id === id
-              ? { ...o, status: opportunityStatus, submittedAt: o.submittedAt ?? new Date().toISOString() }
-              : o
-          )
-        }))
-
-        const updatedOpp = get().opportunities.find(o => o.id === id)
-        if (!updatedOpp) return
-        const trackerRow = bdSubmissionFromOpportunity(updatedOpp, status, existing, comment, get().employees)
-        set(s => ({
-          bdSubmissions: existing
-            ? s.bdSubmissions.map(b => b.id === existing.id ? trackerRow : b)
-            : [trackerRow, ...s.bdSubmissions],
-        }))
-        upsertOpportunity(updatedOpp)
-        upsertBDSubmission(trackerRow)
 
         get().logActivity({
           action: `Moved ${opp.solicitation} to ${status.replace(/_/g, ' ')}${comment ? ` — ${comment}` : ''}`,
@@ -1807,12 +1838,13 @@ export const useStore = create<AppState>()(
           entityName: opp.solicitation,
         })
 
-        if (status === 'AWARDED') get().markOpportunityWon(id)
+        if (status === 'AWARDED' && !(await get().markOpportunityWon(id))) return false
+        return true
       },
 
-      markOpportunityWon: (id) => {
+      markOpportunityWon: async (id) => {
         const opp = get().opportunities.find(o => o.id === id)
-        if (!opp) return
+        if (!opp) return false
         // Guard: never create a duplicate FreshAward for the same opportunity
         const existingAward = get().freshAwards.find(fa => fa.opportunityId === id)
         if (existingAward) {
@@ -1822,17 +1854,10 @@ export const useStore = create<AppState>()(
               o.id === id ? { ...o, status: 'WON' } : o
             )
           }))
-          return
+          return true
         }
-        // 1. Update opportunity status to WON
-        set(s => ({
-          opportunities: s.opportunities.map(o =>
-            o.id === id ? { ...o, status: 'WON' } : o
-          )
-        }))
-        const wonOpp = get().opportunities.find(o => o.id === id)
-        if (wonOpp) upsertOpportunity(wonOpp)
-        // 2. Create a FreshAward from the opportunity
+        // The atomic transition has already persisted WON/AWARDED. Verify the
+        // handoff write before showing a Fresh Award locally.
         const freshAward: FreshAward = {
           id: `fa${Date.now()}`,
           opportunityId: opp.id,
@@ -1855,8 +1880,14 @@ export const useStore = create<AppState>()(
           proposalAttachments: opp.proposalAttachments?.length ? opp.proposalAttachments : undefined,
           samGovContacts: opp.samGovContacts?.length ? opp.samGovContacts : undefined,
         }
-        set(s => ({ freshAwards: [freshAward, ...s.freshAwards] }))
-        upsertFreshAward(freshAward)
+        if (isApiConnected && !(await upsertFreshAward(freshAward))) {
+          showDatabaseSaveError('Fresh Award creation')
+          return false
+        }
+        set(s => ({
+          opportunities: s.opportunities.map(o => o.id === id ? { ...o, status: 'WON' } : o),
+          freshAwards: [freshAward, ...s.freshAwards],
+        }))
         // 3. Add notification
         get().addNotification({
           type: 'FRESH_AWARD',
@@ -1874,6 +1905,7 @@ export const useStore = create<AppState>()(
           entityId: opp.id,
           entityName: opp.solicitation,
         })
+        return true
       },
 
       // ── Contract management ─────────────────────────────────────────
@@ -1881,17 +1913,13 @@ export const useStore = create<AppState>()(
         const now = new Date()
         const { requireAssociateForActivePipeline } = get()
         const reportedOpportunityIds = new Set(get().nonSubReports.map(report => report.opportunityId))
-        // An opportunity that already sits in the BD Tracker (any tracker row,
-        // e.g. "Discussion") has been acted on by the BD team, so it must never
-        // be swept into Non-Submission Reports. Tracker rows link back to the
-        // opportunity by solicitationId.
-        const trackerSolicitationIds = new Set(
-          get().bdSubmissions.map(row => row.solicitationId).filter(Boolean)
-        )
+        // A durable opportunityId is authoritative. Legacy solicitation IDs
+        // are used only when exactly one unlinked tracker row matches, so a
+        // duplicate identifier can never suppress the wrong opportunity.
         const reportableOpps = get().opportunities.filter(opp => {
           if (opp.isDeleted || !PRE_SUBMISSION_STATUSES.includes(opp.status) || opp.nonSubmissionReportId || opp.nonSubmissionExempt || reportedOpportunityIds.has(opp.id)) return false
           // Skip anything already tracked in the BD Tracker (incl. Discussion).
-          if (opp.solicitationId && trackerSolicitationIds.has(opp.solicitationId)) return false
+          if (findBDSubmissionForOpportunity(get().bdSubmissions, opp, get().opportunities)) return false
           // Mode A escalates only Associate-led opps; Mode B escalates any assigned opp.
           if (requireAssociateForActivePipeline) {
             if (!isAssignedToAssociate(get().employees, opp.assignedTo)) return false
@@ -1942,10 +1970,11 @@ export const useStore = create<AppState>()(
       // Reviewed reports (APPROVED/DECLINED) are kept as the historical record,
       // even though the review itself creates a NOT_SUBMITTED/DROPPED tracker row.
       reconcileNonSubReports: () => {
+        // Native API mode preserves the report until an authorized transactional
+        // workflow reviews or returns it. The legacy best-effort delete could
+        // clear only one side for associates and create an orphan report/pointer.
+        if (isApiConnected) return
         const oppById = new Map(get().opportunities.map(o => [o.id, o]))
-        const trackerSolicitationIds = new Set(
-          get().bdSubmissions.map(row => row.solicitationId).filter(Boolean)
-        )
         const pastPerfOpportunityIds = new Set(
           get().pastPerformances.map(pp => pp.opportunityId).filter(Boolean)
         )
@@ -1953,7 +1982,11 @@ export const useStore = create<AppState>()(
         const staleReports = get().nonSubReports.filter(report => {
           if (report.status !== 'PENDING') return false
           const opp = oppById.get(report.opportunityId)
-          const inTracker = !!opp?.solicitationId && trackerSolicitationIds.has(opp.solicitationId)
+          const inTracker = !!opp && !!findBDSubmissionForOpportunity(
+            get().bdSubmissions,
+            opp,
+            get().opportunities,
+          )
           const inPastPerf = pastPerfOpportunityIds.has(report.opportunityId)
           return inTracker || inPastPerf
         })
@@ -1971,14 +2004,13 @@ export const useStore = create<AppState>()(
           ),
         }))
 
-        staleReports.forEach(report => {
-          void bulkDeleteFromTable('non_submission_reports', { column: 'id', value: report.id })
-          const updatedOpp = get().opportunities.find(o => o.id === report.opportunityId)
-          if (updatedOpp) upsertOpportunity(updatedOpp)
-        })
       },
 
       scanDeadlineReminders: () => {
+        const actor = get().currentUser
+        if (!hasPermission(actor, 'opportunity:editSchedule')
+          && !hasPermission(actor, 'opportunity:edit')
+          && !hasPermission(actor, 'admin:manageUsers')) return
         const now = Date.now()
         const FOUR_H = 4 * 60 * 60 * 1000
         const TWENTY_FOUR_H = 24 * 60 * 60 * 1000
@@ -2713,16 +2745,20 @@ export const useStore = create<AppState>()(
       },
 
       // ── Subcontractor management ────────────────────────────────────
-      addSubcontractor: (data) => {
+      addSubcontractor: async (data) => {
         const actor = get().currentUser
         if (!hasPermission(actor, 'sourcing:write')) {
           toast.error('You do not have permission to update sourcing.')
-          return
+          return false
         }
         const sub: Subcontractor = {
           ...data,
           id: `sc${Date.now()}`,
           createdAt: new Date().toISOString(),
+        }
+        if (isApiConnected && !(await upsertSubcontractor(sub))) {
+          showDatabaseSaveError('Sourcing quote')
+          return false
         }
         set(s => ({ subcontractors: [...s.subcontractors, sub] }))
         set(s => ({
@@ -2732,7 +2768,6 @@ export const useStore = create<AppState>()(
               : o
           )
         }))
-        upsertSubcontractor(sub)
         get().logActivity({
           action: `${hasSourcingQuote(sub) ? 'Added quote-backed sourcing' : 'Added sourcing'}: ${sub.companyName}`,
           user: actor?.name || 'System',
@@ -2743,66 +2778,123 @@ export const useStore = create<AppState>()(
         })
         const opportunity = get().opportunities.find(item => item.id === sub.opportunityId)
         if (hasSourcingQuote(sub) && opportunity && !opportunity.quoted) {
-          void get().updateOpportunity(opportunity.id, { quoted: true })
+          if (isApiConnected) {
+            // The native data route marks this flag in the same transaction as
+            // the quote row. Mirror that committed state locally without a
+            // second request that could fail after the quote already saved.
+            set(s => ({
+              opportunities: s.opportunities.map(item =>
+                item.id === opportunity.id ? { ...item, quoted: true } : item),
+            }))
+            get().logActivity({
+              action: `Marked opportunity as quoted: ${opportunity.solicitation}`,
+              user: actor?.name || 'System',
+              userRole: actor?.role || 'CAPTURE_MANAGER',
+              entityType: 'opportunity',
+              entityId: opportunity.id,
+              entityName: opportunity.solicitation,
+            })
+            get().addNotification({
+              type: 'STATUS_CHANGE',
+              title: 'Opportunity quoted',
+              message: `${opportunity.solicitation} has been quoted.`,
+              read: false,
+              relatedId: opportunity.id,
+              targetRole: 'CAPTURE_MANAGER',
+            })
+          } else if (!(await get().updateOpportunity(opportunity.id, { quoted: true }))) {
+            return false
+          }
         }
+        return true
       },
 
-      updateSubcontractor: (id, data) => {
+      updateSubcontractor: async (id, data) => {
         const actor = get().currentUser
         if (!hasPermission(actor, 'sourcing:write')) {
           toast.error('You do not have permission to update sourcing.')
-          return
+          return false
+        }
+        const current = get().subcontractors.find(sc => sc.id === id)
+        if (!current) return false
+        const updated = { ...current, ...data }
+        if (isApiConnected && !(await upsertSubcontractor(updated))) {
+          showDatabaseSaveError('Sourcing quote')
+          return false
         }
         set(s => ({
-          subcontractors: s.subcontractors.map(sc => sc.id === id ? { ...sc, ...data } : sc),
+          subcontractors: s.subcontractors.map(sc => sc.id === id ? updated : sc),
           opportunities: s.opportunities.map(o => ({
             ...o,
-            subcontractors: (o.subcontractors || []).map(sc => sc.id === id ? { ...sc, ...data } : sc),
+            subcontractors: (o.subcontractors || []).map(sc => sc.id === id ? updated : sc),
           })),
         }))
-        const updated = get().subcontractors.find(sc => sc.id === id)
-        if (updated) {
-          upsertSubcontractor(updated)
-          get().logActivity({
-            action: `${hasSourcingQuote(updated) ? 'Updated quote-backed sourcing' : 'Updated sourcing'}: ${updated.companyName}`,
-            user: actor?.name || 'System',
-            userRole: actor?.role || 'CAPTURE_MANAGER',
-            entityType: 'subcontractor',
-            entityId: updated.id,
-            entityName: updated.companyName,
-          })
-          const opportunity = get().opportunities.find(item => item.id === updated.opportunityId)
-          if (hasSourcingQuote(updated) && opportunity && !opportunity.quoted) {
-            void get().updateOpportunity(opportunity.id, { quoted: true })
+        get().logActivity({
+          action: `${hasSourcingQuote(updated) ? 'Updated quote-backed sourcing' : 'Updated sourcing'}: ${updated.companyName}`,
+          user: actor?.name || 'System',
+          userRole: actor?.role || 'CAPTURE_MANAGER',
+          entityType: 'subcontractor',
+          entityId: updated.id,
+          entityName: updated.companyName,
+        })
+        const opportunity = get().opportunities.find(item => item.id === updated.opportunityId)
+        if (hasSourcingQuote(updated) && opportunity && !opportunity.quoted) {
+          if (isApiConnected) {
+            set(s => ({
+              opportunities: s.opportunities.map(item =>
+                item.id === opportunity.id ? { ...item, quoted: true } : item),
+            }))
+            get().logActivity({
+              action: `Marked opportunity as quoted: ${opportunity.solicitation}`,
+              user: actor?.name || 'System',
+              userRole: actor?.role || 'CAPTURE_MANAGER',
+              entityType: 'opportunity',
+              entityId: opportunity.id,
+              entityName: opportunity.solicitation,
+            })
+            get().addNotification({
+              type: 'STATUS_CHANGE',
+              title: 'Opportunity quoted',
+              message: `${opportunity.solicitation} has been quoted.`,
+              read: false,
+              relatedId: opportunity.id,
+              targetRole: 'CAPTURE_MANAGER',
+            })
+          } else if (!(await get().updateOpportunity(opportunity.id, { quoted: true }))) {
+            return false
           }
         }
+        return true
       },
 
-      deleteSubcontractor: (id) => {
+      deleteSubcontractor: async (id) => {
         if (!hasPermission(get().currentUser, 'sourcing:write')) {
           toast.error('You do not have permission to update sourcing.')
-          return
+          return false
         }
         const sub = get().subcontractors.find(sc => sc.id === id)
-        set(s => ({ subcontractors: s.subcontractors.filter(sc => sc.id !== id) }))
-        if (sub) {
-          set(s => ({
-            opportunities: s.opportunities.map(o =>
-              o.id === sub.opportunityId
-                ? { ...o, subcontractors: (o.subcontractors || []).filter(sc => sc.id !== id) }
-                : o
-            )
-          }))
-          deleteSubcontractorRecord(id)
-          get().logActivity({
-            action: `Deleted sourcing subcontractor: ${sub.companyName}`,
-            user: get().currentUser?.name || 'System',
-            userRole: get().currentUser?.role || 'CAPTURE_MANAGER',
-            entityType: 'subcontractor',
-            entityId: sub.id,
-            entityName: sub.companyName,
-          })
+        if (!sub) return false
+        if (isApiConnected && !(await deleteSubcontractorRecord(id))) {
+          showDatabaseSaveError('Sourcing deletion')
+          return false
         }
+        set(s => ({ subcontractors: s.subcontractors.filter(sc => sc.id !== id) }))
+        set(s => ({
+          opportunities: s.opportunities.map(o =>
+            o.id === sub.opportunityId
+              ? { ...o, subcontractors: (o.subcontractors || []).filter(sc => sc.id !== id) }
+              : o
+          )
+        }))
+        get().logActivity({
+          action: `Deleted sourcing subcontractor: ${sub.companyName}`,
+          user: get().currentUser?.name || 'System',
+          userRole: get().currentUser?.role || 'CAPTURE_MANAGER',
+          entityType: 'subcontractor',
+          entityId: sub.id,
+          entityName: sub.companyName,
+        })
+        return true
       },
 
       // ── Fresh Awards ────────────────────────────────────────────────
@@ -2954,51 +3046,128 @@ export const useStore = create<AppState>()(
       },
 
       // ── BD Submissions ──────────────────────────────────────────────
-      updateBDSubmission: (id, status) => {
-        set(s => ({
-          bdSubmissions: s.bdSubmissions.map(b => b.id === id ? { ...b, status } : b)
-        }))
-        const updated = get().bdSubmissions.find(b => b.id === id)
-        if (updated) {
-          upsertBDSubmission(updated)
-          const opp = get().opportunities.find(o => o.solicitationId === updated.solicitationId)
-          if (opp) {
-            const opportunityStatus = bdStatusToOpportunityStatus(status)
-            set(s => ({
-              opportunities: s.opportunities.map(o =>
-                o.id === opp.id ? { ...o, status: opportunityStatus } : o
-              )
-            }))
-            const updatedOpp = get().opportunities.find(o => o.id === opp.id)
-            if (updatedOpp) upsertOpportunity(updatedOpp)
-            if (status === 'AWARDED') get().markOpportunityWon(opp.id)
-          }
+      updateBDSubmission: async (id, status) => {
+        const actor = get().currentUser
+        const current = get().bdSubmissions.find(b => b.id === id)
+        if (!current) return false
+        if ((status === 'CANCELED' || current.status === 'CANCELED')
+          && !hasPermission(actor, 'opportunity:cancel')) {
+          toast.error('Only the Capture Manager can cancel contract opportunities.')
+          return false
         }
-      },
+        if ((status === 'NOT_SUBMITTED' || status === 'DROPPED'
+          || current.status === 'NOT_SUBMITTED' || current.status === 'DROPPED')
+          && !hasPermission(actor, 'nonSubmission:review')) {
+          toast.error('Only the Capture Manager can change a non-submission outcome.')
+          return false
+        }
 
-      updateBDSubmissionDetails: (id, data) => {
+        const leavingCanceled = current.status === 'CANCELED' && status !== 'CANCELED'
+        const opp = findBDSubmissionOpportunity(current, get().opportunities)
+        const pendingReportId = opp?.nonSubmissionReportId
+          && get().nonSubReports.find(report =>
+            report.id === opp.nonSubmissionReportId && report.status === 'PENDING')?.id
+        const committed = await transitionOpportunityWorkflow({
+          ...(opp ? { opportunityId: opp.id } : { submissionId: current.id }),
+          status,
+          expectedSubmissionStatus: current.status,
+          ...(opp ? { expectedOpportunityStatus: opp.status } : {}),
+        })
+        if (!committed) {
+          showDatabaseSaveError('BD Tracker status')
+          return false
+        }
+        const updated = committed.submission
+        const updatedOpp = opp ? mergeCommittedOpportunity(opp, committed.opportunity) : undefined
+
         set(s => ({
-          bdSubmissions: s.bdSubmissions.map(b => b.id === id ? { ...b, ...data } : b)
+          bdSubmissions: s.bdSubmissions.map(b => b.id === id ? updated : b),
+          opportunities: updatedOpp
+            ? s.opportunities.map(o => o.id === updatedOpp.id ? updatedOpp : o)
+            : s.opportunities,
+          nonSubReports: pendingReportId
+            ? s.nonSubReports.filter(report => report.id !== pendingReportId)
+            : s.nonSubReports,
         }))
-        const updated = get().bdSubmissions.find(b => b.id === id)
-        if (updated) upsertBDSubmission(updated)
+        get().logActivity({
+          action: leavingCanceled
+            ? `Restored canceled opportunity to ${status.replace(/_/g, ' ')}: ${updated.solicitation}`
+            : `Moved BD Tracker opportunity to ${status.replace(/_/g, ' ')}: ${updated.solicitation}`,
+          user: actor?.name || 'System',
+          userRole: actor?.role || 'CAPTURE_MANAGER',
+          entityType: 'opportunity',
+          entityId: updatedOpp?.id || String(updated.id),
+          entityName: updated.solicitation,
+        })
+        if (status === 'AWARDED' && updatedOpp && !(await get().markOpportunityWon(updatedOpp.id))) {
+          return false
+        }
+        return true
       },
 
-      deleteBDSubmission: (id) => {
+      updateBDSubmissionDetails: async (id, data, opportunityData) => {
+        const current = get().bdSubmissions.find(b => b.id === id)
+        if (!current) return false
+        const opp = findBDSubmissionOpportunity(current, get().opportunities)
+        const committed = await editOpportunityWorkflow({
+          ...(opp ? { opportunityId: opp.id } : { submissionId: current.id }),
+          expectedSubmissionStatus: current.status,
+          ...(opp ? { expectedOpportunityStatus: opp.status } : {}),
+          values: data,
+          ...(opportunityData ? { opportunityValues: opportunityData } : {}),
+        })
+        if (!committed) {
+          showDatabaseSaveError('BD Tracker details')
+          return false
+        }
+        const updated = committed.submission
+        const updatedOpp = opp ? mergeCommittedOpportunity(opp, committed.opportunity) : undefined
+        set(s => ({
+          bdSubmissions: s.bdSubmissions.map(b => b.id === id ? updated : b),
+          opportunities: updatedOpp
+            ? s.opportunities.map(o => o.id === updatedOpp.id ? updatedOpp : o)
+            : s.opportunities,
+        }))
+        return true
+      },
+
+      deleteBDSubmission: async (id) => {
         const actor = get().currentUser
         if (!hasPermission(actor, 'opportunity:deleteApprove')) {
           toast.error('Only the Capture Manager can delete submitted opportunities.')
-          return
+          return false
         }
         const submission = get().bdSubmissions.find(row => row.id === id)
-        if (!submission) return
+        if (!submission) return false
 
-        const linkedOpp = get().opportunities.find(opp => opp.solicitationId === submission.solicitationId)
+        const linkedOpp = findBDSubmissionOpportunity(submission, get().opportunities)
+        const committed = await deleteOpportunityWorkflow({
+          submissionId: submission.id,
+          expectedSubmissionStatus: submission.status,
+          ...(linkedOpp ? { expectedOpportunityStatus: linkedOpp.status } : {}),
+        })
+        if (!committed) {
+          showDatabaseSaveError('Submitted opportunity deletion')
+          return false
+        }
         set(s => ({
           bdSubmissions: s.bdSubmissions.filter(row => row.id !== id),
           opportunities: linkedOpp
             ? s.opportunities.filter(opp => opp.id !== linkedOpp.id)
             : s.opportunities,
+          subcontractors: linkedOpp
+            ? s.subcontractors.filter(subcontractor => subcontractor.opportunityId !== linkedOpp.id)
+            : s.subcontractors,
+          contracts: linkedOpp
+            ? s.contracts.map(contract => contract.opportunityId === linkedOpp.id
+                ? { ...contract, opportunityId: undefined }
+                : contract)
+            : s.contracts,
+          freshAwards: linkedOpp
+            ? s.freshAwards.map(award => award.opportunityId === linkedOpp.id
+                ? { ...award, opportunityId: undefined }
+                : award)
+            : s.freshAwards,
           nonSubReports: linkedOpp
             ? s.nonSubReports.filter(report => report.opportunityId !== linkedOpp.id)
             : s.nonSubReports,
@@ -3007,8 +3176,6 @@ export const useStore = create<AppState>()(
             : s.deletionRequests,
         }))
 
-        deleteBDSubmissionRecord(id)
-        if (linkedOpp) deleteOpportunityRecord(linkedOpp.id)
         get().logActivity({
           action: `Deleted submitted opportunity: ${submission.solicitation}`,
           user: actor?.name || 'System',
@@ -3017,38 +3184,57 @@ export const useStore = create<AppState>()(
           entityId: linkedOpp?.id || String(id),
           entityName: submission.solicitation,
         })
+        return true
       },
 
-      returnBDSubmissionToPipeline: (id) => {
+      returnBDSubmissionToPipeline: async (id) => {
         const actor = get().currentUser
         if (!hasPermission(actor, 'opportunity:edit')) {
           toast.error('Only the Capture Manager can move submitted opportunities back to the pipeline.')
-          return
+          return false
         }
         const submission = get().bdSubmissions.find(row => row.id === id)
-        if (!submission) return
-        const linkedOpp = get().opportunities.find(opp => opp.solicitationId === submission.solicitationId)
+        if (!submission) return false
+        const linkedOpp = findBDSubmissionOpportunity(submission, get().opportunities)
         if (!linkedOpp) {
           toast.error('The original opportunity could not be found.')
-          return
+          return false
         }
 
-        const restored = normalizeOpportunityAssignmentStatus({
+        const target = normalizeOpportunityAssignmentStatus({
           ...linkedOpp,
           status: 'ACTIVE',
           submittedAt: undefined,
           nonSubmissionReportId: undefined,
         }, get().employees, get().requireAssociateForActivePipeline)
+        const committed = await returnOpportunityToPipelineWorkflow({
+          submissionId: submission.id,
+          expectedOpportunityStatus: linkedOpp.status,
+          expectedSubmissionStatus: submission.status,
+          targetOpportunityStatus: target.status as 'ACTIVE' | 'NEW_ASSIGNMENT',
+          ...(linkedOpp.nonSubmissionReportId
+            ? { nonSubmissionReportId: linkedOpp.nonSubmissionReportId }
+            : {}),
+          ...([submission.status, linkedOpp.status].some(status =>
+            status === 'NOT_SUBMITTED' || status === 'DROPPED')
+            ? { nonSubmissionExempt: true }
+            : {}),
+        })
+        if (!committed) {
+          showDatabaseSaveError('Return to General Pipeline')
+          return false
+        }
+        const restored = normalizeOpportunityAssignmentStatus(
+          mergeCommittedOpportunity(linkedOpp, committed.opportunity),
+          get().employees,
+          get().requireAssociateForActivePipeline,
+        )
 
         set(s => ({
           opportunities: s.opportunities.map(opp => opp.id === restored.id ? restored : opp),
           bdSubmissions: s.bdSubmissions.filter(row => row.id !== id),
         }))
 
-        upsertOpportunity(restored).then(saved => {
-          if (!saved) showDatabaseSaveError('Opportunity update')
-        })
-        deleteBDSubmissionRecord(id)
         get().logActivity({
           action: `Moved submitted opportunity back to General Pipeline: ${submission.solicitation}`,
           user: actor?.name || 'System',
@@ -3057,6 +3243,7 @@ export const useStore = create<AppState>()(
           entityId: restored.id,
           entityName: submission.solicitation,
         })
+        return true
       },
 
       // ── Activity Logs ───────────────────────────────────────────────
@@ -3158,81 +3345,107 @@ export const useStore = create<AppState>()(
         if (report) upsertNonSubReport(report)
       },
 
-      reviewNonSubReport: (id, action, reviewNote, reviewedBy) => {
+      reviewNonSubReport: async (id, action, reviewNote, reviewedBy) => {
         if (!hasPermission(get().currentUser, 'nonSubmission:review')) {
           toast.error('Only the Capture Manager can approve or decline non-submission reports.')
-          return
+          return false
         }
-        set(s => ({
-          nonSubReports: s.nonSubReports.map(r =>
-            r.id === id
-              ? { ...r, status: action, reviewedBy, reviewedAt: new Date().toISOString(), reviewNote }
-              : r
-          )
-        }))
         const report = get().nonSubReports.find(r => r.id === id)
-        if (report) {
-          upsertNonSubReport(report)
-          const newStatus: Opportunity['status'] = action === 'APPROVED' ? 'NOT_SUBMITTED' : 'DROPPED'
-          const trackerStatus: BDSubmission['status'] = action === 'APPROVED' ? 'NOT_SUBMITTED' : 'DROPPED'
-          set(s => ({
-            opportunities: s.opportunities.map(o =>
-              o.id === report.opportunityId ? { ...o, status: newStatus } : o
-            )
-          }))
-          const updatedOpp = get().opportunities.find(o => o.id === report.opportunityId)
-          if (updatedOpp) {
-            const existing = get().bdSubmissions.find(b => b.solicitationId === updatedOpp.solicitationId)
-            const trackerRow = bdSubmissionFromOpportunity(updatedOpp, trackerStatus, existing, reviewNote || report.reason, get().employees)
-            set(s => ({
-              bdSubmissions: existing
-                ? s.bdSubmissions.map(b => b.id === existing.id ? trackerRow : b)
-                : [trackerRow, ...s.bdSubmissions],
-            }))
-            upsertBDSubmission(trackerRow)
-            upsertOpportunity(updatedOpp)
-          }
+        if (!report) return false
+        const opp = get().opportunities.find(o => o.id === report.opportunityId)
+        if (!opp) {
+          toast.error('The original opportunity could not be found.')
+          return false
         }
+        const trackerStatus: BDSubmission['status'] = action === 'APPROVED' ? 'NOT_SUBMITTED' : 'DROPPED'
+        const existing = findBDSubmissionForOpportunity(get().bdSubmissions, opp, get().opportunities)
+        const committed = await transitionOpportunityWorkflow({
+          opportunityId: opp.id,
+          status: trackerStatus,
+          expectedOpportunityStatus: opp.status,
+          expectedSubmissionStatus: existing?.status,
+          comment: reviewNote || report.reason,
+          nonSubmissionReportId: report.id,
+          ...(reviewNote ? { reviewNote } : {}),
+        })
+        if (!committed) {
+          showDatabaseSaveError('Non-submission review')
+          return false
+        }
+        const reviewedReport = {
+          ...report,
+          status: action,
+          reviewedBy,
+          reviewedAt: new Date().toISOString(),
+          reviewNote,
+        }
+        const updatedOpp = mergeCommittedOpportunity(opp, committed.opportunity)
+        const trackerRow = committed.submission
+        set(s => ({
+          nonSubReports: s.nonSubReports.map(r => r.id === id ? reviewedReport : r),
+          opportunities: s.opportunities.map(o => o.id === updatedOpp.id ? updatedOpp : o),
+          bdSubmissions: existing
+            ? s.bdSubmissions.map(b => b.id === existing.id ? trackerRow : b)
+            : [trackerRow, ...s.bdSubmissions],
+        }))
+        return true
       },
 
-      returnNonSubmissionToPipeline: (reportId) => {
+      returnNonSubmissionToPipeline: async (reportId) => {
         const actor = get().currentUser
         if (!hasPermission(actor, 'opportunity:edit')) {
           toast.error('Only the Capture Manager can move opportunities back to the pipeline.')
-          return
+          return false
         }
         const report = get().nonSubReports.find(r => r.id === reportId)
-        if (!report) return
+        if (!report) return false
         const linkedOpp = get().opportunities.find(o => o.id === report.opportunityId)
         if (!linkedOpp) {
           toast.error('The original opportunity could not be found.')
-          return
+          return false
         }
 
-        const restored = normalizeOpportunityAssignmentStatus({
+        const relatedSubmission = findBDSubmissionForOpportunity(
+          get().bdSubmissions,
+          linkedOpp,
+          get().opportunities,
+        )
+        if (!relatedSubmission) {
+          toast.error('The related BD Tracker row could not be found.')
+          return false
+        }
+        const target = normalizeOpportunityAssignmentStatus({
           ...linkedOpp,
           status: 'ACTIVE',
           submittedAt: undefined,
           nonSubmissionReportId: undefined,
-          // Deliberate manager override: keep it in the pipeline. Without this the
-          // next sweep would instantly re-report it (its due datetime is already
-          // >12h in the past), bouncing it straight back to Non-Submission Reports.
           nonSubmissionExempt: true,
         }, get().employees, get().requireAssociateForActivePipeline)
-
-        const relatedSubmission = get().bdSubmissions.find(b => b.solicitationId === linkedOpp.solicitationId)
+        const committed = await returnOpportunityToPipelineWorkflow({
+          submissionId: relatedSubmission.id,
+          expectedOpportunityStatus: linkedOpp.status,
+          expectedSubmissionStatus: relatedSubmission.status,
+          targetOpportunityStatus: target.status as 'ACTIVE' | 'NEW_ASSIGNMENT',
+          nonSubmissionReportId: report.id,
+          // Deliberate manager override: keep it in the pipeline. Without this the
+          // next sweep would instantly re-report it after its overdue deadline.
+          nonSubmissionExempt: true,
+        })
+        if (!committed) {
+          showDatabaseSaveError('Return from Non-Submission')
+          return false
+        }
+        const restored = normalizeOpportunityAssignmentStatus(
+          mergeCommittedOpportunity(linkedOpp, committed.opportunity),
+          get().employees,
+          get().requireAssociateForActivePipeline,
+        )
 
         set(s => ({
           opportunities: s.opportunities.map(o => o.id === restored.id ? restored : o),
           nonSubReports: s.nonSubReports.filter(r => r.id !== reportId),
           bdSubmissions: relatedSubmission ? s.bdSubmissions.filter(b => b.id !== relatedSubmission.id) : s.bdSubmissions,
         }))
-
-        upsertOpportunity(restored).then(saved => {
-          if (!saved) showDatabaseSaveError('Opportunity update')
-        })
-        void bulkDeleteFromTable('non_submission_reports', { column: 'id', value: reportId })
-        if (relatedSubmission) deleteBDSubmissionRecord(relatedSubmission.id)
 
         get().logActivity({
           action: `Moved opportunity back to Contract Opportunities from Non-Submission: ${linkedOpp.solicitation}`,
@@ -3242,6 +3455,7 @@ export const useStore = create<AppState>()(
           entityId: restored.id,
           entityName: linkedOpp.solicitation,
         })
+        return true
       },
 
       // ── Deletion requests ───────────────────────────────────────────
@@ -3292,16 +3506,12 @@ export const useStore = create<AppState>()(
         const req = get().deletionRequests.find(r => r.id === id)
         if (req) upsertDeletionRequest(req)
         if (req && action === 'APPROVED') {
-          const deletedSubmissionId = get().opportunities.find(o => o.id === req.opportunityId)?.solicitationId
           set(s => ({
             opportunities: s.opportunities.map(o =>
               o.id === req.opportunityId
                 ? { ...o, isDeleted: true, deletionRequested: false }
                 : o
             ),
-            bdSubmissions: deletedSubmissionId
-              ? s.bdSubmissions.filter(b => b.solicitationId !== deletedSubmissionId)
-              : s.bdSubmissions,
           }))
           const deletedOpp = get().opportunities.find(o => o.id === req.opportunityId)
           if (deletedOpp) upsertOpportunity(deletedOpp)
@@ -3488,23 +3698,6 @@ export const useStore = create<AppState>()(
 
           const data = await loadAllData()
           if (data) {
-            const canceledOpportunities = data.opportunities.filter(o => o.status === 'CANCELED')
-            const canceledIds = new Set(canceledOpportunities.map(o => o.id))
-            const bdSubmissions = [...data.bdSubmissions]
-
-            canceledOpportunities.forEach(opp => {
-              const existing = bdSubmissions.find(b => b.solicitationId === opp.solicitationId)
-              const trackerRow = bdSubmissionFromOpportunity(opp, 'CANCELED', existing, 'Canceled', get().employees)
-              if (existing) {
-                const idx = bdSubmissions.findIndex(b => b.id === existing.id)
-                bdSubmissions[idx] = trackerRow
-              } else {
-                bdSubmissions.unshift(trackerRow)
-              }
-              upsertBDSubmission(trackerRow)
-              deleteOpportunityRecord(opp.id)
-            })
-
             const localUsers = get().users
             const localCurrentUser = get().currentUser
             const mergedUsers = data.users.length > 0
@@ -3535,15 +3728,15 @@ export const useStore = create<AppState>()(
                 finalUsers,
                 data.employees.length > 0 ? data.employees : get().employees,
               ),
-              opportunities: data.opportunities.filter(o => o.status !== 'CANCELED'),
+              opportunities: data.opportunities,
               contracts: data.contracts,
               freshAwards: data.freshAwards,
               pastPerformances: data.pastPerformances,
               subcontractors: data.subcontractors,
               subkDatabase: data.subkDatabase,
-              nonSubReports: dedupeNonSubReports(data.nonSubReports.filter(r => !canceledIds.has(r.opportunityId))),
-              deletionRequests: data.deletionRequests.filter(r => !canceledIds.has(r.opportunityId)),
-              bdSubmissions,
+              nonSubReports: dedupeNonSubReports(data.nonSubReports),
+              deletionRequests: data.deletionRequests,
+              bdSubmissions: data.bdSubmissions,
               nextInvoiceNumber: Math.max(
                 Math.max(1, Math.trunc(Number(get().nextInvoiceNumber) || 1)),
                 nextInvoiceSequenceFromContracts(data.contracts),
@@ -3638,8 +3831,8 @@ export const useStore = create<AppState>()(
       // activity (new opportunities, HR requests, notifications) shows up without
       // a manual page refresh. Unlike initializeStore this never flips dbReady,
       // never touches auth (currentUser stays the same object reference to avoid
-      // needless re-renders / auth churn) and skips the one-time canceled→BD
-      // migration that init performs.
+      // needless re-renders / auth churn). Tracker reconciliation is performed
+      // once by the database migration, never by individual browser sessions.
       refreshFromDb: async () => {
         const initial = get()
         if (
@@ -3710,9 +3903,6 @@ export const useStore = create<AppState>()(
             afterLoad.loginTimestamp !== startedAt
           ) return
           if (data) {
-            const canceledIds = new Set(
-              data.opportunities.filter(o => o.status === 'CANCELED').map(o => o.id),
-            )
             const dbUsers = data.users.length > 0 ? data.users : get().users
             const finalUsers = mergeSafeUser(dbUsers, refreshedProfile)
             set({
@@ -3721,14 +3911,14 @@ export const useStore = create<AppState>()(
                 finalUsers,
                 data.employees.length > 0 ? data.employees : get().employees,
               ),
-              opportunities: data.opportunities.filter(o => o.status !== 'CANCELED'),
+              opportunities: data.opportunities,
               contracts: data.contracts,
               freshAwards: data.freshAwards,
               pastPerformances: data.pastPerformances,
               subcontractors: data.subcontractors,
               subkDatabase: data.subkDatabase,
-              nonSubReports: dedupeNonSubReports(data.nonSubReports.filter(r => !canceledIds.has(r.opportunityId))),
-              deletionRequests: data.deletionRequests.filter(r => !canceledIds.has(r.opportunityId)),
+              nonSubReports: dedupeNonSubReports(data.nonSubReports),
+              deletionRequests: data.deletionRequests,
               bdSubmissions: data.bdSubmissions,
               lastSyncedAt: Date.now(),
             })
@@ -3947,13 +4137,19 @@ export const useStore = create<AppState>()(
         const count = get().opportunities.length
         set({ opportunities: [], bdSubmissions: [], nonSubReports: [], deletionRequests: [] })
         if (isApiConnected) {
-          // FK ON DELETE CASCADE handles comments/subcontractors/non_sub_reports
-          // children automatically, but bd_submissions/deletion_requests live
-          // in a separate table that may carry orphan refs — wipe them too.
-          const ok = await bulkDeleteFromTable('opportunities')
-          await bulkDeleteFromTable('bd_submissions')
-          await bulkDeleteFromTable('non_submission_reports')
-          await bulkDeleteFromTable('deletion_requests')
+          // The migrated tracker FK uses ON DELETE RESTRICT as a data-loss
+          // guard. Clear every dependent table first and do not touch the
+          // opportunity parents if any child-table wipe fails.
+          const childResults = [
+            await bulkDeleteFromTable('bd_submissions'),
+            await bulkDeleteFromTable('non_submission_reports'),
+            await bulkDeleteFromTable('deletion_requests'),
+          ]
+          const childrenCleared = childResults.every(Boolean)
+          const opportunitiesCleared = childrenCleared
+            ? await bulkDeleteFromTable('opportunities')
+            : false
+          const ok = childrenCleared && opportunitiesCleared
           if (!ok) toast.error('Opportunities were cleared locally but the database wipe failed.')
         }
         get().logActivity({
@@ -4033,32 +4229,32 @@ export const useStore = create<AppState>()(
       },
 
       wipeBDSubmissions: async () => {
+        if (isApiConnected) {
+          toast.error('Tracker rows cannot be wiped separately from their opportunities. Use Reset BD pipeline.')
+          return 0
+        }
         const count = get().bdSubmissions.length
         set({ bdSubmissions: [] })
-        if (isApiConnected) {
-          const ok = await bulkDeleteFromTable('bd_submissions')
-          if (!ok) toast.error('BD tracker entries were cleared locally but the database wipe failed.')
-        }
         return count
       },
 
       wipeNonSubReports: async () => {
+        if (isApiConnected) {
+          toast.error('Non-submission reports cannot be wiped without repairing their opportunity links.')
+          return 0
+        }
         const count = get().nonSubReports.length
         set({ nonSubReports: [] })
-        if (isApiConnected) {
-          const ok = await bulkDeleteFromTable('non_submission_reports')
-          if (!ok) toast.error('Non-submission reports were cleared locally but the database wipe failed.')
-        }
         return count
       },
 
       wipeDeletionRequests: async () => {
+        if (isApiConnected) {
+          toast.error('Deletion requests cannot be wiped without repairing their opportunity flags.')
+          return 0
+        }
         const count = get().deletionRequests.length
         set({ deletionRequests: [] })
-        if (isApiConnected) {
-          const ok = await bulkDeleteFromTable('deletion_requests')
-          if (!ok) toast.error('Deletion requests were cleared locally but the database wipe failed.')
-        }
         return count
       },
 
@@ -4106,10 +4302,18 @@ export const useStore = create<AppState>()(
           get().deletionRequests.length
         set({ opportunities: [], bdSubmissions: [], nonSubReports: [], deletionRequests: [] })
         if (isApiConnected) {
-          await bulkDeleteFromTable('opportunities')
-          await bulkDeleteFromTable('bd_submissions')
-          await bulkDeleteFromTable('non_submission_reports')
-          await bulkDeleteFromTable('deletion_requests')
+          const childResults = [
+            await bulkDeleteFromTable('bd_submissions'),
+            await bulkDeleteFromTable('non_submission_reports'),
+            await bulkDeleteFromTable('deletion_requests'),
+          ]
+          const childrenCleared = childResults.every(Boolean)
+          const opportunitiesCleared = childrenCleared
+            ? await bulkDeleteFromTable('opportunities')
+            : false
+          if (!childrenCleared || !opportunitiesCleared) {
+            toast.error('The BD pipeline was cleared locally but the database reset failed.')
+          }
         }
         get().logActivity({
           action: `Reset BD pipeline (${before} records cleared)`,

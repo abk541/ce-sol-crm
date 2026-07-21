@@ -25,7 +25,8 @@ vi.mock('../lib/db', () => ({
   clearBusinessData: vi.fn().mockResolvedValue(null),
   findActiveOpportunityDuplicate: vi.fn().mockResolvedValue({ ok: true, duplicate: false }),
   upsertOpportunity: vi.fn().mockResolvedValue(true),
-  deleteOpportunityRecord: vi.fn().mockResolvedValue(null),
+  syncOpportunityComments: vi.fn().mockResolvedValue(true),
+  deleteOpportunityRecord: vi.fn().mockResolvedValue(true),
   upsertSubcontractor: vi.fn().mockResolvedValue(null),
   deleteSubcontractorRecord: vi.fn().mockResolvedValue(null),
   upsertContract: vi.fn().mockResolvedValue(null),
@@ -41,7 +42,7 @@ vi.mock('../lib/db', () => ({
   upsertPastPerformance: vi.fn().mockResolvedValue(null),
   upsertNonSubReport: vi.fn().mockResolvedValue(null),
   upsertDeletionRequest: vi.fn().mockResolvedValue(null),
-  upsertBDSubmission: vi.fn().mockResolvedValue(null),
+  upsertBDSubmission: vi.fn().mockResolvedValue(true),
   deleteBDSubmissionRecord: vi.fn().mockResolvedValue(null),
 }))
 
@@ -50,14 +51,32 @@ vi.mock('../lib/api', () => ({
   api: null,
 }))
 
+vi.mock('../lib/opportunityWorkflow', () => ({
+  deleteOpportunityWorkflow: vi.fn(),
+  submitOpportunityWorkflow: vi.fn(),
+  transitionOpportunityWorkflow: vi.fn(),
+  editOpportunityWorkflow: vi.fn(),
+  returnOpportunityToPipelineWorkflow: vi.fn(),
+}))
+
 import { useStore } from '../store/useStore'
 import {
   deleteContractVehicleOrderRecord,
+  deleteOpportunityRecord,
   findActiveOpportunityDuplicate,
+  upsertBDSubmission,
   upsertContractVehicleOrder,
   upsertOpportunity,
+  syncOpportunityComments,
 } from '../lib/db'
-import type { Opportunity, Contract, OppStatus, ContractStatus, Employee, FileAttachment } from '../types'
+import {
+  deleteOpportunityWorkflow,
+  editOpportunityWorkflow,
+  returnOpportunityToPipelineWorkflow,
+  submitOpportunityWorkflow,
+  transitionOpportunityWorkflow,
+} from '../lib/opportunityWorkflow'
+import type { Opportunity, Contract, OppStatus, ContractStatus, Employee, FileAttachment, BDSubmission } from '../types'
 
 // ── Pipeline view filter (mirrors PipelinePage) ───────────────────────
 const OPP_VIEW_STATUSES: OppStatus[] = ['ACTIVE', 'NEW_ASSIGNMENT', 'DISCUSSION']
@@ -128,10 +147,38 @@ const TEST_EMPLOYEES: Employee[] = [
   { id: 'emp-associate', name: 'Test Associate', email: 'associate@ces.com', role: 'ASSOCIATE', managerId: 'emp-lead', avatar: 'TA' },
 ]
 
+function trackerFor(
+  opp: Opportunity,
+  status: BDSubmission['status'],
+  existing?: BDSubmission,
+  comment?: string,
+): BDSubmission {
+  return {
+    id: existing?.id ?? 42,
+    opportunityId: opp.id,
+    submittedOn: existing?.submittedOn ?? '2026-07-21',
+    solicitationId: opp.solicitationId,
+    setAside: opp.setAside,
+    type: opp.type,
+    solicitation: opp.solicitation,
+    status,
+    dueDate: opp.dueDate,
+    localTime: `${opp.localTime ?? ''}${opp.timezone ? ` ${opp.timezone}` : ''}`.trim(),
+    location: opp.location,
+    bdm: opp.assignedTo === 'emp-associate' ? 'Test Manager' : opp.bdm,
+    bds: opp.assignedTo === 'emp-associate' ? 'Test Team Lead' : opp.bds,
+    supportAgent: opp.assignedTo === 'emp-associate' ? 'Test Associate' : opp.supportAgent,
+    value: opp.contractAmount ?? opp.value ?? opp.baseAmount ?? 0,
+    comment: comment ?? existing?.comment,
+  }
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   vi.mocked(findActiveOpportunityDuplicate).mockResolvedValue({ ok: true, duplicate: false })
   vi.mocked(upsertOpportunity).mockResolvedValue(true)
+  vi.mocked(syncOpportunityComments).mockResolvedValue(true)
+  vi.mocked(upsertBDSubmission).mockResolvedValue(true)
   useStore.setState({
     opportunities: [],
     freshAwards: [],
@@ -148,6 +195,103 @@ beforeEach(() => {
     employees: TEST_EMPLOYEES,
     nonSubGraceHours: 0,
     nonSubGraceMinutes: 5,
+  })
+  vi.mocked(submitOpportunityWorkflow).mockImplementation(async (id, _expected, values) => {
+    const opp = useStore.getState().opportunities.find(row => row.id === id)
+    if (!opp) return null
+    const committed = {
+      ...opp,
+      ...values,
+      status: 'SUBMITTED' as const,
+      submittedAt: '2026-07-21T16:00:00.000Z',
+      nonSubmissionReportId: undefined,
+    }
+    const existing = useStore.getState().bdSubmissions.find(row => row.solicitationId === opp.solicitationId)
+    return { opportunity: committed, submission: trackerFor(committed, 'SUBMITTED', existing) }
+  })
+  vi.mocked(transitionOpportunityWorkflow).mockImplementation(async input => {
+    const state = useStore.getState()
+    const current = input.submissionId
+      ? state.bdSubmissions.find(row => row.id === input.submissionId)
+      : state.bdSubmissions.find(row => row.opportunityId === input.opportunityId)
+        ?? state.bdSubmissions.find(row => state.opportunities.some(opp =>
+          opp.id === input.opportunityId && opp.solicitationId === row.solicitationId))
+    const opp = input.opportunityId
+      ? state.opportunities.find(row => row.id === input.opportunityId)
+      : state.opportunities.find(row => row.id === current?.opportunityId)
+        ?? state.opportunities.find(row => row.solicitationId === current?.solicitationId)
+    if (!opp && !current) return null
+    const generatedComment = ['canceled', 'cancelled', 'canceled from contract opportunities', 'cancelled from contract opportunities']
+      .includes((current?.comment ?? '').trim().toLowerCase())
+    const comment = input.comment !== undefined
+      ? input.comment ?? undefined
+      : current?.status === 'CANCELED' && input.status !== 'CANCELED' && generatedComment
+        ? undefined
+        : current?.comment
+    const committedOpp = opp ? {
+      ...opp,
+      status: (input.status === 'DISCUSSING' ? 'DISCUSSION' : input.status === 'AWARDED' ? 'WON' : input.status) as Opportunity['status'],
+      ...(input.status === 'CANCELED' ? {} : { submittedAt: opp.submittedAt ?? '2026-07-21T16:00:00.000Z' }),
+      ...(!input.nonSubmissionReportId
+        && state.nonSubReports.some(report =>
+          report.id === opp.nonSubmissionReportId && report.status === 'PENDING')
+        ? { nonSubmissionReportId: undefined }
+        : {}),
+    } : null
+    const submission = current
+      ? { ...current, status: input.status, comment }
+      : trackerFor(committedOpp as Opportunity, input.status, undefined, comment)
+    return { opportunity: committedOpp, submission }
+  })
+  vi.mocked(editOpportunityWorkflow).mockImplementation(async input => {
+    const state = useStore.getState()
+    const current = input.submissionId
+      ? state.bdSubmissions.find(row => row.id === input.submissionId)
+      : state.bdSubmissions.find(row => row.opportunityId === input.opportunityId)
+        ?? state.bdSubmissions.find(row => state.opportunities.some(opp =>
+          opp.id === input.opportunityId && opp.solicitationId === row.solicitationId))
+    if (!current) return null
+    const opp = input.opportunityId ? state.opportunities.find(row => row.id === input.opportunityId) : undefined
+    const { assignedTo, ...opportunityValues } = input.opportunityValues ?? {}
+    return {
+      opportunity: opp ? {
+        ...opp,
+        ...opportunityValues,
+        ...(input.opportunityValues && Object.prototype.hasOwnProperty.call(input.opportunityValues, 'assignedTo')
+          ? { assignedTo: assignedTo ?? undefined }
+          : {}),
+      } : null,
+      submission: { ...current, ...input.values },
+    }
+  })
+  vi.mocked(deleteOpportunityWorkflow).mockImplementation(async input => {
+    const state = useStore.getState()
+    const submission = state.bdSubmissions.find(row => row.id === input.submissionId)
+    if (!submission) return null
+    const opportunity = state.opportunities.find(row => row.id === submission.opportunityId)
+      ?? state.opportunities.find(row => row.solicitationId === submission.solicitationId)
+      ?? null
+    return { opportunity, submission }
+  })
+  vi.mocked(returnOpportunityToPipelineWorkflow).mockImplementation(async input => {
+    const state = useStore.getState()
+    const submission = state.bdSubmissions.find(row => row.id === input.submissionId)
+    if (!submission) return null
+    const opportunity = state.opportunities.find(row => row.id === submission.opportunityId)
+      ?? state.opportunities.find(row => row.solicitationId === submission.solicitationId)
+    if (!opportunity) return null
+    return {
+      opportunity: {
+        ...opportunity,
+        status: 'ACTIVE',
+        submittedAt: undefined,
+        nonSubmissionReportId: undefined,
+        ...(input.nonSubmissionExempt !== undefined
+          ? { nonSubmissionExempt: input.nonSubmissionExempt }
+          : {}),
+      },
+      submission,
+    }
   })
 })
 
@@ -169,6 +313,7 @@ describe('associate comments and quoted workflow', () => {
       relatedId: opp.id,
       targetRole: 'CAPTURE_MANAGER',
     })
+    expect(syncOpportunityComments).not.toHaveBeenCalled()
   })
 
   it('notifies the Capture Manager when an associate comments on an opportunity', async () => {
@@ -198,6 +343,7 @@ describe('associate comments and quoted workflow', () => {
       entityId: opp.id,
       userRole: 'ASSOCIATE',
     }))
+    expect(syncOpportunityComments).toHaveBeenCalledWith(opp.id, [], [comment])
   })
 
   it('automatically marks an opportunity quoted when sourcing receives a quote attachment', async () => {
@@ -215,7 +361,7 @@ describe('associate comments and quoted workflow', () => {
       users: [CAPTURE_MANAGER_USER, ASSOCIATE_USER],
     })
 
-    useStore.getState().addSubcontractor({
+    await useStore.getState().addSubcontractor({
       opportunityId: opp.id,
       companyName: 'Supplier Company',
       contactName: 'Supplier Contact',
@@ -279,42 +425,42 @@ describe('createOpportunity duplicate guard', () => {
 
 // ═════════════════════════════════════════════════════════════════════
 describe('1 · submitOpportunity', () => {
-  it('sets status → SUBMITTED', () => {
+  it('sets status → SUBMITTED', async () => {
     const opp = makeOpp({ id: 'opp1', status: 'ACTIVE' })
     useStore.setState({ opportunities: [opp] })
 
-    useStore.getState().submitOpportunity('opp1')
+    await useStore.getState().submitOpportunity('opp1')
 
     const updated = useStore.getState().opportunities.find(o => o.id === 'opp1')
     expect(updated?.status).toBe('SUBMITTED')
   })
 
-  it('records submittedAt timestamp', () => {
+  it('records submittedAt timestamp', async () => {
     const opp = makeOpp({ id: 'opp1' })
     useStore.setState({ opportunities: [opp] })
 
-    useStore.getState().submitOpportunity('opp1')
+    await useStore.getState().submitOpportunity('opp1')
 
     const updated = useStore.getState().opportunities.find(o => o.id === 'opp1')
     expect(updated?.submittedAt).toBeTruthy()
     expect(new Date(updated!.submittedAt!).getTime()).toBeGreaterThan(0)
   })
 
-  it('stores OTJ contract amount when provided', () => {
+  it('stores OTJ contract amount when provided', async () => {
     const opp = makeOpp({ id: 'opp1', type: 'OTJ' })
     useStore.setState({ opportunities: [opp] })
 
-    useStore.getState().submitOpportunity('opp1', { contractAmount: 850_000 })
+    await useStore.getState().submitOpportunity('opp1', { contractAmount: 850_000 })
 
     const updated = useStore.getState().opportunities.find(o => o.id === 'opp1')
     expect(updated?.contractAmount).toBe(850_000)
   })
 
-  it('stores RECURRING yearly + monthly values when provided', () => {
+  it('stores RECURRING yearly + monthly values when provided', async () => {
     const opp = makeOpp({ id: 'opp1', type: 'RECURRING' })
     useStore.setState({ opportunities: [opp] })
 
-    useStore.getState().submitOpportunity('opp1', {
+    await useStore.getState().submitOpportunity('opp1', {
       baseAmount: 120_000,
       monthlyPayment: 10_000,
     })
@@ -324,7 +470,7 @@ describe('1 · submitOpportunity', () => {
     expect(updated?.monthlyPayment).toBe(10_000)
   })
 
-  it('stores submitted proposal file references', () => {
+  it('stores submitted proposal file references', async () => {
     const opp = makeOpp({ id: 'opp1' })
     const attachment: FileAttachment = {
       id: 'proposal-file-1',
@@ -337,7 +483,7 @@ describe('1 · submitOpportunity', () => {
     }
     useStore.setState({ opportunities: [opp] })
 
-    useStore.getState().submitOpportunity('opp1', {
+    await useStore.getState().submitOpportunity('opp1', {
       proposals: ['technical-proposal.pdf'],
       assignedOpportunities: ['technical-proposal.pdf'],
       proposalAttachments: [attachment],
@@ -349,25 +495,71 @@ describe('1 · submitOpportunity', () => {
     expect(updated?.proposalAttachments).toEqual([attachment])
   })
 
-  it('removes opp from pipeline view (SUBMITTED ∉ OPP_VIEW_STATUSES)', () => {
+  it('removes opp from pipeline view (SUBMITTED ∉ OPP_VIEW_STATUSES)', async () => {
     const opp = makeOpp({ id: 'opp1', status: 'ACTIVE' })
     useStore.setState({ opportunities: [opp] })
 
-    useStore.getState().submitOpportunity('opp1')
+    await useStore.getState().submitOpportunity('opp1')
 
     const pipeline = useStore.getState().opportunities
       .filter(o => !o.isDeleted && OPP_VIEW_STATUSES.includes(o.status as OppStatus))
     expect(pipeline.some(o => o.id === 'opp1')).toBe(false)
   })
 
-  it('works from NEW_ASSIGNMENT status too', () => {
+  it('works from NEW_ASSIGNMENT status too', async () => {
     const opp = makeOpp({ id: 'opp1', status: 'NEW_ASSIGNMENT' })
     useStore.setState({ opportunities: [opp] })
 
-    useStore.getState().submitOpportunity('opp1')
+    await useStore.getState().submitOpportunity('opp1')
 
     const updated = useStore.getState().opportunities.find(o => o.id === 'opp1')
     expect(updated?.status).toBe('SUBMITTED')
+    expect(submitOpportunityWorkflow).toHaveBeenCalledTimes(1)
+    expect(upsertOpportunity).not.toHaveBeenCalled()
+    expect(upsertBDSubmission).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['PENDING', 0],
+    ['APPROVED', 1],
+  ] as const)('%s non-submission history has the correct lifecycle after a late submit', async (status, expectedCount) => {
+    const opp = makeOpp({
+      id: 'opp1',
+      status: 'ACTIVE',
+      nonSubmissionReportId: 'report-1',
+    })
+    useStore.setState({
+      opportunities: [opp],
+      nonSubReports: [{
+        id: 'report-1',
+        opportunityId: opp.id,
+        agentUsername: 'associate',
+        reason: 'Late proposal',
+        status,
+        submittedAt: '2026-07-21T12:00:00.000Z',
+      }],
+    })
+
+    const saved = await useStore.getState().submitOpportunity(opp.id)
+
+    expect(saved).toBe(true)
+    expect(useStore.getState().opportunities[0]?.nonSubmissionReportId).toBeUndefined()
+    expect(useStore.getState().nonSubReports).toHaveLength(expectedCount)
+  })
+
+  it('does not report or apply submission when the atomic workflow fails', async () => {
+    const opp = makeOpp({ id: 'opp1', status: 'ACTIVE' })
+    useStore.setState({ opportunities: [opp], bdSubmissions: [] })
+    vi.mocked(submitOpportunityWorkflow).mockResolvedValueOnce(null)
+
+    const saved = await useStore.getState().submitOpportunity('opp1')
+
+    expect(saved).toBe(false)
+    expect(useStore.getState().opportunities[0]?.status).toBe('ACTIVE')
+    expect(useStore.getState().bdSubmissions).toHaveLength(0)
+    expect(submitOpportunityWorkflow).toHaveBeenCalledTimes(1)
+    expect(upsertOpportunity).not.toHaveBeenCalled()
+    expect(upsertBDSubmission).not.toHaveBeenCalled()
   })
 
   it('does not auto-submit pre-submission opportunities when the deadline is reached', () => {
@@ -396,6 +588,44 @@ describe('1 · submitOpportunity', () => {
     expect(updated?.nonSubmissionReportId).toBe(reports[0].id)
     expect(updated?.status).toBe('ACTIVE')
     expect(useStore.getState().bdSubmissions).toHaveLength(0)
+  })
+
+  it('does not let a tracker linked to one duplicate solicitation suppress the other opportunity', () => {
+    const first = makeOpp({
+      id: 'opp-duplicate-a', solicitationId: 'SOL-DUP', assignedTo: 'emp-associate',
+      dueDate: '2000-01-01', localTime: '09:00 AM',
+    })
+    const second = makeOpp({
+      id: 'opp-duplicate-b', solicitationId: ' sol-dup ', assignedTo: 'emp-associate',
+      dueDate: '2000-01-01', localTime: '09:00 AM',
+    })
+    useStore.setState({
+      opportunities: [first, second],
+      nonSubReports: [],
+      bdSubmissions: [trackerFor(second, 'DISCUSSING')],
+    })
+
+    useStore.getState().syncDueOpportunities()
+
+    expect(useStore.getState().nonSubReports.map(report => report.opportunityId)).toEqual([first.id])
+  })
+
+  it('does not guess which duplicate opportunity owns an unlinked legacy tracker row', () => {
+    const first = makeOpp({
+      id: 'opp-legacy-a', solicitationId: 'SOL-LEGACY', assignedTo: 'emp-associate',
+      dueDate: '2000-01-01', localTime: '09:00 AM',
+    })
+    const second = makeOpp({
+      id: 'opp-legacy-b', solicitationId: 'sol-legacy', assignedTo: 'emp-associate',
+      dueDate: '2000-01-01', localTime: '09:00 AM',
+    })
+    const legacy = { ...trackerFor(first, 'DISCUSSING'), opportunityId: undefined }
+    useStore.setState({ opportunities: [first, second], nonSubReports: [], bdSubmissions: [legacy] })
+
+    useStore.getState().syncDueOpportunities()
+
+    expect(useStore.getState().nonSubReports.map(report => report.opportunityId).sort())
+      .toEqual([first.id, second.id].sort())
   })
 
   it('does not create non-submission reports for manager-only assignments', () => {
@@ -581,7 +811,7 @@ describe('3 · Non-Submission Report workflow', () => {
     expect(reports[0].opportunityId).toBe('opp1')
   })
 
-  it('APPROVED → opportunity status becomes NOT_SUBMITTED', () => {
+  it('APPROVED → opportunity status becomes NOT_SUBMITTED', async () => {
     const opp = makeOpp({ id: 'opp1', status: 'ACTIVE' })
     useStore.setState({ opportunities: [opp], nonSubReports: [] })
 
@@ -590,13 +820,13 @@ describe('3 · Non-Submission Report workflow', () => {
       reason: 'Amendment arrived 2 hours before deadline — impossible to revise.',
     })
     const reportId = useStore.getState().nonSubReports[0].id
-    useStore.getState().reviewNonSubReport(reportId, 'APPROVED', 'Accepted', 'manager1')
+    await useStore.getState().reviewNonSubReport(reportId, 'APPROVED', 'Accepted', 'manager1')
 
     const updated = useStore.getState().opportunities.find(o => o.id === 'opp1')
     expect(updated?.status).toBe('NOT_SUBMITTED')
   })
 
-  it('APPROVED moves the matching BD tracker row to NOT_SUBMITTED', () => {
+  it('APPROVED moves the matching BD tracker row to NOT_SUBMITTED', async () => {
     const opp = makeOpp({ id: 'opp1', status: 'SUBMITTED' })
     useStore.setState({
       opportunities: [opp],
@@ -625,12 +855,12 @@ describe('3 · Non-Submission Report workflow', () => {
       reason: 'No submission was recorded after the configured deadline window.',
     })
     const reportId = useStore.getState().nonSubReports[0].id
-    useStore.getState().reviewNonSubReport(reportId, 'APPROVED', 'Accepted', 'manager1')
+    await useStore.getState().reviewNonSubReport(reportId, 'APPROVED', 'Accepted', 'manager1')
 
     expect(useStore.getState().bdSubmissions.find(b => b.id === 21)?.status).toBe('NOT_SUBMITTED')
   })
 
-  it('DECLINED → opportunity status becomes DROPPED', () => {
+  it('DECLINED → opportunity status becomes DROPPED', async () => {
     const opp = makeOpp({ id: 'opp1', status: 'ACTIVE' })
     useStore.setState({ opportunities: [opp], nonSubReports: [] })
 
@@ -639,13 +869,13 @@ describe('3 · Non-Submission Report workflow', () => {
       reason: 'Team bandwidth issue — could have been resolved with overtime.',
     })
     const reportId = useStore.getState().nonSubReports[0].id
-    useStore.getState().reviewNonSubReport(reportId, 'DECLINED', 'Insufficient reason', 'manager1')
+    await useStore.getState().reviewNonSubReport(reportId, 'DECLINED', 'Insufficient reason', 'manager1')
 
     const updated = useStore.getState().opportunities.find(o => o.id === 'opp1')
     expect(updated?.status).toBe('DROPPED')
   })
 
-  it('DECLINED moves the matching BD tracker row to DROPPED', () => {
+  it('DECLINED moves the matching BD tracker row to DROPPED', async () => {
     const opp = makeOpp({ id: 'opp1', status: 'SUBMITTED' })
     useStore.setState({
       opportunities: [opp],
@@ -674,18 +904,18 @@ describe('3 · Non-Submission Report workflow', () => {
       reason: 'No submission was recorded after the configured deadline window.',
     })
     const reportId = useStore.getState().nonSubReports[0].id
-    useStore.getState().reviewNonSubReport(reportId, 'DECLINED', 'Not approved', 'manager1')
+    await useStore.getState().reviewNonSubReport(reportId, 'DECLINED', 'Not approved', 'manager1')
 
     expect(useStore.getState().bdSubmissions.find(b => b.id === 22)?.status).toBe('DROPPED')
   })
 
-  it('review records the reviewer and note on the report', () => {
+  it('review records the reviewer and note on the report', async () => {
     const opp = makeOpp({ id: 'opp1' })
     useStore.setState({ opportunities: [opp], nonSubReports: [] })
 
     useStore.getState().submitNonSubReport({ opportunityId: 'opp1', agentUsername: 'agent1', reason: 'No capacity in Q2.' })
     const reportId = useStore.getState().nonSubReports[0].id
-    useStore.getState().reviewNonSubReport(reportId, 'APPROVED', 'Capacity issue confirmed', 'director1')
+    await useStore.getState().reviewNonSubReport(reportId, 'APPROVED', 'Capacity issue confirmed', 'director1')
 
     const report = useStore.getState().nonSubReports.find(r => r.id === reportId)
     expect(report?.status).toBe('APPROVED')
@@ -694,18 +924,18 @@ describe('3 · Non-Submission Report workflow', () => {
     expect(report?.reviewedAt).toBeTruthy()
   })
 
-  it('NOT_SUBMITTED and DROPPED opps are absent from pipeline view', () => {
+  it('NOT_SUBMITTED and DROPPED opps are absent from pipeline view', async () => {
     const opp1 = makeOpp({ id: 'opp1', status: 'ACTIVE' })
     const opp2 = makeOpp({ id: 'opp2', status: 'ACTIVE' })
     useStore.setState({ opportunities: [opp1, opp2], nonSubReports: [] })
 
     // Submit and approve report for opp1 → NOT_SUBMITTED
     useStore.getState().submitNonSubReport({ opportunityId: 'opp1', agentUsername: 'agent1', reason: 'Cancelled solicitation RFP.' })
-    useStore.getState().reviewNonSubReport(useStore.getState().nonSubReports[0].id, 'APPROVED', '', 'mgr')
+    await useStore.getState().reviewNonSubReport(useStore.getState().nonSubReports[0].id, 'APPROVED', '', 'mgr')
 
     // Submit and decline report for opp2 → DROPPED
     useStore.getState().submitNonSubReport({ opportunityId: 'opp2', agentUsername: 'agent1', reason: 'Resource shortage at deadline.' })
-    useStore.getState().reviewNonSubReport(useStore.getState().nonSubReports.find(r => r.opportunityId === 'opp2')!.id, 'DECLINED', '', 'mgr')
+    await useStore.getState().reviewNonSubReport(useStore.getState().nonSubReports.find(r => r.opportunityId === 'opp2')!.id, 'DECLINED', '', 'mgr')
 
     const pipeline = useStore.getState().opportunities
       .filter(o => !o.isDeleted && OPP_VIEW_STATUSES.includes(o.status as OppStatus))
@@ -900,49 +1130,110 @@ describe('7 · BD Submission status updates', () => {
     bdm: 'alice', bds: 'bob', value: 250_000,
   }
 
-  it('updates status from SUBMITTED → DISCUSSING', () => {
+  it('updates status from SUBMITTED → DISCUSSING', async () => {
     useStore.setState({ bdSubmissions: [SAMPLE_BD] })
-    useStore.getState().updateBDSubmission(42, 'DISCUSSING')
+    await useStore.getState().updateBDSubmission(42, 'DISCUSSING')
     expect(useStore.getState().bdSubmissions.find(s => s.id === 42)?.status).toBe('DISCUSSING')
   })
 
-  it('updates status from DISCUSSING → AWARDED', () => {
+  it('updates status from DISCUSSING → AWARDED', async () => {
     useStore.setState({ bdSubmissions: [{ ...SAMPLE_BD, status: 'DISCUSSING' }] })
-    useStore.getState().updateBDSubmission(42, 'AWARDED')
+    await useStore.getState().updateBDSubmission(42, 'AWARDED')
     expect(useStore.getState().bdSubmissions.find(s => s.id === 42)?.status).toBe('AWARDED')
   })
 
-  it('updates status to LOST', () => {
+  it('updates status to LOST', async () => {
     useStore.setState({ bdSubmissions: [SAMPLE_BD] })
-    useStore.getState().updateBDSubmission(42, 'LOST')
+    await useStore.getState().updateBDSubmission(42, 'LOST')
     expect(useStore.getState().bdSubmissions.find(s => s.id === 42)?.status).toBe('LOST')
   })
 
-  it('updates status to NOT_SUBMITTED', () => {
+  it('updates status to NOT_SUBMITTED', async () => {
     useStore.setState({ bdSubmissions: [SAMPLE_BD] })
-    useStore.getState().updateBDSubmission(42, 'NOT_SUBMITTED')
+    await useStore.getState().updateBDSubmission(42, 'NOT_SUBMITTED')
     expect(useStore.getState().bdSubmissions.find(s => s.id === 42)?.status).toBe('NOT_SUBMITTED')
   })
 
-  it('does not affect other BD submissions', () => {
+  it('does not affect other BD submissions', async () => {
     const other = { ...SAMPLE_BD, id: 99, status: 'SUBMITTED' as const }
     useStore.setState({ bdSubmissions: [SAMPLE_BD, other] })
-    useStore.getState().updateBDSubmission(42, 'AWARDED')
+    await useStore.getState().updateBDSubmission(42, 'AWARDED')
     expect(useStore.getState().bdSubmissions.find(s => s.id === 99)?.status).toBe('SUBMITTED')
+  })
+
+  it('repairs linked opportunity and tracker assignments with one atomic workflow', async () => {
+    const opp = makeOpp({ id: 'opp-repair', solicitationId: SAMPLE_BD.solicitationId })
+    useStore.setState({
+      opportunities: [opp],
+      bdSubmissions: [{ ...SAMPLE_BD, opportunityId: opp.id, bdm: '', bds: '', supportAgent: undefined }],
+    })
+
+    const saved = await useStore.getState().updateBDSubmissionDetails(42, {
+      bdm: 'Test Manager',
+      bds: 'Test Team Lead',
+      supportAgent: 'Test Associate',
+    }, {
+      assignedTo: 'emp-associate',
+      bdm: 'Test Manager',
+      bds: 'Test Team Lead',
+      supportAgent: 'Test Associate',
+    })
+
+    expect(saved).toBe(true)
+    expect(editOpportunityWorkflow).toHaveBeenCalledTimes(1)
+    expect(useStore.getState().opportunities[0]).toMatchObject({
+      assignedTo: 'emp-associate',
+      bdm: 'Test Manager',
+      bds: 'Test Team Lead',
+      supportAgent: 'Test Associate',
+    })
+    expect(useStore.getState().bdSubmissions[0]).toMatchObject({
+      bdm: 'Test Manager',
+      bds: 'Test Team Lead',
+      supportAgent: 'Test Associate',
+    })
+    expect(upsertOpportunity).not.toHaveBeenCalled()
+    expect(upsertBDSubmission).not.toHaveBeenCalled()
+  })
+
+  it('keeps linked and tracker assignments unchanged when atomic repair fails', async () => {
+    const opp = makeOpp({ id: 'opp-repair', solicitationId: SAMPLE_BD.solicitationId, assignedTo: undefined })
+    const tracker = { ...SAMPLE_BD, opportunityId: opp.id, bdm: '', bds: '', supportAgent: undefined }
+    useStore.setState({ opportunities: [opp], bdSubmissions: [tracker] })
+    vi.mocked(editOpportunityWorkflow).mockResolvedValueOnce(null)
+
+    const saved = await useStore.getState().updateBDSubmissionDetails(42, {
+      bdm: 'Test Manager',
+      bds: 'Test Team Lead',
+      supportAgent: 'Test Associate',
+    }, { assignedTo: 'emp-associate' })
+
+    expect(saved).toBe(false)
+    expect(useStore.getState().opportunities[0]?.assignedTo).toBeUndefined()
+    expect(useStore.getState().bdSubmissions[0]).toEqual(tracker)
   })
 })
 
 // ═════════════════════════════════════════════════════════════════════
 describe('8 · Cancel opportunity', () => {
-  it('routes CANCELED updates only to BD Tracker canceled', async () => {
-    const opp = makeOpp({ id: 'opp1', status: 'ACTIVE' })
+  it('retains the source opportunity and assignments when canceled', async () => {
+    const opp = makeOpp({ id: 'opp1', status: 'ACTIVE', assignedTo: 'emp-associate' })
     useStore.setState({ opportunities: [opp], bdSubmissions: [] })
 
     await useStore.getState().updateOpportunity('opp1', { status: 'CANCELED' })
 
-    expect(useStore.getState().opportunities.some(o => o.id === 'opp1')).toBe(false)
+    const canceled = useStore.getState().opportunities.find(o => o.id === 'opp1')
+    expect(canceled?.status).toBe('CANCELED')
+    expect(canceled?.assignedTo).toBe('emp-associate')
     const trackerRow = useStore.getState().bdSubmissions.find(b => b.solicitationId === opp.solicitationId)
     expect(trackerRow?.status).toBe('CANCELED')
+    expect(trackerRow?.bdm).toBe('Test Manager')
+    expect(trackerRow?.bds).toBe('Test Team Lead')
+    expect(trackerRow?.supportAgent).toBe('Test Associate')
+    expect(transitionOpportunityWorkflow).toHaveBeenCalledTimes(1)
+    expect(upsertOpportunity).not.toHaveBeenCalled()
+    expect(upsertBDSubmission).not.toHaveBeenCalled()
+    expect(deleteOpportunityRecord).not.toHaveBeenCalled()
   })
 
   it('removes canceled opportunities from every opportunity-backed view', async () => {
@@ -954,7 +1245,8 @@ describe('8 · Cancel opportunity', () => {
     const pipeline = useStore.getState().opportunities
       .filter(o => !o.isDeleted && OPP_VIEW_STATUSES.includes(o.status as OppStatus))
     expect(pipeline.some(o => o.id === 'opp1')).toBe(false)
-    expect(useStore.getState().opportunities).toHaveLength(0)
+    expect(useStore.getState().opportunities).toHaveLength(1)
+    expect(useStore.getState().opportunities[0]?.status).toBe('CANCELED')
   })
 
   it('works from any pre-submission status (NEW_ASSIGNMENT, DISCUSSION)', async () => {
@@ -962,15 +1254,86 @@ describe('8 · Cancel opportunity', () => {
       const opp = makeOpp({ id: `opp-${status}`, status })
       useStore.setState({ opportunities: [opp], bdSubmissions: [] })
       await useStore.getState().updateOpportunity(`opp-${status}`, { status: 'CANCELED' })
-      expect(useStore.getState().opportunities.some(o => o.id === `opp-${status}`)).toBe(false)
+      expect(useStore.getState().opportunities.find(o => o.id === `opp-${status}`)?.status).toBe('CANCELED')
       expect(useStore.getState().bdSubmissions[0]?.status).toBe('CANCELED')
     }
+  })
+
+  it('leaves the source record untouched when cancellation cannot be saved', async () => {
+    const opp = makeOpp({ id: 'opp1', status: 'ACTIVE', assignedTo: 'emp-associate' })
+    useStore.setState({ opportunities: [opp], bdSubmissions: [] })
+    vi.mocked(transitionOpportunityWorkflow).mockResolvedValueOnce(null)
+
+    const saved = await useStore.getState().updateOpportunity('opp1', { status: 'CANCELED' })
+
+    expect(saved).toBe(false)
+    expect(useStore.getState().opportunities[0]).toMatchObject({ status: 'ACTIVE', assignedTo: 'emp-associate' })
+    expect(useStore.getState().bdSubmissions).toHaveLength(0)
+    expect(deleteOpportunityRecord).not.toHaveBeenCalled()
+    expect(upsertOpportunity).not.toHaveBeenCalled()
+    expect(upsertBDSubmission).not.toHaveBeenCalled()
+  })
+
+  it('restores CANCELED to SUBMITTED without losing assignment and clears only the generated comment', async () => {
+    const opp = makeOpp({ id: 'opp1', status: 'CANCELED', assignedTo: 'emp-associate' })
+    const tracker = {
+      id: 42,
+      submittedOn: '2026-05-01',
+      solicitationId: opp.solicitationId,
+      setAside: opp.setAside,
+      type: opp.type,
+      solicitation: opp.solicitation,
+      status: 'CANCELED' as const,
+      dueDate: opp.dueDate,
+      localTime: opp.localTime,
+      location: opp.location,
+      bdm: 'Test Manager',
+      bds: 'Test Team Lead',
+      supportAgent: 'Test Associate',
+      value: 0,
+      comment: 'Canceled',
+    }
+    useStore.setState({ opportunities: [opp], bdSubmissions: [tracker] })
+
+    const saved = await useStore.getState().updateBDSubmission(42, 'SUBMITTED')
+
+    expect(saved).toBe(true)
+    expect(useStore.getState().opportunities[0]).toMatchObject({ status: 'SUBMITTED', assignedTo: 'emp-associate' })
+    expect(useStore.getState().bdSubmissions[0]).toMatchObject({ status: 'SUBMITTED' })
+    expect(useStore.getState().bdSubmissions[0]?.comment).toBeUndefined()
+    expect(useStore.getState().activityLogs[0]?.action).toContain('Restored canceled opportunity')
+  })
+
+  it('preserves a user-authored cancellation reason when restored', async () => {
+    const opp = makeOpp({ id: 'opp1', status: 'CANCELED', assignedTo: 'emp-associate' })
+    const tracker = {
+      id: 42,
+      submittedOn: '2026-05-01',
+      solicitationId: opp.solicitationId,
+      setAside: opp.setAside,
+      type: opp.type,
+      solicitation: opp.solicitation,
+      status: 'CANCELED' as const,
+      dueDate: opp.dueDate,
+      localTime: opp.localTime,
+      location: opp.location,
+      bdm: 'Test Manager',
+      bds: 'Test Team Lead',
+      supportAgent: 'Test Associate',
+      value: 0,
+      comment: 'Agency withdrew the requirement',
+    }
+    useStore.setState({ opportunities: [opp], bdSubmissions: [tracker] })
+
+    await useStore.getState().updateBDSubmission(42, 'SUBMITTED')
+
+    expect(useStore.getState().bdSubmissions[0]?.comment).toBe('Agency withdrew the requirement')
   })
 })
 
 // ═════════════════════════════════════════════════════════════════════
 describe('9 · Full end-to-end contract lifecycle', () => {
-  it('opp → submit → won → fresh award → contract → archive → past performance', () => {
+  it('opp → submit → won → fresh award → contract → archive → past performance', async () => {
     // Step 1: Create opportunity
     const opp = makeOpp({ id: 'opp-e2e', status: 'ACTIVE', contractAmount: 500_000 })
     useStore.setState({ opportunities: [opp], freshAwards: [], contracts: [], pastPerformances: [] })
@@ -981,7 +1344,7 @@ describe('9 · Full end-to-end contract lifecycle', () => {
     ).toBe(true)
 
     // Step 3: Submit
-    useStore.getState().submitOpportunity('opp-e2e', { contractAmount: 500_000 })
+    await useStore.getState().submitOpportunity('opp-e2e', { contractAmount: 500_000 })
     expect(useStore.getState().opportunities.find(o => o.id === 'opp-e2e')?.status).toBe('SUBMITTED')
 
     // Step 4: Opp no longer in pipeline

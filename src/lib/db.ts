@@ -241,7 +241,7 @@ export async function findActiveOpportunityDuplicate(
   }
 }
 
-function dbToOpp(row: Record<string, unknown>): Partial<Opportunity> {
+export function dbToOpp(row: Record<string, unknown>): Partial<Opportunity> {
   const contactMeta = parseJsonMeta<unknown[]>(OPPORTUNITY_CONTACT_META_PREFIX, row.poc)
   const samGovContacts = normalizeSamGovContacts(row.sam_gov_contacts).length
     ? normalizeSamGovContacts(row.sam_gov_contacts)
@@ -263,7 +263,7 @@ function dbToOpp(row: Record<string, unknown>): Partial<Opportunity> {
     pop: row.pop as string,
     bdm: row.bdm as string,
     bds: row.bds as string,
-    supportAgent: row.support_agent as string | undefined,
+    supportAgent: (row.support_agent as string | null) ?? undefined,
     poc: contactMeta ? undefined : row.poc as string | undefined,
     contractAmount: row.contract_amount as number | undefined,
     baseAmount: row.base_amount as number | undefined,
@@ -284,7 +284,7 @@ function dbToOpp(row: Record<string, unknown>): Partial<Opportunity> {
     nonSubmissionExempt: (row.non_submission_exempt as boolean | null | undefined) ?? undefined,
     notifiedDue24h: row.notified_due_24h === true ? true : undefined,
     notifiedDue4h: row.notified_due_4h === true ? true : undefined,
-    assignedTo: row.assigned_to as string | undefined,
+    assignedTo: (row.assigned_to as string | null) ?? undefined,
     proposals: Array.isArray(row.proposals) ? row.proposals as string[] : [],
     assignedOpportunities: Array.isArray(row.assigned_opportunities) ? row.assigned_opportunities as string[] : [],
     proposalAttachments: normalizeStoredAttachments(row.proposal_attachments),
@@ -1228,6 +1228,7 @@ function dbToDeletionRequest(row: Record<string, unknown>): DeletionRequest {
 function bdSubmissionToDb(submission: BDSubmission): Record<string, unknown> {
   return {
     id: submission.id,
+    opportunity_id: submission.opportunityId ?? null,
     submitted_on: submission.submittedOn,
     solicitation_id: submission.solicitationId,
     set_aside: submission.setAside,
@@ -1245,9 +1246,10 @@ function bdSubmissionToDb(submission: BDSubmission): Record<string, unknown> {
   }
 }
 
-function dbToBDSubmission(row: Record<string, unknown>): BDSubmission {
+export function dbToBDSubmission(row: Record<string, unknown>): BDSubmission {
   return {
     id: Number(row.id),
+    opportunityId: (row.opportunity_id as string | null) ?? undefined,
     submittedOn: row.submitted_on as string,
     solicitationId: row.solicitation_id as string,
     setAside: row.set_aside as BDSubmission['setAside'],
@@ -1259,9 +1261,9 @@ function dbToBDSubmission(row: Record<string, unknown>): BDSubmission {
     location: row.location as string,
     bdm: row.bdm as string,
     bds: row.bds as string,
-    supportAgent: row.support_agent as string | undefined,
+    supportAgent: (row.support_agent as string | null) ?? undefined,
     value: Number(row.value ?? 0),
-    comment: row.comment as string | undefined,
+    comment: (row.comment as string | null) ?? undefined,
   }
 }
 
@@ -1444,17 +1446,6 @@ export async function upsertOpportunity(o: Opportunity): Promise<boolean> {
       console.error('[db] upsertOpportunity error', error)
       return false
     }
-    if (!error && Array.isArray(o.comments)) {
-      const deleteRes = await api.from('comments').delete().eq('opportunity_id', o.id)
-      if (deleteRes.error) {
-        console.error('[db] sync comments delete error', deleteRes.error)
-        return false
-      }
-      if (o.comments.length > 0) {
-        const inserted = await insertBatched('comments', o.comments.map(comment => commentToDb(o.id, comment)))
-        if (!inserted) return false
-      }
-    }
     return true
   } catch (err) {
     console.error('[db] upsertOpportunity failed', err)
@@ -1480,27 +1471,37 @@ export async function deleteOpportunityRecord(id: string): Promise<boolean> {
   }
 }
 
-export async function upsertSubcontractor(sub: Subcontractor): Promise<void> {
-  if (!isApiConnected || !api) return
+export async function upsertSubcontractor(sub: Subcontractor): Promise<boolean> {
+  if (!isApiConnected || !api) return false
   try {
     let { error } = await api.from('subcontractors').upsert(subcontractorToDb(sub))
     if (error && String(error.message ?? '').includes('contacts')) {
       const retry = await api.from('subcontractors').upsert(subcontractorToDb(sub, { includeContacts: false }))
       error = retry.error
     }
-    if (error) console.error('[db] upsertSubcontractor error', error)
+    if (error) {
+      console.error('[db] upsertSubcontractor error', error)
+      return false
+    }
+    return true
   } catch (err) {
     console.error('[db] upsertSubcontractor failed', err)
+    return false
   }
 }
 
-export async function deleteSubcontractorRecord(id: string): Promise<void> {
-  if (!isApiConnected || !api) return
+export async function deleteSubcontractorRecord(id: string): Promise<boolean> {
+  if (!isApiConnected || !api) return false
   try {
     const { error } = await api.from('subcontractors').delete().eq('id', id)
-    if (error) console.error('[db] deleteSubcontractorRecord error', error)
+    if (error) {
+      console.error('[db] deleteSubcontractorRecord error', error)
+      return false
+    }
+    return true
   } catch (err) {
     console.error('[db] deleteSubcontractorRecord failed', err)
+    return false
   }
 }
 
@@ -1677,13 +1678,18 @@ export async function deleteContractVehicleOrderRecord(id: string): Promise<void
   }
 }
 
-export async function upsertFreshAward(fa: FreshAward): Promise<void> {
-  if (!isApiConnected || !api) return
+export async function upsertFreshAward(fa: FreshAward): Promise<boolean> {
+  if (!isApiConnected || !api) return false
   try {
     const { error } = await api.from('fresh_awards').upsert(freshAwardToDb(fa))
-    if (error) console.error('[db] upsertFreshAward error', error)
+    if (error) {
+      console.error('[db] upsertFreshAward error', error)
+      return false
+    }
+    return true
   } catch (err) {
     console.error('[db] upsertFreshAward failed', err)
+    return false
   }
 }
 
@@ -1724,6 +1730,50 @@ export async function upsertSubkDatabaseEntry(entry: SubkDatabaseEntry): Promise
   }
 }
 
+export async function syncOpportunityComments(
+  opportunityId: string,
+  previous: readonly Comment[],
+  next: readonly Comment[],
+): Promise<boolean> {
+  if (!isApiConnected || !api) return false
+  try {
+    const previousById = new Map(previous.map(comment => [comment.id, comment]))
+    const nextIds = new Set(next.map(comment => comment.id))
+    const changedRows = next
+      .filter(comment => {
+        const before = previousById.get(comment.id)
+        return !before
+          || JSON.stringify(commentToDb(opportunityId, before)) !== JSON.stringify(commentToDb(opportunityId, comment))
+      })
+      .map(comment => commentToDb(opportunityId, comment))
+
+    // Write additions/edits first. If this fails, no existing comment is
+    // removed. Deletions are limited to IDs that were present in the caller's
+    // prior snapshot, so a concurrent newly-added comment is never erased.
+    if (changedRows.length > 0) {
+      const { error } = await api.from('comments').upsert(changedRows)
+      if (error) {
+        console.error('[db] sync comments upsert error', error)
+        return false
+      }
+    }
+    const removedIds = previous.filter(comment => !nextIds.has(comment.id)).map(comment => comment.id)
+    if (removedIds.length > 0) {
+      const { error } = await api.from('comments').delete()
+        .eq('opportunity_id', opportunityId)
+        .in('id', removedIds)
+      if (error) {
+        console.error('[db] sync comments delete error', error)
+        return false
+      }
+    }
+    return true
+  } catch (err) {
+    console.error('[db] syncOpportunityComments failed', err)
+    return false
+  }
+}
+
 export async function deleteSubkDatabaseEntryRecord(id: string): Promise<boolean> {
   if (!isApiConnected || !api) return false
   try {
@@ -1759,13 +1809,18 @@ export async function upsertDeletionRequest(req: DeletionRequest): Promise<void>
   }
 }
 
-export async function upsertBDSubmission(submission: BDSubmission): Promise<void> {
-  if (!isApiConnected || !api) return
+export async function upsertBDSubmission(submission: BDSubmission): Promise<boolean> {
+  if (!isApiConnected || !api) return false
   try {
     const { error } = await api.from('bd_submissions').upsert(bdSubmissionToDb(submission))
-    if (error) console.error('[db] upsertBDSubmission error', error)
+    if (error) {
+      console.error('[db] upsertBDSubmission error', error)
+      return false
+    }
+    return true
   } catch (err) {
     console.error('[db] upsertBDSubmission failed', err)
+    return false
   }
 }
 

@@ -7,7 +7,7 @@ import type { BDSubmission, ContractType, FileAttachment, Opportunity, SetAside 
 import { useStore } from '../store/useStore'
 import toast from 'react-hot-toast'
 import PeriodFilter, { type Period, filterByPeriod } from '../components/shared/PeriodFilter'
-import { getAssignmentChain, isBDSubmissionAssociatedToUser } from '../lib/team'
+import { findBDSubmissionOpportunity, getAssignmentChain, getBDSubmissionAssignmentChain, isBDSubmissionAssociatedToUser } from '../lib/team'
 import { formatCurrency } from '../lib/utils'
 import { uploadAttachment, downloadAttachment, hasAttachmentSource } from '../lib/attachments'
 import FloatingActionMenu from '../components/shared/FloatingActionMenu'
@@ -67,7 +67,7 @@ function typeLabel(value: string) {
 }
 
 function rowOpportunity(row: BDSubmission, opportunities: ReturnType<typeof useStore.getState>['opportunities']) {
-  return opportunities.find(o => o.solicitationId === row.solicitationId)
+  return findBDSubmissionOpportunity(row, opportunities)
 }
 
 function downloadProposalAttachment(att: FileAttachment) {
@@ -134,7 +134,12 @@ function formatStatusLabel(status: BDTab) {
   return BD_TABS.find(tab => tab.key === status)?.label ?? status.replace(/_/g, ' ')
 }
 
-function trackerEditInitial(row: BDSubmission, opp?: Opportunity | null) {
+function trackerEditInitial(
+  row: BDSubmission,
+  opp: Opportunity | null | undefined,
+  employees: ReturnType<typeof useStore.getState>['employees'],
+) {
+  const assignment = getBDSubmissionAssignmentChain(employees, row, opp ? [opp] : [])
   return {
     solicitation: row.solicitation ?? '',
     client: opp?.client ?? '',
@@ -150,6 +155,7 @@ function trackerEditInitial(row: BDSubmission, opp?: Opportunity | null) {
     mandatoryEvents: opp?.mandatoryEvents ?? '',
     mandatoryEventsList: opp?.mandatoryEventsList ?? [],
     proposalAttachments: opp?.proposalAttachments ?? [],
+    assignedTo: opp?.assignedTo ?? assignment.assigned?.id ?? '',
   }
 }
 
@@ -159,19 +165,28 @@ type TrackerStringField = Exclude<keyof TrackerEditForm, 'proposalAttachments'>
 function BDTrackerEditModal({
   row,
   opportunity,
+  employees,
+  canEditAssignment,
   uploadedBy,
   onClose,
   onSave,
 }: {
   row: BDSubmission
   opportunity?: Opportunity | null
+  employees: ReturnType<typeof useStore.getState>['employees']
+  canEditAssignment: boolean
   uploadedBy: string
   onClose: () => void
   onSave: (form: TrackerEditForm) => Promise<boolean>
 }) {
-  const [form, setForm] = useState(() => trackerEditInitial(row, opportunity))
+  const [form, setForm] = useState(() => trackerEditInitial(row, opportunity, employees))
   const [saving, setSaving] = useState(false)
   const update = (key: TrackerStringField, value: string) => setForm(prev => ({ ...prev, [key]: value }))
+  const assignment = getAssignmentChain(employees, form.assignedTo || undefined)
+  const assignmentOptions = employees
+    .filter(employee => (employee.team ?? 'BD') === 'BD'
+      && ['BD_MANAGER', 'TEAM_LEAD', 'ASSOCIATE'].includes(employee.role))
+    .sort((a, b) => a.role.localeCompare(b.role) || a.name.localeCompare(b.name))
 
   const addProposalFiles = async (files: FileList | null) => {
     if (!files?.length) return
@@ -271,6 +286,27 @@ function BDTrackerEditModal({
             <span className="mb-1 block text-[10px] font-black uppercase tracking-wide text-slate-400">Comment</span>
             <textarea className="input-field min-h-[90px] w-full resize-none" value={form.comment} onChange={e => update('comment', e.target.value)} />
           </label>
+          {canEditAssignment && (
+            <div className="md:col-span-2 rounded-xl border border-[#D7BE7A]/20 bg-white/5 p-3">
+              <label>
+                <span className="mb-1 block text-[10px] font-black uppercase tracking-wide text-slate-400">Assignment</span>
+                <select className="input-field w-full" value={form.assignedTo} onChange={e => update('assignedTo', e.target.value)}>
+                  <option value="">Unassigned</option>
+                  {assignmentOptions.map(employee => (
+                    <option key={employee.id} value={employee.id}>
+                      {employee.name} — {employee.role === 'BD_MANAGER' ? 'Manager' : employee.role === 'TEAM_LEAD' ? 'Team Lead' : 'Associate'}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <p className="mt-2 text-[11px] text-slate-400">
+                Manager: {assignment.manager?.name ?? '-'} · Team Lead: {assignment.teamLead?.name ?? '-'} · Associate: {assignment.associate?.name ?? '-'}
+              </p>
+              {!opportunity && (
+                <p className="mt-1 text-[10px] text-amber-200/80">The source opportunity is missing; this repairs the tracker assignment snapshot only.</p>
+              )}
+            </div>
+          )}
           {opportunity && (
             <div className="md:col-span-2">
               <span className="mb-1 block text-[10px] font-black uppercase tracking-wide text-slate-400">Mandatory Events</span>
@@ -353,11 +389,10 @@ function filterValue(
   opportunities: ReturnType<typeof useStore.getState>['opportunities'],
   employees: ReturnType<typeof useStore.getState>['employees'],
 ) {
-  const opp = rowOpportunity(row, opportunities)
-  const chain = getAssignmentChain(employees, opp?.assignedTo)
+  const chain = getBDSubmissionAssignmentChain(employees, row, opportunities)
   if (key === 'type') return typeLabel(row.type)
-  if (key === 'manager') return chain.manager?.name ?? ''
-  if (key === 'teamLead') return chain.teamLead?.name ?? ''
+  if (key === 'manager') return chain.manager?.name ?? row.bdm ?? ''
+  if (key === 'teamLead') return chain.teamLead?.name ?? row.bds ?? ''
   if (key === 'associate') return chain.associate?.name ?? row.supportAgent ?? ''
   return String(row[key] ?? '')
 }
@@ -408,12 +443,16 @@ export default function BDTrackerPage() {
     updateBDSubmissionDetails,
     deleteBDSubmission,
     returnBDSubmissionToPipeline,
-    updateOpportunity,
     opportunities,
     employees,
     currentUser,
   } = useStore()
   const canEditOpportunities = hasPermission(currentUser, 'opportunity:edit')
+  const canEditAssignment = canEditOpportunities && hasPermission(currentUser, 'opportunity:assign')
+  const canCancelOpportunities = hasPermission(currentUser, 'opportunity:cancel')
+  const canTransitionSubmitted = hasPermission(currentUser, 'opportunity:submitProposal')
+    || canEditOpportunities
+    || hasPermission(currentUser, 'admin:manageUsers')
   const canDeleteSubmitted = hasPermission(currentUser, 'opportunity:deleteApprove')
   const [selectedRowId, setSelectedRowId] = useState<number | null>(null)
   const [editingRowId, setEditingRowId] = useState<number | null>(null)
@@ -424,6 +463,7 @@ export default function BDTrackerPage() {
   const [highlightId, setHighlightId] = useState<string | null>(null)
   const [tab, setTab] = useState<BDTab>('SUBMITTED')
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
+  const [transitioningId, setTransitioningId] = useState<number | null>(null)
   const [period, setPeriod] = useState<Period | null>(null)
   const [search, setSearch] = useState('')
   const [filters, setFilters] = useState<Filters>(() => ({ ...EMPTY_FILTERS }))
@@ -515,8 +555,7 @@ export default function BDTrackerPage() {
   const associateOutcomes = useMemo(() => {
     const counts: Record<string, { name: string; submitted: number; nonSubmitted: number; dropped: number; total: number }> = {}
     baseFiltered.forEach(row => {
-      const opp = rowOpportunity(row, opportunities)
-      const chain = getAssignmentChain(employees, opp?.assignedTo)
+      const chain = getBDSubmissionAssignmentChain(employees, row, opportunities)
       const key = chain.associate?.name || row.supportAgent || 'Unassigned'
       const current = counts[key] || { name: key, submitted: 0, nonSubmitted: 0, dropped: 0, total: 0 }
       if (row.status === 'NOT_SUBMITTED') current.nonSubmitted += 1
@@ -543,8 +582,14 @@ export default function BDTrackerPage() {
 
   const saveTrackerDetails = async (row: BDSubmission, opportunity: Opportunity | null | undefined, form: TrackerEditForm) => {
     const value = Number(form.value) || 0
-    if (opportunity) {
-      const saved = await updateOpportunity(opportunity.id, {
+    const assignment = getAssignmentChain(employees, form.assignedTo || undefined)
+    const assignmentSnapshot = canEditAssignment ? {
+      bdm: assignment.manager?.name ?? '',
+      bds: assignment.teamLead?.name ?? '',
+      supportAgent: assignment.associate?.name ?? '',
+    } : {}
+    const opportunityValues = opportunity
+      ? {
         solicitation: form.solicitation.trim(),
         client: form.client,
         type: form.type as ContractType,
@@ -558,10 +603,10 @@ export default function BDTrackerPage() {
         mandatoryEventsList: form.mandatoryEventsList,
         proposalAttachments: form.proposalAttachments,
         proposals: form.proposalAttachments.map(att => att.name).filter(Boolean),
-      })
-      if (!saved) return false
-    }
-    updateBDSubmissionDetails(row.id, {
+        ...(canEditAssignment ? { assignedTo: form.assignedTo || null, ...assignmentSnapshot } : {}),
+      }
+      : undefined
+    const trackerSaved = await updateBDSubmissionDetails(row.id, {
       solicitation: form.solicitation.trim(),
       type: form.type as ContractType,
       setAside: form.setAside as SetAside,
@@ -570,21 +615,31 @@ export default function BDTrackerPage() {
       location: form.location,
       value,
       comment: form.comment,
-    })
+      ...assignmentSnapshot,
+    }, opportunityValues)
+    if (!trackerSaved) return false
     toast.success('Tracker details updated.')
     return true
   }
 
-  const handleReturnToPipeline = (row: BDSubmission) => {
+  const handleReturnToPipeline = async (row: BDSubmission) => {
     if (!confirm(`Move ${row.solicitation} back to General Pipeline?`)) return
-    returnBDSubmissionToPipeline(row.id)
+    if (transitioningId === row.id) return
+    setTransitioningId(row.id)
+    const saved = await returnBDSubmissionToPipeline(row.id)
+    setTransitioningId(null)
+    if (!saved) return
     setMenuOpen(null)
     setSelectedRowId(null)
   }
 
-  const handleDeleteSubmitted = (row: BDSubmission) => {
+  const handleDeleteSubmitted = async (row: BDSubmission) => {
     if (!confirm(`Delete submitted opportunity ${row.solicitation}? This is only for human-error cleanup.`)) return
-    deleteBDSubmission(row.id)
+    if (transitioningId === row.id) return
+    setTransitioningId(row.id)
+    const saved = await deleteBDSubmission(row.id)
+    setTransitioningId(null)
+    if (!saved) return
     setMenuOpen(null)
     setSelectedRowId(null)
   }
@@ -771,7 +826,7 @@ export default function BDTrackerPage() {
                 {pageRows.map((s, i) => {
                   const meta = STATUS_META[s.status]
                   const opp = rowOpportunity(s, opportunities)
-                  const chain = getAssignmentChain(employees, opp?.assignedTo)
+                  const chain = getBDSubmissionAssignmentChain(employees, s, opportunities)
                   const isGlobalTarget = highlightId && (String(s.id) === highlightId || s.solicitationId === highlightId)
                   return (
                     <motion.tr
@@ -792,8 +847,8 @@ export default function BDTrackerPage() {
                       <td><span className="rounded-md bg-indigo-50 px-2 py-0.5 text-[10px] font-semibold text-indigo-600">{typeLabel(s.type)}</span></td>
                       <td className="whitespace-nowrap text-xs text-slate-500">{s.dueDate}</td>
                       <td className="max-w-[120px] text-xs text-slate-500"><p className="truncate">{s.location}</p></td>
-                      <td className="text-xs text-slate-600">{chain.manager?.name ?? '-'}</td>
-                      <td className="text-xs text-slate-600">{chain.teamLead?.name ?? '-'}</td>
+                      <td className="text-xs text-slate-600">{chain.manager?.name ?? s.bdm ?? '-'}</td>
+                      <td className="text-xs text-slate-600">{chain.teamLead?.name ?? s.bds ?? '-'}</td>
                       <td className="text-xs text-slate-600">{chain.associate?.name ?? s.supportAgent ?? '-'}</td>
                       <td className="whitespace-nowrap text-xs font-semibold text-emerald-600">{formatCurrency(s.value)}</td>
                       <td onClick={e => e.stopPropagation()}>
@@ -828,18 +883,20 @@ export default function BDTrackerPage() {
                                     <Users2 size={13} /> Sourcing
                                   </button>
                                 )}
-                                <button
-                                  onClick={() => {
-                                    openEditForRow(s)
-                                    setMenuOpen(null)
-                                  }}
-                                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50 hover:text-slate-900"
-                                >
-                                  <Edit2 size={13} /> Edit Values
-                                </button>
                                 {canEditOpportunities && (
                                   <button
-                                    onClick={() => handleReturnToPipeline(s)}
+                                    onClick={() => {
+                                      openEditForRow(s)
+                                      setMenuOpen(null)
+                                    }}
+                                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50 hover:text-slate-900"
+                                  >
+                                    <Edit2 size={13} /> Edit Values
+                                  </button>
+                                )}
+                                {canEditOpportunities && (
+                                  <button
+                                    onClick={() => { void handleReturnToPipeline(s) }}
                                     className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50 hover:text-slate-900"
                                   >
                                     <RotateCcw size={13} /> Move to General Pipeline
@@ -847,7 +904,7 @@ export default function BDTrackerPage() {
                                 )}
                                 {canDeleteSubmitted && (
                                   <button
-                                    onClick={() => handleDeleteSubmitted(s)}
+                                    onClick={() => { void handleDeleteSubmitted(s) }}
                                     className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-red-500 transition-colors hover:bg-red-50"
                                   >
                                     <Trash2 size={13} /> Delete Submitted Opportunity
@@ -855,15 +912,27 @@ export default function BDTrackerPage() {
                                 )}
                                 <div className="my-1 border-t border-slate-100" />
                                 <p className="px-3 py-1 text-[9px] font-bold uppercase tracking-wider text-slate-400">Move to</p>
-                                {BD_TABS.filter(t => t.key !== s.status && t.key !== 'NOT_SUBMITTED' && t.key !== 'DROPPED').map(t => {
+                                {BD_TABS.filter(t => {
+                                  if (t.key === s.status || t.key === 'NOT_SUBMITTED' || t.key === 'DROPPED') return false
+                                  if (s.status === 'CANCELED' || t.key === 'CANCELED') return canCancelOpportunities
+                                  return canTransitionSubmitted
+                                }).map(t => {
                                   const itemMeta = STATUS_META[t.key]
                                   return (
-                                    <button key={t.key} onClick={() => {
-                                      updateBDSubmission(s.id, t.key)
-                                      toast.success(`Moved to ${t.label}`)
-                                      setMenuOpen(null)
+                                    <button key={t.key} disabled={transitioningId !== null} onClick={async () => {
+                                      if (transitioningId !== null) return
+                                      setTransitioningId(s.id)
+                                      try {
+                                        const saved = await updateBDSubmission(s.id, t.key)
+                                        if (saved) {
+                                          toast.success(`Moved to ${t.label}`)
+                                          setMenuOpen(null)
+                                        }
+                                      } finally {
+                                        setTransitioningId(null)
+                                      }
                                     }}
-                                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50 hover:text-slate-900">
+                                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50 hover:text-slate-900 disabled:cursor-wait disabled:opacity-50">
                                       <span className="h-2 w-2 rounded-full" style={{ background: itemMeta.color }} />
                                       {t.label}
                                     </button>
@@ -912,7 +981,7 @@ export default function BDTrackerPage() {
           <>
             {(() => {
               const meta = STATUS_META[selectedRow.status]
-              const chain = getAssignmentChain(employees, selectedOpportunity?.assignedTo)
+              const chain = getBDSubmissionAssignmentChain(employees, selectedRow, opportunities)
               const proposalAttachments = selectedOpportunity?.proposalAttachments ?? []
               return (
                 <>
@@ -1058,6 +1127,8 @@ export default function BDTrackerPage() {
         <BDTrackerEditModal
           row={editingRow}
           opportunity={editingOpportunity}
+          employees={employees}
+          canEditAssignment={canEditAssignment}
           uploadedBy={currentUser?.username ?? currentUser?.name ?? 'unknown'}
           onClose={() => setEditingRowId(null)}
           onSave={form => saveTrackerDetails(editingRow, editingOpportunity, form)}

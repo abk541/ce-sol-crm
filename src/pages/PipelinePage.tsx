@@ -46,6 +46,7 @@ import {
 } from '../lib/samGov'
 import { canDeleteComment, canEditComment, hasPermission } from '../lib/permissions'
 import { parseSourcingComments, serializeSourcingComments } from '../lib/sourcingComments'
+import { contactsFromSourcingDraft, normalizeSourcingContacts } from '../lib/sourcingContacts'
 
 // ── Constants ─────────────────────────────────────────────────────────
 const TYPES_DISPLAY: { value: string; label: string }[] = [
@@ -1851,34 +1852,6 @@ function createEmptySourcingDraft(): SourcingDraft {
   }
 }
 
-function normalizeSourcingContacts(contacts?: SubcontractorContact[]) {
-  return (contacts ?? [])
-    .map((contact, index) => ({
-      id: contact.id || crypto.randomUUID?.() || `contact-${index}`,
-      name: (contact.name ?? '').trim(),
-      title: contact.title?.trim() || undefined,
-      email: contact.email?.trim() || undefined,
-      phone: contact.phone?.trim() || undefined,
-      notes: contact.notes?.trim() || undefined,
-    }))
-    .filter(contact => contact.name || contact.email || contact.phone || contact.title || contact.notes)
-}
-
-function contactsFromSourcingDraft(draft: SourcingDraft) {
-  const contacts = normalizeSourcingContacts(draft.contacts)
-  const primary: SubcontractorContact | null = draft.contactName || draft.email || draft.phone
-    ? {
-        id: contacts[0]?.id || crypto.randomUUID(),
-        name: draft.contactName.trim(),
-        email: draft.email.trim() || undefined,
-        phone: draft.phone.trim() || undefined,
-      }
-    : null
-  if (!primary) return contacts
-  const [, ...rest] = contacts
-  return normalizeSourcingContacts([primary, ...rest])
-}
-
 function ensureDraftHasContactRow(draft: SourcingDraft) {
   return draft.contacts.length
     ? draft
@@ -1971,6 +1944,11 @@ export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () 
   const [selectedId, setSelectedId] = useState<string | null>(oppSubs[0]?.id ?? null)
   const [draft, setDraft] = useState<SourcingDraft>(() => createEmptySourcingDraft())
   const [dirty, setDirty] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [uploadingQuotes, setUploadingQuotes] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const uploadingQuotesRef = useRef(false)
+  const deletingRef = useRef(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Keep selection valid when the underlying list changes.
@@ -2093,16 +2071,26 @@ export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () 
   const onPickFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? [])
     if (fileInputRef.current) fileInputRef.current.value = ''
-    if (!files.length) return
+    if (!files.length || uploadingQuotesRef.current) return
     const now = new Date().toISOString()
+    uploadingQuotesRef.current = true
+    setUploadingQuotes(true)
     try {
-      const additions = await Promise.all(
+      const results = await Promise.allSettled(
         files.map(file => fileToProposalAttachment(file, now, currentUser?.username ?? '', 'quotes')),
       )
-      setDraft(p => ({ ...p, quoteFiles: [...(p.quoteFiles ?? []), ...additions] }))
-      setDirty(true)
-    } catch {
-      toast.error('One or more quote files could not be read.')
+      const additions = results.flatMap(result => result.status === 'fulfilled' ? [result.value] : [])
+      const failedCount = results.length - additions.length
+      if (additions.length > 0) {
+        setDraft(p => ({ ...p, quoteFiles: [...(p.quoteFiles ?? []), ...additions] }))
+        setDirty(true)
+      }
+      if (failedCount > 0) {
+        toast.error(`${failedCount} quote file${failedCount === 1 ? '' : 's'} could not be uploaded.`)
+      }
+    } finally {
+      uploadingQuotesRef.current = false
+      setUploadingQuotes(false)
     }
   }
 
@@ -2124,35 +2112,43 @@ export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () 
     )
   }
 
-  const saveAdd = (keepOpen: boolean) => {
+  const saveAdd = async (keepOpen: boolean) => {
+    if (saving || uploadingQuotesRef.current || deletingRef.current) return
     if (!draft.companyName.trim()) {
       toast.error('Company name is required')
       return
     }
-    addSubcontractor({
-      companyName: draft.companyName.trim(),
-      contactName: draft.contactName.trim(),
-      email:       draft.email.trim(),
-      phone:       draft.phone.trim(),
-      website:     draft.website.trim() || undefined,
-      location:    draft.location.trim() || undefined,
-      quoteFile:   draft.quoteFile,
-      quoteFiles:  draft.quoteFiles.length ? draft.quoteFiles : undefined,
-      contacts:    contactsFromSourcingDraft(draft),
-      notes: draft.newComment.trim()
-        ? serializeSourcingComments([{
-            id: crypto.randomUUID(),
-            text: draft.newComment.trim(),
-            author: currentUser?.username ?? '',
-            authorId: currentUser?.id,
-            createdAt: new Date().toISOString(),
-          }])
-        : '',
-      naicsCode: '',
-      setAside: draft.setAside || 'SB',
-      opportunityId: opp.id,
-      createdBy: currentUser?.username ?? '',
-    })
+    let saved = false
+    setSaving(true)
+    try {
+      saved = await addSubcontractor({
+        companyName: draft.companyName.trim(),
+        contactName: draft.contactName.trim(),
+        email:       draft.email.trim(),
+        phone:       draft.phone.trim(),
+        website:     draft.website.trim() || undefined,
+        location:    draft.location.trim() || undefined,
+        quoteFile:   draft.quoteFile,
+        quoteFiles:  draft.quoteFiles.length ? draft.quoteFiles : undefined,
+        contacts:    contactsFromSourcingDraft(draft),
+        notes: draft.newComment.trim()
+          ? serializeSourcingComments([{
+              id: crypto.randomUUID(),
+              text: draft.newComment.trim(),
+              author: currentUser?.username ?? '',
+              authorId: currentUser?.id,
+              createdAt: new Date().toISOString(),
+            }])
+          : '',
+        naicsCode: '',
+        setAside: draft.setAside || 'SB',
+        opportunityId: opp.id,
+        createdBy: currentUser?.username ?? '',
+      })
+    } finally {
+      setSaving(false)
+    }
+    if (!saved) return
     toast.success('Subcontractor added')
     if (keepOpen) {
       setDraft(createEmptySourcingDraft())
@@ -2164,7 +2160,8 @@ export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () 
     }
   }
 
-  const saveEdit = () => {
+  const saveEdit = async () => {
+    if (saving || uploadingQuotesRef.current || deletingRef.current) return
     if (!selected) return
     if (!draft.companyName.trim()) {
       toast.error('Company name is required')
@@ -2181,32 +2178,48 @@ export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () 
         createdAt: new Date().toISOString(),
       })
     }
-    updateSubcontractor(selected.id, {
-      companyName: draft.companyName.trim(),
-      contactName: draft.contactName.trim(),
-      email:       draft.email.trim(),
-      phone:       draft.phone.trim(),
-      website:     draft.website.trim() || undefined,
-      location:    draft.location.trim() || undefined,
-      quoteFile:   draft.quoteFile,
-      quoteFiles:  draft.quoteFiles.length ? draft.quoteFiles : undefined,
-      setAside:    draft.setAside,
-      contacts:    contactsFromSourcingDraft(draft),
-      notes: serializeSourcingComments(nextComments),
-    })
+    let saved = false
+    setSaving(true)
+    try {
+      saved = await updateSubcontractor(selected.id, {
+        companyName: draft.companyName.trim(),
+        contactName: draft.contactName.trim(),
+        email:       draft.email.trim(),
+        phone:       draft.phone.trim(),
+        website:     draft.website.trim() || undefined,
+        location:    draft.location.trim() || undefined,
+        quoteFile:   draft.quoteFile,
+        quoteFiles:  draft.quoteFiles.length ? draft.quoteFiles : undefined,
+        setAside:    draft.setAside,
+        contacts:    contactsFromSourcingDraft(draft),
+        notes: serializeSourcingComments(nextComments),
+      })
+    } finally {
+      setSaving(false)
+    }
+    if (!saved) return
     toast.success('Saved')
     setDraft(p => ({ ...p, newComment: '' }))
     setDirty(false)
   }
 
-  const removeSelected = () => {
-    if (!selected) return
+  const removeSelected = async () => {
+    if (!selected || saving || uploadingQuotesRef.current || deletingRef.current) return
     if (!canWriteSourcing) {
       toast.error('You do not have permission to update sourcing.')
       return
     }
     if (!confirm(`Remove ${selected.companyName} from this sourcing list?`)) return
-    deleteSubcontractor(selected.id)
+    deletingRef.current = true
+    setDeleting(true)
+    let deleted = false
+    try {
+      deleted = await deleteSubcontractor(selected.id)
+    } finally {
+      deletingRef.current = false
+      setDeleting(false)
+    }
+    if (!deleted) return
     toast.success('Subcontractor removed')
     setSelectedId(null)
   }
@@ -2214,8 +2227,16 @@ export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () 
   const detailComments = selected ? parseSourcingComments(selected.notes) : []
 
   return (
-    <ModalWrap onClose={onClose} title="Sourcing" subtitle={opp.solicitation} maxW="max-w-6xl">
+    <ModalWrap
+      onClose={() => {
+        if (!saving && !uploadingQuotesRef.current && !deletingRef.current) onClose()
+      }}
+      title="Sourcing"
+      subtitle={opp.solicitation}
+      maxW="max-w-6xl"
+    >
       <div className="grid h-[min(82vh,720px)] grid-cols-1 md:grid-cols-[300px_1fr] bg-white">
+        <fieldset disabled={saving || uploadingQuotes || deleting} className="contents">
         {/* ── Left pane: searchable list ───────────────────────────── */}
         <aside className="flex flex-col border-r border-slate-200 bg-slate-50">
           <div className="px-3 pt-3 pb-2 space-y-2 border-b border-slate-200 bg-white">
@@ -2354,7 +2375,7 @@ export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () 
                   {canWriteSourcing && (
                     <button
                       type="button"
-                      onClick={removeSelected}
+                      onClick={() => { void removeSelected() }}
                       className="inline-flex flex-shrink-0 items-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] font-black text-rose-700 transition-all hover:bg-rose-100"
                       title="Delete subcontractor"
                     >
@@ -2514,7 +2535,7 @@ export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () 
                 {canWriteSourcing ? (
                   <button
                     type="button"
-                    onClick={removeSelected}
+                    onClick={() => { void removeSelected() }}
                     className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[11px] font-bold text-rose-600 hover:bg-rose-50"
                   >
                     <Trash2 size={12} /> Delete
@@ -2524,8 +2545,8 @@ export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () 
                   {dirty && <span className="text-[10px] font-bold text-amber-600">Unsaved changes</span>}
                   <button
                     type="button"
-                    disabled={!dirty}
-                    onClick={saveEdit}
+                    disabled={!dirty || saving || uploadingQuotes}
+                    onClick={() => void saveEdit()}
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed transition-all"
                   >
                     <CheckCircle2 size={12} /> Save changes
@@ -2656,14 +2677,16 @@ export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () 
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
-                    onClick={() => saveAdd(true)}
+                    disabled={saving || uploadingQuotes}
+                    onClick={() => void saveAdd(true)}
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-indigo-200 text-indigo-600 hover:bg-indigo-50"
                   >
                     Save & add another
                   </button>
                   <button
                     type="button"
-                    onClick={() => saveAdd(false)}
+                    disabled={saving || uploadingQuotes}
+                    onClick={() => void saveAdd(false)}
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700"
                   >
                     <Plus size={12} /> Add subcontractor
@@ -2673,6 +2696,7 @@ export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () 
             </>
           )}
         </section>
+        </fieldset>
       </div>
     </ModalWrap>
   )
@@ -2739,6 +2763,7 @@ function SubmitModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }
   const [yearlyValue, setYearlyValue]       = useState<string>(opp.baseAmount ? String(opp.baseAmount) : '')
   const [monthlyValue, setMonthlyValue]     = useState<string>(opp.monthlyPayment ? String(opp.monthlyPayment) : '')
   const [monthlyOverridden, setMonthlyOverridden] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
 
   const handleYearlyChange = (val: string) => {
     setYearlyValue(val)
@@ -2797,12 +2822,20 @@ function SubmitModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }
     if (showYearlyMonthly) vals.baseAmount = yearly
     if (showYearlyMonthly) vals.monthlyPayment = monthly
     const proposalNames = proposalAttachments.map(att => att.name).filter(Boolean)
-    submitOpportunity(opp.id, {
-      ...vals,
-      proposals: proposalNames,
-      assignedOpportunities: proposalNames,
-      proposalAttachments,
-    })
+    if (submitting) return
+    setSubmitting(true)
+    let saved = false
+    try {
+      saved = await submitOpportunity(opp.id, {
+        ...vals,
+        proposals: proposalNames,
+        assignedOpportunities: proposalNames,
+        proposalAttachments,
+      })
+    } finally {
+      setSubmitting(false)
+    }
+    if (!saved) return
     toast.success('Proposal submitted! Status updated.')
     onClose()
   }
@@ -2964,9 +2997,10 @@ function SubmitModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }
             <button
               type="button"
               onClick={confirm}
+              disabled={submitting}
               className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm"
             >
-              <Send size={12} /> Submit proposal
+              <Send size={12} /> {submitting ? 'Submitting...' : 'Submit proposal'}
             </button>
           </div>
         </footer>
@@ -3754,10 +3788,12 @@ export function OpportunityDetailBody({
   opp,
   canWriteSourcing = false,
   onDeleteSourcing,
+  deletingSourcingId,
 }: {
   opp: Opportunity
   canWriteSourcing?: boolean
-  onDeleteSourcing?: (subId: string, companyName?: string) => void
+  onDeleteSourcing?: (subId: string, companyName?: string) => Promise<void>
+  deletingSourcingId?: string | null
 }) {
   const employees = useStore(s => s.employees)
   return (
@@ -3921,12 +3957,13 @@ export function OpportunityDetailBody({
                   {canWriteSourcing && onDeleteSourcing && (
                     <button
                       type="button"
-                      onClick={() => onDeleteSourcing(s.id, s.companyName)}
+                      disabled={deletingSourcingId === s.id}
+                      onClick={() => { void onDeleteSourcing(s.id, s.companyName) }}
                       className="inline-flex flex-shrink-0 items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11px] font-bold transition-all hover:opacity-80"
                       style={{ borderColor: 'color-mix(in srgb, var(--error-fg) 30%, transparent)', background: 'var(--error-bg)', color: 'var(--error-fg)' }}
                       title="Delete subcontractor"
                     >
-                      <Trash2 size={11} /> Delete
+                      <Trash2 size={11} /> {deletingSourcingId === s.id ? 'Deleting...' : 'Delete'}
                     </button>
                   )}
                 </div>
@@ -3977,6 +4014,8 @@ export default function PipelinePage() {
   const [submitOpp, setSubmitOpp]     = useState<Opportunity | null>(null)
   const [selectedOpp, setSelectedOpp] = useState<Opportunity | null>(null)
   const [deleteOpp, setDeleteOpp]     = useState<Opportunity | null>(null)
+  const [cancelingId, setCancelingId] = useState<string | null>(null)
+  const [deletingSourcingId, setDeletingSourcingId] = useState<string | null>(null)
 
   // ── Sort state ──
   const [sort, setSort] = useState<{ key: SortKey; dir: SortDir }>({ key: 'dueDate', dir: 'asc' })
@@ -4108,13 +4147,21 @@ export default function PipelinePage() {
 
   const hasFilters = !!dueDateRange || mineScope || !!search.trim() || Object.values(columnFilters).some(v => v.trim())
 
-  const handleCancel = (o: Opportunity) => {
+  const handleCancel = async (o: Opportunity) => {
     if (!canCancelOpportunities) {
       toast.error('Only the Capture Manager can cancel contract opportunities.')
       return
     }
-    moveOpportunityToBDTracker(o.id, 'CANCELED', 'Canceled from Contract Opportunities')
-    toast.success(`"${o.solicitation}" canceled.`)
+    if (cancelingId) return
+    setCancelingId(o.id)
+    try {
+      const saved = await moveOpportunityToBDTracker(o.id, 'CANCELED', 'Canceled from Contract Opportunities')
+      if (!saved) return
+      setSelectedOpp(current => current?.id === o.id ? null : current)
+      toast.success(`"${o.solicitation}" canceled.`)
+    } finally {
+      setCancelingId(null)
+    }
   }
 
   const handleDelete = (o: Opportunity) => {
@@ -4149,13 +4196,21 @@ export default function PipelinePage() {
     setSelectedOpp(null)
   }
 
-  const handleDeleteSourcing = (subId: string, companyName?: string) => {
+  const handleDeleteSourcing = async (subId: string, companyName?: string) => {
     if (!canWriteSourcing) {
       toast.error('You do not have permission to update sourcing.')
       return
     }
+    if (deletingSourcingId) return
     if (!confirm(`Remove ${companyName || 'this subcontractor'} from this opportunity?`)) return
-    deleteSubcontractor(subId)
+    setDeletingSourcingId(subId)
+    let deleted = false
+    try {
+      deleted = await deleteSubcontractor(subId)
+    } finally {
+      setDeletingSourcingId(null)
+    }
+    if (!deleted) return
     setSelectedOpp(prev =>
       prev
         ? { ...prev, subcontractors: (prev.subcontractors || []).filter(s => s.id !== subId) }
@@ -4360,7 +4415,7 @@ export default function PipelinePage() {
                                 const saved = await updateOpportunity(o.id, { quoted: !o.quoted })
                                 if (saved) toast.success(o.quoted ? 'Marked as not quoted' : 'Marked as quoted')
                               }}
-                              onCancel={() => handleCancel(o)}
+                              onCancel={() => { void handleCancel(o) }}
                               onRequestDeletion={() => handleDelete(o)}
                               canEdit={canOpenEditModal}
                               canCancel={canCancelOpportunities}
@@ -4409,6 +4464,7 @@ export default function PipelinePage() {
               opp={selectedOpp}
               canWriteSourcing={canWriteSourcing}
               onDeleteSourcing={handleDeleteSourcing}
+              deletingSourcingId={deletingSourcingId}
             />
 
             <div className="sticky bottom-0 -mx-6 -mb-5 mt-4 flex flex-wrap gap-2 border-t px-6 py-4 backdrop-blur" style={{ borderColor: 'var(--border-default)', background: 'color-mix(in srgb, var(--bg-app) 94%, transparent)' }}>
@@ -4445,8 +4501,12 @@ export default function PipelinePage() {
                     {(canCancelOpportunities || (canRequestDeletion && ownedSelected)) && (
                       <>
                         {canCancelOpportunities && (
-                          <button className="btn-secondary text-xs gap-1.5 text-red-600 border-red-200 hover:bg-red-50" onClick={() => { setSelectedOpp(null); handleCancel(selectedOpp) }}>
-                            <Ban size={12} /> Cancel
+                          <button
+                            className="btn-secondary text-xs gap-1.5 text-red-600 border-red-200 hover:bg-red-50 disabled:cursor-wait disabled:opacity-50"
+                            disabled={cancelingId !== null}
+                            onClick={() => { void handleCancel(selectedOpp) }}
+                          >
+                            <Ban size={12} /> {cancelingId === selectedOpp.id ? 'Canceling...' : 'Cancel'}
                           </button>
                         )}
                         {canRequestDeletion && ownedSelected && (

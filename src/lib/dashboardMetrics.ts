@@ -17,8 +17,9 @@ export function isSubmittedLifecycleRow(submission: BDSubmission): boolean {
 }
 
 export function submissionBusinessKey(submission: BDSubmission): string {
-  const solicitationId = submission.solicitationId.trim().toLowerCase()
-  return solicitationId ? `solicitation:${solicitationId}` : `row:${submission.id}`
+  return submission.opportunityId
+    ? `opportunity:${submission.opportunityId}`
+    : `row:${submission.id}`
 }
 
 function submissionRecency(submission: BDSubmission): number {
@@ -70,8 +71,7 @@ export function contractOpportunityRows(
 function uniqueOpportunities(opportunities: Opportunity[]): Opportunity[] {
   const seen = new Set<string>()
   return opportunities.filter(opportunity => {
-    const solicitationId = opportunity.solicitationId.trim().toLowerCase()
-    const key = solicitationId ? `solicitation:${solicitationId}` : `opportunity:${opportunity.id}`
+    const key = opportunity.id
     if (opportunity.isDeleted || seen.has(key)) return false
     seen.add(key)
     return true
@@ -151,15 +151,27 @@ export function calculateBdDashboardSummary({
   const active = uniqueOpportunities(activeOpportunities)
   const captured = uniqueOpportunities(capturedOpportunities)
   const uniqueTracker = uniqueBDSubmissionRows(trackerRows)
-  const capturedKeys = new Set(captured.map(opportunity => {
+  const knownOpportunities = uniqueOpportunities([...captured, ...active])
+  const capturedKeys = new Set(knownOpportunities.map(opportunity => `opportunity:${opportunity.id}`))
+  const opportunitiesBySolicitation = new Map<string, Opportunity[]>()
+  knownOpportunities.forEach(opportunity => {
     const solicitationId = opportunity.solicitationId.trim().toLowerCase()
-    return solicitationId ? `solicitation:${solicitationId}` : `opportunity:${opportunity.id}`
-  }))
-  active.forEach(opportunity => {
-    const solicitationId = opportunity.solicitationId.trim().toLowerCase()
-    capturedKeys.add(solicitationId ? `solicitation:${solicitationId}` : `opportunity:${opportunity.id}`)
+    if (!solicitationId) return
+    opportunitiesBySolicitation.set(
+      solicitationId,
+      [...(opportunitiesBySolicitation.get(solicitationId) ?? []), opportunity],
+    )
   })
-  uniqueTracker.forEach(row => capturedKeys.add(submissionBusinessKey(row)))
+  uniqueTracker.forEach(row => {
+    if (row.opportunityId) {
+      capturedKeys.add(`opportunity:${row.opportunityId}`)
+      return
+    }
+    const matches = opportunitiesBySolicitation.get(row.solicitationId.trim().toLowerCase()) ?? []
+    capturedKeys.add(matches.length === 1
+      ? `opportunity:${matches[0]!.id}`
+      : submissionBusinessKey(row))
+  })
   const capturedCount = capturedKeys.size
   const submitted = uniqueTracker.filter(isSubmittedLifecycleRow)
   const awarded = submitted.filter(submission => submission.status === 'AWARDED')

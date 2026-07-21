@@ -46,6 +46,8 @@ function ReviewModal({ reportId, onClose }: { reportId: string; onClose: () => v
   const [reasonDraft, setReasonDraft] = useState(report?.reason ?? '')
   const [newComment, setNewComment] = useState('')
   const [sourcingOpen, setSourcingOpen] = useState(false)
+  const [reviewing, setReviewing] = useState(false)
+  const [deletingSourcingId, setDeletingSourcingId] = useState<string | null>(null)
 
   const canReview = hasPermission(currentUser, 'nonSubmission:review')
   const canReturn = hasPermission(currentUser, 'opportunity:edit')
@@ -56,13 +58,21 @@ function ReviewModal({ reportId, onClose }: { reportId: string; onClose: () => v
   const isPending = report?.status === 'PENDING'
   const showReviewActions = canReview && isPending
 
-  const review = (action: 'APPROVED' | 'DECLINED') => {
-    reviewNonSubReport(reportId, action, note, currentUser?.username ?? '')
+  const review = async (action: 'APPROVED' | 'DECLINED') => {
+    if (reviewing) return
+    setReviewing(true)
+    const saved = await reviewNonSubReport(reportId, action, note, currentUser?.username ?? '')
+    setReviewing(false)
+    if (!saved) return
     toast.success(action === 'APPROVED' ? 'Report approved → NOT_SUBMITTED' : 'Report declined → DROPPED')
     onClose()
   }
-  const handleReturn = () => {
-    returnNonSubmissionToPipeline(reportId)
+  const handleReturn = async () => {
+    if (reviewing) return
+    setReviewing(true)
+    const saved = await returnNonSubmissionToPipeline(reportId)
+    setReviewing(false)
+    if (!saved) return
     toast.success('Opportunity moved back to Contract Opportunities')
     onClose()
   }
@@ -77,10 +87,18 @@ function ReviewModal({ reportId, onClose }: { reportId: string; onClose: () => v
     addNonSubReportComment(reportId, newComment.trim())
     setNewComment('')
   }
-  const handleDeleteSourcing = (subId: string, companyName?: string) => {
+  const handleDeleteSourcing = async (subId: string, companyName?: string) => {
     if (!canWriteSourcing) { toast.error('You do not have permission to update sourcing.'); return }
+    if (deletingSourcingId) return
     if (!window.confirm(`Remove ${companyName || 'this subcontractor'} from this opportunity?`)) return
-    deleteSubcontractor(subId)
+    setDeletingSourcingId(subId)
+    let deleted = false
+    try {
+      deleted = await deleteSubcontractor(subId)
+    } finally {
+      setDeletingSourcingId(null)
+    }
+    if (!deleted) return
     toast.success('Subcontractor removed')
   }
 
@@ -103,7 +121,12 @@ function ReviewModal({ reportId, onClose }: { reportId: string; onClose: () => v
         showBackdrop
         variant="premium"
       >
-        <OpportunityDetailBody opp={opp} canWriteSourcing={canWriteSourcing} onDeleteSourcing={handleDeleteSourcing} />
+        <OpportunityDetailBody
+          opp={opp}
+          canWriteSourcing={canWriteSourcing}
+          onDeleteSourcing={handleDeleteSourcing}
+          deletingSourcingId={deletingSourcingId}
+        />
 
         {/* ── Non-Submission Report (separate from opportunity data) ── */}
         <DrawerSection title="Non-Submission Report" variant="premium">
@@ -214,12 +237,12 @@ function ReviewModal({ reportId, onClose }: { reportId: string; onClose: () => v
           )}
           {showReviewActions && (
             <>
-              <button onClick={() => review('DECLINED')}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-red-600 bg-red-50 border border-red-200 hover:bg-red-100 transition-colors">
+              <button onClick={() => { void review('DECLINED') }} disabled={reviewing}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-red-600 bg-red-50 border border-red-200 hover:bg-red-100 transition-colors disabled:cursor-wait disabled:opacity-50">
                 <XCircle size={13} /> Decline
               </button>
-              <button onClick={() => review('APPROVED')}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 transition-colors">
+              <button onClick={() => { void review('APPROVED') }} disabled={reviewing}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 transition-colors disabled:cursor-wait disabled:opacity-50">
                 <CheckCircle2 size={13} /> Approve
               </button>
             </>
@@ -663,9 +686,9 @@ export default function NonSubmissionsPage() {
                     opp={opp}
                     isManager={canReviewReports}
                     onReview={() => setReviewId(r.id)}
-                    onApprove={() => { reviewNonSubReport(r.id, 'APPROVED', 'Approved', currentUser?.username ?? ''); toast.success('Report approved → NOT_SUBMITTED') }}
-                    onDecline={() => { reviewNonSubReport(r.id, 'DECLINED', 'Declined', currentUser?.username ?? ''); toast.success('Report declined → DROPPED') }}
-                    onReturn={() => { returnNonSubmissionToPipeline(r.id); toast.success('Opportunity moved back to Contract Opportunities') }}
+                    onApprove={() => { void reviewNonSubReport(r.id, 'APPROVED', 'Approved', currentUser?.username ?? '').then(saved => { if (saved) toast.success('Report approved → NOT_SUBMITTED') }) }}
+                    onDecline={() => { void reviewNonSubReport(r.id, 'DECLINED', 'Declined', currentUser?.username ?? '').then(saved => { if (saved) toast.success('Report declined → DROPPED') }) }}
+                    onReturn={() => { void returnNonSubmissionToPipeline(r.id).then(saved => { if (saved) toast.success('Opportunity moved back to Contract Opportunities') }) }}
                   />
                 )
               })

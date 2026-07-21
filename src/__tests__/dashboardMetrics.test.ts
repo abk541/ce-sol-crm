@@ -116,14 +116,21 @@ describe('dashboard submission definitions', () => {
     ])).toHaveLength(1)
   })
 
-  it('does not double-count two rows for the same solicitation', () => {
+  it('keeps ambiguous unlinked rows with the same solicitation visible', () => {
     const first = submission(1, 'SUBMITTED')
     const latest = submission(2, 'AWARDED')
     latest.solicitationId = first.solicitationId
     latest.submittedOn = '2026-07-11'
 
+    expect(uniqueBDSubmissionRows([first, latest])).toEqual([first, latest])
+    expect(submittedLifecycleRows([first, latest])).toHaveLength(2)
+  })
+
+  it('deduplicates rows carrying the same durable opportunity link', () => {
+    const first = { ...submission(1, 'SUBMITTED'), opportunityId: 'opp-1' }
+    const latest = { ...submission(2, 'AWARDED'), opportunityId: 'opp-1', submittedOn: '2026-07-11' }
+
     expect(uniqueBDSubmissionRows([first, latest])).toEqual([latest])
-    expect(submittedLifecycleRows([first, latest])).toHaveLength(1)
   })
 })
 
@@ -231,6 +238,24 @@ describe('dashboard KPI calculations', () => {
 
     expect(result.capturedCount).toBe(8)
     expect(result.submittedOpportunities).toHaveLength(3)
+  })
+
+  it('does not hide duplicate opportunities or guess an ambiguous legacy tracker link', () => {
+    const first = opportunity('duplicate-a', { solicitationId: 'SOL-DUP' })
+    const second = opportunity('duplicate-b', { solicitationId: ' sol-dup ' })
+    const legacy = submission(99, 'SUBMITTED')
+    legacy.solicitationId = 'SOL-DUP'
+
+    const result = calculateBdDashboardSummary({
+      activeOpportunities: [first, second],
+      capturedOpportunities: [first, second],
+      trackerRows: [legacy],
+      valueForSubmission: row => row.value,
+    })
+
+    expect(result.activeOpportunities).toHaveLength(2)
+    expect(result.capturedOpportunities).toHaveLength(2)
+    expect(result.capturedCount).toBe(3)
   })
 })
 

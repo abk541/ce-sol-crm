@@ -1,6 +1,7 @@
 ﻿import { useState, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useEffect } from 'react'
+import { useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
   ListChecks, Send, Trash2, CheckCircle2, XCircle,
@@ -9,10 +10,9 @@ import {
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { formatCurrency, formatDate } from '../lib/utils'
-import type { OppStatus } from '../types'
+import type { BDSubmission, Opportunity, OppStatus } from '../types'
 import toast from 'react-hot-toast'
 import DetailDrawer, { DrawerSection, DrawerField } from '../components/shared/DetailDrawer'
-import type { Opportunity } from '../types'
 import FloatingActionMenu from '../components/shared/FloatingActionMenu'
 import { hasPermission } from '../lib/permissions'
 import { EditModal as OpportunityEditModal } from './PipelinePage'
@@ -26,8 +26,43 @@ const fadeUp = {
 
 // Only statuses reachable via normal submission workflow.
 // NOT_SUBMITTED and DROPPED are set exclusively by the non-sub-report review flow.
-// WON is handled specially below (calls markOpportunityWon to create the FreshAward).
-const EDITABLE_STATUSES: OppStatus[] = ['SUBMITTED', 'DISCUSSION', 'WON', 'LOST', 'CANCELED']
+type EditableTrackerStatus = Extract<OppStatus, 'SUBMITTED' | 'DISCUSSION' | 'WON' | 'LOST' | 'CANCELED'>
+
+const EDITABLE_STATUSES: EditableTrackerStatus[] = ['SUBMITTED', 'DISCUSSION', 'WON', 'LOST', 'CANCELED']
+
+const TRACKER_STATUS_BY_OPPORTUNITY_STATUS: Record<EditableTrackerStatus, BDSubmission['status']> = {
+  SUBMITTED: 'SUBMITTED',
+  DISCUSSION: 'DISCUSSING',
+  WON: 'AWARDED',
+  LOST: 'LOST',
+  CANCELED: 'CANCELED',
+}
+
+type TrackerStatusTransition = (
+  opportunityId: string,
+  status: BDSubmission['status'],
+  comment?: string,
+) => Promise<boolean>
+
+/**
+ * Keep the opportunity and its BD tracker row in one server transaction.
+ * The callback is deliberately gated on the committed result so UI success
+ * feedback cannot run while (or after) a failed database write.
+ */
+export async function commitTrackerStatusChange(
+  opportunityId: string,
+  status: EditableTrackerStatus,
+  transition: TrackerStatusTransition,
+  onCommitted: () => void,
+): Promise<boolean> {
+  const trackerStatus = TRACKER_STATUS_BY_OPPORTUNITY_STATUS[status]
+  const committed = status === 'CANCELED'
+    ? await transition(opportunityId, trackerStatus, 'Canceled')
+    : await transition(opportunityId, trackerStatus)
+  if (!committed) return false
+  onCommitted()
+  return true
+}
 
 const STATUS_META: Record<string, { color: string; bg: string; border: string }> = {
   SUBMITTED:     { color: '#0891B2', bg: '#ECFEFF', border: '#A5F3FC' },
@@ -53,7 +88,9 @@ function StatusBadge({ status }: { status: string }) {
 
 function StatusDropdown({ oppId, current, canEdit }: { oppId: string; current: OppStatus; canEdit: boolean }) {
   const [open, setOpen] = useState(false)
-  const { updateOpportunity, markOpportunityWon, freshAwards, currentUser } = useStore()
+  const [saving, setSaving] = useState(false)
+  const savingRef = useRef(false)
+  const { moveOpportunityToBDTracker, currentUser } = useStore()
   const canEditStatus = hasPermission(currentUser, 'opportunity:edit')
 
   if (!canEditStatus || !canEdit) return <StatusBadge status={current} />
@@ -61,25 +98,26 @@ function StatusDropdown({ oppId, current, canEdit }: { oppId: string; current: O
   // Only show statuses that differ from current and are valid submission-workflow transitions
   const options = EDITABLE_STATUSES.filter(s => s !== current)
 
-  const handleChange = (s: OppStatus) => {
-    if (s === 'WON') {
-      // Guard: create a FreshAward only if one doesn't already exist for this opportunity
-      const alreadyAwarded = freshAwards.some(fa => fa.opportunityId === oppId)
-      if (alreadyAwarded) {
-        updateOpportunity(oppId, { status: 'WON' })
-      } else {
-        markOpportunityWon(oppId)  // sets status WON + creates FreshAward
-      }
-    } else {
-      updateOpportunity(oppId, { status: s })
+  const handleChange = async (status: EditableTrackerStatus) => {
+    if (savingRef.current) return
+    savingRef.current = true
+    setSaving(true)
+    try {
+      await commitTrackerStatusChange(oppId, status, moveOpportunityToBDTracker, () => {
+        setOpen(false)
+        toast.success(`Status updated to ${status}`)
+      })
+    } finally {
+      savingRef.current = false
+      setSaving(false)
     }
-    setOpen(false)
-    toast.success(`Status updated to ${s}`)
   }
 
   return (
     <div className="relative">
       <button onClick={e => { e.stopPropagation(); setOpen(o => !o) }}
+        disabled={saving}
+        aria-busy={saving}
         className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full transition-all"
         style={{
           color: STATUS_META[current]?.color ?? '#64748B',
@@ -100,7 +138,8 @@ function StatusDropdown({ oppId, current, canEdit }: { oppId: string; current: O
             style={{ background: 'var(--bg-card)', border: '1px solid var(--border-default)', boxShadow: '0 8px 24px rgba(0,0,0,0.10)' }}>
             {options.map(s => (
               <button key={s}
-                onClick={e => { e.stopPropagation(); handleChange(s) }}
+                disabled={saving}
+                onClick={e => { e.stopPropagation(); void handleChange(s) }}
                 className="block w-full text-left px-3 py-2 text-[10px] font-bold transition-colors hover:bg-slate-50"
                 style={{ color: STATUS_META[s]?.color ?? '#64748B' }}>
                 {s === 'WON' ? 'Awarded ' : ''}{s}

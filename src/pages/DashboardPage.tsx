@@ -20,6 +20,7 @@ import TeamStatisticsPanel from '../components/shared/TeamStatisticsPanel'
 import { formatCurrency, avatarColor } from '../lib/utils'
 import { useNavigate } from 'react-router-dom'
 import {
+  findBDSubmissionOpportunity,
   getAssignmentChain,
   isBDSubmissionAssociatedToUser,
   isBDSubmissionAttributedToEmployee,
@@ -844,10 +845,7 @@ function opportunityValue(opp?: Opportunity) {
 }
 
 function submissionOpportunity(submission: BDSubmission, opportunities: Opportunity[]) {
-  return opportunities.find(opp =>
-    opp.solicitationId === submission.solicitationId ||
-    opp.solicitation === submission.solicitation,
-  )
+  return findBDSubmissionOpportunity(submission, opportunities)
 }
 
 function submissionValue(submission: BDSubmission, opportunities: Opportunity[]) {

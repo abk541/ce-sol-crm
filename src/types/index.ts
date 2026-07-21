@@ -464,6 +464,7 @@ export interface ContractVehicleOrder {
 // ── BD Submission (BD Tracker) ────────────────────────────────────────
 export interface BDSubmission {
   id: number
+  opportunityId?: string
   submittedOn: string
   solicitationId: string
   setAside: SetAside

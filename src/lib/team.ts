@@ -268,13 +268,40 @@ export function isOpportunityAssignedToUser(
   return false
 }
 
-function submissionOpportunity(
-  submission: Pick<BDSubmission, 'solicitationId' | 'solicitation'>,
+function normalizedSolicitationId(value: string | undefined): string {
+  return (value ?? '').trim().toLowerCase()
+}
+
+export function findBDSubmissionOpportunity(
+  submission: Pick<BDSubmission, 'opportunityId' | 'solicitationId' | 'solicitation'>,
   opportunities: Opportunity[],
 ): Opportunity | undefined {
-  return opportunities.find(opportunity =>
-    opportunity.solicitationId === submission.solicitationId ||
-    opportunity.solicitation === submission.solicitation)
+  if (submission.opportunityId) {
+    return opportunities.find(opportunity => opportunity.id === submission.opportunityId)
+  }
+  const solicitationId = normalizedSolicitationId(submission.solicitationId)
+  if (!solicitationId) return undefined
+  const matches = opportunities.filter(opportunity =>
+    normalizedSolicitationId(opportunity.solicitationId) === solicitationId)
+  return matches.length === 1 ? matches[0] : undefined
+}
+
+export function findBDSubmissionForOpportunity(
+  submissions: BDSubmission[],
+  opportunity: Pick<Opportunity, 'id' | 'solicitationId'>,
+  opportunities: Array<Pick<Opportunity, 'id' | 'solicitationId'>>,
+): BDSubmission | undefined {
+  const linked = submissions.filter(submission => submission.opportunityId === opportunity.id)
+  if (linked.length !== 0) return linked.length === 1 ? linked[0] : undefined
+  const solicitationId = normalizedSolicitationId(opportunity.solicitationId)
+  if (!solicitationId) return undefined
+  const opportunityMatches = opportunities.filter(candidate =>
+    normalizedSolicitationId(candidate.solicitationId) === solicitationId)
+  if (opportunityMatches.length !== 1 || opportunityMatches[0]?.id !== opportunity.id) return undefined
+  const legacy = submissions.filter(submission =>
+    !submission.opportunityId
+    && normalizedSolicitationId(submission.solicitationId) === solicitationId)
+  return legacy.length === 1 ? legacy[0] : undefined
 }
 
 /**
@@ -289,7 +316,7 @@ export function isBDSubmissionAttributedToEmployee(
   submission: BDSubmission,
   opportunities: Opportunity[],
 ): boolean {
-  const linkedOpportunity = submissionOpportunity(submission, opportunities)
+  const linkedOpportunity = findBDSubmissionOpportunity(submission, opportunities)
   const chain = getAssignmentChain(employees, linkedOpportunity?.assignedTo)
   if (
     chain.manager?.id === employee.id ||
@@ -299,6 +326,37 @@ export function isBDSubmissionAttributedToEmployee(
 
   return [submission.bdm, submission.bds, submission.supportAgent]
     .some(reference => employeeMatchesReference(employee, reference))
+}
+
+/**
+ * Returns the hierarchy shown for a tracker row. Linked opportunities remain
+ * authoritative; legacy rows fall back to the role-specific name snapshots
+ * stored in bd_submissions.
+ */
+export function getBDSubmissionAssignmentChain(
+  employees: Employee[],
+  submission: BDSubmission,
+  opportunities: Opportunity[],
+): AssignmentChain {
+  const linkedOpportunity = findBDSubmissionOpportunity(submission, opportunities)
+  const linkedChain = getAssignmentChain(employees, linkedOpportunity?.assignedTo)
+  if (linkedChain.assigned) return linkedChain
+
+  const associate = employees.find(employee =>
+    employee.role === 'ASSOCIATE' && employeeMatchesReference(employee, submission.supportAgent))
+  const teamLead = employees.find(employee =>
+    employee.role === 'TEAM_LEAD' && employeeMatchesReference(employee, submission.bds))
+  const manager = employees.find(employee =>
+    employee.role === 'BD_MANAGER' && employeeMatchesReference(employee, submission.bdm))
+  const fallbackAssigned = associate ?? teamLead ?? manager
+  const fallbackChain = getAssignmentChain(employees, fallbackAssigned?.id)
+
+  return {
+    assigned: fallbackChain.assigned ?? fallbackAssigned,
+    associate: fallbackChain.associate ?? associate,
+    teamLead: fallbackChain.teamLead ?? teamLead,
+    manager: fallbackChain.manager ?? manager,
+  }
 }
 
 /** Scopes BD Tracker rows and their notifications to the responsible user. */
@@ -311,7 +369,7 @@ export function isBDSubmissionAssociatedToUser(
   if (!user) return false
   if (['CAPTURE_MANAGER', 'BD_MANAGER', 'OPS_MANAGER'].includes(user.role)) return true
 
-  const linkedOpportunity = submissionOpportunity(submission, opportunities)
+  const linkedOpportunity = findBDSubmissionOpportunity(submission, opportunities)
   if (linkedOpportunity?.assignedTo) {
     return isOpportunityOwnedByUser(employees, user, linkedOpportunity.assignedTo)
   }

@@ -50,6 +50,9 @@ const OPPORTUNITY_PERMISSION_FIELDS = {
     'morocco_time',
     'morocco_date',
     'mandatory_events_list',
+    // Deadline flags are schedule bookkeeping written by the app shell.
+    'notified_due_24h',
+    'notified_due_4h',
   ]),
   'sourcing:write': new Set(['quoted']),
   'opportunity:submitProposal': new Set([
@@ -71,8 +74,6 @@ const OPPORTUNITY_PERMISSION_FIELDS = {
     'non_submission_report_id',
     'non_submission_exempt',
   ]),
-  // Deadline flags are bookkeeping written by the authenticated app shell.
-  'opportunity:read': new Set(['notified_due_24h', 'notified_due_4h']),
 } as const
 
 const OPPORTUNITY_FULL_WRITE_PERMISSIONS = new Set([
@@ -81,13 +82,69 @@ const OPPORTUNITY_FULL_WRITE_PERMISSIONS = new Set([
 ])
 
 const OPPORTUNITY_CREATE_PERMISSIONS = new Set([
-  ...OPPORTUNITY_FULL_WRITE_PERMISSIONS,
+  'admin:manageUsers',
   'opportunity:create',
+])
+
+const DESTRUCTIVE_DELETE_PERMISSIONS = new Set([
+  'admin:manageUsers',
+  'opportunity:deleteApprove',
+])
+
+const OPPORTUNITY_NUMERIC_COLUMNS = new Set([
+  'contract_amount',
+  'base_amount',
+  'monthly_payment',
+  'value',
+])
+
+const OPPORTUNITY_TIMESTAMP_COLUMNS = new Set([
+  'submitted_at',
+  'created_at',
+])
+
+const OPPORTUNITY_EMPTY_ARRAY_COLUMNS = new Set([
+  'proposals',
+  'assigned_opportunities',
+  'proposal_attachments',
+  'sam_gov_contacts',
+])
+
+// Generic CRUD is still used for ordinary opportunity edits and assignment
+// normalization. Every status that also creates, changes, or removes a BD
+// Tracker row must go through /opportunity-workflows so both records commit in
+// one transaction. ACTIVE <-> NEW_ASSIGNMENT is the sole generic exception.
+const GENERIC_OPPORTUNITY_STATUSES = new Set(['ACTIVE', 'NEW_ASSIGNMENT'])
+
+const GENERIC_NON_SUBMISSION_EDIT_COLUMNS = new Set([
+  'reason',
+  'comments',
+  'last_reminder_at',
+  'reason_edited_at',
+])
+
+const NON_SUBMISSION_REVIEW_COLUMNS = new Set([
+  'status',
+  'reviewed_by',
+  'reviewed_at',
+  'review_note',
+])
+
+const NON_SUBMISSION_WRITE_PERMISSIONS = new Set([
+  'admin:manageUsers',
+  'nonSubmission:submit',
+  'nonSubmission:review',
+])
+
+const SOURCING_WRITE_PERMISSIONS = new Set([
+  'admin:manageUsers',
+  'sourcing:write',
 ])
 
 const OPPORTUNITY_NOOP_WRITE_PERMISSIONS = new Set([
   ...OPPORTUNITY_FULL_WRITE_PERMISSIONS,
   ...Object.keys(OPPORTUNITY_PERMISSION_FIELDS),
+  'opportunity:cancel',
   'opportunity:comment',
 ])
 
@@ -384,22 +441,28 @@ function stableComparable(value: unknown): unknown {
         .map(([key, entry]) => [key, stableComparable(entry)]),
     )
   }
-  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(value)) {
-    const timestamp = Date.parse(value)
-    if (Number.isFinite(timestamp)) return new Date(timestamp).toISOString()
-  }
   return value
 }
 
-function valuesMatch(left: unknown, right: unknown): boolean {
+function valuesMatch(column: string, left: unknown, right: unknown): boolean {
   if (Object.is(left, right)) return true
-  if (
+  if (OPPORTUNITY_EMPTY_ARRAY_COLUMNS.has(column)) {
+    const leftEmpty = left == null || (Array.isArray(left) && left.length === 0)
+    const rightEmpty = right == null || (Array.isArray(right) && right.length === 0)
+    if (leftEmpty && rightEmpty) return true
+  }
+  if (OPPORTUNITY_NUMERIC_COLUMNS.has(column) && (
     (typeof left === 'number' && typeof right === 'string')
     || (typeof left === 'string' && typeof right === 'number')
-  ) {
+  )) {
     const leftNumber = Number(left)
     const rightNumber = Number(right)
     if (Number.isFinite(leftNumber) && Number.isFinite(rightNumber) && leftNumber === rightNumber) return true
+  }
+  if (OPPORTUNITY_TIMESTAMP_COLUMNS.has(column)) {
+    const leftTimestamp = left instanceof Date ? left.getTime() : typeof left === 'string' ? Date.parse(left) : Number.NaN
+    const rightTimestamp = right instanceof Date ? right.getTime() : typeof right === 'string' ? Date.parse(right) : Number.NaN
+    if (Number.isFinite(leftTimestamp) && Number.isFinite(rightTimestamp) && leftTimestamp === rightTimestamp) return true
   }
   return JSON.stringify(stableComparable(left)) === JSON.stringify(stableComparable(right))
 }
@@ -409,7 +472,7 @@ function changedColumns(
   incoming: Readonly<Record<string, unknown>>,
 ): Set<string> {
   return new Set(
-    Object.keys(incoming).filter((column) => column !== 'id' && !valuesMatch(existing[column], incoming[column])),
+    Object.keys(incoming).filter((column) => column !== 'id' && !valuesMatch(column, existing[column], incoming[column])),
   )
 }
 
@@ -423,7 +486,24 @@ function hasAnyPermission(permissions: ReadonlySet<string>, required: ReadonlySe
 function assertOpportunityFieldAuthorization(
   changed: ReadonlySet<string>,
   permissions: ReadonlySet<string>,
+  incoming?: Readonly<Record<string, unknown>>,
+  existing?: Readonly<Record<string, unknown>>,
 ): void {
+  if (changed.has('status')) {
+    const previousStatus = existing?.status
+    const nextStatus = incoming?.status
+    const assignmentNormalization = typeof previousStatus === 'string'
+      && typeof nextStatus === 'string'
+      && GENERIC_OPPORTUNITY_STATUSES.has(previousStatus)
+      && GENERIC_OPPORTUNITY_STATUSES.has(nextStatus)
+    if (!assignmentNormalization) {
+      throw new ApiError(
+        403,
+        'workflow_required',
+        'Opportunity lifecycle changes must use the atomic opportunity workflow API.',
+      )
+    }
+  }
   if (hasAnyPermission(permissions, OPPORTUNITY_FULL_WRITE_PERMISSIONS)) return
   if (changed.size === 0 && hasAnyPermission(permissions, OPPORTUNITY_NOOP_WRITE_PERMISSIONS)) return
 
@@ -442,6 +522,15 @@ function assertOpportunityFieldAuthorization(
   }
 }
 
+function assertGenericOpportunityCreateStatus(row: Readonly<Record<string, unknown>>): void {
+  if (row.status === undefined || GENERIC_OPPORTUNITY_STATUSES.has(String(row.status))) return
+  throw new ApiError(
+    403,
+    'workflow_required',
+    'New opportunities created through the generic data API must start in the active pipeline.',
+  )
+}
+
 async function effectiveOpportunityPermissions(client: Queryable): Promise<Set<string>> {
   const result = await client.query<{ permission: string; allowed: boolean }>(
     `select requested.permission,
@@ -452,19 +541,63 @@ async function effectiveOpportunityPermissions(client: Queryable): Promise<Set<s
   return new Set(result.rows.filter((row) => row.allowed).map((row) => row.permission))
 }
 
+async function requireAnyDataPermission(
+  client: Queryable,
+  required: ReadonlySet<string>,
+  message: string,
+): Promise<void> {
+  const permissions = await effectiveOpportunityPermissions(client)
+  if (!hasAnyPermission(permissions, required)) {
+    throw new ApiError(403, 'forbidden', message)
+  }
+}
+
+function quoteBackedOpportunityIds(rows: readonly Record<string, unknown>[]): string[] {
+  const ids = rows.flatMap((row, index) => {
+    const legacyQuote = typeof row.quote_file === 'string' && row.quote_file.trim() !== ''
+    const quoteFiles = Array.isArray(row.quote_files) && row.quote_files.length > 0
+    if (!legacyQuote && !quoteFiles) return []
+    return [requiredString(row.opportunity_id, `rows[${index}].opportunity_id`, 128)]
+  })
+  return [...new Set(ids)]
+}
+
+async function markQuotedOpportunities(
+  client: Queryable,
+  opportunityIds: readonly string[],
+): Promise<void> {
+  if (opportunityIds.length === 0) return
+  const result = await client.query<{ id: string }>(
+    `update public.opportunities
+        set quoted = true
+      where id::text = any($1::text[])
+      returning id::text as id`,
+    [opportunityIds],
+  )
+  const updated = new Set(result.rows.map((row) => row.id))
+  if (opportunityIds.some((id) => !updated.has(id))) {
+    throw new ApiError(
+      409,
+      'stale_opportunity',
+      'A sourcing quote could not be linked to its opportunity. Reload and try again.',
+    )
+  }
+}
+
 async function authorizeOpportunityRows(
   client: Queryable,
   rows: readonly Record<string, unknown>[],
   upsert: boolean,
   conflictColumns: readonly string[],
-): Promise<void> {
-  if (!rows.length) return
+): Promise<Map<string, Record<string, unknown>>> {
+  if (!rows.length) return new Map()
   const permissions = await effectiveOpportunityPermissions(client)
   if (!upsert) {
     if (!hasAnyPermission(permissions, OPPORTUNITY_CREATE_PERMISSIONS)) {
       throw new ApiError(403, 'forbidden', 'You do not have permission to create opportunities.')
     }
-    return
+    rows.forEach(assertGenericOpportunityCreateStatus)
+    return new Map()
   }
   if (conflictColumns.length !== 1 || conflictColumns[0] !== 'id') {
     throw new ApiError(400, 'invalid_request', 'Opportunity upserts must use id as the conflict column.')
@@ -489,9 +622,230 @@ async function authorizeOpportunityRows(
       if (!hasAnyPermission(permissions, OPPORTUNITY_CREATE_PERMISSIONS)) {
         throw new ApiError(403, 'forbidden', 'You do not have permission to create opportunities.')
       }
+      assertGenericOpportunityCreateStatus(row)
       continue
     }
-    assertOpportunityFieldAuthorization(changedColumns(existing, row), permissions)
+    assertOpportunityFieldAuthorization(changedColumns(existing, row), permissions, row, existing)
+  }
+  return existingById
+}
+
+function assertNewNonSubmissionReport(row: Readonly<Record<string, unknown>>): void {
+  const reviewedValuePresent = [...NON_SUBMISSION_REVIEW_COLUMNS].some((column) => {
+    const value = row[column]
+    if (column === 'status') return value !== undefined && value !== 'PENDING'
+    return value !== undefined && value !== null && value !== ''
+  })
+  if (reviewedValuePresent) {
+    throw new ApiError(
+      403,
+      'workflow_required',
+      'Non-submission review lifecycle changes must use the atomic opportunity workflow API.',
+    )
+  }
+}
+
+async function authorizeNonSubmissionRows(
+  client: Queryable,
+  rows: readonly Record<string, unknown>[],
+  upsert: boolean,
+  conflictColumns: readonly string[],
+): Promise<Map<string, Record<string, unknown>>> {
+  const permissions = await effectiveOpportunityPermissions(client)
+  if (!hasAnyPermission(permissions, NON_SUBMISSION_WRITE_PERMISSIONS)) {
+    throw new ApiError(403, 'forbidden', 'You do not have permission to create or edit non-submission reports.')
+  }
+  if (!upsert) {
+    rows.forEach(assertNewNonSubmissionReport)
+    return new Map()
+  }
+  if (conflictColumns.length !== 1 || conflictColumns[0] !== 'id') {
+    throw new ApiError(400, 'invalid_request', 'Non-submission report upserts must use id as the conflict column.')
+  }
+  const ids = rows.map((row, index) => requiredString(row.id, `rows[${index}].id`, 200))
+  if (new Set(ids).size !== ids.length) {
+    throw new ApiError(400, 'invalid_request', 'A non-submission report batch cannot contain duplicate ids.')
+  }
+  const existing = await client.query<{ id: string; snapshot: Record<string, unknown> }>(
+    `select report.id::text as id, to_jsonb(report) as snapshot
+       from public.non_submission_reports report
+      where report.id::text = any($1::text[])
+      for update`,
+    [ids],
+  )
+  const existingById = new Map(existing.rows.map((row) => [row.id, row.snapshot]))
+  rows.forEach((row, index) => {
+    const snapshot = existingById.get(ids[index] as string)
+    if (!snapshot) {
+      assertNewNonSubmissionReport(row)
+      return
+    }
+    const denied = [...changedColumns(snapshot, row)]
+      .filter((column) => !GENERIC_NON_SUBMISSION_EDIT_COLUMNS.has(column))
+    if (denied.length > 0) {
+      throw new ApiError(
+        403,
+        'workflow_required',
+        'Non-submission review lifecycle changes must use the atomic opportunity workflow API.',
+      )
+    }
+  })
+  return existingById
+}
+
+async function upsertNonSubmissionData(
+  client: Queryable,
+  common: CommonRequest & Record<string, unknown>,
+  rows: readonly Record<string, unknown>[],
+  keys: readonly string[],
+  existingById: ReadonlyMap<string, Record<string, unknown>>,
+): Promise<Record<string, unknown>> {
+  const returning = common.head
+    ? ''
+    : ` returning ${common.columns === '*' ? '*' : common.columns.map(quoted).join(', ')}`
+  const returnedRows: QueryResultRow[] = []
+  const newRows: Record<string, unknown>[] = []
+  const ignoreDuplicates = common.ignoreDuplicates === true
+  let affected = 0
+
+  for (const row of rows) {
+    const existing = existingById.get(String(row.id))
+    if (!existing) {
+      newRows.push(row)
+      continue
+    }
+    if (ignoreDuplicates) continue
+    const changed = changedColumns(existing, row)
+    const updateColumns = keys.filter((key) => key !== 'id' && changed.has(key))
+    if (updateColumns.length === 0) {
+      if (!common.head) {
+        returnedRows.push(common.columns === '*'
+          ? { ...existing }
+          : Object.fromEntries(common.columns.map((column) => [column, existing[column]])))
+      }
+      affected += 1
+      continue
+    }
+    const values = updateColumns.map((column) => row[column])
+    values.push(row.id)
+    const assignments = updateColumns.map((column, index) => `${quoted(column)} = $${index + 1}`)
+    const result = await client.query<QueryResultRow>(
+      `update public.non_submission_reports set ${assignments.join(', ')} where id = $${values.length}${returning}`,
+      values,
+    )
+    if ((result.rowCount ?? 0) !== 1) {
+      throw new ApiError(409, 'stale_report', 'The non-submission report changed. Reload it and try again.')
+    }
+    returnedRows.push(...result.rows)
+    affected += result.rowCount ?? 0
+  }
+
+  if (newRows.length > 0) {
+    const values: unknown[] = []
+    const tuples = newRows.map((row) => `(${keys.map((key) => {
+      values.push(row[key])
+      return `$${values.length}`
+    }).join(', ')})`)
+    const result = await client.query<QueryResultRow>(
+      `insert into public.non_submission_reports (${keys.map(quoted).join(', ')}) values ${tuples.join(', ')} on conflict ("id") do nothing${returning}`,
+      values,
+    )
+    if (!ignoreDuplicates && (result.rowCount ?? 0) !== newRows.length) {
+      throw new ApiError(409, '23505', 'A non-submission report changed while it was being saved. Reload and try again.')
+    }
+    returnedRows.push(...result.rows)
+    affected += result.rowCount ?? 0
+  }
+
+  return {
+    data: common.head ? null : shapeRows(returnedRows, common),
+    ...(common.count ? { count: affected } : {}),
+    error: null,
+  }
+}
+
+async function upsertOpportunityData(
+  client: Queryable,
+  common: CommonRequest & Record<string, unknown>,
+  rows: readonly Record<string, unknown>[],
+  keys: readonly string[],
+  conflictColumns: readonly string[],
+  existingById: ReadonlyMap<string, Record<string, unknown>>,
+): Promise<Record<string, unknown>> {
+  const returning = common.head
+    ? ''
+    : ` returning ${common.columns === '*' ? '*' : common.columns.map(quoted).join(', ')}`
+  const returnedRows: QueryResultRow[] = []
+  let affected = 0
+  const ignoreDuplicates = common.ignoreDuplicates === true
+  const updateColumns = keys.filter((key) => !conflictColumns.includes(key))
+  const newRows: Record<string, unknown>[] = []
+
+  for (const row of rows) {
+    const id = String(row.id)
+    const existing = existingById.get(id)
+    if (!existing) {
+      newRows.push(row)
+      continue
+    }
+    if (ignoreDuplicates || updateColumns.length === 0) continue
+
+    const changed = changedColumns(existing, row)
+    const rowUpdateColumns = keys.filter((key) => changed.has(key))
+    if (rowUpdateColumns.length === 0) {
+      if (!common.head) {
+        returnedRows.push(common.columns === '*'
+          ? { ...existing }
+          : Object.fromEntries(common.columns.map((column) => [column, existing[column]])))
+      }
+      affected += 1
+      continue
+    }
+
+    const values = rowUpdateColumns.map((key) => row[key])
+    values.push(row.id)
+    const assignments = rowUpdateColumns.map((key, index) => `${quoted(key)} = $${index + 1}`)
+    const result = await client.query<QueryResultRow>(
+      `update public.opportunities set ${assignments.join(', ')} where "id" = $${values.length}${returning}`,
+      values,
+    )
+    if ((result.rowCount ?? 0) !== 1) {
+      throw new ApiError(
+        409,
+        'stale_opportunity',
+        'The opportunity changed or is no longer writable. Reload it and try again.',
+      )
+    }
+    returnedRows.push(...result.rows)
+    affected += result.rowCount ?? 0
+  }
+
+  if (newRows.length > 0) {
+    const values: unknown[] = []
+    const tuples = newRows.map((row) => `(${keys.map((key) => {
+      values.push(row[key])
+      return `$${values.length}`
+    }).join(', ')})`)
+    const conflict = ` on conflict (${conflictColumns.map(quoted).join(', ')}) do nothing`
+    const result = await client.query<QueryResultRow>(
+      `insert into public.opportunities (${keys.map(quoted).join(', ')}) values ${tuples.join(', ')}${conflict}${returning}`,
+      values,
+    )
+    if (!ignoreDuplicates && (result.rowCount ?? 0) !== newRows.length) {
+      throw new ApiError(
+        409,
+        '23505',
+        'An opportunity changed while it was being saved. Reload it and try again.',
+      )
+    }
+    returnedRows.push(...result.rows)
+    affected += result.rowCount ?? 0
+  }
+
+  return {
+    data: common.head ? null : shapeRows(returnedRows, common),
+    ...(common.count ? { count: affected } : {}),
+    error: null,
   }
 }
 
@@ -551,6 +905,16 @@ async function insertData(
   assertColumnsExist(keys, available, common.table)
   assertAppSettingsRows(common.table, rows)
 
+  let quotedOpportunityIds: string[] = []
+  if (common.table === 'subcontractors') {
+    await requireAnyDataPermission(
+      client,
+      SOURCING_WRITE_PERMISSIONS,
+      'You do not have permission to update sourcing.',
+    )
+    quotedOpportunityIds = quoteBackedOpportunityIds(rows)
+  }
+
   let conflictColumns: string[] = []
   if (upsert) {
     const raw = common.onConflict
@@ -564,8 +928,18 @@ async function insertData(
     assertColumnsExist(conflictColumns, available, common.table)
   }
 
+  let existingOpportunities = new Map<string, Record<string, unknown>>()
+  if (common.table === 'non_submission_reports') {
+    const existingReports = await authorizeNonSubmissionRows(client, rows, upsert, conflictColumns)
+    if (upsert) {
+      return upsertNonSubmissionData(client, common, rows, keys, existingReports)
+    }
+  }
   if (common.table === 'opportunities') {
-    await authorizeOpportunityRows(client, rows, upsert, conflictColumns)
+    existingOpportunities = await authorizeOpportunityRows(client, rows, upsert, conflictColumns)
+    if (upsert) {
+      return upsertOpportunityData(client, common, rows, keys, conflictColumns, existingOpportunities)
+    }
   }
 
   const values: unknown[] = []
@@ -589,6 +963,10 @@ async function insertData(
     `insert into public.${quoted(common.table)} (${keys.map(quoted).join(', ')}) values ${tuples.join(', ')}${conflict}${returning}`,
     values,
   )
+  // The generic route itself is wrapped in one database transaction. Marking
+  // the opportunity here means a quote row and its quoted flag either both
+  // commit or both roll back; the browser never has to coordinate two writes.
+  await markQuotedOpportunities(client, quotedOpportunityIds)
   return {
     data: common.head ? null : shapeRows(result.rows, common),
     ...(common.count ? { count: result.rowCount ?? 0 } : {}),
@@ -621,7 +999,29 @@ async function updateOrDeleteData(
       assertAllowedAppSettingKey(patch.key)
     }
     if (common.table === 'opportunities') {
-      assertOpportunityFieldAuthorization(new Set(keys), await effectiveOpportunityPermissions(client))
+      const permissions = await effectiveOpportunityPermissions(client)
+      assertOpportunityFieldAuthorization(new Set(keys), permissions, patch)
+    }
+    if (common.table === 'non_submission_reports') {
+      const permissions = await effectiveOpportunityPermissions(client)
+      if (!hasAnyPermission(permissions, NON_SUBMISSION_WRITE_PERMISSIONS)) {
+        throw new ApiError(403, 'forbidden', 'You do not have permission to edit non-submission reports.')
+      }
+      const denied = keys.filter((key) => !GENERIC_NON_SUBMISSION_EDIT_COLUMNS.has(key))
+      if (denied.length > 0) {
+        throw new ApiError(
+          403,
+          'workflow_required',
+          'Non-submission review lifecycle changes must use the atomic opportunity workflow API.',
+        )
+      }
+    }
+    if (common.table === 'subcontractors') {
+      await requireAnyDataPermission(
+        client,
+        SOURCING_WRITE_PERMISSIONS,
+        'You do not have permission to update sourcing.',
+      )
     }
     const assignments = keys.map((key) => {
       values.push(patch[key])
@@ -629,6 +1029,24 @@ async function updateOrDeleteData(
     })
     prefix = `update public.${quoted(common.table)} set ${assignments.join(', ')}`
   } else {
+    if (common.table === 'subcontractors') {
+      await requireAnyDataPermission(
+        client,
+        SOURCING_WRITE_PERMISSIONS,
+        'You do not have permission to update sourcing.',
+      )
+    }
+    if (common.table === 'opportunities'
+      || common.table === 'bd_submissions'
+      || common.table === 'non_submission_reports') {
+      const permissions = await effectiveOpportunityPermissions(client)
+      const required = isWorkflowBulkClear(common)
+        ? new Set(['admin:manageUsers'])
+        : DESTRUCTIVE_DELETE_PERMISSIONS
+      if (!hasAnyPermission(permissions, required)) {
+        throw new ApiError(403, 'forbidden', 'You do not have permission to permanently delete this workflow record.')
+      }
+    }
     prefix = `delete from public.${quoted(common.table)}`
   }
   common = withAppSettingsScope(common)
@@ -644,6 +1062,38 @@ async function updateOrDeleteData(
   }
 }
 
+function isWorkflowBulkClear(common: Pick<CommonRequest, 'filters' | 'orGroups'>): boolean {
+  return common.orGroups.length === 0
+    && common.filters.length === 1
+    && common.filters[0]?.column === 'id'
+    && common.filters[0]?.operator === 'not.is'
+    && common.filters[0]?.value === null
+}
+
+function assertMutationRoute(
+  path: string,
+  table: string,
+  common: Pick<CommonRequest, 'filters' | 'orGroups'> = { filters: [], orGroups: [] },
+): void {
+  if (path === '/api/v1/data/query') return
+  if (table === 'users') {
+    throw new ApiError(403, 'forbidden', 'User accounts can only be changed through the admin API.')
+  }
+  const approvedBulkDelete = path === '/api/v1/data/delete' && isWorkflowBulkClear(common)
+  const workflowMutation = table === 'bd_submissions'
+    ? !approvedBulkDelete
+    : table === 'non_submission_reports' && path === '/api/v1/data/delete'
+      ? !approvedBulkDelete
+    : table === 'opportunities' && path === '/api/v1/data/delete' && !approvedBulkDelete
+  if (workflowMutation) {
+    throw new ApiError(
+      403,
+      'workflow_required',
+      'Opportunity and BD Tracker lifecycle changes must use the atomic opportunity workflow API.',
+    )
+  }
+}
+
 export function registerDataRoutes(app: FastifyInstance, dependencies: Dependencies): void {
   const route = (
     path: string,
@@ -655,9 +1105,7 @@ export function registerDataRoutes(app: FastifyInstance, dependencies: Dependenc
       { preHandler: (request) => requireCompleted(request, dependencies) },
       async (request) => {
         const common = parseCommon(request.body, additionalKeys)
-        if (path !== '/api/v1/data/query' && common.table === 'users') {
-          throw new ApiError(403, 'forbidden', 'User accounts can only be changed through the admin API.')
-        }
+        assertMutationRoute(path, common.table, common)
         try {
           return await asAuthenticatedUser(
             dependencies.db,
@@ -693,4 +1141,11 @@ export const __test = {
   changedColumns,
   assertOpportunityFieldAuthorization,
   authorizeOpportunityRows,
+  authorizeNonSubmissionRows,
+  quoteBackedOpportunityIds,
+  markQuotedOpportunities,
+  insertData,
+  updateOrDeleteData,
+  assertMutationRoute,
+  isWorkflowBulkClear,
 }

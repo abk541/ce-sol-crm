@@ -32,9 +32,15 @@ Take and verify a fresh encrypted database backup before either migration.
 4. Apply `migrations/002_detach_supabase_auth.sql` during the final write freeze.
    It drops only the old `auth.users` FK after a fail-closed mapping check. It
    deliberately does not delete the old schemas or data.
-5. Start the API, verify `/health/ready`, and exercise login, first-login, CRUD,
+5. On an already-cut-over native deployment, apply
+   `migrations/004_preserve_canceled_opportunities.sql` as the database owner.
+   It prevents cancellation from being treated as deletion, links only
+   unambiguous BD Tracker rows to opportunities, and leaves duplicate/orphan
+   history untouched for manual review.
+6. Start the API, verify `/health/ready`, and exercise login, first-login, CRUD,
    role denial, user administration, SAM status/import, file upload/download,
-   and SSE before enabling production writes.
+   atomic submit/cancel/restore, assignment repair, and SSE before enabling
+   production writes.
 
 The SQL is idempotent. Migration 001 never overwrites a password already changed
 through this service.
@@ -62,6 +68,7 @@ Routes:
 - `POST /api/v1/auth/first-login`
 - `POST /api/v1/auth/logout`
 - `POST /api/v1/data/query|insert|upsert|update|delete`
+- `POST /api/v1/opportunity-workflows`
 - `POST /api/v1/admin/users/actions`
 - `GET /api/v1/integrations/sam/status`
 - `POST /api/v1/integrations/sam/import`
@@ -76,6 +83,10 @@ each `orGroups` item is an OR group. Supported operators are `eq`, `neq`,
 `ilike`, `is`, `not.is`, and `in`. Existing database RLS and effective role/user
 permission overrides remain authoritative because each request runs in a short
 transaction with its account UUID set locally.
+
+Submit, cancel, restore, and tracker-repair actions use the opportunity-workflow
+route. It locks and updates both records in one transaction, rejects stale or
+ambiguous legacy state, and never deletes an opportunity during cancellation.
 
 Uploads are multipart requests with one `file` plus optional `folder`, `id`, and
 `attachedAt` fields. Physical filenames are server-generated UUIDs, never user
