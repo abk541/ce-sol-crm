@@ -17,6 +17,9 @@ export interface ActivityHistoryItem {
   user: string
   createdAt: string
   source: 'activity' | 'notification'
+  entityType?: ActivityLog['entityType']
+  entityId?: string
+  entityName?: string
 }
 
 export function canViewCompanyActivity(user?: User | null): boolean {
@@ -33,6 +36,9 @@ export function buildActivityHistory(
     user: log.user,
     createdAt: log.createdAt,
     source: 'activity',
+    entityType: log.entityType,
+    entityId: log.entityId,
+    entityName: log.entityName,
   })).sort(
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
   )
@@ -66,11 +72,17 @@ export function isNotificationVisibleTo(
 ): boolean {
   const { user, employees, contracts, opportunities = [], bdSubmissions = [] } = ctx
 
+  if (!user) return false
+
+  // Deadline edits are operationally private: only the assigned associate
+  // should receive the bell item and live popup. Keep manager oversight intact
+  // for all other direct notifications to avoid regressing company activity.
+  if (n.type === 'DEADLINE' && n.targetUserId) return n.targetUserId === user.id
+
   // Managers oversee company activity and must see every action, including
   // role- or user-targeted notifications. Team Leads and Associates remain
   // scoped to work that concerns them.
   if (canViewCompanyActivity(user)) return true
-  if (!user) return false
 
   if (n.targetUserId) return n.targetUserId === user.id
   if (n.targetRole && n.targetRole !== 'ALL') return n.targetRole === user.role
@@ -89,6 +101,62 @@ export function isNotificationVisibleTo(
   if (trackerRow) return isBDSubmissionAssociatedToUser(employees, user, trackerRow, opportunities)
 
   return n.targetRole === 'ALL'
+}
+
+/**
+ * Merges shared rows with private read receipts and optimistic local state.
+ * Locally-created alerts remain until their database upsert becomes visible.
+ */
+export function mergeNotificationSnapshot(
+  remote: Notification[],
+  local: Notification[],
+  receiptIds: Iterable<string> = [],
+): Notification[] {
+  const readIds = new Set(receiptIds)
+  local.forEach(notification => {
+    if (notification.read) readIds.add(notification.id)
+  })
+  const remoteIds = new Set(remote.map(notification => notification.id))
+  const localOnly = local.filter(notification => !remoteIds.has(notification.id))
+  return [
+    ...remote.map(notification => ({
+      ...notification,
+      // The migration converts every legacy shared read into per-account
+      // receipts and clears the shared flag. From then on, only a private
+      // receipt or an optimistic local read is authoritative.
+      read: readIds.has(notification.id),
+    })),
+    ...localOnly,
+  ].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
+}
+
+export interface NotificationArrivalSnapshot {
+  seen: Set<string> | null
+  fresh: Notification[]
+}
+
+/**
+ * Treats the first successful DB snapshot as history, then returns each later
+ * unread id once. An early empty render can no longer replay all old rows.
+ */
+export function reconcileNotificationArrivals(
+  notifications: Notification[],
+  ready: boolean,
+  seen: Set<string> | null,
+): NotificationArrivalSnapshot {
+  if (!ready) return { seen, fresh: [] }
+  if (seen === null) {
+    return { seen: new Set(notifications.map(notification => notification.id)), fresh: [] }
+  }
+
+  const nextSeen = new Set(seen)
+  const fresh: Notification[] = []
+  notifications.forEach(notification => {
+    if (nextSeen.has(notification.id)) return
+    nextSeen.add(notification.id)
+    if (!notification.read) fresh.push(notification)
+  })
+  return { seen: nextSeen, fresh }
 }
 
 export interface NotificationRouteContext {

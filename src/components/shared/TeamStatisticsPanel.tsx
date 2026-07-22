@@ -6,6 +6,16 @@ import {
 } from 'lucide-react'
 import { useStore } from '../../store/useStore'
 import { avatarColor } from '../../lib/utils'
+import {
+  bdSubmissionPeriodDate,
+  isSubmittedLifecycleRow,
+  uniqueBDSubmissionRows,
+} from '../../lib/dashboardMetrics'
+import {
+  activeEmployeeIdsForUsers,
+  isBDSubmissionAttributedToEmployee,
+  isNonSubmissionAttributedToEmployee,
+} from '../../lib/team'
 import PeriodFilter, { type Period, filterByPeriod } from './PeriodFilter'
 import AnimatedNumber from './AnimatedNumber'
 import type { Employee, EmployeeTeam, HierarchyRole } from '../../types'
@@ -20,10 +30,6 @@ const GOAL_BY_ROLE: Record<HierarchyRole, number> = {
   BD_MANAGER: 20,
   TEAM_LEAD: 15,
   ASSOCIATE: 10,
-}
-
-function normalize(value: string | undefined | null) {
-  return (value ?? '').trim().toLowerCase()
 }
 
 // All employee ids the current user is allowed to see (themselves + everyone below them in the hierarchy).
@@ -48,17 +54,21 @@ function visibleEmployeeIds(employees: Employee[], userRole: string, currentEmpl
 }
 
 export default function TeamStatisticsPanel({ defaultPeriod = null as Period | null }: { defaultPeriod?: Period | null }) {
-  const { currentUser, employees, users, bdSubmissions, nonSubReports } = useStore()
+  const { currentUser, employees, users, opportunities, bdSubmissions, nonSubReports } = useStore()
   const [period, setPeriod] = useState<Period | null>(defaultPeriod)
   const [teamFilter, setTeamFilter] = useState<'ALL' | EmployeeTeam>('ALL')
   const [personFilter, setPersonFilter] = useState<string>('ALL')
 
   const currentEmployee = useMemo(() => {
     if (!currentUser) return undefined
-    const email = normalize(currentUser.email)
-    const name = normalize(currentUser.name)
-    return employees.find(e => normalize(e.email) === email || normalize(e.name) === name)
+    const employeeIds = activeEmployeeIdsForUsers(employees, [currentUser])
+    return employees.find(employee => employeeIds.has(employee.id))
   }, [employees, currentUser])
+
+  const activeEmployeeIds = useMemo(
+    () => activeEmployeeIdsForUsers(employees, users),
+    [employees, users],
+  )
 
   const allowedIds = useMemo(
     () => visibleEmployeeIds(employees, currentUser?.role ?? 'ASSOCIATE', currentEmployee),
@@ -70,27 +80,29 @@ export default function TeamStatisticsPanel({ defaultPeriod = null as Period | n
   const canFilterByPerson = currentUser?.role !== 'ASSOCIATE'
 
   const scopedEmployees = useMemo(() => {
-    let list = employees.filter(e => allowedIds.has(e.id))
+    let list = employees.filter(e => allowedIds.has(e.id) && activeEmployeeIds.has(e.id))
     if (teamFilter !== 'ALL') list = list.filter(e => (e.team ?? 'BD') === teamFilter)
     if (personFilter !== 'ALL') list = list.filter(e => e.id === personFilter)
     // Sort: managers > team leads > associates, then alphabetical
     const order: Record<HierarchyRole, number> = { BD_MANAGER: 0, TEAM_LEAD: 1, ASSOCIATE: 2 }
     return list.sort((a, b) => (order[a.role] - order[b.role]) || a.name.localeCompare(b.name))
-  }, [employees, allowedIds, teamFilter, personFilter])
+  }, [employees, allowedIds, activeEmployeeIds, teamFilter, personFilter])
 
   const personOptions = useMemo(() => {
     return employees
-      .filter(e => allowedIds.has(e.id) && (teamFilter === 'ALL' || (e.team ?? 'BD') === teamFilter))
+      .filter(e => allowedIds.has(e.id) && activeEmployeeIds.has(e.id) && (teamFilter === 'ALL' || (e.team ?? 'BD') === teamFilter))
       .sort((a, b) => a.name.localeCompare(b.name))
-  }, [employees, allowedIds, teamFilter])
+  }, [employees, allowedIds, activeEmployeeIds, teamFilter])
 
   // Pre-compute submission and non-sub buckets filtered by period.
   const periodSubmissions = useMemo(
-    () => bdSubmissions.filter(s => filterByPeriod(s.submittedOn, period)),
+    () => uniqueBDSubmissionRows(bdSubmissions)
+      .filter(submission => filterByPeriod(bdSubmissionPeriodDate(submission), period)),
     [bdSubmissions, period],
   )
   const periodNonSubs = useMemo(
-    () => nonSubReports.filter(r => r.status !== 'DECLINED' && filterByPeriod(r.submittedAt, period)),
+    () => nonSubReports.filter(report =>
+      report.status === 'APPROVED' && filterByPeriod(report.reviewedAt || report.submittedAt, period)),
     [nonSubReports, period],
   )
 
@@ -110,18 +122,15 @@ export default function TeamStatisticsPanel({ defaultPeriod = null as Period | n
 
   const stats: EmployeeStat[] = useMemo(() => {
     return scopedEmployees.map(employee => {
-      const empName = normalize(employee.name)
-      const userRecord = users.find(u => normalize(u.email) === normalize(employee.email))
-      const userName = normalize(userRecord?.username)
-
-      const personalSubs = periodSubmissions.filter(s => {
-        const haystack = `${normalize(s.supportAgent)} ${normalize(s.bdm)} ${normalize(s.bds)}`
-        return empName && haystack.includes(empName)
-      })
+      const personalSubs = periodSubmissions
+        .filter(isSubmittedLifecycleRow)
+        .filter(submission =>
+          isBDSubmissionAttributedToEmployee(employees, employee, submission, opportunities))
       const submissions = personalSubs.length
       const wins = personalSubs.filter(s => s.status === 'AWARDED').length
-      const losses = personalSubs.filter(s => ['LOST', 'DROPPED', 'CANCELED'].includes(s.status)).length
-      const nonSubmissions = periodNonSubs.filter(r => normalize(r.agentUsername) === userName).length
+      const losses = personalSubs.filter(s => s.status === 'LOST').length
+      const nonSubmissions = periodNonSubs.filter(report =>
+        isNonSubmissionAttributedToEmployee(employees, employee, report, opportunities)).length
       const total = submissions + nonSubmissions
       const successRate = total ? Math.round((submissions / total) * 100) : 0
       const winRate = submissions ? Math.round((wins / submissions) * 100) : 0
@@ -134,29 +143,49 @@ export default function TeamStatisticsPanel({ defaultPeriod = null as Period | n
         total, successRate, winRate, goal, goalPct, goalAchieved,
       }
     })
-  }, [scopedEmployees, users, periodSubmissions, periodNonSubs])
+  }, [scopedEmployees, periodSubmissions, periodNonSubs, employees, opportunities])
+
+  const scopedSubmissionRows = useMemo(
+    () => periodSubmissions
+      .filter(isSubmittedLifecycleRow)
+      .filter(submission => scopedEmployees.some(employee =>
+        isBDSubmissionAttributedToEmployee(employees, employee, submission, opportunities))),
+    [periodSubmissions, scopedEmployees, employees, opportunities],
+  )
+
+  const scopedNonSubmissionRows = useMemo(
+    () => periodNonSubs.filter(report => scopedEmployees.some(employee =>
+      isNonSubmissionAttributedToEmployee(employees, employee, report, opportunities))),
+    [periodNonSubs, scopedEmployees, employees, opportunities],
+  )
 
   const totals = useMemo(() => {
-    const submissions = stats.reduce((s, r) => s + r.submissions, 0)
-    const nonSubmissions = stats.reduce((s, r) => s + r.nonSubmissions, 0)
     const goalsAchieved = stats.filter(r => r.goalAchieved).length
-    return { submissions, nonSubmissions, goalsAchieved, users: stats.length }
-  }, [stats])
+    return {
+      submissions: scopedSubmissionRows.length,
+      nonSubmissions: scopedNonSubmissionRows.length,
+      goalsAchieved,
+      users: stats.length,
+    }
+  }, [stats, scopedSubmissionRows, scopedNonSubmissionRows])
 
   const teamSplit = useMemo(() => {
     const map = new Map<EmployeeTeam, { submissions: number; nonSubmissions: number; count: number }>()
-    for (const s of stats) {
-      const team = (s.employee.team ?? 'BD') as EmployeeTeam
-      const cur = map.get(team) ?? { submissions: 0, nonSubmissions: 0, count: 0 }
-      cur.submissions += s.submissions
-      cur.nonSubmissions += s.nonSubmissions
-      cur.count += 1
-      map.set(team, cur)
+    const teams = new Set(scopedEmployees.map(employee => (employee.team ?? 'BD') as EmployeeTeam))
+    for (const team of teams) {
+      const teamEmployees = scopedEmployees.filter(employee => (employee.team ?? 'BD') === team)
+      const submissions = periodSubmissions
+        .filter(isSubmittedLifecycleRow)
+        .filter(submission => teamEmployees.some(employee =>
+          isBDSubmissionAttributedToEmployee(employees, employee, submission, opportunities))).length
+      const nonSubmissions = periodNonSubs.filter(report => teamEmployees.some(employee =>
+        isNonSubmissionAttributedToEmployee(employees, employee, report, opportunities))).length
+      map.set(team, { submissions, nonSubmissions, count: teamEmployees.length })
     }
     return Array.from(map.entries())
       .map(([team, v]) => ({ team, ...v }))
       .sort((a, b) => a.team.localeCompare(b.team))
-  }, [stats])
+  }, [scopedEmployees, periodSubmissions, periodNonSubs, employees, opportunities])
 
   const periodLabel = period
     ? `${period.from} - ${period.to}`

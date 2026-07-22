@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { Edit2, Filter, MoreHorizontal, Paperclip, RotateCcw, Search, Trash2, TrendingUp, UploadCloud, Users2, X } from 'lucide-react'
+import { ChevronDown, ChevronUp, Edit2, Filter, MoreHorizontal, Paperclip, RotateCcw, Search, Trash2, TrendingUp, UploadCloud, Users2, X } from 'lucide-react'
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts'
 import type { BDSubmission, ContractType, FileAttachment, Opportunity, SetAside } from '../types'
 import { useStore } from '../store/useStore'
@@ -12,7 +12,8 @@ import { formatCurrency } from '../lib/utils'
 import { uploadAttachment, downloadAttachment, hasAttachmentSource } from '../lib/attachments'
 import FloatingActionMenu from '../components/shared/FloatingActionMenu'
 import { hasPermission } from '../lib/permissions'
-import { isSubmittedLifecycleRow, uniqueBDSubmissionRows } from '../lib/dashboardMetrics'
+import { bdSubmissionPeriodDate, isSubmittedLifecycleRow, uniqueBDSubmissionRows } from '../lib/dashboardMetrics'
+import { bdTrackerAssociateOutcomes, parseBDTrackerAmount, sortBDSubmissionsByDueDateTime } from '../lib/bdTracker'
 import DetailDrawer, { DrawerField, DrawerSection } from '../components/shared/DetailDrawer'
 import SamGovListingButton from '../components/shared/SamGovListingButton'
 import { MandatoryEventsEditor, MandatoryEventsList } from '../components/shared/MandatoryEvents'
@@ -150,7 +151,9 @@ function trackerEditInitial(
     localTime: opp?.localTime ?? row.localTime ?? '',
     timezone: opp?.timezone ?? '',
     location: row.location ?? '',
-    value: String(row.value ?? 0),
+    contractAmount: String(opp?.contractAmount ?? opp?.value ?? row.value ?? 0),
+    baseAmount: opp?.baseAmount == null ? '' : String(opp.baseAmount),
+    monthlyPayment: opp?.monthlyPayment == null ? '' : String(opp.monthlyPayment),
     comment: row.comment ?? '',
     mandatoryEvents: opp?.mandatoryEvents ?? '',
     mandatoryEventsList: opp?.mandatoryEventsList ?? [],
@@ -160,13 +163,14 @@ function trackerEditInitial(
 }
 
 type TrackerEditForm = ReturnType<typeof trackerEditInitial>
-type TrackerStringField = Exclude<keyof TrackerEditForm, 'proposalAttachments'>
+type TrackerStringField = Exclude<keyof TrackerEditForm, 'proposalAttachments' | 'mandatoryEventsList'>
 
 function BDTrackerEditModal({
   row,
   opportunity,
   employees,
   canEditAssignment,
+  canEditContractValues,
   uploadedBy,
   onClose,
   onSave,
@@ -175,6 +179,7 @@ function BDTrackerEditModal({
   opportunity?: Opportunity | null
   employees: ReturnType<typeof useStore.getState>['employees']
   canEditAssignment: boolean
+  canEditContractValues: boolean
   uploadedBy: string
   onClose: () => void
   onSave: (form: TrackerEditForm) => Promise<boolean>
@@ -278,10 +283,61 @@ function BDTrackerEditModal({
             <span className="mb-1 block text-[10px] font-black uppercase tracking-wide text-slate-400">Location</span>
             <input className="input-field w-full" value={form.location} onChange={e => update('location', e.target.value)} />
           </label>
-          <label>
-            <span className="mb-1 block text-[10px] font-black uppercase tracking-wide text-slate-400">Value</span>
-            <input className="input-field w-full" type="number" min="0" value={form.value} onChange={e => update('value', e.target.value)} />
-          </label>
+          <div className="md:col-span-2 rounded-xl border border-[#D7BE7A]/20 bg-white/5 p-3">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <span className="text-[10px] font-black uppercase tracking-[0.18em] text-[#D7BE7A]">Contract Dollar Amounts</span>
+              {!canEditContractValues && (
+                <span className="rounded-full border border-slate-600/50 bg-slate-700/30 px-2 py-1 text-[10px] font-bold text-slate-300">
+                  Admin only
+                </span>
+              )}
+            </div>
+            <div className={`grid gap-3 ${opportunity ? 'md:grid-cols-3' : 'md:grid-cols-1'}`}>
+              <label>
+                <span className="mb-1 block text-[10px] font-black uppercase tracking-wide text-slate-400">Total Contract Amount ($)</span>
+                <input
+                  className="input-field w-full disabled:cursor-not-allowed disabled:opacity-60"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={form.contractAmount}
+                  disabled={!canEditContractValues}
+                  onChange={e => update('contractAmount', e.target.value)}
+                />
+              </label>
+              {opportunity && (
+                <>
+                  <label>
+                    <span className="mb-1 block text-[10px] font-black uppercase tracking-wide text-slate-400">Yearly Value ($)</span>
+                    <input
+                      className="input-field w-full disabled:cursor-not-allowed disabled:opacity-60"
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={form.baseAmount}
+                      disabled={!canEditContractValues}
+                      onChange={e => update('baseAmount', e.target.value)}
+                    />
+                  </label>
+                  <label>
+                    <span className="mb-1 block text-[10px] font-black uppercase tracking-wide text-slate-400">Monthly Value ($)</span>
+                    <input
+                      className="input-field w-full disabled:cursor-not-allowed disabled:opacity-60"
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={form.monthlyPayment}
+                      disabled={!canEditContractValues}
+                      onChange={e => update('monthlyPayment', e.target.value)}
+                    />
+                  </label>
+                </>
+              )}
+            </div>
+            {!canEditContractValues && (
+              <p className="mt-2 text-[11px] text-slate-400">You can edit the opportunity details, but only an Admin can change submitted contract amounts.</p>
+            )}
+          </div>
           <label className="md:col-span-2">
             <span className="mb-1 block text-[10px] font-black uppercase tracking-wide text-slate-400">Comment</span>
             <textarea className="input-field min-h-[90px] w-full resize-none" value={form.comment} onChange={e => update('comment', e.target.value)} />
@@ -448,7 +504,10 @@ export default function BDTrackerPage() {
     currentUser,
   } = useStore()
   const canEditOpportunities = hasPermission(currentUser, 'opportunity:edit')
-  const canEditAssignment = canEditOpportunities && hasPermission(currentUser, 'opportunity:assign')
+  const canEditContractValues = hasPermission(currentUser, 'admin:manageUsers')
+  const canEditTrackerRecord = canEditOpportunities || canEditContractValues
+  const canEditAssignment = canEditTrackerRecord
+    && (hasPermission(currentUser, 'opportunity:assign') || canEditContractValues)
   const canCancelOpportunities = hasPermission(currentUser, 'opportunity:cancel')
   const canTransitionSubmitted = hasPermission(currentUser, 'opportunity:submitProposal')
     || canEditOpportunities
@@ -469,6 +528,7 @@ export default function BDTrackerPage() {
   const [filters, setFilters] = useState<Filters>(() => ({ ...EMPTY_FILTERS }))
   const [page, setPage] = useState(1)
   const [perPage, setPerPage] = useState<PerPageOption>(25)
+  const [dashboardExpanded, setDashboardExpanded] = useState(true)
 
   useEffect(() => {
     if (!globalRecordId && !globalTab) return
@@ -511,7 +571,7 @@ export default function BDTrackerPage() {
     let list = uniqueBDSubmissionRows(bdSubmissions)
     list = list.filter(row =>
       isBDSubmissionAssociatedToUser(employees, currentUser, row, opportunities))
-    if (period) list = list.filter(s => filterByPeriod(s.dueDate || s.submittedOn, period))
+    if (period) list = list.filter(s => filterByPeriod(bdSubmissionPeriodDate(s), period))
     if (search.trim()) {
       const q = search.trim().toLowerCase()
       list = list.filter(s =>
@@ -528,7 +588,10 @@ export default function BDTrackerPage() {
     return list
   }, [bdSubmissions, period, search, filters, opportunities, employees, currentUser])
 
-  const filtered = useMemo(() => baseFiltered.filter(s => s.status === tab), [baseFiltered, tab])
+  const filtered = useMemo(
+    () => sortBDSubmissionsByDueDateTime(baseFiltered.filter(s => s.status === tab), opportunities),
+    [baseFiltered, tab, opportunities],
+  )
 
   const totalRows = filtered.length
   const perPageNum = perPage === 'All' ? totalRows || 1 : (perPage as number)
@@ -553,19 +616,7 @@ export default function BDTrackerPage() {
   }, [baseFiltered])
 
   const associateOutcomes = useMemo(() => {
-    const counts: Record<string, { name: string; submitted: number; nonSubmitted: number; dropped: number; total: number }> = {}
-    baseFiltered.forEach(row => {
-      const chain = getBDSubmissionAssignmentChain(employees, row, opportunities)
-      const key = chain.associate?.name || row.supportAgent || 'Unassigned'
-      const current = counts[key] || { name: key, submitted: 0, nonSubmitted: 0, dropped: 0, total: 0 }
-      if (row.status === 'NOT_SUBMITTED') current.nonSubmitted += 1
-      else if (row.status === 'DROPPED') current.dropped += 1
-      else if (isSubmittedLifecycleRow(row)) current.submitted += 1
-      else return
-      current.total += 1
-      counts[key] = current
-    })
-    return Object.values(counts).sort((a, b) => b.total - a.total || a.name.localeCompare(b.name)).slice(0, 8)
+    return bdTrackerAssociateOutcomes(baseFiltered, opportunities, employees)
   }, [baseFiltered, opportunities, employees])
 
   const clearFilters = () => {
@@ -581,7 +632,26 @@ export default function BDTrackerPage() {
   }
 
   const saveTrackerDetails = async (row: BDSubmission, opportunity: Opportunity | null | undefined, form: TrackerEditForm) => {
-    const value = Number(form.value) || 0
+    const parseAmount = (raw: string, label: string, required = false) => {
+      const parsed = parseBDTrackerAmount(raw, required)
+      if (!parsed.valid) {
+        toast.error(`${label} must be a valid non-negative amount.`)
+      }
+      return parsed
+    }
+    const contractAmountResult = canEditContractValues
+      ? parseAmount(form.contractAmount, 'Total contract amount', true)
+      : { valid: true as const, value: null }
+    const baseAmountResult = canEditContractValues
+      ? parseAmount(form.baseAmount, 'Yearly value')
+      : { valid: true as const, value: null }
+    const monthlyPaymentResult = canEditContractValues
+      ? parseAmount(form.monthlyPayment, 'Monthly value')
+      : { valid: true as const, value: null }
+    if (!contractAmountResult.valid || !baseAmountResult.valid || !monthlyPaymentResult.valid) return false
+    const contractAmount = contractAmountResult.value
+    const baseAmount = baseAmountResult.value
+    const monthlyPayment = monthlyPaymentResult.value
     const assignment = getAssignmentChain(employees, form.assignedTo || undefined)
     const assignmentSnapshot = canEditAssignment ? {
       bdm: assignment.manager?.name ?? '',
@@ -596,13 +666,19 @@ export default function BDTrackerPage() {
         setAside: form.setAside as SetAside,
         naicsCode: form.naicsCode,
         dueDate: form.dueDate,
+        localTime: form.localTime,
+        timezone: form.timezone,
         location: form.location,
-        contractAmount: value,
-        value,
         mandatoryEvents: form.mandatoryEvents,
         mandatoryEventsList: form.mandatoryEventsList,
         proposalAttachments: form.proposalAttachments,
         proposals: form.proposalAttachments.map(att => att.name).filter(Boolean),
+        ...(canEditContractValues ? {
+          contractAmount: contractAmount ?? 0,
+          value: contractAmount ?? 0,
+          baseAmount,
+          monthlyPayment,
+        } : {}),
         ...(canEditAssignment ? { assignedTo: form.assignedTo || null, ...assignmentSnapshot } : {}),
       }
       : undefined
@@ -611,10 +687,10 @@ export default function BDTrackerPage() {
       type: form.type as ContractType,
       setAside: form.setAside as SetAside,
       dueDate: form.dueDate,
-      localTime: row.localTime,
+      localTime: form.localTime,
       location: form.location,
-      value,
       comment: form.comment,
+      ...(canEditContractValues ? { value: contractAmount ?? 0 } : {}),
       ...assignmentSnapshot,
     }, opportunityValues)
     if (!trackerSaved) return false
@@ -657,7 +733,25 @@ export default function BDTrackerPage() {
       </div>
 
       <div className="rounded-2xl border border-[var(--border-default)] bg-[var(--bg-card)] p-4 shadow-sm">
-        <div className="grid gap-4 lg:grid-cols-[300px_minmax(0,1fr)]">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-black text-[var(--text-primary)]">BD Tracker Dashboard</p>
+            <p className="mt-1 text-xs text-[var(--text-muted)]">Outcome totals for every associate in the current filters.</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setDashboardExpanded(expanded => !expanded)}
+            className="btn-secondary inline-flex items-center gap-1.5 text-xs"
+            aria-expanded={dashboardExpanded}
+            aria-controls="bd-tracker-outcome-dashboard"
+          >
+            {dashboardExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+            {dashboardExpanded ? 'Hide dashboard' : 'Show dashboard'}
+          </button>
+        </div>
+
+        {dashboardExpanded && (
+        <div id="bd-tracker-outcome-dashboard" className="mt-4 grid gap-4 lg:grid-cols-[300px_minmax(0,1fr)]">
           <div>
             <p className="text-sm font-bold text-[var(--text-primary)]">Associate Outcome Mix</p>
             <p className="mt-1 text-xs text-[var(--text-muted)]">Submission, non-submission, and dropped outcomes from the current filters.</p>
@@ -692,7 +786,7 @@ export default function BDTrackerPage() {
                   { name: 'Dropped', value: row.dropped, color: STATUS_META.DROPPED.color },
                 ].filter(s => s.value > 0)
                 return (
-                  <div key={row.name} className="rounded-xl border border-[var(--border-default)] bg-white/[0.03] p-3">
+                  <div key={row.key} className="rounded-xl border border-[var(--border-default)] bg-white/[0.03] p-3">
                     <p className="truncate text-sm font-black text-[var(--text-primary)]">{row.name}</p>
                     <div className="relative mt-2 h-28">
                       {slices.length === 0 ? (
@@ -732,6 +826,7 @@ export default function BDTrackerPage() {
             )}
           </div>
         </div>
+        )}
       </div>
 
       <div>
@@ -845,7 +940,14 @@ export default function BDTrackerPage() {
                       <td className="max-w-[240px]"><p className="truncate text-xs font-medium text-slate-800">{s.solicitation}</p></td>
                       <td><span className="rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600">{s.setAside}</span></td>
                       <td><span className="rounded-md bg-indigo-50 px-2 py-0.5 text-[10px] font-semibold text-indigo-600">{typeLabel(s.type)}</span></td>
-                      <td className="whitespace-nowrap text-xs text-slate-500">{s.dueDate}</td>
+                      <td className="whitespace-nowrap text-xs text-slate-500">
+                        <p>{s.dueDate || '-'}</p>
+                        {(opp?.localTime || s.localTime) && (
+                          <p className="mt-0.5 text-[10px] text-slate-400">
+                            {opp?.localTime || s.localTime}{opp?.timezone ? ` ${opp.timezone}` : ''}
+                          </p>
+                        )}
+                      </td>
                       <td className="max-w-[120px] text-xs text-slate-500"><p className="truncate">{s.location}</p></td>
                       <td className="text-xs text-slate-600">{chain.manager?.name ?? s.bdm ?? '-'}</td>
                       <td className="text-xs text-slate-600">{chain.teamLead?.name ?? s.bds ?? '-'}</td>
@@ -883,7 +985,7 @@ export default function BDTrackerPage() {
                                     <Users2 size={13} /> Sourcing
                                   </button>
                                 )}
-                                {canEditOpportunities && (
+                                {canEditTrackerRecord && (
                                   <button
                                     onClick={() => {
                                       openEditForRow(s)
@@ -891,7 +993,7 @@ export default function BDTrackerPage() {
                                     }}
                                     className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50 hover:text-slate-900"
                                   >
-                                    <Edit2 size={13} /> Edit Values
+                                    <Edit2 size={13} /> Edit Record
                                   </button>
                                 )}
                                 {canEditOpportunities && (
@@ -1102,14 +1204,14 @@ export default function BDTrackerPage() {
                     </DrawerSection>
                   ) : null}
 
-                  {(selectedOpportunity || canEditOpportunities) && (
+                  {(selectedOpportunity || canEditTrackerRecord) && (
                     <div className="sticky bottom-0 -mx-6 -mb-5 mt-4 flex justify-end gap-2 border-t border-[#D7BE7A]/15 bg-[#07131F]/95 px-6 py-4 backdrop-blur">
                       {selectedOpportunity && (
                         <button className="btn-secondary gap-2 text-xs" onClick={() => setSourcingOpp(selectedOpportunity)}>
                           <Users2 size={13} /> Sourcing
                         </button>
                       )}
-                      {canEditOpportunities && (
+                      {canEditTrackerRecord && (
                         <button className="btn-primary gap-2 text-xs" onClick={() => openEditForRow(selectedRow)}>
                           <Edit2 size={13} /> Edit Record
                         </button>
@@ -1129,6 +1231,7 @@ export default function BDTrackerPage() {
           opportunity={editingOpportunity}
           employees={employees}
           canEditAssignment={canEditAssignment}
+          canEditContractValues={canEditContractValues}
           uploadedBy={currentUser?.username ?? currentUser?.name ?? 'unknown'}
           onClose={() => setEditingRowId(null)}
           onSave={form => saveTrackerDetails(editingRow, editingOpportunity, form)}

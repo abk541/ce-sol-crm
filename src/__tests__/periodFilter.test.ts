@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { filterByPeriod, normalizePeriodDate, type Period } from '../components/shared/PeriodFilter'
+import {
+  filterByPeriod,
+  filterRangeByPeriod,
+  normalizePeriodDate,
+  type Period,
+} from '../components/shared/PeriodFilter'
 
 const july: Period = {
   label: 'July 2026',
@@ -23,5 +28,17 @@ describe('dashboard period filtering', () => {
     expect(filterByPeriod(undefined, july)).toBe(false)
     expect(filterByPeriod('not-a-date', july)).toBe(false)
     expect(filterByPeriod(undefined, null)).toBe(true)
+  })
+
+  it('keeps contracts whose performance range overlaps the selected period', () => {
+    expect(filterRangeByPeriod('2026-06-15', '2026-07-02', july)).toBe(true)
+    expect(filterRangeByPeriod('2026-07-30', '2026-08-15', july)).toBe(true)
+    expect(filterRangeByPeriod('2026-06-01', '2026-06-30', july)).toBe(false)
+  })
+
+  it('normalizes reversed ranges and excludes undated ranges only when filtering', () => {
+    expect(filterRangeByPeriod('2026-07-20', '2026-07-10', july)).toBe(true)
+    expect(filterRangeByPeriod(undefined, undefined, july)).toBe(false)
+    expect(filterRangeByPeriod(undefined, undefined, null)).toBe(true)
   })
 })

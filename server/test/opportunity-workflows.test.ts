@@ -72,6 +72,29 @@ describe('opportunity workflow request validation', () => {
     expect(() => __test.parseRequest({
       action: 'return', submissionId: 1, targetOpportunityStatus: 'ACTIVE',
     })).toThrowError(/expectedOpportunityStatus/)
+
+    expect(__test.parseRequest({
+      action: 'edit',
+      submissionId: 1,
+      expectedSubmissionStatus: 'SUBMITTED',
+      values: { value: 300 },
+      opportunityValues: {
+        contractAmount: 300,
+        baseAmount: 120,
+        monthlyPayment: 10,
+        localTime: '11:30',
+        timezone: 'CT',
+      },
+    })).toMatchObject({
+      values: { value: 300 },
+      opportunityValues: {
+        contractAmount: 300,
+        baseAmount: 120,
+        monthlyPayment: 10,
+        localTime: '11:30',
+        timezone: 'CT',
+      },
+    })
   })
 
   it('recognizes only the finite generated cancellation comments', () => {
@@ -117,6 +140,92 @@ describe('atomic opportunity workflows', () => {
     const trackerLock = statements.findIndex((text) => text.includes('from public.bd_submissions') && text.includes('for update'))
     expect(opportunityLock).toBeGreaterThan(-1)
     expect(trackerLock).toBeGreaterThan(opportunityLock)
+  })
+
+  it.each([
+    ['contractAmount', 101],
+    ['baseAmount', 26],
+    ['monthlyPayment', 11],
+  ] as const)('requires Admin when a resubmission would change %s', async (key, nextValue) => {
+    const statements: string[] = []
+    const client = queryable((text) => {
+      if (text.includes('private.has_permission')) return permissionRows('opportunity:submitProposal')
+      if (text.includes('from public.opportunities') && text.includes('for update')) {
+        return [{
+          ...opportunity,
+          contract_amount: '100.00',
+          base_amount: '25.00',
+          monthly_payment: '10.00',
+        }]
+      }
+      if (text.includes('where opportunity_id = $1 for update')) return [submission]
+      throw new Error(`Unexpected query: ${text}`)
+    }, statements)
+
+    await expect(executeOpportunityWorkflow(client, {
+      action: 'submit',
+      opportunityId: 'opp-1',
+      expectedOpportunityStatus: 'ACTIVE',
+      expectedSubmissionStatus: 'SUBMITTED',
+      values: { [key]: nextValue },
+    }, new Date())).rejects.toMatchObject({ statusCode: 403, code: 'forbidden' })
+    expect(statements.some((text) => text.startsWith('update public.opportunities'))).toBe(false)
+    expect(statements.some((text) => text.startsWith('update public.bd_submissions'))).toBe(false)
+  })
+
+  it('allows a submitter to repeat equivalent persisted financial values', async () => {
+    const persistedOpportunity = {
+      ...opportunity,
+      contract_amount: '100.00',
+      base_amount: '0.500',
+      monthly_payment: null,
+    }
+    const client = queryable((text) => {
+      if (text.includes('private.has_permission')) return permissionRows('opportunity:submitProposal')
+      if (text.includes('from public.opportunities') && text.includes('for update')) return [persistedOpportunity]
+      if (text.includes('where opportunity_id = $1 for update')) return [submission]
+      if (text.startsWith('update public.opportunities')) {
+        return [{ ...persistedOpportunity, status: 'SUBMITTED' }]
+      }
+      if (text.startsWith('update public.bd_submissions')) return [submission]
+      throw new Error(`Unexpected query: ${text}`)
+    })
+
+    await expect(executeOpportunityWorkflow(client, {
+      action: 'submit',
+      opportunityId: 'opp-1',
+      expectedOpportunityStatus: 'ACTIVE',
+      expectedSubmissionStatus: 'SUBMITTED',
+      values: { contractAmount: 100, baseAmount: '.5', monthlyPayment: null },
+    }, new Date())).resolves.toMatchObject({
+      opportunity: { status: 'SUBMITTED' },
+      submission: { id: 41 },
+    })
+  })
+
+  it.each([
+    ['a prior submission timestamp', { status: 'ACTIVE', submitted_at: '2026-07-20T10:00:00.000Z' }],
+    ['a post-submit lifecycle status', { status: 'SUBMITTED', submitted_at: null }],
+  ])('Admin-gates financial changes after an orphaned tracker when the opportunity has %s', async (_label, priorState) => {
+    const statements: string[] = []
+    const client = queryable((text) => {
+      if (text.includes('private.has_permission')) return permissionRows('opportunity:submitProposal')
+      if (text.includes('from public.opportunities') && text.includes('for update')) {
+        return [{ ...opportunity, ...priorState, contract_amount: '100.00' }]
+      }
+      if (text.includes('where opportunity_id = $1 for update')) return []
+      if (text.includes('opportunity_id is null')) return []
+      throw new Error(`Unexpected query: ${text}`)
+    }, statements)
+
+    await expect(executeOpportunityWorkflow(client, {
+      action: 'submit',
+      opportunityId: 'opp-1',
+      expectedOpportunityStatus: priorState.status,
+      values: { contractAmount: 101 },
+    }, new Date())).rejects.toMatchObject({ statusCode: 403, code: 'forbidden' })
+    expect(statements.some((text) => text.startsWith('update public.opportunities'))).toBe(false)
+    expect(statements.some((text) => text.startsWith('insert into public.bd_submissions'))).toBe(false)
   })
 
   it('atomically clears a pending non-submission report when an associate submits late', async () => {
@@ -589,6 +698,175 @@ describe('atomic opportunity workflows', () => {
       opportunity: { assigned_to: 'employee-2', bdm: 'New manager' },
       submission: { bdm: 'New manager' },
     })
+  })
+
+  it.each([
+    ['dueDate', 'due_date', '2026-08-02'],
+    ['localTime', 'local_time', '11:30'],
+    ['timezone', 'timezone', 'CT'],
+  ] as const)('resets both due reminders atomically when %s changes', async (key, column, nextValue) => {
+    const statements: string[] = []
+    const scheduledOpportunity = {
+      ...opportunity,
+      notified_due_24h: true,
+      notified_due_4h: true,
+    }
+    const client = queryable((text, values) => {
+      if (text.includes('private.has_permission')) return permissionRows('opportunity:edit')
+      if (text.startsWith('select id, opportunity_id')) return [{ id: 41, opportunity_id: 'opp-1' }]
+      if (text.includes('from public.opportunities') && text.includes('for update')) return [scheduledOpportunity]
+      if (text.includes('from public.bd_submissions') && text.includes('for update')) return [submission]
+      if (text.startsWith('update public.opportunities')) {
+        expect(text).toContain(`"${column}"`)
+        expect(text).toContain('notified_due_24h = false')
+        expect(text).toContain('notified_due_4h = false')
+        expect(values).toContain(nextValue)
+        return [{
+          ...scheduledOpportunity,
+          [column]: nextValue,
+          notified_due_24h: false,
+          notified_due_4h: false,
+        }]
+      }
+      if (text.startsWith('update public.bd_submissions')) return [submission]
+      throw new Error(`Unexpected query: ${text}`)
+    }, statements)
+
+    await expect(executeOpportunityWorkflow(client, {
+      action: 'edit',
+      submissionId: 41,
+      expectedOpportunityStatus: 'ACTIVE',
+      expectedSubmissionStatus: 'SUBMITTED',
+      opportunityValues: { [key]: nextValue },
+    }, new Date())).resolves.toMatchObject({
+      opportunity: { notified_due_24h: false, notified_due_4h: false },
+    })
+    expect(statements.filter((text) => text.startsWith('update public.opportunities'))).toHaveLength(1)
+  })
+
+  it('preserves due reminder watermarks when submitted schedule values are unchanged', async () => {
+    const statements: string[] = []
+    const scheduledOpportunity = {
+      ...opportunity,
+      notified_due_24h: true,
+      notified_due_4h: true,
+    }
+    const client = queryable((text) => {
+      if (text.includes('private.has_permission')) return permissionRows('opportunity:edit')
+      if (text.startsWith('select id, opportunity_id')) return [{ id: 41, opportunity_id: 'opp-1' }]
+      if (text.includes('from public.opportunities') && text.includes('for update')) return [scheduledOpportunity]
+      if (text.includes('from public.bd_submissions') && text.includes('for update')) return [submission]
+      if (text.startsWith('update public.opportunities')) {
+        expect(text).not.toContain('notified_due_24h')
+        expect(text).not.toContain('notified_due_4h')
+        return [scheduledOpportunity]
+      }
+      if (text.startsWith('update public.bd_submissions')) return [submission]
+      throw new Error(`Unexpected query: ${text}`)
+    }, statements)
+
+    await expect(executeOpportunityWorkflow(client, {
+      action: 'edit',
+      submissionId: 41,
+      expectedOpportunityStatus: 'ACTIVE',
+      expectedSubmissionStatus: 'SUBMITTED',
+      opportunityValues: {
+        dueDate: opportunity.due_date,
+        localTime: opportunity.local_time,
+        timezone: opportunity.timezone,
+      },
+    }, new Date())).resolves.toMatchObject({
+      opportunity: { notified_due_24h: true, notified_due_4h: true },
+    })
+    expect(statements.filter((text) => text.startsWith('update public.opportunities'))).toHaveLength(1)
+  })
+
+  it('treats null and blank schedule values as equivalent without resetting reminders', async () => {
+    const scheduledOpportunity = {
+      ...opportunity,
+      due_date: null,
+      local_time: null,
+      timezone: null,
+      notified_due_24h: true,
+      notified_due_4h: true,
+    }
+    const client = queryable((text) => {
+      if (text.includes('private.has_permission')) return permissionRows('opportunity:edit')
+      if (text.startsWith('select id, opportunity_id')) return [{ id: 41, opportunity_id: 'opp-1' }]
+      if (text.includes('from public.opportunities') && text.includes('for update')) return [scheduledOpportunity]
+      if (text.includes('from public.bd_submissions') && text.includes('for update')) return [submission]
+      if (text.startsWith('update public.opportunities')) {
+        expect(text).not.toContain('notified_due_24h')
+        expect(text).not.toContain('notified_due_4h')
+        return [{ ...scheduledOpportunity, due_date: '', local_time: ' ', timezone: '' }]
+      }
+      if (text.startsWith('update public.bd_submissions')) return [submission]
+      throw new Error(`Unexpected query: ${text}`)
+    })
+
+    await expect(executeOpportunityWorkflow(client, {
+      action: 'edit',
+      submissionId: 41,
+      expectedOpportunityStatus: 'ACTIVE',
+      expectedSubmissionStatus: 'SUBMITTED',
+      opportunityValues: { dueDate: '', localTime: ' ', timezone: '' },
+    }, new Date())).resolves.toMatchObject({
+      opportunity: { notified_due_24h: true, notified_due_4h: true },
+    })
+  })
+
+  it('allows only an Admin to edit submitted contract dollar amounts', async () => {
+    const denied = queryable((text) => {
+      if (text.includes('private.has_permission')) return permissionRows('opportunity:edit')
+      throw new Error(`Unexpected query: ${text}`)
+    })
+    await expect(executeOpportunityWorkflow(denied, {
+      action: 'edit',
+      submissionId: 41,
+      expectedSubmissionStatus: 'SUBMITTED',
+      values: { value: 900 },
+      opportunityValues: { contractAmount: 900, baseAmount: 120, monthlyPayment: 10 },
+    }, new Date())).rejects.toMatchObject({ statusCode: 403, code: 'forbidden' })
+
+    const statements: string[] = []
+    const admin = queryable((text, values) => {
+      if (text.includes('private.has_permission')) return permissionRows('admin:manageUsers')
+      if (text.startsWith('select id, opportunity_id')) return [{ id: 41, opportunity_id: 'opp-1' }]
+      if (text.includes('from public.opportunities') && text.includes('for update')) return [opportunity]
+      if (text.includes('from public.bd_submissions') && text.includes('for update')) return [submission]
+      if (text.startsWith('update public.opportunities')) {
+        expect(text).toContain('"contract_amount"')
+        expect(text).toContain('"base_amount"')
+        expect(text).toContain('"monthly_payment"')
+        expect(values).toEqual(expect.arrayContaining([900, 120, 10]))
+        return [{
+          ...opportunity,
+          contract_amount: 900,
+          base_amount: 120,
+          monthly_payment: 10,
+          value: 900,
+        }]
+      }
+      if (text.startsWith('update public.bd_submissions')) {
+        expect(values).toContain(900)
+        return [{ ...submission, value: 900 }]
+      }
+      throw new Error(`Unexpected query: ${text}`)
+    }, statements)
+
+    await expect(executeOpportunityWorkflow(admin, {
+      action: 'edit',
+      submissionId: 41,
+      expectedOpportunityStatus: 'ACTIVE',
+      expectedSubmissionStatus: 'SUBMITTED',
+      values: { value: 900 },
+      opportunityValues: { contractAmount: 900, baseAmount: 120, monthlyPayment: 10, value: 900 },
+    }, new Date())).resolves.toMatchObject({
+      opportunity: { contract_amount: 900, base_amount: 120, monthly_payment: 10 },
+      submission: { value: 900 },
+    })
+    expect(statements.some((text) => text.startsWith('update public.opportunities'))).toBe(true)
+    expect(statements.some((text) => text.startsWith('update public.bd_submissions'))).toBe(true)
   })
 
   it('requires delete approval before reading or deleting a submitted opportunity', async () => {

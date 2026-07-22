@@ -1,4 +1,4 @@
-import type { BDSubmission, Contract, Employee, EmployeeTeam, Opportunity, User } from '../types'
+import type { BDSubmission, Contract, Employee, EmployeeTeam, NonSubmissionReport, Opportunity, User } from '../types'
 
 export const ROLE_DISPLAY_LABELS: Record<string, string> = {
   BD_MANAGER: 'Manager',
@@ -129,6 +129,34 @@ export function findUserForEmployee(users: User[], employee?: Employee | null): 
     user.email?.toLowerCase() === email ||
     user.name.toLowerCase() === employee.name.toLowerCase(),
   )
+}
+
+/**
+ * Resolve the current employee roster from active accounts without using a
+ * name-only fallback. Migrated databases can contain old employee rows with
+ * the same display name, so a name match would incorrectly reactivate them.
+ * An exact shared id wins; email is used only when it identifies one employee.
+ */
+export function activeEmployeeIdsForUsers(employees: Employee[], users: User[]): Set<string> {
+  const employeeById = new Map(employees.map(employee => [employee.id, employee]))
+  const employeesByEmail = new Map<string, Employee[]>()
+  for (const employee of employees) {
+    const email = normalizeName(employee.email)
+    if (!email) continue
+    employeesByEmail.set(email, [...(employeesByEmail.get(email) ?? []), employee])
+  }
+
+  const activeIds = new Set<string>()
+  for (const user of users) {
+    if (user.status !== 'active') continue
+    if (employeeById.has(user.id)) {
+      activeIds.add(user.id)
+      continue
+    }
+    const emailMatches = employeesByEmail.get(normalizeName(user.email)) ?? []
+    if (emailMatches.length === 1) activeIds.add(emailMatches[0]!.id)
+  }
+  return activeIds
 }
 
 // True for users on the OPS team below manager (i.e. Ops Team Lead / Ops Associate).
@@ -378,6 +406,24 @@ export function isBDSubmissionAssociatedToUser(
     [submission.bdm, submission.bds, submission.supportAgent]
       .some(reference => employeeMatchesReference(employee, reference)) &&
     isOpportunityOwnedByUser(employees, user, employee.id))
+}
+
+/** Attribute an approved non-submission to the same hierarchy as its source opportunity. */
+export function isNonSubmissionAttributedToEmployee(
+  employees: Employee[],
+  employee: Employee,
+  report: Pick<NonSubmissionReport, 'opportunityId' | 'agentUsername'>,
+  opportunities: Opportunity[],
+): boolean {
+  const opportunity = opportunities.find(candidate => candidate.id === report.opportunityId)
+  const chain = getAssignmentChain(employees, opportunity?.assignedTo)
+  if (
+    chain.manager?.id === employee.id ||
+    chain.teamLead?.id === employee.id ||
+    chain.associate?.id === employee.id
+  ) return true
+
+  return employeeMatchesReference(employee, report.agentUsername)
 }
 
 export function assignmentWorkloadByEmployee({

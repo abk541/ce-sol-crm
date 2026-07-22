@@ -80,6 +80,23 @@ export function filterByPeriod(dateStr: string | undefined, period: Period | nul
   return d >= period.from && d <= period.to
 }
 
+/** Keep records whose date range overlaps any part of the selected period. */
+export function filterRangeByPeriod(
+  startDate: string | undefined,
+  endDate: string | undefined,
+  period: Period | null,
+): boolean {
+  if (!period) return true
+  const normalizedStart = normalizePeriodDate(startDate)
+  const normalizedEnd = normalizePeriodDate(endDate)
+  if (!normalizedStart && !normalizedEnd) return false
+  const rangeStart = normalizedStart ?? normalizedEnd!
+  const rangeEnd = normalizedEnd ?? normalizedStart!
+  const from = rangeStart <= rangeEnd ? rangeStart : rangeEnd
+  const to = rangeStart <= rangeEnd ? rangeEnd : rangeStart
+  return from <= period.to && to >= period.from
+}
+
 export default function PeriodFilter({
   value,
   onChange,

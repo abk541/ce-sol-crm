@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { BDSubmission, Contract, Employee, Opportunity, User } from '../types'
 import {
+  bdSubmissionPeriodDate,
   calculateBdDashboardSummary,
   contractOpportunityRows,
   dashboardContractGrossProfit,
@@ -9,7 +10,11 @@ import {
   submittedLifecycleRows,
   uniqueBDSubmissionRows,
 } from '../lib/dashboardMetrics'
-import { isBDSubmissionAssociatedToUser, isBDSubmissionAttributedToEmployee } from '../lib/team'
+import {
+  activeEmployeeIdsForUsers,
+  isBDSubmissionAssociatedToUser,
+  isBDSubmissionAttributedToEmployee,
+} from '../lib/team'
 
 const manager: Employee = {
   id: 'manager-1', name: 'Manager', email: 'manager@example.test', role: 'BD_MANAGER',
@@ -190,6 +195,59 @@ describe('BD Tracker ownership and team attribution', () => {
     row.supportAgent = associate.name
 
     expect(isBDSubmissionAssociatedToUser(employees, associateUser, row, [])).toBe(true)
+  })
+
+  it('keeps deleted opportunity history for tracker attribution without restoring it to the active pipeline', () => {
+    const historicalOpportunity = opportunity('historical', { isDeleted: true })
+    const row = {
+      ...submission(3, 'SUBMITTED'),
+      opportunityId: historicalOpportunity.id,
+      solicitationId: historicalOpportunity.solicitationId,
+      bdm: '',
+      bds: '',
+      supportAgent: '',
+    }
+
+    expect(isBDSubmissionAttributedToEmployee(employees, associate, row, [historicalOpportunity])).toBe(true)
+    expect(isBDSubmissionAttributedToEmployee(employees, lead, row, [historicalOpportunity])).toBe(true)
+    expect(isBDSubmissionAttributedToEmployee(employees, manager, row, [historicalOpportunity])).toBe(true)
+    expect(contractOpportunityRows([historicalOpportunity], employees, true)).toEqual([])
+  })
+})
+
+describe('dashboard tracker dates and active roster', () => {
+  it('uses the tracker due date for period reporting and falls back to submitted date', () => {
+    expect(bdSubmissionPeriodDate({ dueDate: '2026-07-02', submittedOn: '2026-07-20' })).toBe('2026-07-02')
+    expect(bdSubmissionPeriodDate({ dueDate: '', submittedOn: '2026-07-20' })).toBe('2026-07-20')
+  })
+
+  it('selects active employees by exact identity or a unique email, never by a duplicate name', () => {
+    const duplicateName: Employee = {
+      ...associate,
+      id: 'legacy-associate',
+      email: 'legacy@example.test',
+    }
+    const activeUser: User = {
+      id: 'user',
+      name: associate.name,
+      email: associate.email,
+      username: 'associate',
+      role: 'ASSOCIATE',
+      avatar: associate.avatar,
+      status: 'active',
+      firstLogin: false,
+      createdAt: '2026-01-01',
+    }
+    const activeUsers = [
+      { ...activeUser, id: associate.id },
+      { ...activeUser, id: 'lead-user', email: lead.email, name: lead.name },
+      { ...activeUser, id: 'name-only-user', email: 'unknown@example.test', name: associate.name },
+      { ...activeUser, id: manager.id, email: manager.email, name: manager.name, status: 'inactive' },
+    ] as User[]
+
+    expect(activeEmployeeIdsForUsers([...employees, duplicateName], activeUsers)).toEqual(
+      new Set([associate.id, lead.id]),
+    )
   })
 })
 

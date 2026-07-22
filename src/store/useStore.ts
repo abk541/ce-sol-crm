@@ -58,6 +58,8 @@ import {
   fetchAppSettings,
   saveAppSetting,
   fetchNotifications,
+  fetchNotificationReadIds,
+  persistNotificationsRead,
   upsertNotification,
   fetchActivityLogs,
   upsertActivityLog,
@@ -74,6 +76,7 @@ import {
 import { hasPermission, applyPermissionOverrides, type Permission } from '../lib/permissions'
 import { nextInvoiceSequenceFromContracts } from '../lib/invoiceNumbers'
 import { hasSourcingQuote } from '../lib/subcontractorQuotes'
+import { mergeNotificationSnapshot } from '../lib/notifications'
 import {
   authenticateWithPassword,
   completeFirstLoginPassword,
@@ -311,7 +314,7 @@ interface AppState {
 
   // ── Notifications ──────────────────────────────────────────────────
   markNotificationRead: (id: string) => void
-  markAllRead: () => void
+  markAllRead: (ids: string[]) => void
   addNotification: (n: Omit<Notification, 'id' | 'createdAt'>) => void
 
   // ── Employee assignment ────────────────────────────────────────────
@@ -336,6 +339,7 @@ interface AppState {
 
   // ── DB ─────────────────────────────────────────────────────────────
   dbReady: boolean
+  notificationsReady: boolean
   needsPurge: boolean
   initializeStore: () => Promise<void>
   syncUsersFromDb: () => Promise<void>
@@ -444,6 +448,70 @@ const NON_SUBMISSION_GRACE_MS = 12 * 60 * 60 * 1000
 
 function deadlineTimeMs(opp: Opportunity): number | null {
   return opportunityDeadlineTimeMs(opp)
+}
+
+function opportunityDeadlineChanged(before: Opportunity, after: Opportunity): boolean {
+  const beforeMs = deadlineTimeMs(before)
+  const afterMs = deadlineTimeMs(after)
+  if (beforeMs !== null || afterMs !== null) return beforeMs !== afterMs
+
+  // If both values are invalid/unparseable, still detect a genuine raw edit.
+  const raw = (opp: Opportunity) => [opp.dueDate, opp.localTime, opp.timezone ?? '']
+    .map(value => (value ?? '').trim().toLowerCase())
+    .join('|')
+  return raw(before) !== raw(after)
+}
+
+function opportunityDeadlineLabel(opp: Opportunity): string {
+  return [opp.dueDate, opp.localTime, opp.timezone].filter(Boolean).join(' ') || 'No deadline'
+}
+
+function recordOpportunityDeadlineChange(
+  get: () => AppState,
+  before: Opportunity,
+  after: Opportunity,
+  actor?: User | null,
+): void {
+  const previousLabel = opportunityDeadlineLabel(before)
+  const nextLabel = opportunityDeadlineLabel(after)
+  const previousDeadline = deadlineTimeMs(before)
+  const nextDeadline = deadlineTimeMs(after)
+  const extended = previousDeadline !== null
+    && nextDeadline !== null
+    && nextDeadline > previousDeadline
+  const removed = nextDeadline === null && !after.dueDate && !after.localTime
+  const assignedAssociate = getAssignmentChain(get().employees, after.assignedTo).associate
+  const assignedUser = findUserForEmployee(get().users, assignedAssociate)
+
+  if (assignedUser) {
+    get().addNotification({
+      type: 'DEADLINE',
+      title: removed
+        ? 'Opportunity deadline removed'
+        : extended
+          ? 'Opportunity deadline extended'
+          : 'Opportunity deadline updated',
+      message: removed
+        ? `${after.solicitation} no longer has a deadline.`
+        : `${after.solicitation} now has a deadline of ${nextLabel}.`,
+      read: false,
+      relatedId: after.id,
+      targetUserId: assignedUser.id,
+    })
+  }
+  get().logActivity({
+    action: `Changed opportunity deadline for ${after.solicitation}: ${previousLabel} to ${nextLabel}`,
+    user: actor?.name || 'System',
+    userRole: actor?.role || 'CAPTURE_MANAGER',
+    entityType: 'opportunity',
+    entityId: after.id,
+    entityName: after.solicitation,
+  })
+}
+
+function sourcingQuoteChanged(before: Subcontractor, after: Subcontractor): boolean {
+  return before.quoteFile !== after.quoteFile
+    || JSON.stringify(before.quoteFiles ?? []) !== JSON.stringify(after.quoteFiles ?? [])
 }
 
 function isNonSubmissionGraceReached(opp: Opportunity, graceMs: number, now = new Date()): boolean {
@@ -773,6 +841,7 @@ function clearedAuthState(): Partial<AppState> {
     needsFirstLogin: false,
     loginTimestamp: null,
     dbReady: false,
+    notificationsReady: false,
     accessNoticeAccepted: false,
     pendingMfaUserId: null,
     pendingMfaMode: null,
@@ -891,6 +960,7 @@ export const useStore = create<AppState>()(
       nextInvoiceNumber: 1,
       prefs: { notificationSound: true },
       dbReady: false,
+      notificationsReady: false,
       needsPurge: false,
       userSessions: {},
       lastSyncedAt: null,
@@ -1586,6 +1656,14 @@ export const useStore = create<AppState>()(
           data = { ...data, solicitationId: nextSolicitationId }
         }
 
+        const proposed = { ...current, ...data }
+        const deadlineChanged = opportunityDeadlineChanged(current, proposed)
+        if (deadlineChanged) {
+          // A new/extended deadline gets its own future 24h and 4h reminders.
+          // Persist the reset in the same successful opportunity write.
+          data = { ...data, notifiedDue24h: false, notifiedDue4h: false }
+        }
+
         const previous = get().opportunities
         set(s => ({
           opportunities: s.opportunities.map(o =>
@@ -1609,6 +1687,10 @@ export const useStore = create<AppState>()(
           set({ opportunities: previous })
           showDatabaseSaveError('Opportunity update')
           return false
+        }
+
+        if (deadlineChanged) {
+          recordOpportunityDeadlineChange(get, current, updated, actor)
         }
 
         const commentsChanged = JSON.stringify(current.comments ?? []) !== JSON.stringify(updated.comments ?? [])
@@ -2797,16 +2879,19 @@ export const useStore = create<AppState>()(
               : o
           )
         }))
+        const opportunity = get().opportunities.find(item => item.id === sub.opportunityId)
+        const quoteAdded = hasSourcingQuote(sub)
         get().logActivity({
-          action: `${hasSourcingQuote(sub) ? 'Added quote-backed sourcing' : 'Added sourcing'}: ${sub.companyName}`,
+          action: quoteAdded && opportunity
+            ? `Added sourcing quote for ${opportunity.solicitation}: ${sub.companyName}`
+            : `Added sourcing${opportunity ? ` for ${opportunity.solicitation}` : ''}: ${sub.companyName}`,
           user: actor?.name || 'System',
           userRole: actor?.role || 'CAPTURE_MANAGER',
-          entityType: 'subcontractor',
-          entityId: sub.id,
-          entityName: sub.companyName,
+          entityType: opportunity ? 'opportunity' : 'subcontractor',
+          entityId: opportunity?.id ?? sub.id,
+          entityName: opportunity?.solicitation ?? sub.companyName,
         })
-        const opportunity = get().opportunities.find(item => item.id === sub.opportunityId)
-        if (hasSourcingQuote(sub) && opportunity && !opportunity.quoted) {
+        if (quoteAdded && opportunity && !opportunity.quoted) {
           if (isApiConnected) {
             // The native data route marks this flag in the same transaction as
             // the quote row. Mirror that committed state locally without a
@@ -2858,15 +2943,18 @@ export const useStore = create<AppState>()(
             subcontractors: (o.subcontractors || []).map(sc => sc.id === id ? updated : sc),
           })),
         }))
+        const opportunity = get().opportunities.find(item => item.id === updated.opportunityId)
+        const quoteChanged = sourcingQuoteChanged(current, updated)
         get().logActivity({
-          action: `${hasSourcingQuote(updated) ? 'Updated quote-backed sourcing' : 'Updated sourcing'}: ${updated.companyName}`,
+          action: quoteChanged && opportunity
+            ? `${hasSourcingQuote(updated) ? 'Updated' : 'Removed'} sourcing quote for ${opportunity.solicitation}: ${updated.companyName}`
+            : `Updated sourcing${opportunity ? ` for ${opportunity.solicitation}` : ''}: ${updated.companyName}`,
           user: actor?.name || 'System',
           userRole: actor?.role || 'CAPTURE_MANAGER',
-          entityType: 'subcontractor',
-          entityId: updated.id,
-          entityName: updated.companyName,
+          entityType: opportunity ? 'opportunity' : 'subcontractor',
+          entityId: opportunity?.id ?? updated.id,
+          entityName: opportunity?.solicitation ?? updated.companyName,
         })
-        const opportunity = get().opportunities.find(item => item.id === updated.opportunityId)
         if (hasSourcingQuote(updated) && opportunity && !opportunity.quoted) {
           if (isApiConnected) {
             set(s => ({
@@ -2915,13 +3003,16 @@ export const useStore = create<AppState>()(
               : o
           )
         }))
+        const opportunity = get().opportunities.find(item => item.id === sub.opportunityId)
         get().logActivity({
-          action: `Deleted sourcing subcontractor: ${sub.companyName}`,
+          action: hasSourcingQuote(sub) && opportunity
+            ? `Deleted sourcing quote for ${opportunity.solicitation}: ${sub.companyName}`
+            : `Deleted sourcing${opportunity ? ` for ${opportunity.solicitation}` : ''}: ${sub.companyName}`,
           user: get().currentUser?.name || 'System',
           userRole: get().currentUser?.role || 'CAPTURE_MANAGER',
-          entityType: 'subcontractor',
-          entityId: sub.id,
-          entityName: sub.companyName,
+          entityType: opportunity ? 'opportunity' : 'subcontractor',
+          entityId: opportunity?.id ?? sub.id,
+          entityName: opportunity?.solicitation ?? sub.companyName,
         })
         return true
       },
@@ -3135,6 +3226,7 @@ export const useStore = create<AppState>()(
       },
 
       updateBDSubmissionDetails: async (id, data, opportunityData) => {
+        const actor = get().currentUser
         const current = get().bdSubmissions.find(b => b.id === id)
         if (!current) return false
         const opp = findBDSubmissionOpportunity(current, get().opportunities)
@@ -3151,12 +3243,24 @@ export const useStore = create<AppState>()(
         }
         const updated = committed.submission
         const updatedOpp = opp ? mergeCommittedOpportunity(opp, committed.opportunity) : undefined
+        const deadlineChanged = Boolean(opp && updatedOpp && opportunityDeadlineChanged(opp, updatedOpp))
         set(s => ({
           bdSubmissions: s.bdSubmissions.map(b => b.id === id ? updated : b),
           opportunities: updatedOpp
             ? s.opportunities.map(o => o.id === updatedOpp.id ? updatedOpp : o)
             : s.opportunities,
         }))
+        get().logActivity({
+          action: `Updated BD Tracker record for ${updated.solicitation}`,
+          user: actor?.name || 'System',
+          userRole: actor?.role || 'CAPTURE_MANAGER',
+          entityType: 'opportunity',
+          entityId: updatedOpp?.id || String(updated.id),
+          entityName: updated.solicitation,
+        })
+        if (deadlineChanged && opp && updatedOpp) {
+          recordOpportunityDeadlineChange(get, opp, updatedOpp, actor)
+        }
         return true
       },
 
@@ -3556,13 +3660,46 @@ export const useStore = create<AppState>()(
       },
 
       // ── Notifications ───────────────────────────────────────────────
-      markNotificationRead: (id) => set(s => ({
-        notifications: s.notifications.map(n => n.id === id ? { ...n, read: true } : n)
-      })),
+      markNotificationRead: (id) => {
+        const notification = get().notifications.find(item => item.id === id)
+        if (!notification || notification.read) return
+        const accountId = get().currentUser?.id
+        const sessionStartedAt = get().loginTimestamp
+        set(s => ({
+          notifications: s.notifications.map(n => n.id === id ? { ...n, read: true } : n)
+        }))
+        void persistNotificationsRead([id]).then(saved => {
+          const current = get()
+          if (saved || current.currentUser?.id !== accountId || current.loginTimestamp !== sessionStartedAt) return
+          set(s => ({
+            notifications: s.notifications.map(n => n.id === id ? { ...n, read: false } : n)
+          }))
+          toast.error('Could not save notification read status. Please try again.')
+        })
+      },
 
-      markAllRead: () => set(s => ({
-        notifications: s.notifications.map(n => ({ ...n, read: true }))
-      })),
+      markAllRead: (ids) => {
+        const requestedIds = new Set(ids)
+        const targetIds = new Set(
+          get().notifications
+            .filter(notification => requestedIds.has(notification.id) && !notification.read)
+            .map(notification => notification.id),
+        )
+        if (targetIds.size === 0) return
+        const accountId = get().currentUser?.id
+        const sessionStartedAt = get().loginTimestamp
+        set(s => ({
+          notifications: s.notifications.map(n => targetIds.has(n.id) ? { ...n, read: true } : n)
+        }))
+        void persistNotificationsRead([...targetIds]).then(saved => {
+          const current = get()
+          if (saved || current.currentUser?.id !== accountId || current.loginTimestamp !== sessionStartedAt) return
+          set(s => ({
+            notifications: s.notifications.map(n => targetIds.has(n.id) ? { ...n, read: false } : n)
+          }))
+          toast.error('Could not save notification read status. Please try again.')
+        })
+      },
 
       addNotification: (data) => {
         const notification: Notification = {
@@ -3711,11 +3848,21 @@ export const useStore = create<AppState>()(
       },
 
       initializeStore: async () => {
-        if (!isApiConnected || !get().isAuthenticated) return
-        if (get().dbReady) return
+        const initialSession = get()
+        if (!isApiConnected || !initialSession.isAuthenticated || !initialSession.currentUser) return
+        if (initialSession.dbReady) return
+        const initialUserId = initialSession.currentUser.id
+        const initialLoginTimestamp = initialSession.loginTimestamp
+        const sessionIsCurrent = () => {
+          const current = get()
+          return current.isAuthenticated
+            && current.currentUser?.id === initialUserId
+            && current.loginTimestamp === initialLoginTimestamp
+        }
 
         try {
           await seedEmployeesIfEmpty(syncEmployeesWithUsers(get().users, []))
+          if (!sessionIsCurrent()) return
 
           // seedIfEmpty is now a no-op (all mock arrays are empty)
           await seedIfEmpty({
@@ -3724,8 +3871,10 @@ export const useStore = create<AppState>()(
             freshAwards: MOCK_FRESH_AWARDS,
             pastPerformances: MOCK_PAST_PERFORMANCES,
           })
+          if (!sessionIsCurrent()) return
 
           const data = await loadAllData()
+          if (!sessionIsCurrent()) return
           if (data) {
             const localUsers = get().users
             const localCurrentUser = get().currentUser
@@ -3784,6 +3933,7 @@ export const useStore = create<AppState>()(
           // to whatever rehydrated from localStorage otherwise.
           try {
             const r = await fetchPermissionOverrides()
+            if (!sessionIsCurrent()) return
             if (r.ok && r.payload) {
               set({
                 rolePermissionOverrides: r.payload.roles,
@@ -3802,6 +3952,7 @@ export const useStore = create<AppState>()(
           // non-submission grace window) from API server.
           try {
             const s = await fetchAppSettings()
+            if (!sessionIsCurrent()) return
             if (s.ok && s.payload) {
               // Hydrate the grace window from the workspace-wide value so this
               // browser's sweep matches every other session instead of its own
@@ -3824,19 +3975,21 @@ export const useStore = create<AppState>()(
           // source of truth for the set; preserve any locally-read flag so a
           // refresh doesn't resurrect already-read alerts as unread.
           try {
-            const [nRes, rRes, aRes] = await Promise.all([fetchNotifications(), fetchEmployeeRequests(), fetchActivityLogs()])
-            const collabPatch: { notifications?: Notification[]; employeeRequests?: EmployeeRequest[]; activityLogs?: ActivityLog[] } = {}
+            const [nRes, readRes, rRes, aRes] = await Promise.all([
+              fetchNotifications(),
+              fetchNotificationReadIds(),
+              fetchEmployeeRequests(),
+              fetchActivityLogs(),
+            ])
+            if (!sessionIsCurrent()) return
+            const collabPatch: { notifications?: Notification[]; notificationsReady?: boolean; employeeRequests?: EmployeeRequest[]; activityLogs?: ActivityLog[] } = {}
             if (nRes.ok && nRes.payload) {
-              const readLocal = new Set(get().notifications.filter(n => n.read).map(n => n.id))
-              const dbIds = new Set(nRes.payload.map(n => n.id))
-              // Keep locally-created notifications that haven't synced to the DB
-              // yet (or when a DB write failed) so the author never loses their
-              // own alerts to a refresh that treats the DB as the whole truth.
-              const localOnly = get().notifications.filter(n => !dbIds.has(n.id))
-              collabPatch.notifications = [
-                ...nRes.payload.map(n => (readLocal.has(n.id) ? { ...n, read: true } : n)),
-                ...localOnly,
-              ].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
+              collabPatch.notifications = mergeNotificationSnapshot(
+                nRes.payload,
+                get().notifications,
+                readRes.ok ? readRes.payload : [],
+              )
+              collabPatch.notificationsReady = true
             }
             if (rRes.ok && rRes.payload) {
               collabPatch.employeeRequests = rRes.payload
@@ -3852,7 +4005,7 @@ export const useStore = create<AppState>()(
           }
         } catch (err) {
           console.error('[Store] API initialization failed; retaining the last cached snapshot', err)
-          set({ dbReady: true })
+          if (sessionIsCurrent()) set({ dbReady: true })
         }
       },
 
@@ -3953,25 +4106,26 @@ export const useStore = create<AppState>()(
             })
           }
 
-          const [nRes, rRes, aRes] = await Promise.all([fetchNotifications(), fetchEmployeeRequests(), fetchActivityLogs()])
+          const [nRes, readRes, rRes, aRes] = await Promise.all([
+            fetchNotifications(),
+            fetchNotificationReadIds(),
+            fetchEmployeeRequests(),
+            fetchActivityLogs(),
+          ])
           const afterCollaborationLoad = get()
           if (
             !afterCollaborationLoad.isAuthenticated ||
             afterCollaborationLoad.currentUser?.id !== refreshedProfile.id ||
             afterCollaborationLoad.loginTimestamp !== startedAt
           ) return
-          const collabPatch: { notifications?: Notification[]; employeeRequests?: EmployeeRequest[]; activityLogs?: ActivityLog[] } = {}
+          const collabPatch: { notifications?: Notification[]; notificationsReady?: boolean; employeeRequests?: EmployeeRequest[]; activityLogs?: ActivityLog[] } = {}
           if (nRes.ok && nRes.payload) {
-            const readLocal = new Set(get().notifications.filter(n => n.read).map(n => n.id))
-            const dbIds = new Set(nRes.payload.map(n => n.id))
-            // Keep locally-created notifications that haven't synced to the DB
-            // yet (or when a DB write failed) so the author never loses their
-            // own alerts to a refresh that treats the DB as the whole truth.
-            const localOnly = get().notifications.filter(n => !dbIds.has(n.id))
-            collabPatch.notifications = [
-              ...nRes.payload.map(n => (readLocal.has(n.id) ? { ...n, read: true } : n)),
-              ...localOnly,
-            ].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
+            collabPatch.notifications = mergeNotificationSnapshot(
+              nRes.payload,
+              get().notifications,
+              readRes.ok ? readRes.payload : [],
+            )
+            collabPatch.notificationsReady = true
           }
           if (rRes.ok && rRes.payload) {
             collabPatch.employeeRequests = rRes.payload

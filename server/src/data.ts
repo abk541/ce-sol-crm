@@ -98,6 +98,13 @@ const OPPORTUNITY_NUMERIC_COLUMNS = new Set([
   'value',
 ])
 
+const OPPORTUNITY_FINANCIAL_COLUMNS = new Set([
+  'contract_amount',
+  'base_amount',
+  'monthly_payment',
+  'value',
+])
+
 const OPPORTUNITY_TIMESTAMP_COLUMNS = new Set([
   'submitted_at',
   'created_at',
@@ -503,6 +510,14 @@ function assertOpportunityFieldAuthorization(
         'Opportunity lifecycle changes must use the atomic opportunity workflow API.',
       )
     }
+  }
+  if ([...changed].some((column) => OPPORTUNITY_FINANCIAL_COLUMNS.has(column))
+    && !permissions.has('admin:manageUsers')) {
+    throw new ApiError(
+      403,
+      'forbidden_opportunity_financial_fields',
+      'Only an Admin can change contract dollar amounts.',
+    )
   }
   if (hasAnyPermission(permissions, OPPORTUNITY_FULL_WRITE_PERMISSIONS)) return
   if (changed.size === 0 && hasAnyPermission(permissions, OPPORTUNITY_NOOP_WRITE_PERMISSIONS)) return

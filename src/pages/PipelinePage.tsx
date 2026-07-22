@@ -19,6 +19,7 @@ import { formatCurrency, formatDate, useEscapeKey } from '../lib/utils'
 import { uploadAttachment, hasAttachmentSource, downloadAttachment } from '../lib/attachments'
 import { assignableEmployeesForUser, getAssignmentChain, isOpportunityAssignedToUser, isOpportunityOwnedByUser, ROLE_DISPLAY_LABELS } from '../lib/team'
 import { CONTRACT_OPPORTUNITY_STATUSES, isContractOpportunityVisible } from '../lib/dashboardMetrics'
+import { matchesPipelineFilterValue, readPipelineQueryFilters } from '../lib/pipelineQuery'
 import { NAICS_CODES } from '../data/naics'
 import toast from 'react-hot-toast'
 import DetailDrawer, { DrawerSection, DrawerField } from '../components/shared/DetailDrawer'
@@ -3983,12 +3984,17 @@ export default function PipelinePage() {
   const mineScope = searchParams.get('mine') === '1'
   const queryParam = searchParams.get('q')
   const typeParam = searchParams.get('type')
+  const priorityParam = searchParams.get('priority')
 
   // ── Filter state ──
-  const [columnFilters, setColumnFilters] = useState<ColumnFilters>(() => ({
-    ...EMPTY_COLUMN_FILTERS,
-    type: typeParam ?? '',
-  }))
+  const [columnFilters, setColumnFilters] = useState<ColumnFilters>(() => {
+    const queryFilters = readPipelineQueryFilters(searchParams)
+    return {
+      ...EMPTY_COLUMN_FILTERS,
+      type: queryFilters.type,
+      priority: queryFilters.priority,
+    }
+  })
   const [dueDateRange, setDueDateRange] = useState<Period | null>(null)
   // Free-text search across all columns. Seeded from the ?q= param so the global
   // top-bar search can drop the user straight into a filtered pipeline list.
@@ -4001,11 +4007,13 @@ export default function PipelinePage() {
   }, [queryParam])
 
   useEffect(() => {
-    if (typeParam !== null) {
-      setColumnFilters(previous => ({ ...previous, type: typeParam }))
-      setPage(1)
-    }
-  }, [typeParam])
+    setColumnFilters(previous => ({
+      ...previous,
+      type: typeParam?.trim() ?? '',
+      priority: priorityParam?.trim() ?? '',
+    }))
+    setPage(1)
+  }, [typeParam, priorityParam])
 
   // ── Modal state ──
   const [showCreate, setShowCreate]   = useState(false)
@@ -4092,7 +4100,11 @@ export default function PipelinePage() {
       // Team Lead / Associate suggestions carry a trailing " (count)" badge — strip it before matching.
       if (col.key === 'teamLead' || col.key === 'associate') q = q.replace(/\s*\(\d+\)\s*$/, '').trim()
       if (!q) return
-      list = list.filter(o => getColumnFilterValue(o, col.key, employees).toLowerCase().includes(q))
+      list = list.filter(o => matchesPipelineFilterValue(
+        getColumnFilterValue(o, col.key, employees),
+        q,
+        col.key === 'priority' ? 'exact' : 'contains',
+      ))
     })
 
     list.sort((a, b) => {
@@ -4140,6 +4152,7 @@ export default function PipelinePage() {
       const next = new URLSearchParams(prev)
       next.delete('q')
       next.delete('type')
+      next.delete('priority')
       return next
     }, { replace: true })
     resetPage()

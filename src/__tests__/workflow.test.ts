@@ -44,6 +44,8 @@ vi.mock('../lib/db', () => ({
   upsertDeletionRequest: vi.fn().mockResolvedValue(null),
   upsertBDSubmission: vi.fn().mockResolvedValue(true),
   deleteBDSubmissionRecord: vi.fn().mockResolvedValue(null),
+  fetchNotificationReadIds: vi.fn().mockResolvedValue({ ok: true, payload: [] }),
+  persistNotificationsRead: vi.fn().mockResolvedValue(true),
 }))
 
 vi.mock('../lib/api', () => ({
@@ -67,6 +69,7 @@ import {
   upsertBDSubmission,
   upsertContractVehicleOrder,
   upsertOpportunity,
+  persistNotificationsRead,
   syncOpportunityComments,
 } from '../lib/db'
 import {
@@ -76,7 +79,7 @@ import {
   submitOpportunityWorkflow,
   transitionOpportunityWorkflow,
 } from '../lib/opportunityWorkflow'
-import type { Opportunity, Contract, OppStatus, ContractStatus, Employee, FileAttachment, BDSubmission } from '../types'
+import type { Opportunity, Contract, OppStatus, ContractStatus, Employee, FileAttachment, BDSubmission, Subcontractor, Notification as AppNotification } from '../types'
 
 // ── Pipeline view filter (mirrors PipelinePage) ───────────────────────
 const OPP_VIEW_STATUSES: OppStatus[] = ['ACTIVE', 'NEW_ASSIGNMENT', 'DISCUSSION']
@@ -252,11 +255,17 @@ beforeEach(() => {
           opp.id === input.opportunityId && opp.solicitationId === row.solicitationId))
     if (!current) return null
     const opp = input.opportunityId ? state.opportunities.find(row => row.id === input.opportunityId) : undefined
-    const { assignedTo, ...opportunityValues } = input.opportunityValues ?? {}
+    const { assignedTo, baseAmount, monthlyPayment, ...opportunityValues } = input.opportunityValues ?? {}
     return {
       opportunity: opp ? {
         ...opp,
         ...opportunityValues,
+        ...(input.opportunityValues && Object.prototype.hasOwnProperty.call(input.opportunityValues, 'baseAmount')
+          ? { baseAmount: baseAmount ?? undefined }
+          : {}),
+        ...(input.opportunityValues && Object.prototype.hasOwnProperty.call(input.opportunityValues, 'monthlyPayment')
+          ? { monthlyPayment: monthlyPayment ?? undefined }
+          : {}),
         ...(input.opportunityValues && Object.prototype.hasOwnProperty.call(input.opportunityValues, 'assignedTo')
           ? { assignedTo: assignedTo ?? undefined }
           : {}),
@@ -292,6 +301,45 @@ beforeEach(() => {
       },
       submission,
     }
+  })
+})
+
+describe('notification read persistence', () => {
+  it('does not rewrite or persist a notification that is already read', () => {
+    const item: AppNotification = {
+      id: 'notification-already-read',
+      type: 'SYSTEM',
+      title: 'Already read',
+      message: 'Opening this item is a no-op.',
+      read: true,
+      createdAt: '2026-07-22T09:00:00.000Z',
+    }
+    useStore.setState({ notifications: [item] })
+
+    useStore.getState().markNotificationRead(item.id)
+
+    expect(persistNotificationsRead).not.toHaveBeenCalled()
+    expect(useStore.getState().notifications[0]?.read).toBe(true)
+  })
+
+  it('restores unread state when the private receipt cannot be saved', async () => {
+    const item: AppNotification = {
+      id: 'notification-retry',
+      type: 'SYSTEM',
+      title: 'Retry me',
+      message: 'Receipt persistence failed.',
+      read: false,
+      createdAt: '2026-07-22T10:00:00.000Z',
+    }
+    vi.mocked(persistNotificationsRead).mockResolvedValueOnce(false)
+    useStore.setState({ notifications: [item] })
+
+    useStore.getState().markNotificationRead(item.id)
+
+    expect(persistNotificationsRead).toHaveBeenCalledWith([item.id])
+    await vi.waitFor(() => {
+      expect(useStore.getState().notifications[0]?.read).toBe(false)
+    })
   })
 })
 
@@ -346,6 +394,141 @@ describe('associate comments and quoted workflow', () => {
     expect(syncOpportunityComments).toHaveBeenCalledWith(opp.id, [], [comment])
   })
 
+  it('notifies only the assigned associate and resets reminder flags when the effective deadline changes', async () => {
+    const opp = makeOpp({
+      id: 'opp-deadline-edit',
+      assignedTo: 'emp-associate',
+      dueDate: '2099-01-01',
+      localTime: '16:00',
+      timezone: 'GMT+0',
+      notifiedDue24h: true,
+      notifiedDue4h: true,
+    })
+    useStore.setState({
+      opportunities: [opp],
+      currentUser: CAPTURE_MANAGER_USER,
+      users: [CAPTURE_MANAGER_USER, ASSOCIATE_USER],
+    })
+
+    const saved = await useStore.getState().updateOpportunity(opp.id, { dueDate: '2099-01-02' })
+
+    expect(saved).toBe(true)
+    expect(useStore.getState().opportunities[0]).toMatchObject({
+      dueDate: '2099-01-02',
+      notifiedDue24h: false,
+      notifiedDue4h: false,
+    })
+    expect(upsertOpportunity).toHaveBeenCalledWith(expect.objectContaining({
+      id: opp.id,
+      notifiedDue24h: false,
+      notifiedDue4h: false,
+    }))
+    expect(useStore.getState().notifications).toContainEqual(expect.objectContaining({
+      type: 'DEADLINE',
+      title: 'Opportunity deadline extended',
+      relatedId: opp.id,
+      targetUserId: ASSOCIATE_USER.id,
+      message: expect.stringContaining('HVAC Maintenance Service'),
+    }))
+    expect(useStore.getState().activityLogs).toContainEqual(expect.objectContaining({
+      action: expect.stringContaining('Changed opportunity deadline for HVAC Maintenance Service'),
+      entityId: opp.id,
+      entityName: opp.solicitation,
+    }))
+  })
+
+  it('does not alert or reset reminders when deadline formatting changes but the effective time does not', async () => {
+    const opp = makeOpp({
+      id: 'opp-equivalent-deadline',
+      assignedTo: 'emp-associate',
+      dueDate: '2099-01-01',
+      localTime: '16:00',
+      timezone: 'GMT+0',
+      notifiedDue24h: true,
+      notifiedDue4h: true,
+    })
+    useStore.setState({
+      opportunities: [opp],
+      currentUser: CAPTURE_MANAGER_USER,
+      users: [CAPTURE_MANAGER_USER, ASSOCIATE_USER],
+    })
+
+    const saved = await useStore.getState().updateOpportunity(opp.id, { localTime: '4:00 PM' })
+
+    expect(saved).toBe(true)
+    expect(useStore.getState().opportunities[0]).toMatchObject({
+      localTime: '4:00 PM',
+      notifiedDue24h: true,
+      notifiedDue4h: true,
+    })
+    expect(useStore.getState().notifications.filter(item => item.type === 'DEADLINE')).toEqual([])
+  })
+
+  it('tolerates nullable migrated deadline fields during an ordinary opportunity edit', async () => {
+    const opp = makeOpp({
+      id: 'opp-null-deadline',
+      dueDate: null as unknown as string,
+      localTime: null as unknown as string,
+      timezone: null as unknown as string,
+    })
+    useStore.setState({ opportunities: [opp], currentUser: CAPTURE_MANAGER_USER })
+
+    await expect(
+      useStore.getState().updateOpportunity(opp.id, { client: 'Updated Agency' }),
+    ).resolves.toBe(true)
+    expect(useStore.getState().notifications.filter(item => item.type === 'DEADLINE')).toEqual([])
+  })
+
+  it('uses clear wording when an assigned opportunity deadline is removed', async () => {
+    const opp = makeOpp({
+      id: 'opp-deadline-removed',
+      assignedTo: 'emp-associate',
+      dueDate: '2099-01-01',
+      localTime: '16:00',
+      timezone: 'GMT+0',
+    })
+    useStore.setState({
+      opportunities: [opp],
+      currentUser: CAPTURE_MANAGER_USER,
+      users: [CAPTURE_MANAGER_USER, ASSOCIATE_USER],
+    })
+
+    const saved = await useStore.getState().updateOpportunity(opp.id, { dueDate: '', localTime: '' })
+
+    expect(saved).toBe(true)
+    expect(useStore.getState().notifications).toContainEqual(expect.objectContaining({
+      title: 'Opportunity deadline removed',
+      message: 'HVAC Maintenance Service no longer has a deadline.',
+      targetUserId: ASSOCIATE_USER.id,
+    }))
+  })
+
+  it('does not create a direct deadline alert when no associate is assigned', async () => {
+    const opp = makeOpp({
+      id: 'opp-unassigned-deadline',
+      assignedTo: undefined,
+      dueDate: '2099-01-01',
+      localTime: '16:00',
+      timezone: 'GMT+0',
+      notifiedDue24h: true,
+      notifiedDue4h: true,
+    })
+    useStore.setState({
+      opportunities: [opp],
+      currentUser: CAPTURE_MANAGER_USER,
+      users: [CAPTURE_MANAGER_USER, ASSOCIATE_USER],
+    })
+
+    const saved = await useStore.getState().updateOpportunity(opp.id, { dueDate: '2099-01-02' })
+
+    expect(saved).toBe(true)
+    expect(useStore.getState().notifications.filter(item => item.type === 'DEADLINE')).toEqual([])
+    expect(useStore.getState().opportunities[0]).toMatchObject({
+      notifiedDue24h: false,
+      notifiedDue4h: false,
+    })
+  })
+
   it('automatically marks an opportunity quoted when sourcing receives a quote attachment', async () => {
     const opp = makeOpp({ id: 'opp-auto-quoted', assignedTo: 'emp-associate', quoted: false })
     const quote: FileAttachment = {
@@ -378,6 +561,54 @@ describe('associate comments and quoted workflow', () => {
       expect(useStore.getState().opportunities[0].quoted).toBe(true)
       expect(useStore.getState().notifications.filter(item => item.title === 'Opportunity quoted')).toHaveLength(1)
     })
+    expect(useStore.getState().activityLogs).toContainEqual(expect.objectContaining({
+      action: 'Added sourcing quote for HVAC Maintenance Service: Supplier Company',
+      entityType: 'opportunity',
+      entityId: opp.id,
+      entityName: opp.solicitation,
+    }))
+  })
+
+  it('does not call an ordinary supplier detail edit a quote update in activity history', async () => {
+    const opp = makeOpp({ id: 'opp-sourcing-edit', assignedTo: 'emp-associate', quoted: true })
+    const quote: FileAttachment = {
+      id: 'quote-existing',
+      name: 'existing-quote.pdf',
+      attachedAt: '2026-07-17T10:00:00.000Z',
+      uploadedBy: ASSOCIATE_USER.name,
+      storagePath: 'quotes/existing-quote.pdf',
+    }
+    const supplier: Subcontractor = {
+      id: 'supplier-existing',
+      opportunityId: opp.id,
+      companyName: 'Supplier Company',
+      contactName: 'Supplier Contact',
+      email: 'supplier@example.test',
+      phone: '555-0100',
+      naicsCode: '',
+      setAside: '',
+      notes: '',
+      quoteFiles: [quote],
+      createdAt: '2026-07-17T10:00:00.000Z',
+      createdBy: ASSOCIATE_USER.name,
+    }
+    useStore.setState({
+      opportunities: [{ ...opp, subcontractors: [supplier] }],
+      subcontractors: [supplier],
+      currentUser: ASSOCIATE_USER,
+      users: [CAPTURE_MANAGER_USER, ASSOCIATE_USER],
+    })
+
+    const saved = await useStore.getState().updateSubcontractor(supplier.id, { phone: '555-0199' })
+
+    expect(saved).toBe(true)
+    expect(useStore.getState().activityLogs).toContainEqual(expect.objectContaining({
+      action: 'Updated sourcing for HVAC Maintenance Service: Supplier Company',
+      entityType: 'opportunity',
+      entityId: opp.id,
+      entityName: opp.solicitation,
+    }))
+    expect(useStore.getState().activityLogs.some(log => log.action.includes('sourcing quote'))).toBe(false)
   })
 })
 
@@ -1194,6 +1425,110 @@ describe('7 · BD Submission status updates', () => {
     })
     expect(upsertOpportunity).not.toHaveBeenCalled()
     expect(upsertBDSubmission).not.toHaveBeenCalled()
+  })
+
+  it('commits submitted total, yearly, and monthly amounts through one atomic tracker edit', async () => {
+    const opp = makeOpp({
+      id: 'opp-financial-edit',
+      solicitationId: SAMPLE_BD.solicitationId,
+      status: 'SUBMITTED',
+      contractAmount: 250_000,
+      baseAmount: 60_000,
+      monthlyPayment: 5_000,
+    })
+    useStore.setState({
+      opportunities: [opp],
+      bdSubmissions: [{ ...SAMPLE_BD, opportunityId: opp.id }],
+    })
+
+    const saved = await useStore.getState().updateBDSubmissionDetails(42, {
+      value: 300_000,
+    }, {
+      contractAmount: 300_000,
+      value: 300_000,
+      baseAmount: 72_000,
+      monthlyPayment: 6_000,
+    })
+
+    expect(saved).toBe(true)
+    expect(editOpportunityWorkflow).toHaveBeenCalledWith(expect.objectContaining({
+      values: { value: 300_000 },
+      opportunityValues: expect.objectContaining({
+        contractAmount: 300_000,
+        baseAmount: 72_000,
+        monthlyPayment: 6_000,
+      }),
+    }))
+    expect(useStore.getState().opportunities[0]).toMatchObject({
+      contractAmount: 300_000,
+      baseAmount: 72_000,
+      monthlyPayment: 6_000,
+    })
+    expect(useStore.getState().bdSubmissions[0]?.value).toBe(300_000)
+    expect(useStore.getState().activityLogs).toContainEqual(expect.objectContaining({
+      action: 'Updated BD Tracker record for Test BD Submission',
+      entityType: 'opportunity',
+      entityId: opp.id,
+    }))
+    expect(upsertOpportunity).not.toHaveBeenCalled()
+    expect(upsertBDSubmission).not.toHaveBeenCalled()
+  })
+
+  it('alerts only the assigned associate and audits a deadline changed through BD Tracker', async () => {
+    const opp = makeOpp({
+      id: 'opp-tracker-deadline',
+      solicitationId: SAMPLE_BD.solicitationId,
+      status: 'SUBMITTED',
+      assignedTo: 'emp-associate',
+      dueDate: '2099-01-01',
+      localTime: '16:00',
+      timezone: 'GMT+0',
+      notifiedDue24h: true,
+      notifiedDue4h: true,
+    })
+    const tracker = { ...SAMPLE_BD, opportunityId: opp.id }
+    useStore.setState({
+      opportunities: [opp],
+      bdSubmissions: [tracker],
+      currentUser: CAPTURE_MANAGER_USER,
+      users: [CAPTURE_MANAGER_USER, ASSOCIATE_USER],
+    })
+    vi.mocked(editOpportunityWorkflow).mockResolvedValueOnce({
+      opportunity: {
+        ...opp,
+        dueDate: '2099-01-02',
+        localTime: '17:00',
+        notifiedDue24h: false,
+        notifiedDue4h: false,
+      },
+      submission: { ...tracker, dueDate: '2099-01-02', localTime: '17:00 GMT+0' },
+    })
+
+    const saved = await useStore.getState().updateBDSubmissionDetails(42, {
+      dueDate: '2099-01-02',
+      localTime: '17:00 GMT+0',
+    }, {
+      dueDate: '2099-01-02',
+      localTime: '17:00',
+      timezone: 'GMT+0',
+    })
+
+    expect(saved).toBe(true)
+    expect(useStore.getState().opportunities[0]).toMatchObject({
+      dueDate: '2099-01-02',
+      localTime: '17:00',
+      notifiedDue24h: false,
+      notifiedDue4h: false,
+    })
+    expect(useStore.getState().notifications).toContainEqual(expect.objectContaining({
+      type: 'DEADLINE',
+      targetUserId: ASSOCIATE_USER.id,
+      relatedId: opp.id,
+    }))
+    expect(useStore.getState().activityLogs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ action: 'Updated BD Tracker record for Test BD Submission' }),
+      expect.objectContaining({ action: expect.stringContaining('Changed opportunity deadline for') }),
+    ]))
   })
 
   it('keeps linked and tracker assignments unchanged when atomic repair fails', async () => {

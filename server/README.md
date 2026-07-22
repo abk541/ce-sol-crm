@@ -17,7 +17,7 @@ file. Never place `DATABASE_URL` or `SAM_GOV_API_KEY` in a Vite variable.
 
 ## Database preparation and cutover
 
-Take and verify a fresh encrypted database backup before either migration.
+Take and verify a fresh encrypted database backup before applying migrations.
 
 1. Apply `migrations/001_prepare_native_api.sql` as the database owner. It
    transactionally copies existing GoTrue bcrypt credentials, adds opaque
@@ -37,7 +37,10 @@ Take and verify a fresh encrypted database backup before either migration.
    It prevents cancellation from being treated as deletion, links only
    unambiguous BD Tracker rows to opportunities, and leaves duplicate/orphan
    history untouched for manual review.
-6. Start the API, verify `/health/ready`, and exercise login, first-login, CRUD,
+6. Apply `migrations/005_notification_read_receipts.sql` as the database owner.
+   It stores notification read state per account instead of changing the shared
+   notification row for every user.
+7. Start the API, verify `/health/ready`, and exercise login, first-login, CRUD,
    role denial, user administration, SAM status/import, file upload/download,
    atomic submit/cancel/restore, assignment repair, and SSE before enabling
    production writes.
@@ -69,6 +72,8 @@ Routes:
 - `POST /api/v1/auth/logout`
 - `POST /api/v1/data/query|insert|upsert|update|delete`
 - `POST /api/v1/opportunity-workflows`
+- `GET /api/v1/notifications/read-state`
+- `POST /api/v1/notifications/read`
 - `POST /api/v1/admin/users/actions`
 - `GET /api/v1/integrations/sam/status`
 - `POST /api/v1/integrations/sam/import`

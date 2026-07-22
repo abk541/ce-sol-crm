@@ -230,13 +230,25 @@ describe('generic data request compiler', () => {
     expect(() => __test.assertOpportunityFieldAuthorization(
       new Set(['quoted', 'contract_amount']),
       sourcing,
-    )).toThrowError(/do not have permission/)
+    )).toThrowError(/Only an Admin/)
   })
 
-  it('preserves ordinary submission fields but routes lifecycle status through the workflow', () => {
+  it('reserves contract dollar edits for Admin and routes lifecycle status through the workflow', () => {
     expect(() => __test.assertOpportunityFieldAuthorization(
-      new Set(['submitted_at', 'proposal_attachments', 'contract_amount']),
+      new Set(['submitted_at', 'proposal_attachments']),
       new Set(['opportunity:submitProposal']),
+    )).not.toThrow()
+    expect(() => __test.assertOpportunityFieldAuthorization(
+      new Set(['contract_amount', 'base_amount', 'monthly_payment', 'value']),
+      new Set(['opportunity:submitProposal', 'opportunity:edit']),
+    )).toThrowError(/Only an Admin/)
+    expect(() => __test.assertOpportunityFieldAuthorization(
+      new Set(['client']),
+      new Set(['opportunity:edit']),
+    )).not.toThrow()
+    expect(() => __test.assertOpportunityFieldAuthorization(
+      new Set(['contract_amount', 'base_amount', 'monthly_payment', 'value']),
+      new Set(['admin:manageUsers']),
     )).not.toThrow()
     expect(() => __test.assertOpportunityFieldAuthorization(
       new Set(['status', 'submitted_at', 'proposal_attachments']),
@@ -542,6 +554,53 @@ describe('generic data request compiler', () => {
       due_date: '2026-07-21',
       contract_amount: 100,
     }], true, ['id'])).rejects.toMatchObject({ code: 'workflow_required' })
+  })
+
+  it('prevents the generic opportunity update route from bypassing Admin-only dollar fields', async () => {
+    const request = __test.parseCommon({
+      table: 'opportunities',
+      values: { contract_amount: 900, base_amount: 120, monthly_payment: 10 },
+      filters: [{ column: 'id', operator: 'eq', value: 'o1' }],
+    }, ['values'])
+    const denied = queryable((text) => {
+      if (text.includes('information_schema.columns')) {
+        return [
+          { column_name: 'id' },
+          { column_name: 'contract_amount' },
+          { column_name: 'base_amount' },
+          { column_name: 'monthly_payment' },
+        ]
+      }
+      if (text.includes('private.has_permission')) {
+        return [{ permission: 'opportunity:edit', allowed: true }]
+      }
+      throw new Error(`Unexpected query: ${text}`)
+    })
+
+    await expect(__test.updateOrDeleteData(denied, request, 'update'))
+      .rejects.toMatchObject({ statusCode: 403, code: 'forbidden_opportunity_financial_fields' })
+
+    const admin = queryable((text) => {
+      if (text.includes('information_schema.columns')) {
+        return [
+          { column_name: 'id' },
+          { column_name: 'contract_amount' },
+          { column_name: 'base_amount' },
+          { column_name: 'monthly_payment' },
+        ]
+      }
+      if (text.includes('private.has_permission')) {
+        return [{ permission: 'admin:manageUsers', allowed: true }]
+      }
+      if (text.startsWith('update public.') && text.includes('opportunities')) {
+        return [{ id: 'o1', contract_amount: 900, base_amount: 120, monthly_payment: 10 }]
+      }
+      throw new Error(`Unexpected query: ${text}`)
+    })
+
+    await expect(__test.updateOrDeleteData(admin, request, 'update')).resolves.toMatchObject({
+      data: [{ id: 'o1', contract_amount: 900, base_amount: 120, monthly_payment: 10 }],
+    })
   })
 
   it.each([

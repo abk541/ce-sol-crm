@@ -1,4 +1,4 @@
-import { api, isApiConnected, subscribeToApiEvents } from './api'
+import { api, apiRequest, envelopeData, isApiConnected, subscribeToApiEvents } from './api'
 import type {
   ActivityLog,
   BDSubmission,
@@ -266,8 +266,8 @@ export function dbToOpp(row: Record<string, unknown>): Partial<Opportunity> {
     supportAgent: (row.support_agent as string | null) ?? undefined,
     poc: contactMeta ? undefined : row.poc as string | undefined,
     contractAmount: row.contract_amount as number | undefined,
-    baseAmount: row.base_amount as number | undefined,
-    monthlyPayment: row.monthly_payment as number | undefined,
+    baseAmount: row.base_amount == null ? undefined : row.base_amount as number,
+    monthlyPayment: row.monthly_payment == null ? undefined : row.monthly_payment as number,
     value: row.value as number | undefined,
     period: row.period as string,
     capturedOn: row.captured_on as string,
@@ -2228,6 +2228,45 @@ export async function upsertNotification(n: Notification): Promise<boolean> {
     return true
   } catch (err) {
     if (!isMissingTableError(err)) console.error('[db] upsertNotification failed', err)
+    return false
+  }
+}
+
+export interface NotificationReadIdsResult {
+  ok: boolean
+  payload?: string[]
+}
+
+/** Loads read receipts for the authenticated account; the server owns identity. */
+export async function fetchNotificationReadIds(): Promise<NotificationReadIdsResult> {
+  if (!isApiConnected) return { ok: false }
+  try {
+    const response = await apiRequest<unknown>('/notifications/read-state')
+    const data = envelopeData<{ notificationIds?: unknown }>(response)
+    return {
+      ok: true,
+      payload: Array.isArray(data.notificationIds)
+        ? data.notificationIds.filter((id): id is string => typeof id === 'string')
+        : [],
+    }
+  } catch (err) {
+    console.error('[db] fetchNotificationReadIds failed', err)
+    return { ok: false }
+  }
+}
+
+/** Persists read state per authenticated account, never on the shared row. */
+export async function persistNotificationsRead(notificationIds: readonly string[]): Promise<boolean> {
+  const ids = [...new Set(notificationIds.filter(Boolean))]
+  if (!isApiConnected || ids.length === 0) return ids.length === 0
+  try {
+    await apiRequest<unknown>('/notifications/read', {
+      method: 'POST',
+      body: JSON.stringify({ notificationIds: ids }),
+    })
+    return true
+  } catch (err) {
+    console.error('[db] persistNotificationsRead failed', err)
     return false
   }
 }

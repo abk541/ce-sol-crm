@@ -12,6 +12,7 @@ import { formatCurrency, useEscapeKey } from '../lib/utils'
 import toast from 'react-hot-toast'
 import FloatingActionMenu from '../components/shared/FloatingActionMenu'
 import { parseSourcingComments, sourcingNotesText } from '../lib/sourcingComments'
+import { matchesUsLocationFilters, US_STATES } from '../lib/usLocation'
 
 const SETASIDE_OPTIONS: SetAside[] = ['SB', 'SDVOSB', 'WOSB', 'HUBZone', 'VOSB', '8(a)', 'UNRES']
 
@@ -261,6 +262,12 @@ function CreateModal({ onClose, onSave }: { onClose: () => void; onSave: (e: Omi
           </div>
 
           <div>
+            <label className="block text-xs font-semibold text-slate-600 mb-1">Location</label>
+            <input value={form.location} onChange={e => set('location', e.target.value)}
+              className="input-field text-xs py-2 w-full" placeholder="City, State" />
+          </div>
+
+          <div>
             <label className="block text-xs font-semibold text-slate-600 mb-1">Notes</label>
             <textarea rows={3} value={form.notes} onChange={e => set('notes', e.target.value)}
               className="input-field text-xs py-2 w-full resize-none" />
@@ -437,7 +444,8 @@ export default function SubkDatabasePage() {
   const canEdit = hasPermission(currentUser, 'opportunity:edit')
   const [search, setSearch] = useState('')
   const [filterSA, setFilterSA] = useState<string>('ALL')
-  const [filterLocation, setFilterLocation] = useState<string>('ALL')
+  const [filterCity, setFilterCity] = useState('')
+  const [filterState, setFilterState] = useState('')
   const [selected, setSelected] = useState<SubkView | null>(null)
   const [editTarget, setEditTarget] = useState<SubkView | null>(null)
   const [showCreate, setShowCreate] = useState(false)
@@ -477,18 +485,12 @@ export default function SubkDatabasePage() {
     return [...manual, ...derived]
   }, [subkDatabase, subcontractors])
 
-  const locationOptions = useMemo(() => {
-    const set = new Set<string>()
-    allEntries.forEach(e => {
-      if (e.location && e.location.trim()) set.add(e.location.trim())
-    })
-    return Array.from(set).sort((a, b) => a.localeCompare(b))
-  }, [allEntries])
-
   const filtered = useMemo(() => {
     let list = allEntries
     if (filterSA !== 'ALL') list = list.filter(e => e.setAside === filterSA)
-    if (filterLocation !== 'ALL') list = list.filter(e => (e.location ?? '') === filterLocation)
+    if (filterCity || filterState) {
+      list = list.filter(e => matchesUsLocationFilters(e.location, filterCity, filterState))
+    }
     if (search) {
       const q = search.toLowerCase()
       list = list.filter(e =>
@@ -500,7 +502,7 @@ export default function SubkDatabasePage() {
       )
     }
     return list
-  }, [allEntries, search, filterSA, filterLocation])
+  }, [allEntries, search, filterSA, filterCity, filterState])
 
   return (
     <div className="p-6 page-enter">
@@ -548,17 +550,29 @@ export default function SubkDatabasePage() {
             </button>
           ))}
         </div>
-        {locationOptions.length > 0 && (
-          <select
-            value={filterLocation}
-            onChange={e => setFilterLocation(e.target.value)}
-            className="input-field text-xs py-1.5 px-2.5">
-            <option value="ALL">All Locations</option>
-            {locationOptions.map(loc => (
-              <option key={loc} value={loc}>{loc}</option>
-            ))}
-          </select>
-        )}
+        <div className="relative">
+          <MapPin size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input
+            value={filterCity}
+            onChange={e => setFilterCity(e.target.value)}
+            className="input-field py-1.5 pl-8 pr-2.5 text-xs"
+            placeholder="City"
+            aria-label="Filter sourcing entries by city"
+          />
+        </div>
+        <input
+          list="sourcing-us-states"
+          value={filterState}
+          onChange={e => setFilterState(e.target.value)}
+          className="input-field py-1.5 px-2.5 text-xs"
+          placeholder="State or code"
+          aria-label="Filter sourcing entries by state"
+        />
+        <datalist id="sourcing-us-states">
+          {US_STATES.map(state => (
+            <option key={state.code} value={state.name}>{state.code}</option>
+          ))}
+        </datalist>
       </div>
 
       {/* Cards grid */}

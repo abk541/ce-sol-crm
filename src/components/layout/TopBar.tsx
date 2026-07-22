@@ -34,7 +34,7 @@ import { getAssignmentChain, isOpsAgent, ROLE_DISPLAY_LABELS } from '../../lib/t
 import type { Contract, Employee, NotifType, Notification as AppNotification, Opportunity } from '../../types'
 import { ROUTE_LABELS } from '../../config/navigation'
 import { buildGlobalSearchResults, type GlobalSearchResult } from '../../lib/globalSearch'
-import { isNotificationVisibleTo, notificationRecordRoute } from '../../lib/notifications'
+import { isNotificationVisibleTo, notificationRecordRoute, reconcileNotificationArrivals } from '../../lib/notifications'
 import { ROLE_LABELS } from '../../lib/permissions'
 import { playNotificationDing } from '../../lib/sound'
 import AppearanceMenu from './AppearanceMenu'
@@ -112,7 +112,9 @@ function DetailRow({ label, value }: { label: string; value?: string | number | 
 export default function TopBar() {
   const {
     currentUser,
+    loginTimestamp,
     notifications,
+    notificationsReady,
     markNotificationRead,
     markAllRead,
     contracts,
@@ -134,6 +136,7 @@ export default function TopBar() {
   const [selectedNotification, setSelectedNotification] = useState<AppNotification | null>(null)
   const [bellPulse, setBellPulse] = useState(false)
   const seenNotificationIds = useRef<Set<string> | null>(null)
+  const seenNotificationSession = useRef<string | null>(null)
 
   useEscapeKey(() => setSelectedNotification(null), Boolean(selectedNotification))
   useEscapeKey(() => setShowGlobalSearch(false), showGlobalSearch)
@@ -188,17 +191,22 @@ export default function TopBar() {
 
   // Live notification feedback: when a new visible notification arrives,
   // play the configured sound (if enabled) and pulse the bell briefly.
-  // Initial mount seeds the seen-set so existing data does not re-trigger.
+  // The first successful server snapshot is history; only later ids are live.
   useEffect(() => {
-    if (seenNotificationIds.current === null) {
-      seenNotificationIds.current = new Set(visibleNotifications.map(n => n.id))
-      return
+    const sessionKey = `${currentUser?.id ?? ''}:${loginTimestamp ?? ''}`
+    if (seenNotificationSession.current !== sessionKey) {
+      seenNotificationSession.current = sessionKey
+      seenNotificationIds.current = null
     }
-    const seen = seenNotificationIds.current
-    const fresh = visibleNotifications.filter(n => !seen.has(n.id))
+    const arrivals = reconcileNotificationArrivals(
+      visibleNotifications,
+      notificationsReady,
+      seenNotificationIds.current,
+    )
+    seenNotificationIds.current = arrivals.seen
+    const fresh = arrivals.fresh
     if (fresh.length === 0) return
     fresh.forEach(n => {
-      seen.add(n.id)
       const cfg = TYPE_CONFIG[n.type]
       const Icon = cfg?.icon ?? Bell
       const accent = cfg?.color ?? '#94A3B8'
@@ -232,7 +240,7 @@ export default function TopBar() {
     setBellPulse(true)
     const timer = window.setTimeout(() => setBellPulse(false), 1400)
     return () => window.clearTimeout(timer)
-  }, [visibleNotifications, soundEnabled, navigate, contracts, opportunities, bdSubmissions])
+  }, [visibleNotifications, notificationsReady, currentUser?.id, loginTimestamp, soundEnabled, navigate, contracts, opportunities, bdSubmissions])
 
   const openGlobalSearchResult = (result: GlobalSearchResult) => {
     navigate(result.route)
@@ -421,7 +429,9 @@ export default function TopBar() {
                     {visibleNotifications.some(n => !n.read) && (
                       <button
                         type="button"
-                        onClick={markAllRead}
+                        onClick={() => markAllRead(
+                          visibleNotifications.filter(notification => !notification.read).map(notification => notification.id),
+                        )}
                         className="flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1 text-[10px] font-bold text-slate-300 hover:bg-white/10"
                       >
                         <CheckCheck size={12} /> Read all

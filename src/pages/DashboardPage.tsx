@@ -15,15 +15,17 @@ import {
 } from 'recharts'
 import { useStore } from '../store/useStore'
 import AnimatedNumber from '../components/shared/AnimatedNumber'
-import PeriodFilter, { type Period, filterByPeriod } from '../components/shared/PeriodFilter'
+import PeriodFilter, { type Period, filterByPeriod, filterRangeByPeriod } from '../components/shared/PeriodFilter'
 import TeamStatisticsPanel from '../components/shared/TeamStatisticsPanel'
 import { formatCurrency, avatarColor } from '../lib/utils'
 import { useNavigate } from 'react-router-dom'
 import {
+  activeEmployeeIdsForUsers,
   findBDSubmissionOpportunity,
   getAssignmentChain,
   isBDSubmissionAssociatedToUser,
   isBDSubmissionAttributedToEmployee,
+  isNonSubmissionAttributedToEmployee,
   isOpportunityAssignedToUser,
   isOpsAgent,
 } from '../lib/team'
@@ -31,6 +33,7 @@ import { hasAnyPermission, hasPermission, ROLE_LABELS } from '../lib/permissions
 import { buildActivityHistory, canViewCompanyActivity } from '../lib/notifications'
 import { chartColorsForTheme, useAppearance } from '../lib/appearance'
 import {
+  bdSubmissionPeriodDate,
   calculateBdDashboardSummary,
   contractOpportunityRows,
   dashboardContractGrossProfit,
@@ -40,6 +43,7 @@ import {
   isSubmittedLifecycleRow,
   uniqueBDSubmissionRows,
 } from '../lib/dashboardMetrics'
+import { pipelineFilterHref } from '../lib/pipelineQuery'
 import { NAICS_CODES } from '../data/naics'
 import type { BDSubmission, Contract, Employee, EmployeeTeam, FreshAward, Goal, HierarchyRole, NonSubmissionReport, Opportunity, User } from '../types'
 import {
@@ -535,7 +539,7 @@ function AgentDashboard() {
     const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
     return {
       name: month,
-      s: mySubmissionRows.filter(row => (row.submittedOn || '').startsWith(key)).length,
+      s: mySubmissionRows.filter(row => (bdSubmissionPeriodDate(row) || '').startsWith(key)).length,
     }
   })
 
@@ -1814,6 +1818,7 @@ function MemberDetailView({
             <div className="space-y-2">
               {rollup.recent.map((submission) => {
                 const color = STATUS_COLORS[submission.status] || accent
+                const periodDate = bdSubmissionPeriodDate(submission)
                 return (
                   <div
                     key={submission.id}
@@ -1822,7 +1827,9 @@ function MemberDetailView({
                   >
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-black" style={{ color: 'var(--text-primary)' }}>{submission.solicitation || submission.solicitationId || 'Untitled'}</p>
-                      <p className="truncate text-[11px]" style={{ color: 'var(--text-tertiary)' }}>{submission.submittedOn || 'No date'} · {submission.type || 'No type'}</p>
+                      <p className="truncate text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
+                        {periodDate ? `${submission.dueDate ? 'Due' : 'Submitted'} ${periodDate}` : 'No date'} · {submission.type || 'No type'}
+                      </p>
                     </div>
                     <span className="rounded-full px-2 py-0.5 text-[10px] font-black uppercase" style={{ background: `${color}1F`, color }}>{submission.status}</span>
                     <p className="text-sm font-black" style={{ color: accent }}>{formatCurrency(Number(submission.value) || 0)}</p>
@@ -1883,10 +1890,9 @@ const PIE_METRIC_OPTIONS: Array<{ id: PiePersonMetric; label: string }> = [
 
 function BdPeopleGrid({
   bdEmployees,
-  users,
   submissions,
   nonSubs,
-  visibleOpps,
+  opportunityHistory,
   employees,
   chartColors,
   accent,
@@ -1895,10 +1901,9 @@ function BdPeopleGrid({
   onPickMember,
 }: {
   bdEmployees: Employee[]
-  users: User[]
   submissions: BDSubmission[]
   nonSubs: NonSubmissionReport[]
-  visibleOpps: Opportunity[]
+  opportunityHistory: Opportunity[]
   employees: Employee[]
   chartColors: string[]
   accent: string
@@ -1924,10 +1929,9 @@ function BdPeopleGrid({
             <BdPersonCard
               key={employee.id}
               employee={employee}
-              users={users}
               submissions={submissions}
               nonSubs={nonSubs}
-              visibleOpps={visibleOpps}
+              opportunityHistory={opportunityHistory}
               employees={employees}
               chartColors={chartColors}
               accent={accent}
@@ -1944,10 +1948,9 @@ function BdPeopleGrid({
 
 function BdPersonCard({
   employee,
-  users,
   submissions,
   nonSubs,
-  visibleOpps,
+  opportunityHistory,
   employees,
   chartColors,
   accent,
@@ -1956,10 +1959,9 @@ function BdPersonCard({
   onPick,
 }: {
   employee: Employee
-  users: User[]
   submissions: BDSubmission[]
   nonSubs: NonSubmissionReport[]
-  visibleOpps: Opportunity[]
+  opportunityHistory: Opportunity[]
   employees: Employee[]
   chartColors: string[]
   accent: string
@@ -1969,20 +1971,19 @@ function BdPersonCard({
 }) {
   const [metric, setMetric] = useState<PiePersonMetric>('status')
 
-  const userRecord = users.find(u => (u.email || '').toLowerCase() === (employee.email || '').toLowerCase())
-  const userName = (userRecord?.username || '').trim().toLowerCase()
-
   const personalTrackerRows = useMemo(
-    () => submissions.filter(sub => matchesEmployee(employee, sub, visibleOpps, employees)),
-    [submissions, employee, visibleOpps, employees],
+    () => submissions.filter(sub => matchesEmployee(employee, sub, opportunityHistory, employees)),
+    [submissions, employee, opportunityHistory, employees],
   )
   const personalSubs = useMemo(
     () => personalTrackerRows.filter(isSubmittedLifecycleRow),
     [personalTrackerRows],
   )
   const personalNonSubs = useMemo(
-    () => nonSubs.filter(report => report.status === 'APPROVED' && report.agentUsername.toLowerCase() === userName),
-    [nonSubs, userName],
+    () => nonSubs.filter(report =>
+      report.status === 'APPROVED' &&
+      isNonSubmissionAttributedToEmployee(employees, employee, report, opportunityHistory)),
+    [nonSubs, employees, employee, opportunityHistory],
   )
 
   const wins = personalSubs.filter(s => s.status === 'AWARDED').length
@@ -2000,7 +2001,7 @@ function BdPersonCard({
   const pieData = useMemo(() => {
     if (metric === 'status') return groupRows(personalTrackerRows, s => s.status || 'Unspecified')
     if (metric === 'type') return groupRows(personalSubs, s => s.type || 'Unspecified')
-    if (metric === 'setAside') return groupRows(personalSubs, s => submissionOpportunity(s, visibleOpps)?.setAside || 'Unspecified')
+    if (metric === 'setAside') return groupRows(personalSubs, s => submissionOpportunity(s, opportunityHistory)?.setAside || 'Unspecified')
     if (metric === 'subsVsNon') return [
       { name: 'Submissions', value: submissionsCount, count: submissionsCount },
       { name: 'Non-Submissions', value: nonSubsCount, count: nonSubsCount },
@@ -2012,7 +2013,7 @@ function BdPersonCard({
       { name: 'Pending', value: Math.max(0, submissionsCount - wins - losses), count: Math.max(0, submissionsCount - wins - losses) },
     ]
     return []
-  }, [metric, personalTrackerRows, personalSubs, visibleOpps, submissionsCount, nonSubsCount, dropped, wins, losses])
+  }, [metric, personalTrackerRows, personalSubs, opportunityHistory, submissionsCount, nonSubsCount, dropped, wins, losses])
 
   const pieColorFor = (name: string, idx: number): string => {
     if (metric === 'status') return STATUS_COLORS[name] || chartColors[idx % chartColors.length]
@@ -2226,13 +2227,12 @@ function ExecutiveDashboard() {
     [visibleOpps, period],
   )
   const periodSubmissions = useMemo(
-    () => uniqueBDSubmissionRows(
-      bdSubmissions.filter(submission => filterByPeriod(submission.submittedOn || submission.dueDate, period)),
-    ),
+    () => uniqueBDSubmissionRows(bdSubmissions)
+      .filter(submission => filterByPeriod(bdSubmissionPeriodDate(submission), period)),
     [bdSubmissions, period],
   )
   const periodContracts = useMemo(
-    () => contracts.filter(contract => filterByPeriod(contract.popStart || contract.popEnd, period)),
+    () => contracts.filter(contract => filterRangeByPeriod(contract.popStart, contract.popEnd, period)),
     [contracts, period],
   )
   const activeOpportunityRows = useMemo(
@@ -2254,7 +2254,7 @@ function ExecutiveDashboard() {
     return employeeTeamMap.get(topId) ?? 'BD'
   }, [employees, employeeTeamMap])
   const submissionTeam = useMemo(() => (submission: BDSubmission): EmployeeTeam | null => {
-    const opp = submissionOpportunity(submission, visibleOpps)
+    const opp = submissionOpportunity(submission, opportunities)
     if (opp) {
       const team = opportunityTeam(opp)
       if (team) return team
@@ -2267,7 +2267,7 @@ function ExecutiveDashboard() {
       if (team) return team
     }
     return null
-  }, [opportunityTeam, employeeTeamMap, visibleOpps, employees])
+  }, [opportunityTeam, employeeTeamMap, opportunities, employees])
 
   const bdPeriodOpps = useMemo(
     () => periodCapturedOpps.filter(opp => {
@@ -2275,6 +2275,13 @@ function ExecutiveDashboard() {
       return team === null || team === 'BD'
     }),
     [periodCapturedOpps, opportunityTeam],
+  )
+  const bdActiveOpportunityRows = useMemo(
+    () => activeOpportunityRows.filter(opp => {
+      const team = opportunityTeam(opp)
+      return team === null || team === 'BD'
+    }),
+    [activeOpportunityRows, opportunityTeam],
   )
   const bdPeriodTrackerRows = useMemo(
     () => periodSubmissions.filter(submission => {
@@ -2284,9 +2291,14 @@ function ExecutiveDashboard() {
     [periodSubmissions, submissionTeam],
   )
 
+  const activeEmployeeIds = useMemo(
+    () => activeEmployeeIdsForUsers(employees, users),
+    [employees, users],
+  )
+
   const bdEmployees = useMemo(
-    () => employees.filter(e => (e.team ?? 'BD') === 'BD'),
-    [employees],
+    () => employees.filter(e => (e.team ?? 'BD') === 'BD' && activeEmployeeIds.has(e.id)),
+    [employees, activeEmployeeIds],
   )
   const periodNonSubs = useMemo(
     () => nonSubReports.filter(r => r.status === 'APPROVED' && filterByPeriod(r.reviewedAt || r.submittedAt, period)),
@@ -2294,11 +2306,11 @@ function ExecutiveDashboard() {
   )
 
   const bdSummary = useMemo(() => calculateBdDashboardSummary({
-    activeOpportunities: activeOpportunityRows,
+    activeOpportunities: bdActiveOpportunityRows,
     capturedOpportunities: bdPeriodOpps,
     trackerRows: bdPeriodTrackerRows,
-    valueForSubmission: submission => submissionValue(submission, visibleOpps),
-  }), [activeOpportunityRows, bdPeriodOpps, bdPeriodTrackerRows, visibleOpps])
+    valueForSubmission: submission => submissionValue(submission, opportunities),
+  }), [bdActiveOpportunityRows, bdPeriodOpps, bdPeriodTrackerRows, opportunities])
   const activeOpportunities = bdSummary.activeOpportunities
   const capturedCount = bdSummary.capturedCount
   const bdPeriodSubs = bdSummary.submittedOpportunities
@@ -2309,13 +2321,13 @@ function ExecutiveDashboard() {
 
   const submittedByNaics = groupRows(
     bdPeriodSubs,
-    submission => naicsDisplay(submissionOpportunity(submission, visibleOpps)?.naicsCode),
+    submission => naicsDisplay(submissionOpportunity(submission, opportunities)?.naicsCode),
   ).slice(0, 8)
   const submittedByType = groupRows(bdPeriodSubs, submission => submission.type || 'Unspecified').slice(0, 6)
   const agencyPerformance = groupRows(
     bdPeriodSubs,
-    submission => submissionOpportunity(submission, visibleOpps)?.client || 'Unspecified agency',
-    submission => submission.status === 'AWARDED' ? submissionValue(submission, visibleOpps) : 0,
+    submission => submissionOpportunity(submission, opportunities)?.client || 'Unspecified agency',
+    submission => submission.status === 'AWARDED' ? submissionValue(submission, opportunities) : 0,
   ).slice(0, 8)
 
   const months = useMemo(
@@ -2324,11 +2336,11 @@ function ExecutiveDashboard() {
   )
   const submissionTrend = months.map(month => ({
     month: month.month,
-    submitted: bdPeriodSubs.filter(submission => monthKey(submission.submittedOn) === month.key).length,
-    awarded: bdPeriodSubs.filter(submission => monthKey(submission.submittedOn) === month.key && submission.status === 'AWARDED').length,
+    submitted: bdPeriodSubs.filter(submission => monthKey(bdSubmissionPeriodDate(submission)) === month.key).length,
+    awarded: bdPeriodSubs.filter(submission => monthKey(bdSubmissionPeriodDate(submission)) === month.key && submission.status === 'AWARDED').length,
     value: bdPeriodSubs
-      .filter(submission => monthKey(submission.submittedOn) === month.key)
-      .reduce((sum, submission) => sum + submissionValue(submission, visibleOpps), 0),
+      .filter(submission => monthKey(bdSubmissionPeriodDate(submission)) === month.key)
+      .reduce((sum, submission) => sum + submissionValue(submission, opportunities), 0),
   }))
 
   const activityHistory = useMemo(
@@ -2366,20 +2378,20 @@ function ExecutiveDashboard() {
 
   // ── Business Development distributions ────────────────────────────────────
   const oppsByStatus = useMemo(
-    () => groupRows(activeOpportunityRows, opp => opp.status || 'Unspecified'),
-    [activeOpportunityRows],
+    () => groupRows(bdActiveOpportunityRows, opp => opp.status || 'Unspecified'),
+    [bdActiveOpportunityRows],
   )
   const oppsBySetAside = useMemo(
-    () => groupRows(activeOpportunityRows, opp => opp.setAside || 'Unspecified'),
-    [activeOpportunityRows],
+    () => groupRows(bdActiveOpportunityRows, opp => opp.setAside || 'Unspecified'),
+    [bdActiveOpportunityRows],
   )
   const oppsByPriority = useMemo(
-    () => groupRows(activeOpportunityRows, opp => opp.priority || 'Unspecified'),
-    [activeOpportunityRows],
+    () => groupRows(bdActiveOpportunityRows, opp => opp.priority || 'Unspecified'),
+    [bdActiveOpportunityRows],
   )
   const oppsByType = useMemo(
-    () => groupRows(activeOpportunityRows, opp => opp.type || 'Unspecified'),
-    [activeOpportunityRows],
+    () => groupRows(bdActiveOpportunityRows, opp => opp.type || 'Unspecified'),
+    [bdActiveOpportunityRows],
   )
   const conversionFunnel = useMemo(() => {
     const total = capturedCount
@@ -2392,10 +2404,10 @@ function ExecutiveDashboard() {
     ]
   }, [capturedCount, bdPeriodSubs.length, awardedSubmissions.length, chartColors])
   const topOpenOpps = useMemo(
-    () => [...activeOpportunityRows]
+    () => [...bdActiveOpportunityRows]
       .sort((a, b) => opportunityValue(b) - opportunityValue(a))
       .slice(0, 10),
-    [activeOpportunityRows],
+    [bdActiveOpportunityRows],
   )
 
   // ── Team rollups ──────────────────────────────────────────────────────────
@@ -2406,13 +2418,14 @@ function ExecutiveDashboard() {
   const reportsByManager = useMemo(() => {
     const map = new Map<string | null, Employee[]>()
     for (const employee of employees) {
+      if (!activeEmployeeIds.has(employee.id)) continue
       const key = employee.managerId
       const list = map.get(key) ?? []
       list.push(employee)
       map.set(key, list)
     }
     return map
-  }, [employees])
+  }, [employees, activeEmployeeIds])
   const collectReports = useMemo(() => (rootId: string): Employee[] => {
     const out: Employee[] = []
     const stack = [rootId]
@@ -2430,7 +2443,7 @@ function ExecutiveDashboard() {
     const employee = employeesById.get(employeeId)
     if (!employee) return null
     const trackerRows = periodSubmissions.filter(submission =>
-      matchesEmployee(employee, submission, visibleOpps, employees))
+      matchesEmployee(employee, submission, opportunities, employees))
     const subs = trackerRows.filter(isSubmittedLifecycleRow)
     const assignedOpps = activeOpportunityRows.filter(opp => {
       const chain = getAssignmentChain(employees, opp.assignedTo)
@@ -2441,32 +2454,32 @@ function ExecutiveDashboard() {
     const awarded = subs.filter(submission => submission.status === 'AWARDED')
     const lost = subs.filter(submission => submission.status === 'LOST')
     const dropped = trackerRows.filter(submission => submission.status === 'DROPPED')
-    const value = subs.reduce((sum, submission) => sum + submissionValue(submission, visibleOpps), 0)
-    const awardedValue = awarded.reduce((sum, submission) => sum + submissionValue(submission, visibleOpps), 0)
+    const value = subs.reduce((sum, submission) => sum + submissionValue(submission, opportunities), 0)
+    const awardedValue = awarded.reduce((sum, submission) => sum + submissionValue(submission, opportunities), 0)
     const byStatus = groupRows(trackerRows, submission => submission.status || 'Unspecified')
     const byType = groupRows(subs, submission => submission.type || 'Unspecified')
-    const byNaics = groupRows(subs, submission => naicsDisplay(submissionOpportunity(submission, visibleOpps)?.naicsCode))
+    const byNaics = groupRows(subs, submission => naicsDisplay(submissionOpportunity(submission, opportunities)?.naicsCode))
     const bySetAside = groupRows(assignedOpps, opp => opp.setAside || 'Unspecified')
     const byPriority = groupRows(assignedOpps, opp => opp.priority || 'Unspecified')
     const byAgency = groupRows(assignedOpps, opp => opp.client || 'Unspecified agency').slice(0, 6)
     const assignedByStatus = groupRows(assignedOpps, opp => opp.status || 'Unspecified')
     const monthsData = months.map(month => ({
       month: month.month,
-      submitted: subs.filter(s => monthKey(s.submittedOn) === month.key).length,
-      awarded: subs.filter(s => monthKey(s.submittedOn) === month.key && s.status === 'AWARDED').length,
+      submitted: subs.filter(s => monthKey(bdSubmissionPeriodDate(s)) === month.key).length,
+      awarded: subs.filter(s => monthKey(bdSubmissionPeriodDate(s)) === month.key && s.status === 'AWARDED').length,
     }))
     const valueByMonth = months.map(month => {
-      const monthSubs = subs.filter(s => monthKey(s.submittedOn) === month.key)
+      const monthSubs = subs.filter(s => monthKey(bdSubmissionPeriodDate(s)) === month.key)
       return {
         month: month.month,
-        value: monthSubs.reduce((sum, s) => sum + submissionValue(s, visibleOpps), 0),
+        value: monthSubs.reduce((sum, s) => sum + submissionValue(s, opportunities), 0),
         awarded: monthSubs
           .filter(s => s.status === 'AWARDED')
-          .reduce((sum, s) => sum + submissionValue(s, visibleOpps), 0),
+          .reduce((sum, s) => sum + submissionValue(s, opportunities), 0),
       }
     })
     const recent = [...subs]
-      .sort((a, b) => new Date(b.submittedOn || 0).getTime() - new Date(a.submittedOn || 0).getTime())
+      .sort((a, b) => new Date(bdSubmissionPeriodDate(b) || 0).getTime() - new Date(bdSubmissionPeriodDate(a) || 0).getTime())
       .slice(0, 8)
     return {
       employee,
@@ -2479,7 +2492,7 @@ function ExecutiveDashboard() {
       valueByMonth,
       recent,
     }
-  }, [employeesById, periodSubmissions, visibleOpps, employees, activeOpportunityRows, months])
+  }, [employeesById, periodSubmissions, opportunities, employees, activeOpportunityRows, months])
 
   const computeTeamRollup = useMemo(() => (managerId: string) => {
     const manager = employeesById.get(managerId)
@@ -2487,7 +2500,7 @@ function ExecutiveDashboard() {
     const members = collectReports(managerId)
     const all = [manager, ...members]
     const trackerRows = periodSubmissions.filter(submission =>
-      all.some(employee => matchesEmployee(employee, submission, visibleOpps, employees)))
+      all.some(employee => matchesEmployee(employee, submission, opportunities, employees)))
     const subs = trackerRows.filter(isSubmittedLifecycleRow)
     const assignedOpps = activeOpportunityRows.filter(opp => {
       const chain = getAssignmentChain(employees, opp.assignedTo)
@@ -2502,32 +2515,32 @@ function ExecutiveDashboard() {
     const notSubmitted = nonSubReports.filter(report => {
       if (report.status !== 'APPROVED') return false
       if (!filterByPeriod(report.reviewedAt || report.submittedAt, period)) return false
-      const opp = visibleOpps.find(item => item.id === report.opportunityId)
+      const opp = opportunities.find(item => item.id === report.opportunityId)
       const chain = getAssignmentChain(employees, opp?.assignedTo)
       return all.some(employee =>
         employee.id === chain.associate?.id ||
         employee.id === chain.teamLead?.id ||
         employee.id === chain.manager?.id)
     })
-    const value = subs.reduce((sum, submission) => sum + submissionValue(submission, visibleOpps), 0)
-    const awardedValue = awarded.reduce((sum, submission) => sum + submissionValue(submission, visibleOpps), 0)
+    const value = subs.reduce((sum, submission) => sum + submissionValue(submission, opportunities), 0)
+    const awardedValue = awarded.reduce((sum, submission) => sum + submissionValue(submission, opportunities), 0)
     const memberStats = members
       .map(employee => computeMemberRollup(employee.id)!)
       .filter(Boolean)
       .sort((a, b) => b.subs.length - a.subs.length || b.value - a.value)
     const monthsData = months.map(month => ({
       month: month.month,
-      submitted: subs.filter(s => monthKey(s.submittedOn) === month.key).length,
-      awarded: subs.filter(s => monthKey(s.submittedOn) === month.key && s.status === 'AWARDED').length,
+      submitted: subs.filter(s => monthKey(bdSubmissionPeriodDate(s)) === month.key).length,
+      awarded: subs.filter(s => monthKey(bdSubmissionPeriodDate(s)) === month.key && s.status === 'AWARDED').length,
     }))
     const valueByMonth = months.map(month => {
-      const monthSubs = subs.filter(s => monthKey(s.submittedOn) === month.key)
+      const monthSubs = subs.filter(s => monthKey(bdSubmissionPeriodDate(s)) === month.key)
       return {
         month: month.month,
-        value: monthSubs.reduce((sum, s) => sum + submissionValue(s, visibleOpps), 0),
+        value: monthSubs.reduce((sum, s) => sum + submissionValue(s, opportunities), 0),
         awarded: monthSubs
           .filter(s => s.status === 'AWARDED')
-          .reduce((sum, s) => sum + submissionValue(s, visibleOpps), 0),
+          .reduce((sum, s) => sum + submissionValue(s, opportunities), 0),
       }
     })
     return {
@@ -2553,16 +2566,16 @@ function ExecutiveDashboard() {
       })),
       byRole: groupRows(all, employee => ROLE_LABELS[employee.role] ?? employee.role),
     }
-  }, [employeesById, collectReports, periodSubmissions, visibleOpps, employees, nonSubReports, period, computeMemberRollup, activeOpportunityRows, months])
+  }, [employeesById, collectReports, periodSubmissions, opportunities, employees, nonSubReports, period, computeMemberRollup, activeOpportunityRows, months])
 
   // BD managers head their own teams; the OPS lead is mirrored as a BD_MANAGER with team='OPS'.
   const bdTeamHeads = useMemo(
-    () => employees.filter(e => e.role === 'BD_MANAGER' && (e.team ?? 'BD') === 'BD'),
-    [employees],
+    () => employees.filter(e => e.role === 'BD_MANAGER' && (e.team ?? 'BD') === 'BD' && activeEmployeeIds.has(e.id)),
+    [employees, activeEmployeeIds],
   )
   const opsTeamHeads = useMemo(
-    () => employees.filter(e => e.role === 'BD_MANAGER' && e.team === 'OPS'),
-    [employees],
+    () => employees.filter(e => e.role === 'BD_MANAGER' && e.team === 'OPS' && activeEmployeeIds.has(e.id)),
+    [employees, activeEmployeeIds],
   )
   const bdTeamRollups = useMemo(
     () => bdTeamHeads.map(head => computeTeamRollup(head.id)!).filter(Boolean),
@@ -2697,7 +2710,7 @@ function ExecutiveDashboard() {
               subtitle="Pipeline distribution across statuses"
               data={oppsByStatus}
               chartColors={chartColors}
-              total={activeOpportunityRows.length}
+              total={bdActiveOpportunityRows.length}
               onSlice={(row) => goToOpportunityStatus(row.name)}
               colorOverride={(name) => STATUS_COLORS[name]}
             />
@@ -2706,7 +2719,7 @@ function ExecutiveDashboard() {
               subtitle="Active socio-economic designations"
               data={oppsBySetAside}
               chartColors={chartColors}
-              total={activeOpportunityRows.length}
+              total={bdActiveOpportunityRows.length}
               onSlice={() => goToPipeline()}
             />
             <BdPiePanel
@@ -2714,25 +2727,24 @@ function ExecutiveDashboard() {
               subtitle="Priority mix in the current period"
               data={oppsByPriority}
               chartColors={chartColors}
-              total={activeOpportunityRows.length}
-              onSlice={() => goToPipeline()}
+              total={bdActiveOpportunityRows.length}
+              onSlice={(row) => navigate(pipelineFilterHref({ priority: row.name }))}
             />
             <BdPiePanel
               title="By Type"
               subtitle="OTJ, recurring and other vehicles"
               data={oppsByType}
               chartColors={chartColors}
-              total={activeOpportunityRows.length}
-              onSlice={(row) => navigate(`/pipeline?type=${encodeURIComponent(row.name)}`)}
+              total={bdActiveOpportunityRows.length}
+              onSlice={(row) => navigate(pipelineFilterHref({ type: row.name }))}
             />
           </div>
 
           <BdPeopleGrid
             bdEmployees={bdEmployees}
-            users={users}
             submissions={bdPeriodTrackerRows}
             nonSubs={periodNonSubs}
-            visibleOpps={visibleOpps}
+            opportunityHistory={opportunities}
             employees={employees}
             chartColors={chartColors}
             accent={accent}
@@ -2988,6 +3000,11 @@ function ExecutiveDashboard() {
                         </div>
                         <div className="min-w-0 flex-1">
                           <p className="text-sm font-semibold leading-snug" style={{ color: 'var(--text-primary)' }}>{log.action}</p>
+                          {log.entityName && (
+                            <p className="mt-1 text-[10px] font-black uppercase tracking-[0.1em]" style={{ color: secondaryAccent }}>
+                              {log.entityType?.replace(/_/g, ' ') || 'Record'} · {log.entityName}
+                            </p>
+                          )}
                           <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
                             {log.user} | {new Date(log.createdAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
                           </p>

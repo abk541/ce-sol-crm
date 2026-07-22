@@ -39,6 +39,8 @@ export type OpportunityWorkflowEditValues = Partial<Pick<Opportunity,
   | 'setAside'
   | 'naicsCode'
   | 'dueDate'
+  | 'localTime'
+  | 'timezone'
   | 'location'
   | 'contractAmount'
   | 'value'
@@ -48,7 +50,12 @@ export type OpportunityWorkflowEditValues = Partial<Pick<Opportunity,
   | 'bdm'
   | 'bds'
   | 'supportAgent'
->> & { assignedTo?: string | null; mandatoryEventsList?: MandatoryEvent[] }
+>> & {
+  assignedTo?: string | null
+  mandatoryEventsList?: MandatoryEvent[]
+  baseAmount?: number | null
+  monthlyPayment?: number | null
+}
 
 type RawWorkflowResult = {
   opportunity: Record<string, unknown> | null

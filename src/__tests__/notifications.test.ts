@@ -4,7 +4,9 @@ import {
   buildActivityHistory,
   canViewCompanyActivity,
   isNotificationVisibleTo,
+  mergeNotificationSnapshot,
   notificationRecordRoute,
+  reconcileNotificationArrivals,
 } from '../lib/notifications'
 import { findUserForEmployee } from '../lib/team'
 
@@ -179,6 +181,21 @@ describe('notification visibility', () => {
     })).toBe(false)
   })
 
+  it('keeps a directly-targeted deadline edit exclusive to its assigned associate', () => {
+    const item = notification({
+      type: 'DEADLINE',
+      targetUserId: assignedAssociate.id,
+      relatedId: opportunity.id,
+    })
+    const context = { employees, contracts: [], opportunities: [opportunity] }
+
+    expect(isNotificationVisibleTo(item, { ...context, user: assignedAssociate })).toBe(true)
+    expect(isNotificationVisibleTo(item, { ...context, user: otherAssociate })).toBe(false)
+    expect(isNotificationVisibleTo(item, { ...context, user: teamLead })).toBe(false)
+    expect(isNotificationVisibleTo(item, { ...context, user: captureManager })).toBe(false)
+    expect(isNotificationVisibleTo(item, { ...context, user: bdManager })).toBe(false)
+  })
+
   it('shows opportunity notifications to the assigned associate and their team lead', () => {
     const item = notification({ relatedId: 'opp-1' })
     const context = { employees, contracts: [], opportunities: [opportunity] }
@@ -226,6 +243,57 @@ describe('notification visibility', () => {
   })
 })
 
+describe('notification refresh state', () => {
+  it('applies private read receipts without changing another account shared row', () => {
+    const remote = [
+      // A stale legacy flag must not leak one account's read state after the
+      // migration; the private receipt is now the source of truth.
+      notification({ id: 'read-for-me', read: true }),
+      notification({ id: 'still-unread', read: false }),
+      notification({ id: 'optimistic-local', read: false }),
+    ]
+
+    const mine = mergeNotificationSnapshot(
+      remote,
+      [notification({ id: 'optimistic-local', read: true })],
+      ['read-for-me'],
+    )
+    const theirs = mergeNotificationSnapshot(remote, [], [])
+
+    expect(mine.find(item => item.id === 'read-for-me')?.read).toBe(true)
+    expect(mine.find(item => item.id === 'still-unread')?.read).toBe(false)
+    expect(mine.find(item => item.id === 'optimistic-local')?.read).toBe(true)
+    expect(theirs.find(item => item.id === 'read-for-me')?.read).toBe(false)
+  })
+
+  it('baselines initial history and emits each later unread notification once', () => {
+    const history = Array.from({ length: 24 }, (_, index) => notification({ id: `old-${index}` }))
+    let snapshot = reconcileNotificationArrivals([], false, null)
+    expect(snapshot.fresh).toEqual([])
+    expect(snapshot.seen).toBeNull()
+
+    snapshot = reconcileNotificationArrivals(history, true, snapshot.seen)
+    expect(snapshot.fresh).toEqual([])
+    expect(snapshot.seen?.size).toBe(24)
+
+    const live = notification({ id: 'live-new' })
+    snapshot = reconcileNotificationArrivals([live, ...history], true, snapshot.seen)
+    expect(snapshot.fresh.map(item => item.id)).toEqual(['live-new'])
+
+    snapshot = reconcileNotificationArrivals([live, ...history], true, snapshot.seen)
+    expect(snapshot.fresh).toEqual([])
+  })
+
+  it('records a newly-arrived read id without replaying a popup', () => {
+    const seeded = reconcileNotificationArrivals([], true, null)
+    const alreadyRead = notification({ id: 'read-on-another-device', read: true })
+    const next = reconcileNotificationArrivals([alreadyRead], true, seeded.seen)
+
+    expect(next.fresh).toEqual([])
+    expect(next.seen?.has(alreadyRead.id)).toBe(true)
+  })
+})
+
 describe('company history', () => {
   it('contains actual activities without mixing in notification events', () => {
     const logs: ActivityLog[] = [{
@@ -234,6 +302,8 @@ describe('company history', () => {
       user: 'Team Member',
       userRole: 'ASSOCIATE',
       entityType: 'opportunity',
+      entityId: 'opp-history-1',
+      entityName: 'HVAC Maintenance Service',
       createdAt: '2026-01-01T10:00:00.000Z',
     }]
     const alerts = [
@@ -246,6 +316,11 @@ describe('company history', () => {
     expect(history).toHaveLength(1)
     expect(history.map(item => item.id)).toEqual(['activity:activity-1'])
     expect(history.every(item => item.source === 'activity')).toBe(true)
+    expect(history[0]).toMatchObject({
+      entityType: 'opportunity',
+      entityId: 'opp-history-1',
+      entityName: 'HVAC Maintenance Service',
+    })
   })
 })
 

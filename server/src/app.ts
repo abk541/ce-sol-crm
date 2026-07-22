@@ -11,6 +11,7 @@ import { installErrorHandler, ApiError } from './errors.js'
 import { registerFileRoutes } from './files.js'
 import { registerSamRoutes } from './sam.js'
 import { registerOpportunityWorkflowRoutes } from './opportunity-workflows.js'
+import { registerNotificationRoutes } from './notifications.js'
 import type { Dependencies } from './types.js'
 
 export async function buildApp(dependencies: Dependencies): Promise<FastifyInstance> {
@@ -94,6 +95,7 @@ export async function buildApp(dependencies: Dependencies): Promise<FastifyInsta
   registerAuthRoutes(app, dependencies)
   registerDataRoutes(app, dependencies)
   registerOpportunityWorkflowRoutes(app, dependencies)
+  registerNotificationRoutes(app, dependencies)
   registerAdminUserRoutes(app, dependencies)
   registerFileRoutes(app, dependencies)
   registerSamRoutes(app, dependencies)

@@ -110,7 +110,10 @@ export default function NotificationsPage() {
           </p>
         </div>
         {mine.some(n => !n.read) && (
-          <button onClick={markAllRead} className="btn-secondary text-xs gap-1.5">
+          <button
+            onClick={() => markAllRead(mine.filter(notification => !notification.read).map(notification => notification.id))}
+            className="btn-secondary text-xs gap-1.5"
+          >
             <CheckCheck size={12} /> Mark all as read
           </button>
         )}

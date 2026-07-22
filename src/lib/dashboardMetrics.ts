@@ -16,6 +16,18 @@ export function isSubmittedLifecycleRow(submission: BDSubmission): boolean {
   return submittedStatusSet.has(submission.status)
 }
 
+/**
+ * The BD Tracker period control is a due-date filter. Keep dashboard totals and
+ * charts on that same business date so migrated rows are not reassigned to the
+ * day they were later imported or updated. `submittedOn` remains a fallback for
+ * historical rows that do not carry a due date.
+ */
+export function bdSubmissionPeriodDate(
+  submission: Pick<BDSubmission, 'dueDate' | 'submittedOn'>,
+): string | undefined {
+  return submission.dueDate?.trim() || submission.submittedOn?.trim() || undefined
+}
+
 export function submissionBusinessKey(submission: BDSubmission): string {
   return submission.opportunityId
     ? `opportunity:${submission.opportunityId}`

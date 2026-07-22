@@ -41,8 +41,12 @@ const OPPORTUNITY_EDIT_COLUMNS = {
   setAside: 'set_aside',
   naicsCode: 'naics_code',
   dueDate: 'due_date',
+  localTime: 'local_time',
+  timezone: 'timezone',
   location: 'location',
   contractAmount: 'contract_amount',
+  baseAmount: 'base_amount',
+  monthlyPayment: 'monthly_payment',
   value: 'value',
   mandatoryEvents: 'mandatory_events',
   mandatoryEventsList: 'mandatory_events_list',
@@ -56,6 +60,22 @@ const OPPORTUNITY_EDIT_COLUMNS = {
 
 const ASSIGNMENT_KEYS = new Set(['assignedTo', 'bdm', 'bds', 'supportAgent'])
 const TRACKER_ASSIGNMENT_KEYS = new Set(['bdm', 'bds', 'supportAgent'])
+const FINANCIAL_KEYS = new Set(['contractAmount', 'baseAmount', 'monthlyPayment', 'value'])
+const TRACKER_FINANCIAL_KEYS = new Set(['value'])
+const SUBMIT_FINANCIAL_COLUMNS = {
+  contractAmount: 'contract_amount',
+  baseAmount: 'base_amount',
+  monthlyPayment: 'monthly_payment',
+} as const
+const OPPORTUNITY_SCHEDULE_COLUMNS = {
+  dueDate: 'due_date',
+  localTime: 'local_time',
+  timezone: 'timezone',
+} as const
+const POST_SUBMISSION_OPPORTUNITY_STATUSES = new Set([
+  'SUBMITTED', 'WON', 'LOST', 'CANCELED', 'NOT_SUBMITTED', 'DROPPED', 'TERMINATED',
+  'AWARDED', 'DISCUSSING',
+])
 const PERMISSIONS = [
   'admin:manageUsers',
   'opportunity:submitProposal',
@@ -353,6 +373,61 @@ function assignments(mapping: Readonly<Record<string, string>>, values: Record<s
   })
 }
 
+function canonicalNumeric(value: unknown): string | undefined {
+  const source = typeof value === 'number'
+    ? Number.isFinite(value) ? String(value) : undefined
+    : typeof value === 'string' ? value.trim() : undefined
+  if (!source) return undefined
+  const match = /^([+-]?)(\d*)(?:\.(\d*))?(?:[eE]([+-]?\d+))?$/.exec(source)
+  if (!match) return undefined
+  if (!match[2] && !match[3]) return undefined
+  const exponent = match[4] === undefined ? 0 : Number(match[4])
+  if (!Number.isSafeInteger(exponent)) return undefined
+  let digits = `${match[2]}${match[3] ?? ''}`.replace(/^0+/, '')
+  if (!digits) return '0'
+  let scale = (match[3]?.length ?? 0) - exponent
+  while (digits.endsWith('0')) {
+    digits = digits.slice(0, -1)
+    scale -= 1
+  }
+  return `${match[1] === '-' ? '-' : ''}${digits}e${-scale}`
+}
+
+function numericValuesEqual(current: unknown, requested: unknown): boolean {
+  if ((current === null || current === undefined) && (requested === null || requested === undefined)) {
+    return true
+  }
+  const currentNumeric = canonicalNumeric(current)
+  const requestedNumeric = canonicalNumeric(requested)
+  return currentNumeric !== undefined && currentNumeric === requestedNumeric
+}
+
+function submittedFinancialsChanged(
+  opportunity: QueryResultRow,
+  values: Record<string, unknown>,
+): boolean {
+  return Object.entries(SUBMIT_FINANCIAL_COLUMNS).some(([key, column]) => (
+    Object.prototype.hasOwnProperty.call(values, key)
+      && !numericValuesEqual(opportunity[column], values[key])
+  ))
+}
+
+function normalizedScheduleValue(value: unknown): unknown {
+  if (value === null || value === undefined) return null
+  if (typeof value === 'string' && value.trim() === '') return null
+  return value
+}
+
+function opportunityScheduleChanged(
+  opportunity: QueryResultRow,
+  values: Record<string, unknown>,
+): boolean {
+  return Object.entries(OPPORTUNITY_SCHEDULE_COLUMNS).some(([key, column]) => {
+    if (!Object.prototype.hasOwnProperty.call(values, key)) return false
+    return normalizedScheduleValue(opportunity[column]) !== normalizedScheduleValue(values[key])
+  })
+}
+
 async function trackerSnapshot(
   client: Queryable,
   opportunity: QueryResultRow,
@@ -463,6 +538,12 @@ async function submit(
     assertExpectedStatus(current, request.expectedSubmissionStatus, 'BD submission')
   }
   else if (request.expectedSubmissionStatus !== undefined) stale('BD submission')
+  const wasPreviouslySubmitted = current !== null
+    || original.submitted_at !== null && original.submitted_at !== undefined
+    || POST_SUBMISSION_OPPORTUNITY_STATUSES.has(String(original.status ?? '').toUpperCase())
+  if (wasPreviouslySubmitted && submittedFinancialsChanged(original, request.values)) {
+    requirePermission(permissions, 'admin:manageUsers')
+  }
   const oldStatuses = new Set([String(original.status ?? ''), String(current?.status ?? '')])
   if (oldStatuses.has('CANCELED')) requirePermission(permissions, 'opportunity:cancel')
   if (oldStatuses.has('NOT_SUBMITTED') || oldStatuses.has('DROPPED')) {
@@ -661,6 +742,10 @@ async function edit(
     || [...Object.keys(request.opportunityValues)].some((key) => ASSIGNMENT_KEYS.has(key))) {
     requirePermission(permissions, 'opportunity:assign')
   }
+  if ([...Object.keys(request.values)].some((key) => TRACKER_FINANCIAL_KEYS.has(key))
+    || [...Object.keys(request.opportunityValues)].some((key) => FINANCIAL_KEYS.has(key))) {
+    requirePermission(permissions, 'admin:manageUsers')
+  }
   const located = await locateForLinkedAction(client, request)
   if (!located.submission) throw new ApiError(404, 'not_found', 'BD submission not found.')
   if (located.opportunity && request.expectedOpportunityStatus === undefined) {
@@ -676,6 +761,9 @@ async function edit(
   if (opportunity && Object.keys(request.opportunityValues).length > 0) {
     const params: unknown[] = []
     const set = assignments(OPPORTUNITY_EDIT_COLUMNS, request.opportunityValues, params)
+    if (opportunityScheduleChanged(opportunity, request.opportunityValues)) {
+      set.push('notified_due_24h = false', 'notified_due_4h = false')
+    }
     params.push(opportunity.id)
     const updated = await client.query(
       `update public.opportunities set ${set.join(', ')} where id = $${params.length} returning *`,

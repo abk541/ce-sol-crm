@@ -7,8 +7,13 @@ const mocks = vi.hoisted(() => ({
   signOutCurrentSession: vi.fn().mockResolvedValue(undefined),
   loadAllData: vi.fn(),
   fetchNotifications: vi.fn(),
+  fetchNotificationReadIds: vi.fn(),
   fetchEmployeeRequests: vi.fn(),
   fetchActivityLogs: vi.fn(),
+  seedEmployeesIfEmpty: vi.fn().mockResolvedValue(undefined),
+  seedIfEmpty: vi.fn().mockResolvedValue(undefined),
+  fetchPermissionOverrides: vi.fn().mockResolvedValue({ ok: false }),
+  fetchAppSettings: vi.fn().mockResolvedValue({ ok: false }),
 }))
 
 vi.mock('../lib/auth', () => ({
@@ -31,8 +36,13 @@ vi.mock('../lib/db', async (importOriginal) => {
     ...actual,
     loadAllData: mocks.loadAllData,
     fetchNotifications: mocks.fetchNotifications,
+    fetchNotificationReadIds: mocks.fetchNotificationReadIds,
     fetchEmployeeRequests: mocks.fetchEmployeeRequests,
     fetchActivityLogs: mocks.fetchActivityLogs,
+    seedEmployeesIfEmpty: mocks.seedEmployeesIfEmpty,
+    seedIfEmpty: mocks.seedIfEmpty,
+    fetchPermissionOverrides: mocks.fetchPermissionOverrides,
+    fetchAppSettings: mocks.fetchAppSettings,
   }
 })
 
@@ -78,6 +88,7 @@ describe('background profile revalidation', () => {
     mocks.loadAllData.mockResolvedValue(null)
     mocks.restoreAuthenticatedProfile.mockResolvedValue({ initialized: true, profile: null })
     mocks.fetchNotifications.mockResolvedValue({ ok: false })
+    mocks.fetchNotificationReadIds.mockResolvedValue({ ok: false })
     mocks.fetchEmployeeRequests.mockResolvedValue({ ok: false })
     mocks.fetchActivityLogs.mockResolvedValue({ ok: false })
     setAuthenticatedWorkspace()
@@ -210,5 +221,39 @@ describe('background profile revalidation', () => {
       isAuthenticated: true,
     })
     expect(useStore.getState().opportunities).toEqual([])
+  })
+
+  it('discards account-scoped initialization results after the active account changes', async () => {
+    const otherUser: User = {
+      ...user,
+      id: 'profile-2',
+      authUserId: 'auth-2',
+      email: 'other@example.com',
+      username: 'other',
+    }
+    let resolveNotifications!: (value: { ok: true; payload: [] }) => void
+    mocks.fetchNotifications.mockReturnValueOnce(new Promise(resolve => {
+      resolveNotifications = resolve
+    }))
+    mocks.fetchNotificationReadIds.mockResolvedValueOnce({ ok: true, payload: ['account-a-read'] })
+    useStore.setState({ dbReady: false, notifications: [] })
+
+    const initialization = useStore.getState().initializeStore()
+    await vi.waitFor(() => expect(mocks.fetchNotifications).toHaveBeenCalledOnce())
+    useStore.setState({
+      currentUser: otherUser,
+      users: [otherUser],
+      loginTimestamp: Date.parse('2026-07-20T09:00:00.000Z'),
+      notifications: [],
+      notificationsReady: false,
+    })
+    resolveNotifications({ ok: true, payload: [] })
+    await initialization
+
+    expect(useStore.getState()).toMatchObject({
+      currentUser: otherUser,
+      notifications: [],
+      notificationsReady: false,
+    })
   })
 })
