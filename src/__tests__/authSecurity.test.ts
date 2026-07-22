@@ -115,6 +115,31 @@ describe('private API authentication boundary', () => {
     expect(result.ok && result.profile).not.toHaveProperty('mfaSecret')
   })
 
+  it.each([
+    [401, 'invalid_credentials', 'invalid_credentials', false, 'Invalid email or password.'],
+    [0, 'network_error', 'auth_unreachable', true, 'could not be reached'],
+    [404, 'not_found', 'outdated_client', true, 'outdated CRM version'],
+    [429, 'rate_limited', 'login_rate_limited', true, 'Wait one minute'],
+    [503, 'service_unavailable', 'auth_temporarily_unavailable', true, 'temporarily unavailable'],
+  ])(
+    'maps login failure status %i without destroying another tab session',
+    async (status, apiCode, expectedCode, retryable, message) => {
+      mocks.apiRequest.mockRejectedValue(
+        new mocks.MockApiRequestError('Server detail', apiCode, status),
+      )
+
+      const result = await authenticateWithPassword('user@example.com', 'not-logged')
+
+      expect(result).toMatchObject({
+        ok: false,
+        code: expectedCode,
+        retryable,
+      })
+      expect(!result.ok && result.error).toContain(message)
+      expect(mocks.clearApiSession).not.toHaveBeenCalled()
+    },
+  )
+
   it('restores an existing API session and safe profile', async () => {
     mocks.apiRequest.mockResolvedValue({ data: { user: safeRow, session: apiSession } })
 

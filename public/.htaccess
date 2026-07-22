@@ -1,0 +1,21 @@
+RewriteEngine On
+
+# Keep one browser origin. The API authorizes the canonical non-www host, and
+# bookmarks using www must not load an identical-looking but CORS-blocked app.
+RewriteCond %{HTTP_HOST} ^www\.crm\.cesolutionplus\.com$ [NC]
+RewriteRule ^ https://crm.cesolutionplus.com%{REQUEST_URI} [R=301,L,NE]
+
+<IfModule mod_headers.c>
+  # The HTML selects the current hashed application bundle, so it must always
+  # be revalidated. This prevents one computer from retaining an old API URL.
+  <FilesMatch "\.html$">
+    Header always set Cache-Control "no-cache, no-store, must-revalidate"
+    Header always set Pragma "no-cache"
+    Header always set Expires "0"
+  </FilesMatch>
+
+  # Vite content hashes these assets; a new release always gets a new name.
+  <FilesMatch "-[A-Za-z0-9_-]{8,}\.(css|js|avif|svg|png|jpg|jpeg|webp|woff|woff2)$">
+    Header always set Cache-Control "public, max-age=31536000, immutable"
+  </FilesMatch>
+</IfModule>

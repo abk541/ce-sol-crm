@@ -49,6 +49,7 @@ const opportunity = {
 
 describe('auth memory and persistence boundaries', () => {
   beforeEach(() => {
+    vi.restoreAllMocks()
     localStorage.clear()
     sessionStorage.clear()
     vi.clearAllMocks()
@@ -227,6 +228,30 @@ describe('auth memory and persistence boundaries', () => {
       loginTimestamp: Date.parse(newStartIso),
       accessNoticeAccepted: false,
     })
+  })
+
+  it('completes a valid login when optional preference storage rejects writes', async () => {
+    authMocks.authenticateWithPassword.mockResolvedValue({
+      ok: true,
+      profile: user,
+      session: {
+        access_token: 'opaque-token',
+        user: { id: 'auth-1', last_sign_in_at: '2026-07-20T12:00:00.000Z' },
+      },
+    })
+    const setItem = vi.spyOn(localStorage, 'setItem').mockImplementation(() => {
+      throw new DOMException('Storage blocked', 'SecurityError')
+    })
+
+    await expect(useStore.getState().login(user.email, 'ValidPassword1!')).resolves.toEqual({
+      ok: true,
+    })
+    expect(useStore.getState()).toMatchObject({
+      currentUser: user,
+      isAuthenticated: true,
+      needsFirstLogin: false,
+    })
+    setItem.mockRestore()
   })
 
   it('purges workspace state on a cross-tab sign-out event', async () => {

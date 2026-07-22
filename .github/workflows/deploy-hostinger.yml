@@ -81,6 +81,7 @@ jobs:
           set cmd:fail-exit true;
           open -u '$FTP_USER','$FTP_PASS' '$FTP_HOST';
           mirror -R --verbose --parallel=4 --exclude-glob .ftp-deploy-sync-state.json ./dist/ '$FTP_PATH';
+          put -O '$FTP_PATH' ./dist/.htaccess;
           bye;
           "
 
@@ -109,12 +110,24 @@ jobs:
               curl -fsSL -H 'Cache-Control: no-cache' \
                 "https://crm.cesolutionplus.com/${public_js}?release=${GITHUB_SHA}-${attempt}" \
                 -o /tmp/public-crm.js
+              canonical_headers="$(curl -sSI -H 'Cache-Control: no-cache' \
+                "https://www.crm.cesolutionplus.com/?release=${GITHUB_SHA}-${attempt}" || true)"
+              canonical_status="$(printf '%s\n' "$canonical_headers" \
+                | awk '/^HTTP\// { status=$2 } END { print status }')"
+              canonical_location="$(printf '%s\n' "$canonical_headers" \
+                | tr -d '\r' | sed -n 's/^[Ll]ocation: //p' | tail -n 1)"
+              index_cache="$(curl -sSI -H 'Cache-Control: no-cache' \
+                "https://crm.cesolutionplus.com/?release=${GITHUB_SHA}-${attempt}" \
+                | tr -d '\r' | grep -i '^cache-control:' | tail -n 1 || true)"
               if grep -Fq "$expected_api_host" /tmp/public-crm.js \
                 && ! grep -Fq 'supabase.co' /tmp/public-crm.js \
                 && ! grep -Fq '/rest/v1' /tmp/public-crm.js \
                 && ! grep -Fq '/auth/v1' /tmp/public-crm.js \
                 && ! grep -Fq 'api.sam.gov' /tmp/public-crm.js \
-                && ! grep -Fq 'VITE_SAM_GOV_API_KEY' /tmp/public-crm.js; then
+                && ! grep -Fq 'VITE_SAM_GOV_API_KEY' /tmp/public-crm.js \
+                && [ "$canonical_status" = '301' ] \
+                && [[ "$canonical_location" == https://crm.cesolutionplus.com/* ]] \
+                && [[ "$index_cache" == *no-store*must-revalidate* ]]; then
                 echo "Verified public release asset: $public_js"
                 exit 0
               fi

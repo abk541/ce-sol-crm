@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
+import { createJSONStorage, persist, type StateStorage } from 'zustand/middleware'
 import toast from 'react-hot-toast'
 import type { ApiSession } from '../lib/api'
 import type {
@@ -826,6 +826,35 @@ function pendingFirstLoginState(
     loginTimestamp: startedAt,
     accessNoticeAccepted,
   }
+}
+
+// UI preferences are optional. A privacy policy, browser extension, or full
+// storage quota must never interrupt authentication or a business-data update.
+const resilientPreferenceStorage: StateStorage = {
+  getItem: name => {
+    if (typeof window === 'undefined') return null
+    try {
+      return window.localStorage.getItem(name)
+    } catch {
+      return null
+    }
+  },
+  setItem: (name, value) => {
+    if (typeof window === 'undefined') return
+    try {
+      window.localStorage.setItem(name, value)
+    } catch {
+      // The in-memory preference remains authoritative for this tab.
+    }
+  },
+  removeItem: name => {
+    if (typeof window === 'undefined') return
+    try {
+      window.localStorage.removeItem(name)
+    } catch {
+      // A stale preference is harmless and will be ignored if unreadable.
+    }
+  },
 }
 
 export const useStore = create<AppState>()(
@@ -4556,6 +4585,7 @@ export const useStore = create<AppState>()(
     }),
     {
       name: 'ces-crm-store',
+      storage: createJSONStorage(() => resilientPreferenceStorage),
       // v21: reintroduce MFA (TOTP) gate — new pendingMfa* fields are cleared
       // on rehydrate so a persisted mid-flow state can never bypass the login
       // screen; existing users are re-enrolled on next login (mfaEnabled=false).

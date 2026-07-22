@@ -32,6 +32,10 @@ interface AuthPayload {
 }
 
 const GENERIC_LOGIN_ERROR = 'Invalid email or password.'
+const LOGIN_CONNECTION_ERROR = 'The sign-in service could not be reached. Check your connection and try again.'
+const LOGIN_SERVICE_ERROR = 'The sign-in service is temporarily unavailable. Try again shortly.'
+const OUTDATED_CLIENT_ERROR = 'This browser loaded an outdated CRM version. Close all CRM tabs, reopen the site, and try again.'
+const LOGIN_RATE_LIMIT_ERROR = 'Too many sign-in attempts. Wait one minute and try again.'
 
 function authFailure(
   code: string,
@@ -51,6 +55,30 @@ function isRetryableAuthError(error: unknown): boolean {
   }
   const message = error instanceof Error ? error.message : ''
   return /network|fetch|timeout|temporar|connection/i.test(message)
+}
+
+function safeLoginFailure(error: unknown): ServiceFailure {
+  if (!(error instanceof ApiRequestError)) {
+    return authFailure('login_failed', LOGIN_SERVICE_ERROR, true)
+  }
+  if (error.status === 401 || error.code === 'invalid_credentials') {
+    return authFailure('invalid_credentials', GENERIC_LOGIN_ERROR)
+  }
+  if (error.status === 429) {
+    return authFailure('login_rate_limited', LOGIN_RATE_LIMIT_ERROR, true)
+  }
+  if (error.status === 404) {
+    return authFailure('outdated_client', OUTDATED_CLIENT_ERROR, true)
+  }
+  if (error.status === 0 || error.code === 'network_error') {
+    return authFailure('auth_unreachable', LOGIN_CONNECTION_ERROR, true)
+  }
+  if (error.status >= 500 || isRetryableAuthError(error)) {
+    return authFailure('auth_temporarily_unavailable', LOGIN_SERVICE_ERROR, true)
+  }
+  // Keep all other credential-related server rejections deliberately generic
+  // so account existence and internal authentication details are not exposed.
+  return authFailure('invalid_credentials', GENERIC_LOGIN_ERROR)
 }
 
 function safeProfile(payload: AuthPayload): User | null {
@@ -144,7 +172,6 @@ export async function authenticateWithPassword(email: string, password: string):
     const payload = envelopeData<AuthPayload>(response)
     const profileResult = validateActiveProfile(safeProfile(payload))
     if (!profileResult.ok || !payload.session?.access_token || !payload.session.user?.id) {
-      clearApiSession()
       return profileResult.ok
         ? authFailure('invalid_credentials', GENERIC_LOGIN_ERROR)
         : profileResult
@@ -152,11 +179,10 @@ export async function authenticateWithPassword(email: string, password: string):
 
     storeApiSession(payload.session)
     return { ...profileResult, session: payload.session }
-  } catch {
-    clearApiSession()
-    // Login failures remain deliberately generic so account existence and
-    // infrastructure details are not disclosed.
-    return authFailure('invalid_credentials', GENERIC_LOGIN_ERROR)
+  } catch (error) {
+    // A failed unauthenticated attempt must not erase a valid session created
+    // concurrently in another browser tab.
+    return safeLoginFailure(error)
   }
 }
 

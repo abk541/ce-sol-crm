@@ -26,7 +26,20 @@ type RequestOptions = {
 
 const TOKEN_STORAGE_KEY = 'ces-crm-api-token'
 const SESSION_STORAGE_KEY = 'ces-crm-api-session'
+const SESSION_FALLBACK_STORAGE_KEY = 'ces-crm-api-session-fallback'
 const AUTH_BROADCAST_CHANNEL = 'ces-crm-auth'
+
+interface StoredSessionFallback {
+  token: string
+  session: ApiSession
+}
+
+// Some privacy tools and full browser profiles make localStorage readable but
+// reject writes. Keep the accepted server session usable in that tab, and use
+// sessionStorage as a reload-safe fallback when the browser permits it.
+let memoryToken: string | null = null
+let memorySession: ApiSession | null = null
+let preferMemorySession = false
 
 function normalizeApiUrl(value: string | undefined): string {
   const trimmed = (value ?? '').trim().replace(/^['"]|['"]$/g, '')
@@ -50,28 +63,70 @@ export const apiHost = (() => {
   }
 })()
 
-function storageAvailable(): boolean {
-  return typeof window !== 'undefined' && typeof window.localStorage !== 'undefined'
-}
-
-export function getApiAccessToken(): string | null {
-  if (!storageAvailable()) return null
+function browserStorage(kind: 'localStorage' | 'sessionStorage'): Storage | null {
+  if (typeof window === 'undefined') return null
   try {
-    return window.localStorage.getItem(TOKEN_STORAGE_KEY)
+    return window[kind]
   } catch {
     return null
   }
 }
 
-export function getStoredApiSession(): ApiSession | null {
-  if (!storageAvailable()) return null
+function safeStoredSession(raw: string | null): ApiSession | null {
+  if (!raw) return null
   try {
-    const raw = window.localStorage.getItem(SESSION_STORAGE_KEY)
-    if (!raw) return null
     const session = JSON.parse(raw) as ApiSession
     return session?.user?.id ? session : null
   } catch {
     return null
+  }
+}
+
+function readSessionFallback(): StoredSessionFallback | null {
+  const storage = browserStorage('sessionStorage')
+  if (!storage) return null
+  try {
+    const raw = storage.getItem(SESSION_FALLBACK_STORAGE_KEY)
+    if (!raw) return null
+    const fallback = JSON.parse(raw) as StoredSessionFallback
+    if (!fallback?.token || !fallback.session?.user?.id) return null
+    return fallback
+  } catch {
+    return null
+  }
+}
+
+function removeSessionFallback(): boolean {
+  try {
+    browserStorage('sessionStorage')?.removeItem(SESSION_FALLBACK_STORAGE_KEY)
+    return true
+  } catch {
+    // Memory or localStorage remains the active session source.
+    return false
+  }
+}
+
+export function getApiAccessToken(): string | null {
+  if (preferMemorySession) return memoryToken
+  const fallback = readSessionFallback()
+  if (fallback) return fallback.token
+  try {
+    return browserStorage('localStorage')?.getItem(TOKEN_STORAGE_KEY) ?? memoryToken
+  } catch {
+    return memoryToken
+  }
+}
+
+export function getStoredApiSession(): ApiSession | null {
+  if (preferMemorySession) return memorySession
+  const fallback = readSessionFallback()
+  if (fallback) return fallback.session
+  try {
+    return safeStoredSession(
+      browserStorage('localStorage')?.getItem(SESSION_STORAGE_KEY) ?? null,
+    ) ?? memorySession
+  } catch {
+    return memorySession
   }
 }
 
@@ -103,12 +158,56 @@ export function storeApiSession(session: ApiSession, event?: Exclude<ApiAuthEven
     ...session,
     access_token: undefined,
   }
-  if (storageAvailable()) {
+
+  memoryToken = token
+  memorySession = storedSession
+
+  let persistedLocally = false
+  const localStorage = browserStorage('localStorage')
+  if (localStorage) {
     try {
-      window.localStorage.setItem(TOKEN_STORAGE_KEY, token)
-      window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(storedSession))
+      localStorage.setItem(TOKEN_STORAGE_KEY, token)
+      localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(storedSession))
+      persistedLocally = true
     } catch {
-      throw new Error('This browser could not securely persist the session.')
+      // Avoid leaving a new token paired with an old session (or vice versa).
+      try {
+        localStorage.removeItem(TOKEN_STORAGE_KEY)
+        localStorage.removeItem(SESSION_STORAGE_KEY)
+      } catch {
+        // The in-memory preference below prevents a stale readable value from
+        // replacing the session that the server just accepted in this tab.
+      }
+    }
+  }
+
+  if (persistedLocally) {
+    preferMemorySession = !removeSessionFallback()
+    if (preferMemorySession) {
+      try {
+        browserStorage('sessionStorage')?.setItem(
+          SESSION_FALLBACK_STORAGE_KEY,
+          JSON.stringify({ token, session: storedSession } satisfies StoredSessionFallback),
+        )
+        preferMemorySession = false
+      } catch {
+        // Keep the new session authoritative in memory if an old fallback
+        // cannot be removed or replaced.
+      }
+    }
+  } else {
+    preferMemorySession = true
+    const fallbackStorage = browserStorage('sessionStorage')
+    if (fallbackStorage) {
+      try {
+        fallbackStorage.setItem(SESSION_FALLBACK_STORAGE_KEY, JSON.stringify({
+          token,
+          session: storedSession,
+        } satisfies StoredSessionFallback))
+      } catch {
+        // The current tab can still use the in-memory session. A browser that
+        // blocks all storage will require a new login after a page refresh.
+      }
     }
   }
 
@@ -119,14 +218,23 @@ export function storeApiSession(session: ApiSession, event?: Exclude<ApiAuthEven
 }
 
 export function clearApiSession(options: { broadcast?: boolean } = {}): void {
-  if (storageAvailable()) {
+  memoryToken = null
+  memorySession = null
+  let localSessionRemoved = true
+  const localStorage = browserStorage('localStorage')
+  if (localStorage) {
     try {
-      window.localStorage.removeItem(TOKEN_STORAGE_KEY)
-      window.localStorage.removeItem(SESSION_STORAGE_KEY)
+      localStorage.removeItem(TOKEN_STORAGE_KEY)
+      localStorage.removeItem(SESSION_STORAGE_KEY)
     } catch {
+      localSessionRemoved = false
       // In-memory state is still invalidated by the auth event below.
     }
   }
+  const fallbackRemoved = removeSessionFallback()
+  // If an extension blocks removals, this tab must not fall back to a stale
+  // value that remains readable in browser storage.
+  preferMemorySession = !localSessionRemoved || !fallbackRemoved
   notifyAuthListeners('SIGNED_OUT', null)
   if (options.broadcast !== false) broadcastAuthEvent('SIGNED_OUT', null)
 }
@@ -140,16 +248,20 @@ export function subscribeToApiAuthEvents(listener: AuthListener): () => void {
     // make an older tab revoke the newly-created session. The session-key event
     // is the atomic hand-off and also covers logout.
     if (event.key !== SESSION_STORAGE_KEY) return
-    const token = getApiAccessToken()
+    let token: string | null = null
     let session: ApiSession | null = null
     if (event.newValue) {
+      session = safeStoredSession(event.newValue)
       try {
-        const parsed = JSON.parse(event.newValue) as ApiSession
-        session = parsed?.user?.id ? parsed : null
+        token = browserStorage('localStorage')?.getItem(TOKEN_STORAGE_KEY) ?? null
       } catch {
-        session = null
+        token = null
       }
     }
+    memoryToken = token
+    memorySession = token && session ? session : null
+    const fallbackRemoved = removeSessionFallback()
+    preferMemorySession = !fallbackRemoved
     notifyAuthListeners(token && session ? 'TOKEN_REFRESHED' : 'SIGNED_OUT', token ? session : null)
   }
 
@@ -215,9 +327,9 @@ export async function apiRequest<T>(
 ): Promise<T> {
   const headers = new Headers(init.headers)
   const auth = options.auth !== false
+  const requestToken = auth ? getApiAccessToken() : null
   if (auth) {
-    const token = getApiAccessToken()
-    if (token) headers.set('Authorization', `Bearer ${token}`)
+    if (requestToken) headers.set('Authorization', `Bearer ${requestToken}`)
   }
   if (init.body && !(init.body instanceof FormData) && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json')
@@ -249,7 +361,14 @@ export async function apiRequest<T>(
   }
 
   if (!response.ok) {
-    if (response.status === 401 && auth && getApiAccessToken()) clearApiSession()
+    // A request from an older tab/session must never erase a newer token that
+    // was stored while that request was in flight.
+    if (
+      response.status === 401
+      && auth
+      && requestToken
+      && getApiAccessToken() === requestToken
+    ) clearApiSession()
     throw errorPayload(payload, response.status)
   }
   return payload as T
@@ -504,7 +623,13 @@ export function subscribeToApiEvents(onEvent: () => void): () => void {
         signal: controller.signal,
       })
       if (response.status === 401) {
-        clearApiSession()
+        if (token && getApiAccessToken() === token) {
+          clearApiSession()
+        } else {
+          // The session changed while this stream was opening. Reconnect with
+          // the newer token instead of waiting for the polling fallback.
+          scheduleReconnect()
+        }
         return
       }
       if (!response.ok || !response.body) throw new Error(`Event stream failed (${response.status}).`)

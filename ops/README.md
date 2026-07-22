@@ -78,7 +78,7 @@ DATABASE_URL=postgresql://app_runtime:generated-password@127.0.0.1:5433/ce_crm
 HOST=127.0.0.1
 PORT=3001
 TRUST_PROXY=true
-ALLOWED_ORIGINS=https://crm.cesolutionplus.com,https://abk541.github.io
+ALLOWED_ORIGINS=https://crm.cesolutionplus.com,https://www.crm.cesolutionplus.com,https://abk541.github.io
 ATTACHMENTS_DIR=/var/lib/ce-crm/attachments
 SAM_GOV_API_KEY=server-only-value
 ```
