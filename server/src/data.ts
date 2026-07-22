@@ -201,8 +201,35 @@ const COMMON_KEYS = [
   'head',
 ] as const
 
+// node-postgres treats JavaScript arrays as PostgreSQL arrays. JSON/JSONB
+// columns must instead receive serialized JSON, otherwise attachment arrays
+// fail at runtime with 22P02 (invalid input syntax for type json).
+const JSON_COLUMNS = new Map<string, ReadonlySet<string>>([
+  ['contract_invoices', new Set(['line_item_ids'])],
+  ['contract_vehicle_orders', new Set(['document'])],
+  ['contracts', new Set(['proposal_attachments', 'comms_log'])],
+  ['employee_requests', new Set(['attachments'])],
+  ['fresh_awards', new Set(['proposal_attachments'])],
+  ['non_submission_reports', new Set(['comments'])],
+  ['opportunities', new Set(['proposal_attachments', 'mandatory_events_list', 'sam_gov_contacts'])],
+  ['role_permission_overrides', new Set(['permissions'])],
+  ['subcontractors', new Set(['quote_files', 'contacts'])],
+  ['user_permission_overrides', new Set(['grants', 'revokes'])],
+])
+
 function quoted(identifier: string): string {
   return `"${identifier.replaceAll('"', '""')}"`
+}
+
+function pushColumnParameter(
+  values: unknown[],
+  table: string,
+  column: string,
+  value: unknown,
+): string {
+  const jsonValue = JSON_COLUMNS.get(table)?.has(column) === true
+  values.push(jsonValue && value !== null ? JSON.stringify(value) : value)
+  return `$${values.length}${jsonValue ? '::jsonb' : ''}`
 }
 
 function bool(value: unknown, label: string): boolean {
@@ -741,9 +768,11 @@ async function upsertNonSubmissionData(
       affected += 1
       continue
     }
-    const values = updateColumns.map((column) => row[column])
+    const values: unknown[] = []
+    const assignments = updateColumns.map((column) => (
+      `${quoted(column)} = ${pushColumnParameter(values, common.table, column, row[column])}`
+    ))
     values.push(row.id)
-    const assignments = updateColumns.map((column, index) => `${quoted(column)} = $${index + 1}`)
     const result = await client.query<QueryResultRow>(
       `update public.non_submission_reports set ${assignments.join(', ')} where id = $${values.length}${returning}`,
       values,
@@ -758,8 +787,7 @@ async function upsertNonSubmissionData(
   if (newRows.length > 0) {
     const values: unknown[] = []
     const tuples = newRows.map((row) => `(${keys.map((key) => {
-      values.push(row[key])
-      return `$${values.length}`
+      return pushColumnParameter(values, common.table, key, row[key])
     }).join(', ')})`)
     const result = await client.query<QueryResultRow>(
       `insert into public.non_submission_reports (${keys.map(quoted).join(', ')}) values ${tuples.join(', ')} on conflict ("id") do nothing${returning}`,
@@ -817,9 +845,11 @@ async function upsertOpportunityData(
       continue
     }
 
-    const values = rowUpdateColumns.map((key) => row[key])
+    const values: unknown[] = []
+    const assignments = rowUpdateColumns.map((key) => (
+      `${quoted(key)} = ${pushColumnParameter(values, common.table, key, row[key])}`
+    ))
     values.push(row.id)
-    const assignments = rowUpdateColumns.map((key, index) => `${quoted(key)} = $${index + 1}`)
     const result = await client.query<QueryResultRow>(
       `update public.opportunities set ${assignments.join(', ')} where "id" = $${values.length}${returning}`,
       values,
@@ -838,8 +868,7 @@ async function upsertOpportunityData(
   if (newRows.length > 0) {
     const values: unknown[] = []
     const tuples = newRows.map((row) => `(${keys.map((key) => {
-      values.push(row[key])
-      return `$${values.length}`
+      return pushColumnParameter(values, common.table, key, row[key])
     }).join(', ')})`)
     const conflict = ` on conflict (${conflictColumns.map(quoted).join(', ')}) do nothing`
     const result = await client.query<QueryResultRow>(
@@ -959,8 +988,7 @@ async function insertData(
 
   const values: unknown[] = []
   const tuples = rows.map((row) => `(${keys.map((key) => {
-    values.push(row[key])
-    return `$${values.length}`
+    return pushColumnParameter(values, common.table, key, row[key])
   }).join(', ')})`)
   let conflict = ''
   if (upsert) {
@@ -1039,8 +1067,7 @@ async function updateOrDeleteData(
       )
     }
     const assignments = keys.map((key) => {
-      values.push(patch[key])
-      return `${quoted(key)} = $${values.length}`
+      return `${quoted(key)} = ${pushColumnParameter(values, common.table, key, patch[key])}`
     })
     prefix = `update public.${quoted(common.table)} set ${assignments.join(', ')}`
   } else {

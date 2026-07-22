@@ -107,11 +107,21 @@ describe('opportunity workflow request validation', () => {
 describe('atomic opportunity workflows', () => {
   it('submits by locking/updating the opportunity before reconciling and creating a tracker row', async () => {
     const statements: string[] = []
+    const proposalAttachment = {
+      id: 'proposal-1',
+      name: 'proposal.pdf',
+      attachedAt: '2026-07-21T11:00:00.000Z',
+      uploadedBy: 'associate',
+      storagePath: 'attachments/proposal-1',
+    }
     const client = queryable((text, values) => {
       if (text.includes('private.has_permission')) return permissionRows('opportunity:submitProposal')
       if (text.includes('from public.opportunities') && text.includes('for update')) return [opportunity]
       if (text.startsWith('update public.opportunities')) {
         expect(values).toContain('SUBMITTED')
+        expect(text).toMatch(/"proposal_attachments" = \$\d+::jsonb/)
+        expect(values).toContain(JSON.stringify([proposalAttachment]))
+        expect(values).toContainEqual(['proposal.pdf'])
         return [{ ...opportunity, status: 'SUBMITTED', submitted_at: '2026-07-21T12:00:00.000Z' }]
       }
       if (text.includes('where opportunity_id = $1 for update')) return []
@@ -130,7 +140,11 @@ describe('atomic opportunity workflows', () => {
       action: 'submit',
       opportunityId: 'opp-1',
       expectedOpportunityStatus: 'ACTIVE',
-      values: { contractAmount: 250, proposals: ['proposal.pdf'] },
+      values: {
+        contractAmount: 250,
+        proposals: ['proposal.pdf'],
+        proposalAttachments: [proposalAttachment],
+      },
     }, new Date('2026-07-21T12:00:00.000Z'))).resolves.toMatchObject({
       opportunity: { id: 'opp-1', status: 'SUBMITTED' },
       submission: { opportunity_id: 'opp-1', status: 'SUBMITTED' },

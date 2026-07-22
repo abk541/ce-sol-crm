@@ -399,7 +399,12 @@ describe('generic data request compiler', () => {
       if (text.includes('private.has_permission')) {
         return [{ permission: 'sourcing:write', allowed: true }]
       }
-      if (text.startsWith('insert into public."subcontractors"')) return [row]
+      if (text.startsWith('insert into public."subcontractors"')) {
+        expect(text).toMatch(/\$\d+::jsonb/)
+        expect(values).toContain(JSON.stringify(row.quote_files))
+        expect(values).not.toContain(row.quote_files)
+        return [row]
+      }
       if (text.startsWith('update public.opportunities')) {
         expect(values).toEqual([['opp-1']])
         return [{ id: 'opp-1' }]

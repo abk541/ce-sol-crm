@@ -72,6 +72,7 @@ const OPPORTUNITY_SCHEDULE_COLUMNS = {
   localTime: 'local_time',
   timezone: 'timezone',
 } as const
+const JSON_VALUE_KEYS = new Set(['proposalAttachments', 'mandatoryEventsList'])
 const POST_SUBMISSION_OPPORTUNITY_STATUSES = new Set([
   'SUBMITTED', 'WON', 'LOST', 'CANCELED', 'NOT_SUBMITTED', 'DROPPED', 'TERMINATED',
   'AWARDED', 'DISCUSSING',
@@ -368,8 +369,9 @@ function generatedCancellationComment(value: unknown): boolean {
 
 function assignments(mapping: Readonly<Record<string, string>>, values: Record<string, unknown>, params: unknown[]): string[] {
   return Object.keys(values).sort().map((key) => {
-    params.push(values[key])
-    return `"${mapping[key]}" = $${params.length}`
+    const jsonValue = JSON_VALUE_KEYS.has(key)
+    params.push(jsonValue && values[key] !== null ? JSON.stringify(values[key]) : values[key])
+    return `"${mapping[key]}" = $${params.length}${jsonValue ? '::jsonb' : ''}`
   })
 }
 
