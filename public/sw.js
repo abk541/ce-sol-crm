@@ -1,11 +1,13 @@
-const SHELL_CACHE = 'ce-erp-shell-v1'
+const SHELL_CACHE = 'ce-erp-shell-v2'
 const SHELL_FILES = [
   './',
   './index.html',
   './manifest.webmanifest',
-  './pwa-192.png',
-  './pwa-512.png',
-  './apple-touch-icon.png',
+  './pwa-192-v2.png',
+  './pwa-512-v2.png',
+  './apple-touch-icon-v2.png',
+  './favicon-32-v2.png',
+  './favicon-64-v2.png',
   './logo.avif',
 ]
 

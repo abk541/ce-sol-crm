@@ -246,6 +246,28 @@ describe('notification visibility', () => {
 })
 
 describe('notification refresh state', () => {
+  it('delivers a deletion decision to its associate as one live popup arrival', () => {
+    const context = { employees, contracts: [], opportunities: [opportunity] }
+    const decision = notification({
+      id: 'deletion-review-request-1',
+      type: 'DELETION_REQUEST',
+      title: 'Deletion request approved',
+      message: 'Your deletion request was approved.',
+      relatedId: opportunity.id,
+      targetUserId: assignedAssociate.id,
+    })
+
+    expect(isNotificationVisibleTo(decision, { ...context, user: assignedAssociate })).toBe(true)
+    expect(isNotificationVisibleTo(decision, { ...context, user: otherAssociate })).toBe(false)
+
+    const baseline = reconcileNotificationArrivals([], true, null)
+    const firstRefresh = reconcileNotificationArrivals([decision], true, baseline.seen)
+    expect(firstRefresh.fresh).toEqual([decision])
+
+    const secondRefresh = reconcileNotificationArrivals([decision], true, firstRefresh.seen)
+    expect(secondRefresh.fresh).toEqual([])
+  })
+
   it('applies private read receipts without changing another account shared row', () => {
     const remote = [
       // A stale legacy flag must not leak one account's read state after the

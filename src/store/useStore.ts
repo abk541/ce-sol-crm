@@ -447,7 +447,29 @@ function normalizeOpportunityAssignmentStatus(
 const NON_SUB_GRACE_HOURS_KEY = 'non_sub_grace_hours'
 const NON_SUB_GRACE_MINUTES_KEY = 'non_sub_grace_minutes'
 const REQUIRE_ASSOCIATE_FOR_ACTIVE_PIPELINE_KEY = 'require_associate_for_active_pipeline'
-let activationSettingPendingValue: boolean | undefined
+interface PendingActivationSetting {
+  revision: number
+  value: boolean
+}
+
+interface ActivationSettingsFetchSnapshot {
+  revision: number
+  pending?: PendingActivationSetting
+}
+
+let activationSettingRevision = 0
+let activationSettingPending: PendingActivationSetting | undefined
+let activationSettingConfirmedValue: boolean | undefined
+let activationStatusWriteQueue = Promise.resolve()
+
+function activationSettingsFetchSnapshot(): ActivationSettingsFetchSnapshot {
+  return {
+    revision: activationSettingRevision,
+    ...(activationSettingPending
+      ? { pending: { ...activationSettingPending } }
+      : {}),
+  }
+}
 
 function parseSharedBoolean(value: string | undefined): boolean | undefined {
   if (value === 'true') return true
@@ -455,19 +477,45 @@ function parseSharedBoolean(value: string | undefined): boolean | undefined {
   return undefined
 }
 
+function normalizeLoadedOpportunityStatuses(
+  opportunities: Opportunity[],
+  employees: Employee[],
+  state: Pick<AppState, 'appSettings'>,
+): Opportunity[] {
+  // A pending choice is authoritative. Otherwise normalize only when this
+  // session has already hydrated a known shared value; at cold start the
+  // default boolean must not override raw DB statuses before settings load.
+  const knownMode = activationSettingPending?.value
+    ?? parseSharedBoolean(state.appSettings[REQUIRE_ASSOCIATE_FOR_ACTIVE_PIPELINE_KEY])
+  return knownMode === undefined
+    ? opportunities
+    : opportunities.map(opportunity =>
+        normalizeOpportunityAssignmentStatus(opportunity, employees, knownMode)
+      )
+}
+
 function sharedAppSettingsPatch(
   state: AppState,
   payload: Record<string, string>,
+  activationSnapshot: ActivationSettingsFetchSnapshot,
 ): Partial<AppState> {
-  const appSettings = activationSettingPendingValue === undefined
+  const activationReadIsStale = activationSnapshot.revision !== activationSettingRevision
+    || activationSnapshot.pending !== undefined
+  const protectedActivationValue = activationSettingPending?.value
+    ?? (activationReadIsStale ? state.requireAssociateForActivePipeline : undefined)
+  const appSettings = protectedActivationValue === undefined
     ? payload
     : {
         ...payload,
-        [REQUIRE_ASSOCIATE_FOR_ACTIVE_PIPELINE_KEY]: String(activationSettingPendingValue),
+        [REQUIRE_ASSOCIATE_FOR_ACTIVE_PIPELINE_KEY]: String(protectedActivationValue),
       }
   const patch: Partial<AppState> = {
     appSettings,
-    appSettingsSyncStatus: activationSettingPendingValue === undefined ? 'synced' : 'unknown',
+    appSettingsSyncStatus: activationSettingPending !== undefined
+      ? 'unknown'
+      : activationReadIsStale
+        ? state.appSettingsSyncStatus
+        : 'synced',
   }
   const rawHours = payload[NON_SUB_GRACE_HOURS_KEY]
   const rawMinutes = payload[NON_SUB_GRACE_MINUTES_KEY]
@@ -478,16 +526,20 @@ function sharedAppSettingsPatch(
     patch.nonSubGraceMinutes = Math.max(0, Math.trunc(Number(rawMinutes) || 0))
   }
 
-  const requireAssociate = activationSettingPendingValue === undefined
-    ? parseSharedBoolean(payload[REQUIRE_ASSOCIATE_FOR_ACTIVE_PIPELINE_KEY])
-    : undefined
-  if (requireAssociate !== undefined) {
-    patch.requireAssociateForActivePipeline = requireAssociate
+  const fetchedRequireAssociate = parseSharedBoolean(
+    payload[REQUIRE_ASSOCIATE_FOR_ACTIVE_PIPELINE_KEY],
+  )
+  if (protectedActivationValue === undefined && fetchedRequireAssociate !== undefined) {
+    activationSettingConfirmedValue = fetchedRequireAssociate
+  }
+  const effectiveRequireAssociate = protectedActivationValue ?? fetchedRequireAssociate
+  if (effectiveRequireAssociate !== undefined) {
+    patch.requireAssociateForActivePipeline = effectiveRequireAssociate
     patch.opportunities = state.opportunities.map(opportunity =>
       normalizeOpportunityAssignmentStatus(
         opportunity,
         state.employees,
-        requireAssociate,
+        effectiveRequireAssociate,
       )
     )
   }
@@ -4007,16 +4059,24 @@ export const useStore = create<AppState>()(
             const finalUsers = refreshedCurrent
               ? mergedUsers.map(u => (u.id === refreshedCurrent.id ? refreshedCurrent : u))
               : mergedUsers
+            const currentWorkspace = get()
+            const finalEmployees = syncEmployeesWithUsers(
+              finalUsers,
+              data.employees.length > 0 ? data.employees : currentWorkspace.employees,
+            )
 
             set({
               users: finalUsers,
               currentUser: refreshedCurrent,
-              needsFirstLogin: refreshedCurrent ? refreshedCurrent.firstLogin === true : get().needsFirstLogin,
-              employees: syncEmployeesWithUsers(
-                finalUsers,
-                data.employees.length > 0 ? data.employees : get().employees,
+              needsFirstLogin: refreshedCurrent
+                ? refreshedCurrent.firstLogin === true
+                : currentWorkspace.needsFirstLogin,
+              employees: finalEmployees,
+              opportunities: normalizeLoadedOpportunityStatuses(
+                data.opportunities,
+                finalEmployees,
+                currentWorkspace,
               ),
-              opportunities: data.opportunities,
               contracts: data.contracts,
               freshAwards: data.freshAwards,
               pastPerformances: data.pastPerformances,
@@ -4026,7 +4086,7 @@ export const useStore = create<AppState>()(
               deletionRequests: data.deletionRequests,
               bdSubmissions: data.bdSubmissions,
               nextInvoiceNumber: Math.max(
-                Math.max(1, Math.trunc(Number(get().nextInvoiceNumber) || 1)),
+                Math.max(1, Math.trunc(Number(currentWorkspace.nextInvoiceNumber) || 1)),
                 nextInvoiceSequenceFromContracts(data.contracts),
               ),
               dbReady: true,
@@ -4061,12 +4121,17 @@ export const useStore = create<AppState>()(
           // Pull runtime app settings (integration keys + the shared
           // non-submission grace window) from API server.
           try {
+            const activationSnapshot = activationSettingsFetchSnapshot()
             const s = await fetchAppSettings()
             if (!sessionIsCurrent()) return
             if (s.ok && s.payload) {
               // Hydrate every workspace-wide operational setting, including an
               // explicit "false" activation mode, from the shared source.
-              set(state => sharedAppSettingsPatch(state, s.payload as Record<string, string>))
+              set(state => sharedAppSettingsPatch(
+                state,
+                s.payload as Record<string, string>,
+                activationSnapshot,
+              ))
             } else if (s.missingTable) {
               set({ appSettingsSyncStatus: 'local' })
             }
@@ -4191,13 +4256,19 @@ export const useStore = create<AppState>()(
           if (data) {
             const dbUsers = data.users.length > 0 ? data.users : get().users
             const finalUsers = mergeSafeUser(dbUsers, refreshedProfile)
+            const currentWorkspace = get()
+            const finalEmployees = syncEmployeesWithUsers(
+              finalUsers,
+              data.employees.length > 0 ? data.employees : currentWorkspace.employees,
+            )
             set({
               users: finalUsers,
-              employees: syncEmployeesWithUsers(
-                finalUsers,
-                data.employees.length > 0 ? data.employees : get().employees,
+              employees: finalEmployees,
+              opportunities: normalizeLoadedOpportunityStatuses(
+                data.opportunities,
+                finalEmployees,
+                currentWorkspace,
               ),
-              opportunities: data.opportunities,
               contracts: data.contracts,
               freshAwards: data.freshAwards,
               pastPerformances: data.pastPerformances,
@@ -4210,6 +4281,7 @@ export const useStore = create<AppState>()(
             })
           }
 
+          const activationSnapshot = activationSettingsFetchSnapshot()
           const [nRes, readRes, rRes, aRes, settingsRes] = await Promise.all([
             fetchNotifications(),
             fetchNotificationReadIds(),
@@ -4227,6 +4299,7 @@ export const useStore = create<AppState>()(
             set(state => sharedAppSettingsPatch(
               state,
               settingsRes.payload as Record<string, string>,
+              activationSnapshot,
             ))
           } else if (settingsRes.missingTable) {
             set({ appSettingsSyncStatus: 'local' })
@@ -4295,8 +4368,16 @@ export const useStore = create<AppState>()(
         const next = !!value
         const before = get()
         const prev = before.requireAssociateForActivePipeline
-        const previousSetting = before.appSettings[REQUIRE_ASSOCIATE_FOR_ACTIVE_PIPELINE_KEY]
-        if (prev === next && previousSetting === String(next)) return true
+        const currentSetting = before.appSettings[REQUIRE_ASSOCIATE_FOR_ACTIVE_PIPELINE_KEY]
+        if (prev === next && currentSetting === String(next)) return true
+
+        // Capture the database value at the start of a serialized toggle
+        // sequence. Each successful queued write advances this confirmation;
+        // failures always return to the last value the database acknowledged,
+        // never merely to the preceding optimistic UI value.
+        if (activationSettingPending === undefined) {
+          activationSettingConfirmedValue = parseSharedBoolean(currentSetting) ?? prev
+        }
 
         // Retroactively re-evaluate every opportunity so ACTIVE/NEW_ASSIGNMENT
         // matches the new mode immediately; bulk-upsert anything that flipped.
@@ -4307,7 +4388,41 @@ export const useStore = create<AppState>()(
           if (updated.status !== opp.status) changed.push(updated)
           return updated
         })
-        activationSettingPendingValue = next
+        const revision = ++activationSettingRevision
+        activationSettingPending = { revision, value: next }
+        const queueStatusChanges = (
+          statusChanges: Opportunity[],
+          expectedMode: boolean,
+          employeeSnapshot: Employee[],
+        ) => {
+          if (statusChanges.length === 0 || !isApiConnected) return
+          const batch = activationStatusWriteQueue.then(async () => {
+            if (
+              activationSettingRevision !== revision ||
+              get().requireAssociateForActivePipeline !== expectedMode
+            ) return
+            const synced = await ensureAssignmentEmployeesSynced(employeeSnapshot)
+            // A newer mode may have been selected while employee syncing was
+            // in flight. Never launch an obsolete status batch.
+            if (
+              !synced ||
+              activationSettingRevision !== revision ||
+              get().requireAssociateForActivePipeline !== expectedMode
+            ) return
+            // Status batches are serialized. If this request is already in
+            // flight when a newer mode is selected, the newer corrective batch
+            // waits and therefore reaches the database last.
+            const results = await Promise.all(statusChanges.map(opp => upsertOpportunity(opp)))
+            const failures = results.filter(saved => !saved).length
+            if (failures > 0) {
+              toast.error(`${failures} opportunit${failures === 1 ? 'y' : 'ies'} could not sync to the database.`)
+            }
+          })
+          activationStatusWriteQueue = batch.catch(err => {
+            console.error('[Store] activation opportunity status sync failed', err)
+            toast.error('Opportunity statuses could not sync to the database.')
+          })
+        }
         set(state => ({
           requireAssociateForActivePipeline: next,
           opportunities: renormalized,
@@ -4331,59 +4446,66 @@ export const useStore = create<AppState>()(
           ok: false,
           missingTable: false,
         }))
-        if (activationSettingPendingValue === next) {
-          activationSettingPendingValue = undefined
+        if (result.ok) {
+          // Writes are serialized, so this always advances in database order,
+          // including successful intermediate writes superseded in the UI.
+          activationSettingConfirmedValue = next
+        }
+        const isLatestWrite = activationSettingPending?.revision === revision
+        if (isLatestWrite) {
+          activationSettingPending = undefined
         }
 
         if (!result.ok) {
           let rolledBack = false
+          const confirmedValue = activationSettingConfirmedValue ?? prev
+          const rollbackChanges: Opportunity[] = []
+          let rollbackEmployees = employees
           set(state => {
             if (
+              !isLatestWrite ||
               state.requireAssociateForActivePipeline !== next ||
               state.appSettings[REQUIRE_ASSOCIATE_FOR_ACTIVE_PIPELINE_KEY] !== String(next)
             ) {
               return {}
             }
             rolledBack = true
-            const appSettings = { ...state.appSettings }
-            if (previousSetting === undefined) {
-              delete appSettings[REQUIRE_ASSOCIATE_FOR_ACTIVE_PIPELINE_KEY]
-            } else {
-              appSettings[REQUIRE_ASSOCIATE_FOR_ACTIVE_PIPELINE_KEY] = previousSetting
-            }
+            rollbackEmployees = state.employees
+            const opportunities = state.opportunities.map(opportunity => {
+              const updated = normalizeOpportunityAssignmentStatus(
+                opportunity,
+                state.employees,
+                confirmedValue,
+              )
+              if (updated.status !== opportunity.status) rollbackChanges.push(updated)
+              return updated
+            })
             return {
-              requireAssociateForActivePipeline: prev,
-              opportunities: state.opportunities.map(opportunity =>
-                normalizeOpportunityAssignmentStatus(opportunity, state.employees, prev)
-              ),
-              appSettings,
+              requireAssociateForActivePipeline: confirmedValue,
+              opportunities,
+              appSettings: {
+                ...state.appSettings,
+                [REQUIRE_ASSOCIATE_FOR_ACTIVE_PIPELINE_KEY]: String(confirmedValue),
+              },
               appSettingsSyncStatus: result.missingTable ? 'local' : 'unknown',
             }
           })
           if (rolledBack) {
             toast.error('Activation mode could not be saved. The previous setting was restored.')
+            queueStatusChanges(rollbackChanges, confirmedValue, rollbackEmployees)
           }
           return false
         }
 
         set(state => (
+          isLatestWrite &&
           state.requireAssociateForActivePipeline === next &&
           state.appSettings[REQUIRE_ASSOCIATE_FOR_ACTIVE_PIPELINE_KEY] === String(next)
             ? { appSettingsSyncStatus: 'synced' }
             : {}
         ))
 
-        if (changed.length > 0 && isApiConnected && get().requireAssociateForActivePipeline === next) {
-          void ensureAssignmentEmployeesSynced(employees).then(synced => {
-            if (!synced) return
-            void Promise.all(changed.map(opp => upsertOpportunity(opp))).then(results => {
-              const failures = results.filter(saved => !saved).length
-              if (failures > 0) {
-                toast.error(`${failures} opportunit${failures === 1 ? 'y' : 'ies'} could not sync to the database.`)
-              }
-            })
-          })
-        }
+        if (isLatestWrite) queueStatusChanges(changed, next, employees)
         return true
       },
       consumeInvoiceNumber: () => {
