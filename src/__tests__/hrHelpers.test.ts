@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { approvedLeaveUsage, approvedTimeOffDays, hrRoleGroup } from '../lib/hr'
+import {
+  annualLeaveBalance,
+  approvedLeaveRequestDays,
+  approvedLeaveUsage,
+  approvedTimeOffDays,
+  employeeLeaveHistory,
+  hrRoleGroup,
+  leaveRequestDays,
+} from '../lib/hr'
 import type { EmployeeRequest } from '../types'
 
 function request(overrides: Partial<EmployeeRequest>): EmployeeRequest {
@@ -91,5 +99,74 @@ describe('approved time-off calculations', () => {
       holidayDays: 0,
       sickDays: 0,
     })
+  })
+})
+
+describe('employee leave balance and history', () => {
+  it('shows consumed, remaining, and allowance for one employee', () => {
+    const balance = annualLeaveBalance([
+      request({ id: 'holiday', leaveStart: '2026-07-01', leaveEnd: '2026-07-05' }),
+      request({ id: 'sick', type: 'SICK_LEAVE', leaveStart: '2026-08-01', leaveEnd: '2026-08-03' }),
+      request({ id: 'pending', status: 'PENDING', leaveStart: '2026-09-01', leaveEnd: '2026-09-04' }),
+      request({ id: 'other-user', requesterId: 'user-2', leaveStart: '2026-10-01', leaveEnd: '2026-10-10' }),
+    ], 'user-1', 2026)
+
+    expect(balance).toEqual({
+      holiday: { allowance: 18, consumed: 5, remaining: 13 },
+      sickLeave: { allowance: 30, consumed: 3, remaining: 27 },
+    })
+  })
+
+  it('never displays a negative remaining balance', () => {
+    const balance = annualLeaveBalance([
+      request({ leaveStart: '2026-01-01', leaveEnd: '2026-01-31' }),
+    ], 'user-1', 2026)
+
+    expect(balance.holiday).toEqual({ allowance: 18, consumed: 31, remaining: 0 })
+  })
+
+  it('keeps the full leave history for one employee and orders it newest first', () => {
+    const history = employeeLeaveHistory([
+      request({ id: 'older-approved', leaveStart: '2026-02-01', leaveEnd: '2026-02-02' }),
+      request({ id: 'newer-pending', status: 'PENDING', type: 'SICK_LEAVE', leaveStart: '2026-08-01', leaveEnd: '2026-08-03' }),
+      request({ id: 'declined', status: 'DECLINED', leaveStart: '2026-05-01', leaveEnd: '2026-05-01' }),
+      request({ id: 'not-leave', type: 'DOCUMENT', leaveStart: undefined, leaveEnd: undefined }),
+      request({ id: 'other-user', requesterId: 'user-2', leaveStart: '2026-12-01', leaveEnd: '2026-12-05' }),
+    ], 'user-1')
+
+    expect(history.map(item => item.id)).toEqual(['newer-pending', 'declined', 'older-approved'])
+  })
+
+  it('reports inclusive calendar duration for a history entry', () => {
+    expect(leaveRequestDays(request({ leaveStart: '2026-07-21', leaveEnd: '2026-07-29' }))).toBe(9)
+    expect(leaveRequestDays(request({ leaveStart: '2026-07-29', leaveEnd: '2026-07-21' }))).toBe(0)
+    expect(leaveRequestDays(request({ leaveStart: undefined, leaveEnd: undefined }))).toBe(0)
+  })
+
+  it('shows annual balance impact only for approved leave days in that year', () => {
+    expect(approvedLeaveRequestDays(request({
+      status: 'APPROVED',
+      leaveStart: '2025-12-30',
+      leaveEnd: '2026-01-03',
+    }), 2026)).toBe(3)
+    expect(approvedLeaveRequestDays(request({
+      status: 'PENDING',
+      leaveStart: '2026-07-21',
+      leaveEnd: '2026-07-29',
+    }), 2026)).toBe(0)
+    expect(approvedLeaveRequestDays(request({
+      status: 'DECLINED',
+      leaveStart: '2026-07-21',
+      leaveEnd: '2026-07-29',
+    }), 2026)).toBe(0)
+  })
+
+  it('keeps per-request approved duration distinct from de-duplicated balance totals', () => {
+    const first = request({ id: 'first', leaveStart: '2026-07-01', leaveEnd: '2026-07-05' })
+    const overlapping = request({ id: 'overlapping', leaveStart: '2026-07-04', leaveEnd: '2026-07-07' })
+
+    expect(approvedLeaveRequestDays(first, 2026)).toBe(5)
+    expect(approvedLeaveRequestDays(overlapping, 2026)).toBe(4)
+    expect(annualLeaveBalance([first, overlapping], 'user-1', 2026).holiday.consumed).toBe(7)
   })
 })
