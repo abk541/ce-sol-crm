@@ -15,20 +15,14 @@ import {
   UserRound,
   X,
 } from 'lucide-react'
-import { Cell, Pie, PieChart, ResponsiveContainer } from 'recharts'
 import toast from 'react-hot-toast'
 import { useStore } from '../store/useStore'
 import { hasPermission } from '../lib/permissions'
 import { useEscapeKey } from '../lib/utils'
 import {
   annualLeaveBalance,
-  approvedLeaveRequestDays,
-  approvedLeaveUsage,
-  employeeLeaveHistory,
-  HOLIDAY_ALLOWANCE_DAYS,
   hrRoleGroup,
-  leaveRequestDays,
-  SICK_LEAVE_ALLOWANCE_DAYS,
+  leaveBalanceForRequest,
   type HRRoleGroup,
 } from '../lib/hr'
 import PeriodFilter, { type Period } from '../components/shared/PeriodFilter'
@@ -556,43 +550,7 @@ export default function HRPage() {
 
   const ownRequests = employeeRequests.filter(request => request.requesterId === currentUser?.id)
   const pendingReviewCount = employeeRequests.filter(request => request.status === 'PENDING' || request.status === 'IN_REVIEW').length
-  const leaveDashboardPeople = employeeFilter !== 'ALL'
-    ? dashboardPeople.filter(person => person.id === employeeFilter)
-    : dashboardPeople
-  const selectedLeavePerson = employeeFilter !== 'ALL'
-    ? userById.get(employeeFilter)
-    : canReviewRequests
-      ? undefined
-      : currentUser ?? undefined
   const currentYear = new Date().getFullYear()
-  const aggregateLeaveUsage = approvedLeaveUsage(
-    employeeRequests,
-    leaveDashboardPeople.map(person => person.id),
-    currentYear,
-  )
-  const selectedLeaveBalance = selectedLeavePerson
-    ? annualLeaveBalance(employeeRequests, selectedLeavePerson.id, currentYear)
-    : undefined
-  const selectedLeaveHistory = selectedLeavePerson
-    ? employeeLeaveHistory(employeeRequests, selectedLeavePerson.id)
-    : []
-  const holidayAllowance = selectedLeaveBalance?.holiday.allowance
-    ?? leaveDashboardPeople.length * HOLIDAY_ALLOWANCE_DAYS
-  const sickAllowance = selectedLeaveBalance?.sickLeave.allowance
-    ?? leaveDashboardPeople.length * SICK_LEAVE_ALLOWANCE_DAYS
-  const holidayConsumed = selectedLeaveBalance?.holiday.consumed ?? aggregateLeaveUsage.holidayDays
-  const sickConsumed = selectedLeaveBalance?.sickLeave.consumed ?? aggregateLeaveUsage.sickDays
-  const holidayRemaining = selectedLeaveBalance?.holiday.remaining
-    ?? Math.max(0, holidayAllowance - holidayConsumed)
-  const sickRemaining = selectedLeaveBalance?.sickLeave.remaining
-    ?? Math.max(0, sickAllowance - sickConsumed)
-  const usedLeaveDays = holidayConsumed + sickConsumed
-  const leaveAllowance = holidayAllowance + sickAllowance
-  const remainingLeaveDays = holidayRemaining + sickRemaining
-  const leaveChartData = [
-    { name: 'Used', value: usedLeaveDays, color: '#D7BE7A' },
-    { name: 'Remaining', value: remainingLeaveDays, color: '#1C4B4B' },
-  ]
 
   return (
     <div className="page-enter p-6">
@@ -677,90 +635,16 @@ export default function HRPage() {
                 <UsersRound size={17} />
               </div>
               <div>
-                <h2 className="text-sm font-black text-white">
-                  {selectedLeavePerson ? `${selectedLeavePerson.name}'s leave balance` : 'Workforce leave summary'}
-                </h2>
+                <h2 className="text-sm font-black text-white">{canReviewRequests ? 'Employee request dashboard' : 'My request dashboard'}</h2>
                 <p className="text-xs text-slate-400">
-                  {selectedLeavePerson
-                    ? `${currentYear} individual allowance and consumption`
-                    : `${leaveDashboardPeople.length} active employees in the current role filter`}
+                  {employeeFilter === 'ALL'
+                    ? 'Request status and employee balance overview'
+                    : userById.get(employeeFilter)?.name}
                 </p>
               </div>
             </div>
 
-            <div className="grid items-center gap-4 border-y border-[var(--border-default)] py-4 sm:grid-cols-[150px_1fr]">
-              <div className="relative h-36">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie data={leaveChartData} dataKey="value" nameKey="name" innerRadius={43} outerRadius={62} paddingAngle={usedLeaveDays > 0 ? 2 : 0} stroke="none">
-                      {leaveChartData.map(item => <Cell key={item.name} fill={item.color} />)}
-                    </Pie>
-                  </PieChart>
-                </ResponsiveContainer>
-                <div className="pointer-events-none absolute inset-0 grid place-items-center text-center">
-                  <div>
-                    <p className="text-2xl font-black text-white">{usedLeaveDays}</p>
-                    <p className="text-[9px] font-bold uppercase tracking-wide text-slate-400">days used</p>
-                  </div>
-                </div>
-              </div>
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-amber-200">{currentYear} approved leave</p>
-                <p className="mt-2 text-sm font-bold text-white">
-                  {remainingLeaveDays} remaining · {usedLeaveDays} consumed · {leaveAllowance} allowance
-                </p>
-                {!selectedLeavePerson && canReviewRequests && (
-                  <p className="mt-1 text-[11px] text-cyan-100">
-                    Select an employee above or below to see their personal balance and leave history.
-                  </p>
-                )}
-                <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                  <div className="rounded-lg border border-[var(--border-default)] bg-black/10 p-2.5">
-                    <p className="text-[9px] font-bold uppercase tracking-wide text-slate-400">Holiday</p>
-                    <div className="mt-2 grid grid-cols-3 gap-2">
-                      <div>
-                        <p className="text-base font-black text-white">{holidayConsumed}</p>
-                        <p className="text-[9px] text-slate-500">Consumed</p>
-                      </div>
-                      <div>
-                        <p className="text-base font-black text-emerald-200">{holidayRemaining}</p>
-                        <p className="text-[9px] text-slate-500">Remaining</p>
-                      </div>
-                      <div>
-                        <p className="text-base font-black text-slate-200">{holidayAllowance}</p>
-                        <p className="text-[9px] text-slate-500">Allowance</p>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="rounded-lg border border-[var(--border-default)] bg-black/10 p-2.5">
-                    <p className="text-[9px] font-bold uppercase tracking-wide text-slate-400">Sick leave</p>
-                    <div className="mt-2 grid grid-cols-3 gap-2">
-                      <div>
-                        <p className="text-base font-black text-white">{sickConsumed}</p>
-                        <p className="text-[9px] text-slate-500">Consumed</p>
-                      </div>
-                      <div>
-                        <p className="text-base font-black text-emerald-200">{sickRemaining}</p>
-                        <p className="text-[9px] text-slate-500">Remaining</p>
-                      </div>
-                      <div>
-                        <p className="text-base font-black text-slate-200">{sickAllowance}</p>
-                        <p className="text-[9px] text-slate-500">Allowance</p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                <p className="mt-2 text-xs leading-relaxed text-slate-400">
-                  Approved date ranges count inclusively toward each employee's 18 holiday days and 30 sick days. Overlapping approved dates count once in the balance totals.
-                </p>
-                <div className="mt-3 flex items-center gap-4 text-xs">
-                  <span className="flex items-center gap-1.5 text-slate-300"><span className="h-2 w-2 rounded-full bg-[#D7BE7A]" /> Used</span>
-                  <span className="flex items-center gap-1.5 text-slate-300"><span className="h-2 w-2 rounded-full bg-[#1C4B4B]" /> Remaining</span>
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-3 border-t border-[var(--border-default)] pt-4 sm:grid-cols-2">
               {REQUEST_STATUSES.map(status => {
                 const count = visibleRequests.filter(request => request.status === status).length
                 return (
@@ -808,92 +692,9 @@ export default function HRPage() {
           </div>
 
           <div className="space-y-3">
-            <section className="rounded-xl border border-[var(--border-default)] bg-white/[0.03] p-4" aria-labelledby="leave-history-heading">
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2">
-                  <CalendarDays size={15} className="text-amber-200" />
-                  <div>
-                    <h3 id="leave-history-heading" className="text-sm font-black text-white">Leave history</h3>
-                    <p className="text-[11px] text-slate-400">
-                      {selectedLeavePerson ? selectedLeavePerson.name : 'Choose one employee to view their records'}
-                    </p>
-                  </div>
-                </div>
-                {selectedLeavePerson && (
-                  <span className="rounded-full bg-black/20 px-2 py-0.5 text-[10px] font-bold text-slate-300">
-                    {selectedLeaveHistory.length}
-                  </span>
-                )}
-              </div>
-
-              {!selectedLeavePerson ? (
-                <div className="mt-4 rounded-lg border border-dashed border-[var(--border-strong)] px-4 py-8 text-center">
-                  <p className="text-sm font-semibold text-slate-200">Select an employee to open their leave history.</p>
-                  <p className="mt-1 text-xs text-slate-500">Use the employee filter above or click an employee in the overview.</p>
-                </div>
-              ) : selectedLeaveHistory.length === 0 ? (
-                <div className="mt-4 rounded-lg border border-dashed border-[var(--border-strong)] px-4 py-8 text-center text-sm text-slate-400">
-                  No holiday or sick-leave requests yet.
-                </div>
-              ) : (
-                <div className="mt-4 max-h-80 space-y-2 overflow-y-auto pr-1">
-                  {selectedLeaveHistory.map(request => {
-                    const duration = leaveRequestDays(request)
-                    const approvedDays = approvedLeaveRequestDays(request, currentYear)
-                    return (
-                      <article key={`leave-history-${request.id}`} className="rounded-lg border border-[var(--border-default)] bg-[#07131F]/70 p-3">
-                        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                          <div className="min-w-0">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <span className={badgeClass(REQUEST_STATUS_STYLE[request.status])}>{request.status.replace('_', ' ')}</span>
-                              <span className="rounded-full border border-[var(--border-default)] px-2 py-0.5 text-[10px] font-bold uppercase text-slate-300">
-                                {REQUEST_TYPE_LABEL[request.type]}
-                              </span>
-                            </div>
-                            <p className="mt-2 truncate text-xs font-bold text-white">{request.title}</p>
-                          </div>
-                          <div className="shrink-0 text-left sm:text-right">
-                            <p className="text-xs font-bold text-slate-100">{duration} {duration === 1 ? 'day' : 'days'}</p>
-                            <p className="text-[10px] text-slate-500">requested duration</p>
-                          </div>
-                        </div>
-                        <div className="mt-3 grid gap-1 text-[11px] text-slate-400 sm:grid-cols-2">
-                          <p>
-                            Period: <span className="font-semibold text-slate-200">{formatDate(request.leaveStart)} - {formatDate(request.leaveEnd)}</span>
-                          </p>
-                          <p>
-                            Submitted: <span className="font-semibold text-slate-200">{formatDate(request.submittedAt)}</span>
-                          </p>
-                          {request.status === 'APPROVED' ? (
-                            <p>
-                              {currentYear} approved duration:{' '}
-                              <span className="font-semibold text-emerald-200">
-                                {approvedDays} {approvedDays === 1 ? 'day' : 'days'}
-                              </span>
-                            </p>
-                          ) : (
-                            <p>
-                              Balance effect: <span className="font-semibold text-slate-300">0 days — not approved</span>
-                            </p>
-                          )}
-                          {request.reviewedAt && (
-                            <p className="sm:col-span-2">
-                              Reviewed: <span className="font-semibold text-slate-200">{formatDate(request.reviewedAt)}</span>
-                              {request.reviewedBy ? ` by ${request.reviewedBy}` : ''}
-                            </p>
-                          )}
-                        </div>
-                        {request.reviewNote && <p className="mt-2 text-[11px] text-slate-400">Review note: {request.reviewNote}</p>}
-                      </article>
-                    )
-                  })}
-                </div>
-              )}
-            </section>
-
             <div className="flex items-center justify-between gap-3 px-1 pt-1">
               <h3 className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">
-                {canReviewRequests ? 'Visible HR request records' : 'My HR request records'}
+                {canReviewRequests ? 'Employee request history' : 'My request history'}
               </h3>
               <span className="text-[10px] text-slate-500">{visibleRequests.length} records</span>
             </div>
@@ -903,8 +704,10 @@ export default function HRPage() {
                 No HR requests found.
               </div>
             ) : (
-              visibleRequests.map(request => (
-                <div key={request.id} className="rounded-xl border border-[var(--border-default)] bg-[#07131F]/70 p-4">
+              visibleRequests.map(request => {
+                const leaveBalance = leaveBalanceForRequest(employeeRequests, request, currentYear)
+                return (
+                  <div key={request.id} className="rounded-xl border border-[var(--border-default)] bg-[#07131F]/70 p-4">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div className="min-w-0">
                       <div className="mb-2 flex flex-wrap items-center gap-2">
@@ -941,6 +744,42 @@ export default function HRPage() {
                     {request.deadline && <p>Requested by: <span className="font-semibold text-slate-200">{formatDate(request.deadline)}</span></p>}
                     {request.leaveStart && <p>Leave period: <span className="font-semibold text-slate-200">{formatDate(request.leaveStart)} - {formatDate(request.leaveEnd)}</span></p>}
                   </div>
+                  {leaveBalance && (
+                    <section className="mt-4 rounded-xl border border-cyan-400/20 bg-cyan-400/[0.06] p-3.5" aria-label={`${leaveBalance.label} annual balance for ${request.requesterName}`}>
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-cyan-200">
+                            {leaveBalance.year} approved {leaveBalance.label.toLowerCase()} annual balance
+                          </p>
+                          <p className="mt-1 text-xs text-slate-400">{request.requesterName}</p>
+                        </div>
+                        <span className="w-fit rounded-full border border-[var(--border-default)] bg-black/15 px-2.5 py-1 text-[11px] font-bold text-slate-300">
+                          {leaveBalance.allowance}-day annual allowance
+                        </span>
+                      </div>
+                      <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                        <div className="rounded-lg border border-[var(--border-default)] bg-black/10 p-2.5">
+                          <p className="text-xl font-black text-white">{leaveBalance.consumed}</p>
+                          <p className="mt-0.5 text-[11px] font-bold uppercase tracking-wide text-slate-400">Days consumed</p>
+                        </div>
+                        <div className="rounded-lg border border-emerald-400/20 bg-emerald-400/[0.06] p-2.5">
+                          <p className="text-xl font-black text-emerald-200">{leaveBalance.remaining}</p>
+                          <p className="mt-0.5 text-[11px] font-bold uppercase tracking-wide text-slate-400">Days remaining</p>
+                        </div>
+                        <div className="col-span-2 rounded-lg border border-[var(--border-default)] bg-black/10 p-2.5 sm:col-span-1">
+                          <p className="text-base font-black text-slate-200">{leaveBalance.requestedDays}</p>
+                          <p className="mt-0.5 text-[11px] font-bold uppercase tracking-wide text-slate-400">Requested days</p>
+                        </div>
+                      </div>
+                      <p className="mt-2.5 text-[11px] leading-relaxed text-slate-400">
+                        {request.status === 'APPROVED'
+                          ? `${leaveBalance.approvedDaysInYear} approved ${leaveBalance.approvedDaysInYear === 1 ? 'day falls' : 'days fall'} in ${leaveBalance.year}. Overlapping approved dates count once in the consumed total.`
+                          : request.status === 'DECLINED'
+                            ? 'This declined request does not reduce the remaining balance.'
+                            : 'This request is not deducted from the remaining balance until it is approved.'}
+                      </p>
+                    </section>
+                  )}
                   {request.reviewNote && (
                     <div className="mt-3 rounded-lg border border-[var(--border-default)] bg-white/[0.03] p-3">
                       <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Review note</p>
@@ -948,7 +787,8 @@ export default function HRPage() {
                     </div>
                   )}
                 </div>
-              ))
+                )
+              })
             )}
           </div>
         </div>

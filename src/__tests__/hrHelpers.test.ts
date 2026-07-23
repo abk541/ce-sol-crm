@@ -4,8 +4,8 @@ import {
   approvedLeaveRequestDays,
   approvedLeaveUsage,
   approvedTimeOffDays,
-  employeeLeaveHistory,
   hrRoleGroup,
+  leaveBalanceForRequest,
   leaveRequestDays,
 } from '../lib/hr'
 import type { EmployeeRequest } from '../types'
@@ -102,7 +102,7 @@ describe('approved time-off calculations', () => {
   })
 })
 
-describe('employee leave balance and history', () => {
+describe('employee leave balance and request display', () => {
   it('shows consumed, remaining, and allowance for one employee', () => {
     const balance = annualLeaveBalance([
       request({ id: 'holiday', leaveStart: '2026-07-01', leaveEnd: '2026-07-05' }),
@@ -125,19 +125,7 @@ describe('employee leave balance and history', () => {
     expect(balance.holiday).toEqual({ allowance: 18, consumed: 31, remaining: 0 })
   })
 
-  it('keeps the full leave history for one employee and orders it newest first', () => {
-    const history = employeeLeaveHistory([
-      request({ id: 'older-approved', leaveStart: '2026-02-01', leaveEnd: '2026-02-02' }),
-      request({ id: 'newer-pending', status: 'PENDING', type: 'SICK_LEAVE', leaveStart: '2026-08-01', leaveEnd: '2026-08-03' }),
-      request({ id: 'declined', status: 'DECLINED', leaveStart: '2026-05-01', leaveEnd: '2026-05-01' }),
-      request({ id: 'not-leave', type: 'DOCUMENT', leaveStart: undefined, leaveEnd: undefined }),
-      request({ id: 'other-user', requesterId: 'user-2', leaveStart: '2026-12-01', leaveEnd: '2026-12-05' }),
-    ], 'user-1')
-
-    expect(history.map(item => item.id)).toEqual(['newer-pending', 'declined', 'older-approved'])
-  })
-
-  it('reports inclusive calendar duration for a history entry', () => {
+  it('reports inclusive calendar duration for a leave request', () => {
     expect(leaveRequestDays(request({ leaveStart: '2026-07-21', leaveEnd: '2026-07-29' }))).toBe(9)
     expect(leaveRequestDays(request({ leaveStart: '2026-07-29', leaveEnd: '2026-07-21' }))).toBe(0)
     expect(leaveRequestDays(request({ leaveStart: undefined, leaveEnd: undefined }))).toBe(0)
@@ -168,5 +156,83 @@ describe('employee leave balance and history', () => {
     expect(approvedLeaveRequestDays(first, 2026)).toBe(5)
     expect(approvedLeaveRequestDays(overlapping, 2026)).toBe(4)
     expect(annualLeaveBalance([first, overlapping], 'user-1', 2026).holiday.consumed).toBe(7)
+  })
+
+  it('puts the employee sick-leave balance directly on an approved request', () => {
+    const sickRequest = request({
+      id: 'approved-sick',
+      type: 'SICK_LEAVE',
+      leaveStart: '2026-07-21',
+      leaveEnd: '2026-07-29',
+    })
+    const summary = leaveBalanceForRequest([
+      sickRequest,
+      request({
+        id: 'other-user-sick',
+        requesterId: 'user-2',
+        type: 'SICK_LEAVE',
+        leaveStart: '2026-07-01',
+        leaveEnd: '2026-07-20',
+      }),
+    ], sickRequest)
+
+    expect(summary).toEqual({
+      year: 2026,
+      label: 'Sick leave',
+      allowance: 30,
+      consumed: 9,
+      remaining: 21,
+      requestedDays: 9,
+      approvedDaysInYear: 9,
+    })
+  })
+
+  it('shows current consumption but does not deduct a pending request', () => {
+    const approved = request({
+      id: 'approved-sick',
+      type: 'SICK_LEAVE',
+      leaveStart: '2026-03-01',
+      leaveEnd: '2026-03-03',
+    })
+    const pending = request({
+      id: 'pending-sick',
+      type: 'SICK_LEAVE',
+      status: 'PENDING',
+      leaveStart: '2026-08-10',
+      leaveEnd: '2026-08-14',
+    })
+
+    expect(leaveBalanceForRequest([approved, pending], pending)).toEqual({
+      year: 2026,
+      label: 'Sick leave',
+      allowance: 30,
+      consumed: 3,
+      remaining: 27,
+      requestedDays: 5,
+      approvedDaysInYear: 0,
+    })
+  })
+
+  it('uses the request year for historical balances and ignores non-leave requests', () => {
+    const historical = request({
+      id: 'historical',
+      leaveStart: '2025-12-20',
+      leaveEnd: '2025-12-21',
+    })
+    const current = request({
+      id: 'current',
+      leaveStart: '2026-01-01',
+      leaveEnd: '2026-01-10',
+    })
+
+    expect(leaveBalanceForRequest([historical, current], historical, 2026)).toMatchObject({
+      year: 2025,
+      label: 'Holiday',
+      consumed: 2,
+      remaining: 16,
+    })
+    expect(leaveBalanceForRequest([
+      request({ type: 'DOCUMENT', leaveStart: undefined, leaveEnd: undefined }),
+    ], request({ type: 'DOCUMENT', leaveStart: undefined, leaveEnd: undefined }))).toBeNull()
   })
 })

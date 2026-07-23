@@ -42,6 +42,16 @@ export interface AnnualLeaveBalance {
   sickLeave: LeaveBalanceLine
 }
 
+export interface LeaveRequestBalance {
+  year: number
+  label: 'Holiday' | 'Sick leave'
+  allowance: number
+  consumed: number
+  remaining: number
+  requestedDays: number
+  approvedDaysInYear: number
+}
+
 /**
  * Counts approved holiday and sick-leave ranges for only the requested
  * employees. Dates are inclusive, clipped to the selected calendar year, and
@@ -138,26 +148,31 @@ export function approvedLeaveRequestDays(
 }
 
 /**
- * Returns one employee's complete holiday/sick-leave request history, newest
- * leave period first. Status is intentionally not filtered so pending,
- * approved, and declined requests remain visible to the employee.
+ * Resolves the annual balance that belongs directly on a leave request card.
+ * The request start year determines the allowance year so historical requests
+ * never display the current year's balance.
  */
-export function employeeLeaveHistory(
+export function leaveBalanceForRequest(
   requests: EmployeeRequest[],
-  requesterId: string,
-): EmployeeRequest[] {
-  const sortTime = (request: EmployeeRequest) => {
-    const value = request.leaveStart || request.submittedAt
-    const parsed = new Date(value.includes('T') ? value : `${value}T00:00:00`)
-    return Number.isNaN(parsed.getTime()) ? 0 : parsed.getTime()
-  }
+  request: EmployeeRequest,
+  fallbackYear = new Date().getFullYear(),
+): LeaveRequestBalance | null {
+  if (request.type !== 'TIME_OFF' && request.type !== 'SICK_LEAVE') return null
 
-  return requests
-    .filter(request =>
-      request.requesterId === requesterId
-      && (request.type === 'TIME_OFF' || request.type === 'SICK_LEAVE'),
-    )
-    .sort((left, right) => sortTime(right) - sortTime(left))
+  const parsedYear = Number(request.leaveStart?.match(/^(\d{4})-/)?.[1])
+  const year = Number.isInteger(parsedYear) && parsedYear >= 1900 && parsedYear <= 9999
+    ? parsedYear
+    : fallbackYear
+  const balance = annualLeaveBalance(requests, request.requesterId, year)
+  const line = request.type === 'TIME_OFF' ? balance.holiday : balance.sickLeave
+
+  return {
+    year,
+    label: request.type === 'TIME_OFF' ? 'Holiday' : 'Sick leave',
+    ...line,
+    requestedDays: leaveRequestDays(request),
+    approvedDaysInYear: approvedLeaveRequestDays(request, year),
+  }
 }
 
 export function approvedTimeOffDays(requests: EmployeeRequest[], year = new Date().getFullYear()): number {
