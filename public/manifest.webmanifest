@@ -1,0 +1,26 @@
+{
+  "name": "CE Solution Plus ERP",
+  "short_name": "CE ERP",
+  "description": "Enterprise operations, business development, contracts, sourcing, finance, and HR workspace.",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#F4F6F8",
+  "theme_color": "#0F2742",
+  "icons": [
+    {
+      "src": "./pwa-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./pwa-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

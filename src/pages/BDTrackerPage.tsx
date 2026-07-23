@@ -13,7 +13,12 @@ import { uploadAttachment, downloadAttachment, hasAttachmentSource } from '../li
 import FloatingActionMenu from '../components/shared/FloatingActionMenu'
 import { hasPermission } from '../lib/permissions'
 import { bdSubmissionPeriodDate, isSubmittedLifecycleRow, uniqueBDSubmissionRows } from '../lib/dashboardMetrics'
-import { bdTrackerAssociateOutcomes, parseBDTrackerAmount, sortBDSubmissionsByDueDateTime } from '../lib/bdTracker'
+import {
+  bdTrackerAssociateOutcomes,
+  bdTrackerUsesRecurringAmounts,
+  parseBDTrackerAmount,
+  sortBDSubmissionsNewestFirst,
+} from '../lib/bdTracker'
 import DetailDrawer, { DrawerField, DrawerSection } from '../components/shared/DetailDrawer'
 import SamGovListingButton from '../components/shared/SamGovListingButton'
 import { MandatoryEventsEditor, MandatoryEventsList } from '../components/shared/MandatoryEvents'
@@ -187,6 +192,15 @@ function BDTrackerEditModal({
   const [form, setForm] = useState(() => trackerEditInitial(row, opportunity, employees))
   const [saving, setSaving] = useState(false)
   const update = (key: TrackerStringField, value: string) => setForm(prev => ({ ...prev, [key]: value }))
+  const updateContractType = (value: ContractType) => {
+    setForm(prev => ({
+      ...prev,
+      type: value,
+      ...(bdTrackerUsesRecurringAmounts(value)
+        ? {}
+        : { baseAmount: '', monthlyPayment: '' }),
+    }))
+  }
   const assignment = getAssignmentChain(employees, form.assignedTo || undefined)
   const assignmentOptions = employees
     .filter(employee => (employee.team ?? 'BD') === 'BD'
@@ -255,7 +269,11 @@ function BDTrackerEditModal({
           )}
           <label>
             <span className="mb-1 block text-[10px] font-black uppercase tracking-wide text-slate-400">Contract Type</span>
-            <select className="input-field w-full" value={form.type} onChange={e => update('type', e.target.value)}>
+            <select
+              className="input-field w-full"
+              value={form.type}
+              onChange={e => updateContractType(e.target.value as ContractType)}
+            >
               {CONTRACT_TYPES.map(type => <option key={type} value={type}>{typeLabel(type)}</option>)}
             </select>
           </label>
@@ -292,7 +310,7 @@ function BDTrackerEditModal({
                 </span>
               )}
             </div>
-            <div className={`grid gap-3 ${opportunity ? 'md:grid-cols-3' : 'md:grid-cols-1'}`}>
+            <div className={`grid gap-3 ${opportunity && bdTrackerUsesRecurringAmounts(form.type) ? 'md:grid-cols-3' : 'md:grid-cols-1'}`}>
               <label>
                 <span className="mb-1 block text-[10px] font-black uppercase tracking-wide text-slate-400">Total Contract Amount ($)</span>
                 <input
@@ -305,7 +323,7 @@ function BDTrackerEditModal({
                   onChange={e => update('contractAmount', e.target.value)}
                 />
               </label>
-              {opportunity && (
+              {opportunity && bdTrackerUsesRecurringAmounts(form.type) && (
                 <>
                   <label>
                     <span className="mb-1 block text-[10px] font-black uppercase tracking-wide text-slate-400">Yearly Value ($)</span>
@@ -589,8 +607,8 @@ export default function BDTrackerPage() {
   }, [bdSubmissions, period, search, filters, opportunities, employees, currentUser])
 
   const filtered = useMemo(
-    () => sortBDSubmissionsByDueDateTime(baseFiltered.filter(s => s.status === tab), opportunities),
-    [baseFiltered, tab, opportunities],
+    () => sortBDSubmissionsNewestFirst(baseFiltered.filter(s => s.status === tab)),
+    [baseFiltered, tab],
   )
 
   const totalRows = filtered.length
@@ -642,10 +660,11 @@ export default function BDTrackerPage() {
     const contractAmountResult = canEditContractValues
       ? parseAmount(form.contractAmount, 'Total contract amount', true)
       : { valid: true as const, value: null }
-    const baseAmountResult = canEditContractValues
+    const usesRecurringAmounts = bdTrackerUsesRecurringAmounts(form.type as ContractType)
+    const baseAmountResult = canEditContractValues && usesRecurringAmounts
       ? parseAmount(form.baseAmount, 'Yearly value')
       : { valid: true as const, value: null }
-    const monthlyPaymentResult = canEditContractValues
+    const monthlyPaymentResult = canEditContractValues && usesRecurringAmounts
       ? parseAmount(form.monthlyPayment, 'Monthly value')
       : { valid: true as const, value: null }
     if (!contractAmountResult.valid || !baseAmountResult.valid || !monthlyPaymentResult.valid) return false
@@ -676,8 +695,8 @@ export default function BDTrackerPage() {
         ...(canEditContractValues ? {
           contractAmount: contractAmount ?? 0,
           value: contractAmount ?? 0,
-          baseAmount,
-          monthlyPayment,
+          baseAmount: usesRecurringAmounts ? baseAmount : null,
+          monthlyPayment: usesRecurringAmounts ? monthlyPayment : null,
         } : {}),
         ...(canEditAssignment ? { assignedTo: form.assignedTo || null, ...assignmentSnapshot } : {}),
       }

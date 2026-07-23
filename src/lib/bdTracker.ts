@@ -1,4 +1,4 @@
-import type { BDSubmission, Employee, Opportunity } from '../types'
+import type { BDSubmission, ContractType, Employee, Opportunity } from '../types'
 import { isSubmittedLifecycleRow } from './dashboardMetrics'
 import { findBDSubmissionOpportunity, getBDSubmissionAssignmentChain } from './team'
 import { opportunityDeadlineTimeMs } from './timezone'
@@ -138,5 +138,40 @@ export function sortBDSubmissionsByDueDateTime(
     return left.solicitationId.localeCompare(right.solicitationId)
       || left.solicitation.localeCompare(right.solicitation)
       || left.id - right.id
+  })
+}
+
+export function bdTrackerUsesRecurringAmounts(type: ContractType): boolean {
+  return type === 'RECURRING'
+}
+
+function submittedOnOrder(value: string | undefined): number | null {
+  const trimmed = (value ?? '').trim()
+  if (!trimmed) return null
+  const parsed = Date.parse(trimmed)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+/**
+ * Jira KAN-70 defines every tracker tab as a newest-first work queue.
+ * `submittedOn` is the only persisted creation timestamp on a BD submission,
+ * so it is the canonical ordering field across all seven lifecycle statuses.
+ */
+export function sortBDSubmissionsNewestFirst(
+  submissions: readonly BDSubmission[],
+): BDSubmission[] {
+  return [...submissions].sort((left, right) => {
+    const leftSubmitted = submittedOnOrder(left.submittedOn)
+    const rightSubmitted = submittedOnOrder(right.submittedOn)
+
+    if (leftSubmitted === null && rightSubmitted !== null) return 1
+    if (leftSubmitted !== null && rightSubmitted === null) return -1
+    if (leftSubmitted !== rightSubmitted) {
+      return (rightSubmitted ?? 0) - (leftSubmitted ?? 0)
+    }
+
+    return right.id - left.id
+      || right.solicitationId.localeCompare(left.solicitationId)
+      || right.solicitation.localeCompare(left.solicitation)
   })
 }

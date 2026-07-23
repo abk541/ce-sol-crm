@@ -44,6 +44,45 @@ export function buildActivityHistory(
   )
 }
 
+/**
+ * Applies the activity dashboard's user selection with an exact name match.
+ * An empty selection and the explicit ALL sentinel both preserve the full log.
+ */
+export function filterActivityHistoryByUser(
+  history: ActivityHistoryItem[],
+  selectedUser?: string | null,
+): ActivityHistoryItem[] {
+  if (!selectedUser || selectedUser === 'ALL') return history
+  return history.filter(item => item.user === selectedUser)
+}
+
+export interface ActivityHistoryPage {
+  items: ActivityHistoryItem[]
+  page: number
+  pageCount: number
+  total: number
+}
+
+export function activityHistoryPage(
+  history: ActivityHistoryItem[],
+  selectedUser: string | null | undefined,
+  requestedPage: number,
+  pageSize: number,
+): ActivityHistoryPage {
+  const filtered = filterActivityHistoryByUser(history, selectedUser)
+  const safePageSize = Math.max(1, pageSize)
+  const pageCount = Math.max(1, Math.ceil(filtered.length / safePageSize))
+  const page = Math.min(Math.max(1, requestedPage), pageCount)
+  const start = (page - 1) * safePageSize
+
+  return {
+    items: filtered.slice(start, start + safePageSize),
+    page,
+    pageCount,
+    total: filtered.length,
+  }
+}
+
 export interface NotificationVisibilityContext {
   user?: User | null
   employees: Employee[]

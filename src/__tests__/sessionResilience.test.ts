@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   seedIfEmpty: vi.fn().mockResolvedValue(undefined),
   fetchPermissionOverrides: vi.fn().mockResolvedValue({ ok: false }),
   fetchAppSettings: vi.fn().mockResolvedValue({ ok: false }),
+  saveAppSetting: vi.fn().mockResolvedValue({ ok: true, missingTable: false }),
 }))
 
 vi.mock('../lib/auth', () => ({
@@ -43,6 +44,7 @@ vi.mock('../lib/db', async (importOriginal) => {
     seedIfEmpty: mocks.seedIfEmpty,
     fetchPermissionOverrides: mocks.fetchPermissionOverrides,
     fetchAppSettings: mocks.fetchAppSettings,
+    saveAppSetting: mocks.saveAppSetting,
   }
 })
 
@@ -91,6 +93,8 @@ describe('background profile revalidation', () => {
     mocks.fetchNotificationReadIds.mockResolvedValue({ ok: false })
     mocks.fetchEmployeeRequests.mockResolvedValue({ ok: false })
     mocks.fetchActivityLogs.mockResolvedValue({ ok: false })
+    mocks.fetchAppSettings.mockResolvedValue({ ok: false, missingTable: false })
+    mocks.saveAppSetting.mockResolvedValue({ ok: true, missingTable: false })
     setAuthenticatedWorkspace()
   })
 
@@ -176,6 +180,113 @@ describe('background profile revalidation', () => {
       role: 'TEAM_LEAD',
       team: 'OPS',
       managerId: 'profile-2',
+    })
+  })
+
+  it('hydrates an explicit false pipeline activation setting during initialization', async () => {
+    useStore.setState({
+      dbReady: false,
+      requireAssociateForActivePipeline: true,
+    })
+    mocks.fetchAppSettings.mockResolvedValueOnce({
+      ok: true,
+      missingTable: false,
+      payload: {
+        non_sub_grace_hours: '0',
+        non_sub_grace_minutes: '5',
+        require_associate_for_active_pipeline: 'false',
+      },
+    })
+
+    await useStore.getState().initializeStore()
+
+    expect(useStore.getState()).toMatchObject({
+      requireAssociateForActivePipeline: false,
+      appSettingsSyncStatus: 'synced',
+      appSettings: {
+        require_associate_for_active_pipeline: 'false',
+      },
+    })
+  })
+
+  it('refreshes the shared pipeline activation setting without coercing false to the default', async () => {
+    mocks.revalidateAuthenticatedProfile.mockResolvedValue({ ok: true, profile: user })
+    mocks.fetchAppSettings.mockResolvedValueOnce({
+      ok: true,
+      missingTable: false,
+      payload: { require_associate_for_active_pipeline: 'false' },
+    })
+    useStore.setState({ requireAssociateForActivePipeline: true })
+
+    await useStore.getState().refreshFromDb()
+
+    expect(useStore.getState().requireAssociateForActivePipeline).toBe(false)
+    expect(mocks.fetchAppSettings).toHaveBeenCalledOnce()
+  })
+
+  it('persists activation changes and restores the prior value when the shared write fails', async () => {
+    useStore.setState({
+      requireAssociateForActivePipeline: true,
+      appSettings: { require_associate_for_active_pipeline: 'true' },
+      appSettingsSyncStatus: 'synced',
+    })
+
+    await expect(
+      useStore.getState().setRequireAssociateForActivePipeline(false),
+    ).resolves.toBe(true)
+    expect(mocks.saveAppSetting).toHaveBeenLastCalledWith(
+      'require_associate_for_active_pipeline',
+      'false',
+    )
+    expect(useStore.getState()).toMatchObject({
+      requireAssociateForActivePipeline: false,
+      appSettings: { require_associate_for_active_pipeline: 'false' },
+      appSettingsSyncStatus: 'synced',
+    })
+
+    mocks.saveAppSetting.mockResolvedValueOnce({ ok: false, missingTable: false })
+    await expect(
+      useStore.getState().setRequireAssociateForActivePipeline(true),
+    ).resolves.toBe(false)
+
+    expect(useStore.getState()).toMatchObject({
+      requireAssociateForActivePipeline: false,
+      appSettings: { require_associate_for_active_pipeline: 'false' },
+      appSettingsSyncStatus: 'unknown',
+    })
+  })
+
+  it('does not let a periodic refresh overwrite an activation change that is still saving', async () => {
+    let resolveSave!: (value: { ok: true; missingTable: false }) => void
+    mocks.saveAppSetting.mockReturnValueOnce(new Promise(resolve => {
+      resolveSave = resolve
+    }))
+    mocks.revalidateAuthenticatedProfile.mockResolvedValue({ ok: true, profile: user })
+    mocks.fetchAppSettings.mockResolvedValueOnce({
+      ok: true,
+      missingTable: false,
+      payload: { require_associate_for_active_pipeline: 'true' },
+    })
+    useStore.setState({
+      requireAssociateForActivePipeline: true,
+      appSettings: { require_associate_for_active_pipeline: 'true' },
+    })
+
+    const pendingSave = useStore.getState().setRequireAssociateForActivePipeline(false)
+    await vi.waitFor(() => expect(mocks.saveAppSetting).toHaveBeenCalledOnce())
+    await useStore.getState().refreshFromDb()
+
+    expect(useStore.getState()).toMatchObject({
+      requireAssociateForActivePipeline: false,
+      appSettings: { require_associate_for_active_pipeline: 'false' },
+      appSettingsSyncStatus: 'unknown',
+    })
+
+    resolveSave({ ok: true, missingTable: false })
+    await expect(pendingSave).resolves.toBe(true)
+    expect(useStore.getState()).toMatchObject({
+      requireAssociateForActivePipeline: false,
+      appSettingsSyncStatus: 'synced',
     })
   })
 

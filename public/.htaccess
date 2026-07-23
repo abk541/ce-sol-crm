@@ -14,6 +14,14 @@ RewriteRule ^ https://crm.cesolutionplus.com%{REQUEST_URI} [R=301,L,NE]
     Header always set Expires "0"
   </FilesMatch>
 
+  # Service-worker entry points keep stable filenames, so force revalidation
+  # on every visit to make releases and install metadata update promptly.
+  <FilesMatch "^(sw\.js|manifest\.webmanifest)$">
+    Header always set Cache-Control "no-cache, no-store, must-revalidate"
+    Header always set Pragma "no-cache"
+    Header always set Expires "0"
+  </FilesMatch>
+
   # Vite content hashes these assets; a new release always gets a new name.
   <FilesMatch "-[A-Za-z0-9_-]{8,}\.(css|js|avif|svg|png|jpg|jpeg|webp|woff|woff2)$">
     Header always set Cache-Control "public, max-age=31536000, immutable"

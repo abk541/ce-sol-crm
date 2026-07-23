@@ -42,6 +42,7 @@ vi.mock('../lib/db', () => ({
   upsertPastPerformance: vi.fn().mockResolvedValue(null),
   upsertNonSubReport: vi.fn().mockResolvedValue(null),
   upsertDeletionRequest: vi.fn().mockResolvedValue(null),
+  upsertNotification: vi.fn().mockResolvedValue(true),
   upsertBDSubmission: vi.fn().mockResolvedValue(true),
   deleteBDSubmissionRecord: vi.fn().mockResolvedValue(null),
   fetchNotificationReadIds: vi.fn().mockResolvedValue({ ok: true, payload: [] }),
@@ -61,16 +62,24 @@ vi.mock('../lib/opportunityWorkflow', () => ({
   returnOpportunityToPipelineWorkflow: vi.fn(),
 }))
 
+vi.mock('../lib/deletionReview', () => ({
+  reviewDeletionRequestWorkflow: vi.fn(),
+}))
+
 import { useStore } from '../store/useStore'
 import {
   deleteContractVehicleOrderRecord,
   deleteOpportunityRecord,
   findActiveOpportunityDuplicate,
+  seedEmployeesIfEmpty,
   upsertBDSubmission,
+  upsertContract,
   upsertContractVehicleOrder,
   upsertOpportunity,
   persistNotificationsRead,
   syncOpportunityComments,
+  upsertDeletionRequest,
+  upsertNotification,
 } from '../lib/db'
 import {
   deleteOpportunityWorkflow,
@@ -79,6 +88,7 @@ import {
   submitOpportunityWorkflow,
   transitionOpportunityWorkflow,
 } from '../lib/opportunityWorkflow'
+import { reviewDeletionRequestWorkflow } from '../lib/deletionReview'
 import type { Opportunity, Contract, OppStatus, ContractStatus, Employee, FileAttachment, BDSubmission, Subcontractor, Notification as AppNotification } from '../types'
 
 // ── Pipeline view filter (mirrors PipelinePage) ───────────────────────
@@ -130,6 +140,11 @@ function makeContract(overrides: Partial<Contract> = {}): Contract {
 }
 
 // ── Reset store data before every test ───────────────────────────────
+function makeContractCreation(overrides: Partial<Omit<Contract, 'id'>> = {}): Omit<Contract, 'id'> {
+  const { id: _id, ...contract } = makeContract(overrides)
+  return contract
+}
+
 const CAPTURE_MANAGER_USER = {
   id: 'u-capture-manager', name: 'Capture Manager', email: 'capture@ces.com',
   username: 'capture', role: 'CAPTURE_MANAGER' as const, avatar: 'CM',
@@ -182,6 +197,35 @@ beforeEach(() => {
   vi.mocked(upsertOpportunity).mockResolvedValue(true)
   vi.mocked(syncOpportunityComments).mockResolvedValue(true)
   vi.mocked(upsertBDSubmission).mockResolvedValue(true)
+  vi.mocked(upsertContract).mockResolvedValue(true)
+  vi.mocked(reviewDeletionRequestWorkflow).mockImplementation(async (requestId, decision) => {
+    const state = useStore.getState()
+    const request = state.deletionRequests.find(item => item.id === requestId)
+    const opportunity = state.opportunities.find(item => item.id === request?.opportunityId)
+    if (!request || !opportunity || !state.currentUser) return null
+    const identity = request.requestedBy.trim().toLowerCase()
+    const requester = state.users.find(user => [
+      user.id,
+      user.authUserId,
+      user.username,
+      user.email,
+      user.name,
+    ].some(value => value?.trim().toLowerCase() === identity))
+    if (!requester) return null
+    const outcome = decision === 'APPROVED' ? 'approved' : 'declined'
+    const reviewedAt = '2026-07-23T08:30:00.000Z'
+    return {
+      requestId,
+      opportunityId: opportunity.id,
+      decision,
+      requesterId: requester.id,
+      reviewedBy: state.currentUser.name,
+      reviewedAt,
+      notificationId: `deletion-review-${requestId}`,
+      notificationTitle: `Deletion request ${outcome}`,
+      notificationMessage: `Your deletion request for ${opportunity.solicitation} was ${outcome} by ${state.currentUser.name}.`,
+    }
+  })
   useStore.setState({
     opportunities: [],
     freshAwards: [],
@@ -193,12 +237,17 @@ beforeEach(() => {
     notifications: [],
     activityLogs: [],
     currentUser: CAPTURE_MANAGER_USER,
+    users: [CAPTURE_MANAGER_USER, ASSOCIATE_USER],
     isAuthenticated: true,
     loginTimestamp: Date.now(),
     employees: TEST_EMPLOYEES,
     nonSubGraceHours: 0,
     nonSubGraceMinutes: 5,
+    rolePermissionOverrides: {},
+    userPermissionGrants: {},
+    userPermissionRevokes: {},
   })
+  vi.mocked(upsertNotification).mockResolvedValue(true)
   vi.mocked(submitOpportunityWorkflow).mockImplementation(async (id, _expected, values) => {
     const opp = useStore.getState().opportunities.find(row => row.id === id)
     if (!opp) return null
@@ -301,6 +350,156 @@ beforeEach(() => {
       },
       submission,
     }
+  })
+})
+
+describe('deletion request review notifications', () => {
+  it('stores the immutable requester profile id on new requests', () => {
+    const opp = makeOpp({ id: 'opp-delete-request', deletionRequested: false })
+    useStore.setState({
+      currentUser: ASSOCIATE_USER,
+      users: [CAPTURE_MANAGER_USER, ASSOCIATE_USER],
+      opportunities: [opp],
+    })
+
+    useStore.getState().requestDeletion(opp.id, ASSOCIATE_USER.username, 'Duplicate record')
+
+    expect(useStore.getState().deletionRequests[0]).toMatchObject({
+      opportunityId: opp.id,
+      requestedBy: ASSOCIATE_USER.id,
+      status: 'PENDING',
+    })
+    expect(upsertDeletionRequest).toHaveBeenCalledWith(expect.objectContaining({
+      requestedBy: ASSOCIATE_USER.id,
+    }))
+  })
+
+  it.each([
+    ['APPROVED', 'approved', true],
+    ['DECLINED', 'declined', false],
+  ] as const)(
+    'persists one unread requester notification when a request is %s',
+    async (action, outcome, isDeleted) => {
+      const opp = makeOpp({
+        id: `opp-delete-${outcome}`,
+        deletionRequested: true,
+        isDeleted: false,
+      })
+      const request = {
+        id: `request-${outcome}`,
+        opportunityId: opp.id,
+        // Historical requests stored names, usernames, or emails rather than
+        // the immutable profile id. Exact email resolution remains supported.
+        requestedBy: ` ${ASSOCIATE_USER.email.toUpperCase()} `,
+        reason: 'Duplicate record',
+        status: 'PENDING' as const,
+        requestedAt: '2026-07-22T10:00:00.000Z',
+      }
+      useStore.setState({
+        users: [CAPTURE_MANAGER_USER, ASSOCIATE_USER],
+        opportunities: [opp],
+        deletionRequests: [request],
+        notifications: [],
+      })
+
+      await expect(
+        useStore.getState().reviewDeletionRequest(
+          request.id,
+          action,
+        ),
+      ).resolves.toBe(true)
+
+      const expectedNotification = expect.objectContaining({
+        id: `deletion-review-${request.id}`,
+        type: 'DELETION_REQUEST',
+        title: `Deletion request ${outcome}`,
+        read: false,
+        relatedId: opp.id,
+        targetUserId: ASSOCIATE_USER.id,
+      })
+      expect(useStore.getState().notifications).toEqual([expectedNotification])
+      expect(reviewDeletionRequestWorkflow).toHaveBeenCalledOnce()
+      expect(reviewDeletionRequestWorkflow).toHaveBeenCalledWith(request.id, action)
+      expect(useStore.getState().deletionRequests[0]?.status).toBe(action)
+      expect(useStore.getState().opportunities[0]).toMatchObject({
+        isDeleted,
+        deletionRequested: false,
+      })
+
+      await expect(
+        useStore.getState().reviewDeletionRequest(
+          request.id,
+          action,
+        ),
+      ).resolves.toBe(false)
+      expect(reviewDeletionRequestWorkflow).toHaveBeenCalledOnce()
+      expect(useStore.getState().notifications).toHaveLength(1)
+    },
+  )
+
+  it('refuses to guess when a legacy display name identifies multiple users', async () => {
+    const duplicateNameUser = {
+      ...ASSOCIATE_USER,
+      id: 'user-associate-2',
+      email: 'associate-2@ces.com',
+      username: 'associate-2',
+    }
+    const opp = makeOpp({ id: 'opp-ambiguous-requester', deletionRequested: true })
+    const request = {
+      id: 'request-ambiguous',
+      opportunityId: opp.id,
+      requestedBy: ASSOCIATE_USER.name,
+      reason: 'Duplicate record',
+      status: 'PENDING' as const,
+      requestedAt: '2026-07-22T10:00:00.000Z',
+    }
+    useStore.setState({
+      users: [CAPTURE_MANAGER_USER, ASSOCIATE_USER, duplicateNameUser],
+      opportunities: [opp],
+      deletionRequests: [request],
+      notifications: [],
+    })
+
+    await expect(
+      useStore.getState().reviewDeletionRequest(
+        request.id,
+        'APPROVED',
+      ),
+    ).resolves.toBe(false)
+
+    expect(useStore.getState().deletionRequests[0]?.status).toBe('PENDING')
+    expect(useStore.getState().notifications).toEqual([])
+    expect(reviewDeletionRequestWorkflow).not.toHaveBeenCalled()
+  })
+
+  it('keeps the request pending and emits no notification when the atomic review fails', async () => {
+    const opp = makeOpp({ id: 'opp-review-failure', deletionRequested: true, isDeleted: false })
+    const request = {
+      id: 'request-review-failure',
+      opportunityId: opp.id,
+      requestedBy: ASSOCIATE_USER.id,
+      reason: 'Duplicate record',
+      status: 'PENDING' as const,
+      requestedAt: '2026-07-22T10:00:00.000Z',
+    }
+    useStore.setState({
+      users: [CAPTURE_MANAGER_USER, ASSOCIATE_USER],
+      opportunities: [opp],
+      deletionRequests: [request],
+      notifications: [],
+    })
+    vi.mocked(reviewDeletionRequestWorkflow).mockResolvedValueOnce(null)
+
+    await expect(
+      useStore.getState().reviewDeletionRequest(request.id, 'APPROVED'),
+    ).resolves.toBe(false)
+
+    expect(useStore.getState().deletionRequests[0]?.status).toBe('PENDING')
+    expect(useStore.getState().opportunities[0]).toMatchObject({
+      deletionRequested: true,
+      isDeleted: false,
+    })
+    expect(useStore.getState().notifications).toEqual([])
   })
 })
 
@@ -1667,6 +1866,123 @@ describe('8 · Cancel opportunity', () => {
 })
 
 // ═════════════════════════════════════════════════════════════════════
+describe('Manual legacy contract creation', () => {
+  const opsSpecialist: Employee = {
+    id: 'ops-specialist',
+    name: 'Operations Specialist',
+    email: 'ops-specialist@ces.com',
+    role: 'ASSOCIATE',
+    managerId: null,
+    avatar: 'OS',
+    team: 'OPS',
+  }
+
+  it('persists a valid contract, adds it to state, and records the creation', async () => {
+    const input = makeContractCreation({
+      contractId: '  LEGACY-C-001  ',
+      title: '  Legacy Facilities Contract  ',
+      assignedTo: opsSpecialist.id,
+      opportunityId: undefined,
+    })
+    useStore.setState({ employees: [...TEST_EMPLOYEES, opsSpecialist] })
+
+    const saved = await useStore.getState().createContract(input)
+
+    expect(saved).toBe(true)
+    expect(seedEmployeesIfEmpty).toHaveBeenCalledWith([...TEST_EMPLOYEES, opsSpecialist])
+    expect(upsertContract).toHaveBeenCalledOnce()
+    expect(upsertContract).toHaveBeenCalledWith(expect.objectContaining({
+      id: expect.stringMatching(/^c\d+$/),
+      contractId: 'LEGACY-C-001',
+      title: 'Legacy Facilities Contract',
+      assignedTo: opsSpecialist.id,
+      opportunityId: undefined,
+    }))
+    expect(useStore.getState().contracts).toEqual([
+      expect.objectContaining({ contractId: 'LEGACY-C-001', title: 'Legacy Facilities Contract' }),
+    ])
+    expect(useStore.getState().notifications).toContainEqual(expect.objectContaining({
+      type: 'CONTRACT_CREATED',
+      relatedId: useStore.getState().contracts[0]?.id,
+    }))
+    expect(useStore.getState().activityLogs).toContainEqual(expect.objectContaining({
+      entityType: 'contract',
+      entityId: useStore.getState().contracts[0]?.id,
+      action: expect.stringContaining('Created contract: Legacy Facilities Contract'),
+    }))
+  })
+
+  it('denies callers without contract:edit before touching persistence', async () => {
+    useStore.setState({ currentUser: ASSOCIATE_USER })
+
+    const saved = await useStore.getState().createContract(makeContractCreation())
+
+    expect(saved).toBe(false)
+    expect(upsertContract).not.toHaveBeenCalled()
+    expect(useStore.getState().contracts).toHaveLength(0)
+  })
+
+  it('rejects duplicate human contract IDs after case and whitespace normalization', async () => {
+    useStore.setState({
+      contracts: [makeContract({ id: 'existing', contractId: 'LEGACY-C-001' })],
+    })
+
+    const saved = await useStore.getState().createContract(makeContractCreation({
+      contractId: '  legacy-c-001  ',
+    }))
+
+    expect(saved).toBe(false)
+    expect(upsertContract).not.toHaveBeenCalled()
+    expect(useStore.getState().contracts).toHaveLength(1)
+  })
+
+  it('rejects non-Operations assignments before syncing or saving', async () => {
+    const saved = await useStore.getState().createContract(makeContractCreation({
+      assignedTo: 'emp-associate',
+    }))
+
+    expect(saved).toBe(false)
+    expect(seedEmployeesIfEmpty).not.toHaveBeenCalled()
+    expect(upsertContract).not.toHaveBeenCalled()
+    expect(useStore.getState().contracts).toHaveLength(0)
+  })
+
+  it('does not add the contract when assignment sync or the database write fails', async () => {
+    useStore.setState({ employees: [...TEST_EMPLOYEES, opsSpecialist] })
+    vi.mocked(seedEmployeesIfEmpty).mockResolvedValueOnce(false)
+
+    const syncFailed = await useStore.getState().createContract(makeContractCreation({
+      contractId: 'LEGACY-SYNC-FAIL',
+      assignedTo: opsSpecialist.id,
+    }))
+
+    expect(syncFailed).toBe(false)
+    expect(upsertContract).not.toHaveBeenCalled()
+    expect(useStore.getState().contracts).toHaveLength(0)
+
+    vi.mocked(upsertContract).mockResolvedValueOnce(false)
+    const dbFailed = await useStore.getState().createContract(makeContractCreation({
+      contractId: 'LEGACY-DB-FAIL',
+    }))
+
+    expect(dbFailed).toBe(false)
+    expect(upsertContract).toHaveBeenCalledOnce()
+    expect(useStore.getState().contracts).toHaveLength(0)
+  })
+
+  it('rejects malformed direct-call data before persistence', async () => {
+    const saved = await useStore.getState().createContract(makeContractCreation({
+      popStart: '2027-01-01',
+      popEnd: '2026-01-01',
+      value: Number.NaN,
+    }))
+
+    expect(saved).toBe(false)
+    expect(upsertContract).not.toHaveBeenCalled()
+    expect(useStore.getState().contracts).toHaveLength(0)
+  })
+})
+
 describe('9 · Full end-to-end contract lifecycle', () => {
   it('opp → submit → won → fresh award → contract → archive → past performance', async () => {
     // Step 1: Create opportunity

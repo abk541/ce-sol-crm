@@ -17,9 +17,20 @@ import type { Opportunity, Priority, OppStatus, Comment, FileAttachment, SamGovC
 import { TIMEZONES } from '../data/mock'
 import { formatCurrency, formatDate, useEscapeKey } from '../lib/utils'
 import { uploadAttachment, hasAttachmentSource, downloadAttachment } from '../lib/attachments'
-import { assignableEmployeesForUser, getAssignmentChain, isOpportunityAssignedToUser, isOpportunityOwnedByUser, ROLE_DISPLAY_LABELS } from '../lib/team'
+import {
+  assignableEmployeesForUser,
+  getAssignmentChain,
+  isOpportunityAssociatedToUser,
+  isOpportunityAssignedToUser,
+  isOpportunityOwnedByUser,
+  ROLE_DISPLAY_LABELS,
+} from '../lib/team'
 import { CONTRACT_OPPORTUNITY_STATUSES, isContractOpportunityVisible } from '../lib/dashboardMetrics'
-import { matchesPipelineFilterValue, readPipelineQueryFilters } from '../lib/pipelineQuery'
+import {
+  matchesPipelineFilterValue,
+  matchesPipelineSetAside,
+  readPipelineQueryFilters,
+} from '../lib/pipelineQuery'
 import { NAICS_CODES } from '../data/naics'
 import toast from 'react-hot-toast'
 import DetailDrawer, { DrawerSection, DrawerField } from '../components/shared/DetailDrawer'
@@ -3985,6 +3996,7 @@ export default function PipelinePage() {
   const queryParam = searchParams.get('q')
   const typeParam = searchParams.get('type')
   const priorityParam = searchParams.get('priority')
+  const setAsideParam = searchParams.get('setAside')
 
   // ── Filter state ──
   const [columnFilters, setColumnFilters] = useState<ColumnFilters>(() => {
@@ -3993,8 +4005,10 @@ export default function PipelinePage() {
       ...EMPTY_COLUMN_FILTERS,
       type: queryFilters.type,
       priority: queryFilters.priority,
+      setAside: queryFilters.setAside,
     }
   })
+  const [filtersExpanded, setFiltersExpanded] = useState(true)
   const [dueDateRange, setDueDateRange] = useState<Period | null>(null)
   // Free-text search across all columns. Seeded from the ?q= param so the global
   // top-bar search can drop the user straight into a filtered pipeline list.
@@ -4011,9 +4025,10 @@ export default function PipelinePage() {
       ...previous,
       type: typeParam?.trim() ?? '',
       priority: priorityParam?.trim() ?? '',
+      setAside: setAsideParam?.trim() ?? '',
     }))
     setPage(1)
-  }, [typeParam, priorityParam])
+  }, [typeParam, priorityParam, setAsideParam])
 
   // ── Modal state ──
   const [showCreate, setShowCreate]   = useState(false)
@@ -4100,11 +4115,16 @@ export default function PipelinePage() {
       // Team Lead / Associate suggestions carry a trailing " (count)" badge — strip it before matching.
       if (col.key === 'teamLead' || col.key === 'associate') q = q.replace(/\s*\(\d+\)\s*$/, '').trim()
       if (!q) return
-      list = list.filter(o => matchesPipelineFilterValue(
-        getColumnFilterValue(o, col.key, employees),
-        q,
-        col.key === 'priority' ? 'exact' : 'contains',
-      ))
+      list = list.filter(o => {
+        const value = getColumnFilterValue(o, col.key, employees)
+        return col.key === 'setAside'
+          ? matchesPipelineSetAside(value, q)
+          : matchesPipelineFilterValue(
+              value,
+              q,
+              col.key === 'priority' ? 'exact' : 'contains',
+            )
+      })
     })
 
     list.sort((a, b) => {
@@ -4153,6 +4173,7 @@ export default function PipelinePage() {
       next.delete('q')
       next.delete('type')
       next.delete('priority')
+      next.delete('setAside')
       return next
     }, { replace: true })
     resetPage()
@@ -4290,39 +4311,56 @@ export default function PipelinePage() {
             </button>
           )}
 
+          <button
+            type="button"
+            aria-expanded={filtersExpanded}
+            aria-controls="pipeline-column-filters"
+            onClick={() => setFiltersExpanded(value => !value)}
+            className="btn-secondary text-xs flex items-center gap-1.5"
+          >
+            <Filter size={12} />
+            {filtersExpanded ? 'Hide filters' : 'Show filters'}
+            {filtersExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+          </button>
+
           <button className="btn-secondary text-xs flex items-center gap-1.5">
             <Download size={12} /> Export
           </button>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-7 gap-3 pt-2 border-t border-slate-100">
-          {COLUMN_FILTERS.map(col => (
-            <ColumnFilterInput
-              key={col.key}
-              id={`pipeline-filter-${col.key}`}
-              label={col.label}
-              value={columnFilters[col.key]}
-              placeholder={col.placeholder}
-              suggestions={filterOptions[col.key] ?? []}
-              onChange={value => {
-                setColumnFilters(prev => ({ ...prev, [col.key]: value }))
-                resetPage()
-              }}
-            />
-          ))}
-          <div>
-            <label className="block text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1">Due Date</label>
-            <PeriodFilter
-              value={dueDateRange}
-              onChange={value => {
-                setDueDateRange(value)
-                resetPage()
-              }}
-              placeholder="All dates"
-            />
+        {filtersExpanded && (
+          <div
+            id="pipeline-column-filters"
+            className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-7 gap-3 pt-2 border-t border-slate-100"
+          >
+            {COLUMN_FILTERS.map(col => (
+              <ColumnFilterInput
+                key={col.key}
+                id={`pipeline-filter-${col.key}`}
+                label={col.label}
+                value={columnFilters[col.key]}
+                placeholder={col.placeholder}
+                suggestions={filterOptions[col.key] ?? []}
+                onChange={value => {
+                  setColumnFilters(prev => ({ ...prev, [col.key]: value }))
+                  resetPage()
+                }}
+              />
+            ))}
+            <div>
+              <label className="block text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1">Due Date</label>
+              <PeriodFilter
+                value={dueDateRange}
+                onChange={value => {
+                  setDueDateRange(value)
+                  resetPage()
+                }}
+                placeholder="All dates"
+              />
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       {/* Table */}
@@ -4414,12 +4452,13 @@ export default function PipelinePage() {
                         <SamGovListingButton opportunity={o} compact />
                         {(() => {
                           const owned = isOpportunityOwnedByUser(employees, currentUser, o.assignedTo)
+                          const associated = isOpportunityAssociatedToUser(employees, currentUser, o)
                           return (
                             <RowMenu
                               o={o}
                               canSubmit={canSubmit && owned}
-                              canSource={canWriteSourcing && owned}
-                              canToggleQuoted={canWriteSourcing && owned}
+                              canSource={canWriteSourcing && associated}
+                              canToggleQuoted={canWriteSourcing && associated}
                               onViewDetails={() => setSelectedOpp(o)}
                               onEdit={() => setEditOpp(o)}
                               onSourcing={() => setSourcingOpp(o)}
@@ -4475,7 +4514,10 @@ export default function PipelinePage() {
           <>
             <OpportunityDetailBody
               opp={selectedOpp}
-              canWriteSourcing={canWriteSourcing}
+              canWriteSourcing={
+                canWriteSourcing
+                && isOpportunityAssociatedToUser(employees, currentUser, selectedOpp)
+              }
               onDeleteSourcing={handleDeleteSourcing}
               deletingSourcingId={deletingSourcingId}
             />
@@ -4484,6 +4526,7 @@ export default function PipelinePage() {
               <SamGovListingButton opportunity={selectedOpp} label="Open SAM.gov" variant="premium" />
               {(() => {
                 const ownedSelected = isOpportunityOwnedByUser(employees, currentUser, selectedOpp.assignedTo)
+                const associatedSelected = isOpportunityAssociatedToUser(employees, currentUser, selectedOpp)
                 return (
                   <>
                     {canOpenEditModal && (
@@ -4491,9 +4534,24 @@ export default function PipelinePage() {
                         <Edit2 size={12} /> {canEditOpportunities ? 'Edit' : 'Comment'}
                       </button>
                     )}
-                    {canWriteSourcing && ownedSelected && (
+                    {canWriteSourcing && associatedSelected && (
                       <button className="btn-secondary text-xs gap-1.5" onClick={() => { setSelectedOpp(null); setSourcingOpp(selectedOpp) }}>
                         <Users2 size={12} /> Sourcing
+                      </button>
+                    )}
+                    {canWriteSourcing && associatedSelected && (
+                      <button
+                        className="btn-secondary text-xs gap-1.5"
+                        onClick={async () => {
+                          const quoted = !selectedOpp.quoted
+                          const saved = await updateOpportunity(selectedOpp.id, { quoted })
+                          if (!saved) return
+                          setSelectedOpp(current => current ? { ...current, quoted } : current)
+                          toast.success(quoted ? 'Marked as quoted' : 'Marked as not quoted')
+                        }}
+                      >
+                        <BadgeCheck size={12} />
+                        {selectedOpp.quoted ? 'Mark Not Quoted' : 'Mark Quoted'}
                       </button>
                     )}
                     {canSubmit && ownedSelected && OPP_VIEW_STATUSES.includes(selectedOpp.status as any) && (

@@ -2094,6 +2094,7 @@ export type AppSettings = Record<string, string>
 const KNOWN_NON_SECRET_APP_SETTINGS = new Set([
   'non_sub_grace_hours',
   'non_sub_grace_minutes',
+  'require_associate_for_active_pipeline',
 ])
 
 export interface AppSettingsResult {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { approvedTimeOffDays, hrRoleGroup } from '../lib/hr'
+import { approvedLeaveUsage, approvedTimeOffDays, hrRoleGroup } from '../lib/hr'
 import type { EmployeeRequest } from '../types'
 
 function request(overrides: Partial<EmployeeRequest>): EmployeeRequest {
@@ -48,5 +48,48 @@ describe('approved time-off calculations', () => {
     expect(approvedTimeOffDays([
       request({ leaveStart: '2025-12-30', leaveEnd: '2026-01-03' }),
     ], 2026)).toBe(3)
+  })
+
+  it('counts approved holiday and sick leave separately, including weekends', () => {
+    const usage = approvedLeaveUsage([
+      request({ id: 'holiday', leaveStart: '2026-07-03', leaveEnd: '2026-07-05' }),
+      request({ id: 'sick', type: 'SICK_LEAVE', leaveStart: '2026-08-08', leaveEnd: '2026-08-09' }),
+      request({ id: 'pending-sick', type: 'SICK_LEAVE', status: 'PENDING', leaveStart: '2026-09-01', leaveEnd: '2026-09-10' }),
+    ], ['user-1'], 2026)
+
+    expect(usage).toEqual({ holidayDays: 3, sickDays: 2 })
+  })
+
+  it('clips and de-duplicates approved ranges independently for each leave type', () => {
+    const usage = approvedLeaveUsage([
+      request({ id: 'holiday-1', leaveStart: '2025-12-30', leaveEnd: '2026-01-03' }),
+      request({ id: 'holiday-2', leaveStart: '2026-01-02', leaveEnd: '2026-01-04' }),
+      request({ id: 'sick-1', type: 'SICK_LEAVE', leaveStart: '2026-01-03', leaveEnd: '2027-01-02' }),
+      request({ id: 'sick-duplicate', type: 'SICK_LEAVE', leaveStart: '2026-01-03', leaveEnd: '2026-01-04' }),
+    ], ['user-1'], 2026)
+
+    expect(usage).toEqual({ holidayDays: 4, sickDays: 363 })
+  })
+
+  it('isolates one employee while aggregate usage keeps same-date days for each employee', () => {
+    const requests = [
+      request({ id: 'user-1-holiday', requesterId: 'user-1', leaveStart: '2026-07-01', leaveEnd: '2026-07-02' }),
+      request({ id: 'user-1-sick', requesterId: 'user-1', type: 'SICK_LEAVE', leaveStart: '2026-08-01', leaveEnd: '2026-08-01' }),
+      request({ id: 'user-2-holiday', requesterId: 'user-2', leaveStart: '2026-07-01', leaveEnd: '2026-07-02' }),
+      request({ id: 'user-2-sick', requesterId: 'user-2', type: 'SICK_LEAVE', leaveStart: '2026-08-01', leaveEnd: '2026-08-03' }),
+    ]
+
+    expect(approvedLeaveUsage(requests, ['user-1'], 2026)).toEqual({
+      holidayDays: 2,
+      sickDays: 1,
+    })
+    expect(approvedLeaveUsage(requests, ['user-1', 'user-2'], 2026)).toEqual({
+      holidayDays: 4,
+      sickDays: 4,
+    })
+    expect(approvedLeaveUsage(requests, [], 2026)).toEqual({
+      holidayDays: 0,
+      sickDays: 0,
+    })
   })
 })

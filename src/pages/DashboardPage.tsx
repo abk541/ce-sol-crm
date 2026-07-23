@@ -30,7 +30,7 @@ import {
   isOpsAgent,
 } from '../lib/team'
 import { hasAnyPermission, hasPermission, ROLE_LABELS } from '../lib/permissions'
-import { buildActivityHistory, canViewCompanyActivity } from '../lib/notifications'
+import { activityHistoryPage, buildActivityHistory, canViewCompanyActivity } from '../lib/notifications'
 import { chartColorsForTheme, useAppearance } from '../lib/appearance'
 import {
   bdSubmissionPeriodDate,
@@ -2199,6 +2199,7 @@ function ExecutiveDashboard() {
   const [period, setPeriod] = useState<Period | null>(null)
   const [tab, setTab] = useState<ExecutiveDashboardTab>('bd')
   const [activityPage, setActivityPage] = useState(1)
+  const [activityUserFilter, setActivityUserFilter] = useState('ALL')
   const [bdTeamView, setBdTeamView] = useState<TeamView>({ mode: 'teams' })
   const [opsTeamView, setOpsTeamView] = useState<TeamView>({ mode: 'teams' })
   const visibleTabs = useMemo(() => {
@@ -2347,11 +2348,24 @@ function ExecutiveDashboard() {
     () => buildActivityHistory(activityLogs),
     [activityLogs],
   )
-  const activityPageCount = Math.max(1, Math.ceil(activityHistory.length / ACTIVITY_HISTORY_PAGE_SIZE))
-  const activityPageItems = useMemo(() => {
-    const start = (activityPage - 1) * ACTIVITY_HISTORY_PAGE_SIZE
-    return activityHistory.slice(start, start + ACTIVITY_HISTORY_PAGE_SIZE)
-  }, [activityHistory, activityPage])
+  const activityUserOptions = useMemo(() => {
+    const names = new Set(activityHistory.map(item => item.user).filter(Boolean))
+    users.forEach(user => {
+      if (user.name) names.add(user.name)
+    })
+    return [...names].sort((left, right) => left.localeCompare(right))
+  }, [activityHistory, users])
+  const activityPageResult = useMemo(
+    () => activityHistoryPage(
+      activityHistory,
+      activityUserFilter,
+      activityPage,
+      ACTIVITY_HISTORY_PAGE_SIZE,
+    ),
+    [activityHistory, activityPage, activityUserFilter],
+  )
+  const activityPageCount = activityPageResult.pageCount
+  const activityPageItems = activityPageResult.items
   useEffect(() => {
     setActivityPage(page => Math.min(page, activityPageCount))
   }, [activityPageCount])
@@ -2720,7 +2734,7 @@ function ExecutiveDashboard() {
               data={oppsBySetAside}
               chartColors={chartColors}
               total={bdActiveOpportunityRows.length}
-              onSlice={() => goToPipeline()}
+              onSlice={(row) => navigate(pipelineFilterHref({ setAside: row.name }))}
             />
             <BdPiePanel
               title="By Priority"
@@ -2983,12 +2997,39 @@ function ExecutiveDashboard() {
           <DashboardPanel
             title="Company Activity Log"
             subtitle="Recorded assignments, comments, uploads, submissions and status changes"
-            action={<span className="rounded-full bg-emerald-400/10 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-emerald-300">Live</span>}
+            action={(
+              <div className="flex items-center gap-2">
+                {canViewCompanyActivity(currentUser) && (
+                  <select
+                    aria-label="Filter company activity by user"
+                    value={activityUserFilter}
+                    onChange={event => {
+                      setActivityUserFilter(event.target.value)
+                      setActivityPage(1)
+                    }}
+                    className="min-w-32 rounded-lg border px-2 py-1 text-xs font-bold outline-none focus:ring-2"
+                    style={{
+                      borderColor: 'var(--exec-border-strong)',
+                      background: 'var(--bg-card)',
+                      color: 'var(--text-primary)',
+                    }}
+                  >
+                    <option value="ALL">All users</option>
+                    {activityUserOptions.map(userName => (
+                      <option key={userName} value={userName}>{userName}</option>
+                    ))}
+                  </select>
+                )}
+                <span className="rounded-full bg-emerald-400/10 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-emerald-300">Live</span>
+              </div>
+            )}
           >
             {!canViewCompanyActivity(currentUser) ? (
               <EmptyDashboardState label="You do not have access to the company history log." />
             ) : activityHistory.length === 0 ? (
               <EmptyDashboardState label="No activity recorded yet." />
+            ) : activityPageResult.total === 0 ? (
+              <EmptyDashboardState label={`No activity recorded for ${activityUserFilter}.`} />
             ) : (
               <>
                 <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
@@ -3015,25 +3056,25 @@ function ExecutiveDashboard() {
                 </div>
                 <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t pt-4" style={{ borderColor: 'var(--exec-border)' }}>
                   <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                    Showing {(activityPage - 1) * ACTIVITY_HISTORY_PAGE_SIZE + 1}-{Math.min(activityPage * ACTIVITY_HISTORY_PAGE_SIZE, activityHistory.length)} of {activityHistory.length}
+                    Showing {(activityPageResult.page - 1) * ACTIVITY_HISTORY_PAGE_SIZE + 1}-{Math.min(activityPageResult.page * ACTIVITY_HISTORY_PAGE_SIZE, activityPageResult.total)} of {activityPageResult.total}
                   </p>
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
-                      disabled={activityPage === 1}
-                      onClick={() => setActivityPage(page => Math.max(1, page - 1))}
+                      disabled={activityPageResult.page === 1}
+                      onClick={() => setActivityPage(Math.max(1, activityPageResult.page - 1))}
                       className="rounded-lg border px-3 py-1.5 text-xs font-black disabled:cursor-not-allowed disabled:opacity-40"
                       style={{ borderColor: 'var(--exec-border-strong)', color: 'var(--text-primary)', background: 'var(--exec-panel-soft)' }}
                     >
                       Previous
                     </button>
                     <span className="min-w-16 text-center text-xs font-black" style={{ color: 'var(--text-primary)' }}>
-                      {activityPage} / {activityPageCount}
+                      {activityPageResult.page} / {activityPageCount}
                     </span>
                     <button
                       type="button"
-                      disabled={activityPage === activityPageCount}
-                      onClick={() => setActivityPage(page => Math.min(activityPageCount, page + 1))}
+                      disabled={activityPageResult.page === activityPageCount}
+                      onClick={() => setActivityPage(Math.min(activityPageCount, activityPageResult.page + 1))}
                       className="rounded-lg border px-3 py-1.5 text-xs font-black disabled:cursor-not-allowed disabled:opacity-40"
                       style={{ borderColor: 'var(--exec-border-strong)', color: 'var(--text-primary)', background: 'var(--exec-panel-soft)' }}
                     >

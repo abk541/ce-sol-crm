@@ -40,6 +40,7 @@ const SAFE_USER_COLUMNS = [
 const ALLOWED_APP_SETTING_KEYS = [
   'non_sub_grace_hours',
   'non_sub_grace_minutes',
+  'require_associate_for_active_pipeline',
 ] as const
 
 const OPPORTUNITY_PERMISSION_FIELDS = {

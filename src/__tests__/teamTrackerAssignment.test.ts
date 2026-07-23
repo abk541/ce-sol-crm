@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { findBDSubmissionForOpportunity, getBDSubmissionAssignmentChain } from '../lib/team'
-import type { BDSubmission, Employee } from '../types'
+import {
+  findBDSubmissionForOpportunity,
+  findUserByExactIdentity,
+  getBDSubmissionAssignmentChain,
+  isOpportunityAssociatedToUser,
+} from '../lib/team'
+import type { BDSubmission, Employee, User } from '../types'
 import type { Opportunity } from '../types'
 
 const employees: Employee[] = [
@@ -25,6 +30,34 @@ const submission: BDSubmission = {
   supportAgent: 'Alex Associate',
   value: 0,
 }
+
+const account: User = {
+  id: 'account-1',
+  authUserId: '11111111-1111-4111-8111-111111111111',
+  username: 'alex.associate',
+  name: 'Alex Associate',
+  email: 'associate@example.com',
+  role: 'ASSOCIATE',
+  avatar: 'AA',
+  status: 'active',
+  firstLogin: false,
+  createdAt: '2026-07-01T00:00:00.000Z',
+}
+
+describe('exact account identity resolution', () => {
+  it('resolves immutable ids and migrated exact values', () => {
+    expect(findUserByExactIdentity([account], account.id)?.id).toBe(account.id)
+    expect(findUserByExactIdentity([account], ` ${account.email.toUpperCase()} `)?.id).toBe(account.id)
+    expect(findUserByExactIdentity([account], account.name)?.id).toBe(account.id)
+  })
+
+  it('fails closed for ambiguous legacy names', () => {
+    expect(findUserByExactIdentity([
+      account,
+      { ...account, id: 'account-2', username: 'alex-2', email: 'alex-2@example.com' },
+    ], account.name)).toBeUndefined()
+  })
+})
 
 describe('BD Tracker assignment fallback', () => {
   it('reconstructs an orphaned tracker hierarchy from its saved names', () => {
@@ -101,5 +134,37 @@ describe('BD Tracker assignment fallback', () => {
 
     expect(findBDSubmissionForOpportunity([linked], opportunities[1]!, opportunities)).toEqual(linked)
     expect(findBDSubmissionForOpportunity([linked], opportunities[0]!, opportunities)).toBeUndefined()
+  })
+})
+
+describe('legacy opportunity sourcing ownership', () => {
+  const associateUser: User = {
+    id: 'associate-user',
+    name: 'Alex Associate',
+    email: 'associate@example.com',
+    username: 'associate',
+    role: 'ASSOCIATE',
+    avatar: 'AA',
+    status: 'active',
+    firstLogin: false,
+    createdAt: '2026-07-01',
+  }
+
+  it('recognizes the saved support-agent reference after a migrated assignment', () => {
+    expect(isOpportunityAssociatedToUser(employees, associateUser, {
+      assignedTo: 'lead',
+      bdm: 'Morgan Manager',
+      bds: 'Taylor Lead',
+      supportAgent: 'associate',
+    })).toBe(true)
+  })
+
+  it('does not grant an associate access to another support agent', () => {
+    expect(isOpportunityAssociatedToUser(employees, associateUser, {
+      assignedTo: 'lead',
+      bdm: 'Morgan Manager',
+      bds: 'Taylor Lead',
+      supportAgent: 'someone-else',
+    })).toBe(false)
   })
 })

@@ -108,11 +108,41 @@ export function employeeName(employees: Employee[], employeeId?: string): string
 
 export function findEmployeeForUser(employees: Employee[], user?: User | null): Employee | undefined {
   if (!user) return undefined
+  const exact = employees.find(employee => employee.id === user.id)
+  if (exact) return exact
   const email = user.email?.toLowerCase()
   return employees.find(employee =>
     employee.email.toLowerCase() === email ||
     employee.name.toLowerCase() === user.name.toLowerCase(),
   )
+}
+
+/**
+ * Resolve an account from one exact identity value without ever guessing.
+ * New records use the immutable profile id; the remaining selectors keep
+ * migrated rows readable. Ambiguous legacy values fail closed.
+ */
+export function findUserByExactIdentity(
+  users: readonly User[],
+  identityValue: string,
+): User | undefined {
+  const identity = identityValue.trim().toLowerCase()
+  if (!identity) return undefined
+
+  const selectors: Array<(user: User) => string | undefined> = [
+    user => user.id,
+    user => user.authUserId,
+    user => user.username,
+    user => user.email,
+    user => user.name,
+  ]
+  for (const selector of selectors) {
+    const matches = users.filter(user => selector(user)?.trim().toLowerCase() === identity)
+    if (matches.length > 1) return undefined
+    if (matches.length === 1) return matches[0]
+  }
+
+  return undefined
 }
 
 // Inverse of findEmployeeForUser: given an employee, find their login User
@@ -243,6 +273,41 @@ export function isOpportunityOwnedByUser(
   }
 
   return false
+}
+
+/**
+ * Ownership normally follows `assignedTo`. Migrated opportunities can still
+ * carry the associate/team chain only in the legacy name fields, so sourcing
+ * actions also recognize that saved responsibility without granting access to
+ * unrelated associates.
+ */
+export function isOpportunityAssociatedToUser(
+  employees: Employee[],
+  user: User | null | undefined,
+  opportunity: Pick<Opportunity, 'assignedTo' | 'bdm' | 'bds' | 'supportAgent'>,
+): boolean {
+  if (isOpportunityOwnedByUser(employees, user, opportunity.assignedTo)) return true
+  if (!user) return false
+
+  const me = findEmployeeForUser(employees, user)
+  if (!me) return false
+
+  if (me.role === 'ASSOCIATE') {
+    return employeeMatchesReference(me, opportunity.supportAgent)
+  }
+
+  if (me.role === 'TEAM_LEAD') {
+    if (employeeMatchesReference(me, opportunity.bds)) return true
+    const legacyAssociate = employees.find(employee =>
+      employee.role === 'ASSOCIATE'
+      && employeeMatchesReference(employee, opportunity.supportAgent))
+    return Boolean(
+      legacyAssociate
+      && teamMemberIdsForWorkload(employees, me.id).includes(legacyAssociate.id),
+    )
+  }
+
+  return employeeMatchesReference(me, opportunity.bdm)
 }
 
 // True when a contract "belongs" to the user: it is assigned to their employee

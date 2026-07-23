@@ -82,7 +82,11 @@ begin
   select count(*)
     into unsafe_setting_count
     from public.app_settings
-   where key not in ('non_sub_grace_hours', 'non_sub_grace_minutes');
+   where key not in (
+     'non_sub_grace_hours',
+     'non_sub_grace_minutes',
+     'require_associate_for_active_pipeline'
+   );
 
   if unsafe_setting_count <> 0 then
     raise exception 'Found % app settings outside the browser-safe allowlist', unsafe_setting_count;

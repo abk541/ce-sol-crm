@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { ActivityLog, BDSubmission, Contract, Employee, Notification, Opportunity, User } from '../types'
 import {
+  activityHistoryPage,
   buildActivityHistory,
   canViewCompanyActivity,
+  filterActivityHistoryByUser,
   isNotificationVisibleTo,
   mergeNotificationSnapshot,
   notificationRecordRoute,
@@ -321,6 +323,56 @@ describe('company history', () => {
       entityId: 'opp-history-1',
       entityName: 'HVAC Maintenance Service',
     })
+  })
+
+  it('filters by the exact selected user while preserving All and empty selections', () => {
+    const history = buildActivityHistory([
+      {
+        id: 'activity-alex',
+        action: 'Updated the record',
+        user: 'Alex',
+        userRole: 'ASSOCIATE',
+        entityType: 'opportunity',
+        createdAt: '2026-01-01T10:00:00.000Z',
+      },
+      {
+        id: 'activity-alexa',
+        action: 'Submitted the record',
+        user: 'Alexa',
+        userRole: 'ASSOCIATE',
+        entityType: 'opportunity',
+        createdAt: '2026-01-01T11:00:00.000Z',
+      },
+      {
+        id: 'activity-alex-newer',
+        action: 'Commented on the record',
+        user: 'Alex',
+        userRole: 'ASSOCIATE',
+        entityType: 'opportunity',
+        createdAt: '2026-01-01T12:00:00.000Z',
+      },
+      {
+        id: 'activity-alex-newest',
+        action: 'Uploaded a document',
+        user: 'Alex',
+        userRole: 'ASSOCIATE',
+        entityType: 'opportunity',
+        createdAt: '2026-01-01T13:00:00.000Z',
+      },
+    ])
+
+    expect(filterActivityHistoryByUser(history, 'Alex').map(item => item.user)).toEqual(['Alex', 'Alex', 'Alex'])
+    expect(filterActivityHistoryByUser(history, 'Missing User')).toEqual([])
+    expect(filterActivityHistoryByUser(history, 'ALL')).toEqual(history)
+    expect(filterActivityHistoryByUser(history, '')).toEqual(history)
+
+    const secondAlexPage = activityHistoryPage(history, 'Alex', 2, 2)
+    expect(secondAlexPage).toMatchObject({
+      page: 2,
+      pageCount: 2,
+      total: 3,
+    })
+    expect(secondAlexPage.items.map(item => item.id)).toEqual(['activity:activity-alex'])
   })
 })
 

@@ -40,7 +40,10 @@ Take and verify a fresh encrypted database backup before applying migrations.
 6. Apply `migrations/005_notification_read_receipts.sql` as the database owner.
    It stores notification read state per account instead of changing the shared
    notification row for every user.
-7. Start the API, verify `/health/ready`, and exercise login, first-login, CRUD,
+7. Apply `migrations/006_pipeline_activation_setting.sql` as the database owner.
+   It allowlists and seeds the workspace-wide Contract Opportunities activation
+   rule without overwriting an administrator's existing choice.
+8. Start the API, verify `/health/ready`, and exercise login, first-login, CRUD,
    role denial, user administration, SAM status/import, file upload/download,
    atomic submit/cancel/restore, assignment repair, and SSE before enabling
    production writes.
@@ -72,6 +75,7 @@ Routes:
 - `POST /api/v1/auth/logout`
 - `POST /api/v1/data/query|insert|upsert|update|delete`
 - `POST /api/v1/opportunity-workflows`
+- `POST /api/v1/deletion-reviews`
 - `GET /api/v1/notifications/read-state`
 - `POST /api/v1/notifications/read`
 - `POST /api/v1/admin/users/actions`

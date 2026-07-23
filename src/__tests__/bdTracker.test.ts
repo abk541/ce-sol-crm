@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import type { BDSubmission, Employee, Opportunity } from '../types'
-import { bdTrackerAssociateOutcomes, parseBDTrackerAmount, sortBDSubmissionsByDueDateTime } from '../lib/bdTracker'
+import {
+  bdTrackerAssociateOutcomes,
+  bdTrackerUsesRecurringAmounts,
+  parseBDTrackerAmount,
+  sortBDSubmissionsByDueDateTime,
+  sortBDSubmissionsNewestFirst,
+} from '../lib/bdTracker'
 
 describe('BD Tracker amount input', () => {
   it('clears optional amounts with a blank and clears the required total to zero', () => {
@@ -100,6 +106,58 @@ describe('BD Tracker due-date sorting', () => {
     ]
 
     expect(sortBDSubmissionsByDueDateTime(rows, []).map(row => row.id)).toEqual([10, 20])
+  })
+})
+
+describe('BD Tracker newest-first tab sorting', () => {
+  it('sorts by submitted timestamp descending without mutating the source rows', () => {
+    const rows = [
+      submission(1, { submittedOn: '2026-07-20T09:00:00Z' }),
+      submission(3, { submittedOn: '2026-07-22' }),
+      submission(2, { submittedOn: '2026-07-21T18:30:00Z' }),
+    ]
+
+    expect(sortBDSubmissionsNewestFirst(rows).map(row => row.id)).toEqual([3, 2, 1])
+    expect(rows.map(row => row.id)).toEqual([1, 3, 2])
+  })
+
+  it('places missing dates last and uses descending ids as a deterministic tie-breaker', () => {
+    const rows = [
+      submission(1, { submittedOn: '' }),
+      submission(2, { submittedOn: 'not-a-date' }),
+      submission(3, { submittedOn: '2026-07-20' }),
+      submission(4, { submittedOn: '2026-07-20' }),
+    ]
+
+    expect(sortBDSubmissionsNewestFirst(rows).map(row => row.id)).toEqual([4, 3, 2, 1])
+  })
+
+  it.each<BDSubmission['status']>([
+    'SUBMITTED',
+    'DISCUSSING',
+    'AWARDED',
+    'LOST',
+    'CANCELED',
+    'NOT_SUBMITTED',
+    'DROPPED',
+  ])('keeps %s rows newest first', status => {
+    const rows = [
+      submission(10, { status, submittedOn: '2026-07-20' }),
+      submission(11, { status, submittedOn: '2026-07-23' }),
+    ]
+
+    expect(sortBDSubmissionsNewestFirst(rows).map(row => row.id)).toEqual([11, 10])
+  })
+
+  it('shows the recurring breakdown only for recurring contracts', () => {
+    expect(bdTrackerUsesRecurringAmounts('RECURRING')).toBe(true)
+    expect([
+      'OTJ',
+      'BPA',
+      'IDIQ',
+      'S&D',
+      'SUPPLY',
+    ].every(type => !bdTrackerUsesRecurringAmounts(type as Opportunity['type']))).toBe(true)
   })
 })
 

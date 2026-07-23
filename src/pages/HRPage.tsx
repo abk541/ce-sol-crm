@@ -20,7 +20,7 @@ import toast from 'react-hot-toast'
 import { useStore } from '../store/useStore'
 import { hasPermission } from '../lib/permissions'
 import { useEscapeKey } from '../lib/utils'
-import { approvedTimeOffDays, hrRoleGroup, type HRRoleGroup } from '../lib/hr'
+import { approvedLeaveUsage, hrRoleGroup, type HRRoleGroup } from '../lib/hr'
 import PeriodFilter, { type Period } from '../components/shared/PeriodFilter'
 import type {
   CompanyCertification,
@@ -550,11 +550,15 @@ export default function HRPage() {
     ? dashboardPeople.filter(person => person.id === employeeFilter)
     : dashboardPeople
   const currentYear = new Date().getFullYear()
-  const usedLeaveDays = leaveDashboardPeople.reduce(
-    (sum, person) => sum + approvedTimeOffDays(employeeRequests.filter(request => request.requesterId === person.id), currentYear),
-    0,
+  const aggregateLeaveUsage = approvedLeaveUsage(
+    employeeRequests,
+    leaveDashboardPeople.map(person => person.id),
+    currentYear,
   )
-  const leaveAllowance = Math.max(18, leaveDashboardPeople.length * 18)
+  const holidayAllowance = leaveDashboardPeople.length * 18
+  const sickAllowance = leaveDashboardPeople.length * 30
+  const usedLeaveDays = aggregateLeaveUsage.holidayDays + aggregateLeaveUsage.sickDays
+  const leaveAllowance = holidayAllowance + sickAllowance
   const remainingLeaveDays = Math.max(0, leaveAllowance - usedLeaveDays)
   const leaveChartData = [
     { name: 'Used', value: usedLeaveDays, color: '#D7BE7A' },
@@ -666,9 +670,21 @@ export default function HRPage() {
                 </div>
               </div>
               <div>
-                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-amber-200">{currentYear} time off</p>
-                <p className="mt-2 text-sm font-bold text-white">{remainingLeaveDays} of {leaveAllowance} days remaining</p>
-                <p className="mt-1 text-xs leading-relaxed text-slate-400">Only approved time-off requests count toward the 18-day annual allowance for each employee.</p>
+                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-amber-200">{currentYear} approved leave</p>
+                <p className="mt-2 text-sm font-bold text-white">{remainingLeaveDays} of {leaveAllowance} combined days remaining</p>
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  <div className="rounded-lg border border-[var(--border-default)] bg-black/10 p-2.5">
+                    <p className="text-[9px] font-bold uppercase tracking-wide text-slate-400">Holiday</p>
+                    <p className="mt-1 text-base font-black text-white">{aggregateLeaveUsage.holidayDays}/{holidayAllowance}</p>
+                    <p className="text-[9px] text-slate-500">approved days used</p>
+                  </div>
+                  <div className="rounded-lg border border-[var(--border-default)] bg-black/10 p-2.5">
+                    <p className="text-[9px] font-bold uppercase tracking-wide text-slate-400">Sick leave</p>
+                    <p className="mt-1 text-base font-black text-white">{aggregateLeaveUsage.sickDays}/{sickAllowance}</p>
+                    <p className="text-[9px] text-slate-500">approved days used</p>
+                  </div>
+                </div>
+                <p className="mt-2 text-xs leading-relaxed text-slate-400">Approved date ranges count inclusively toward each employee's 18 holiday days and 30 sick days.</p>
                 <div className="mt-3 flex items-center gap-4 text-xs">
                   <span className="flex items-center gap-1.5 text-slate-300"><span className="h-2 w-2 rounded-full bg-[#D7BE7A]" /> Used</span>
                   <span className="flex items-center gap-1.5 text-slate-300"><span className="h-2 w-2 rounded-full bg-[#1C4B4B]" /> Remaining</span>
@@ -694,7 +710,7 @@ export default function HRPage() {
                 <div className="max-h-52 divide-y divide-[var(--border-default)] overflow-y-auto pr-1">
                   {dashboardPeople.map(person => {
                     const personRequests = employeeRequests.filter(request => request.requesterId === person.id)
-                    const days = approvedTimeOffDays(personRequests, currentYear)
+                    const usage = approvedLeaveUsage(employeeRequests, [person.id], currentYear)
                     return (
                       <button
                         key={person.id}
@@ -708,7 +724,8 @@ export default function HRPage() {
                         </span>
                         <span className="shrink-0 text-right text-[10px] text-slate-400">
                           <span className="block font-bold text-slate-200">{personRequests.length} requests</span>
-                          <span>{days}/18 days used</span>
+                          <span className="block">Holiday {usage.holidayDays}/18</span>
+                          <span className="block">Sick leave {usage.sickDays}/30</span>
                         </span>
                       </button>
                     )

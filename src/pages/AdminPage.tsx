@@ -539,6 +539,7 @@ export default function AdminPage() {
   const [dragId, setDragId] = useState<string | null>(null)
   const [dragOverKey, setDragOverKey] = useState<string | null>(null)
   const [danger, setDanger] = useState<DangerAction | null>(null)
+  const [activationModeSaving, setActivationModeSaving] = useState(false)
   const [dangerBusy, setDangerBusy] = useState(false)
   const [contractClient, setContractClient] = useState<string>('')
 
@@ -797,12 +798,17 @@ export default function AdminPage() {
               type="button"
               role="switch"
               aria-checked={requireAssociateForActivePipeline}
-              onClick={() => {
+              disabled={activationModeSaving}
+              onClick={async () => {
                 const next = !requireAssociateForActivePipeline
-                setRequireAssociateForActivePipeline(next)
-                toast.success(next ? 'Switched to: Wait for Associate' : 'Switched to: Manager/TL can carry it')
+                setActivationModeSaving(true)
+                const saved = await setRequireAssociateForActivePipeline(next)
+                setActivationModeSaving(false)
+                if (saved) {
+                  toast.success(next ? 'Switched to: Wait for Associate' : 'Switched to: Manager/TL can carry it')
+                }
               }}
-              className="relative inline-flex h-7 w-14 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-violet-400 focus:ring-offset-slate-900"
+              className="relative inline-flex h-7 w-14 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-violet-400 focus:ring-offset-slate-900 disabled:cursor-wait disabled:opacity-60"
               style={{
                 background: requireAssociateForActivePipeline ? '#7c3aed' : '#10b981',
               }}
@@ -813,7 +819,11 @@ export default function AdminPage() {
               />
             </button>
             <span className="text-xs font-semibold text-slate-200 min-w-[140px]">
-              {requireAssociateForActivePipeline ? 'Wait for Associate' : 'Manager/TL can carry it'}
+              {activationModeSaving
+                ? 'Saving...'
+                : requireAssociateForActivePipeline
+                  ? 'Wait for Associate'
+                  : 'Manager/TL can carry it'}
             </span>
           </div>
         </div>

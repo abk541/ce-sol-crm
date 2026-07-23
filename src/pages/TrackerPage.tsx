@@ -15,6 +15,7 @@ import toast from 'react-hot-toast'
 import DetailDrawer, { DrawerSection, DrawerField } from '../components/shared/DetailDrawer'
 import FloatingActionMenu from '../components/shared/FloatingActionMenu'
 import { hasPermission } from '../lib/permissions'
+import { findUserByExactIdentity } from '../lib/team'
 import { EditModal as OpportunityEditModal } from './PipelinePage'
 import SamGovListingButton from '../components/shared/SamGovListingButton'
 
@@ -190,7 +191,7 @@ function Paginator({ total, perPage, page, onPage, onPerPage }: {
 }
 
 export default function TrackerPage() {
-  const { opportunities, deletionRequests, reviewDeletionRequest, currentUser } = useStore()
+  const { opportunities, deletionRequests, reviewDeletionRequest, currentUser, users } = useStore()
   const [searchParams, setSearchParams] = useSearchParams()
   const globalRecordId = searchParams.get('record')
   const globalTab = searchParams.get('tab')
@@ -199,11 +200,26 @@ export default function TrackerPage() {
   const [selected, setSelected] = useState<Opportunity | null>(null)
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
   const [editOpp, setEditOpp] = useState<Opportunity | null>(null)
+  const [reviewingRequestId, setReviewingRequestId] = useState<string | null>(null)
   const [page, setPage] = useState(1)
   const [perPage, setPerPage] = useState<PerPage>(25)
 
   const isAdmin = hasPermission(currentUser, 'opportunity:deleteApprove')
   const isManager = hasPermission(currentUser, 'opportunity:edit')
+
+  const handleDeletionReview = async (
+    requestId: string,
+    action: 'APPROVED' | 'DECLINED',
+  ) => {
+    if (reviewingRequestId) return
+    setReviewingRequestId(requestId)
+    try {
+      const saved = await reviewDeletionRequest(requestId, action)
+      if (saved) toast.success(action === 'APPROVED' ? 'Deletion approved' : 'Deletion declined')
+    } finally {
+      setReviewingRequestId(null)
+    }
+  }
 
   useEffect(() => {
     if (globalTab === 'deleted' || globalTab === 'pending') setTab(globalTab)
@@ -446,6 +462,9 @@ export default function TrackerPage() {
             <div className="divide-y divide-slate-50">
               {deleted.map((o, i) => {
                 const req = deletionRequests.find(r => r.opportunityId === o.id)
+                const requesterName = req
+                  ? findUserByExactIdentity(users, req.requestedBy)?.name ?? req.requestedBy
+                  : ''
                 return (
                   <motion.div key={o.id}
                     initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }}
@@ -470,7 +489,7 @@ export default function TrackerPage() {
                       </div>
                       {req && (
                         <div>
-                          <p className="text-[10px] text-slate-500">Deleted by {req.requestedBy}</p>
+                          <p className="text-[10px] text-slate-500">Deleted by {req.reviewedBy ?? requesterName}</p>
                           <p className="text-[10px] text-slate-400">
                             {new Date(req.requestedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                           </p>
@@ -495,6 +514,8 @@ export default function TrackerPage() {
           ) : (
             pending.map((req, i) => {
               const opp = opportunities.find(o => o.id === req.opportunityId)
+              const requesterName = findUserByExactIdentity(users, req.requestedBy)?.name ?? req.requestedBy
+              const reviewing = reviewingRequestId === req.id
               return (
                 <motion.div key={req.id} variants={fadeUp}
                   className="glass rounded-2xl p-5 border-l-4 border-amber-400">
@@ -504,7 +525,7 @@ export default function TrackerPage() {
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-bold text-slate-900">{opp?.solicitation ?? 'Unknown Opportunity'}</p>
-                      <p className="text-[11px] text-slate-500">{opp?.solicitationId} - Requested by {req.requestedBy}</p>
+                      <p className="text-[11px] text-slate-500">{opp?.solicitationId} - Requested by {requesterName}</p>
                       <div className="mt-2 p-3 rounded-lg bg-slate-50 border border-slate-100">
                         <p className="text-xs text-slate-700 leading-relaxed">{req.reason}</p>
                       </div>
@@ -515,13 +536,19 @@ export default function TrackerPage() {
                     </div>
                     <div className="flex flex-col gap-2 flex-shrink-0">
                       <button
-                        onClick={() => { reviewDeletionRequest(req.id, 'APPROVED', currentUser?.username ?? ''); toast.success('Deletion approved') }}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 transition-colors">
+                        type="button"
+                        disabled={reviewingRequestId !== null}
+                        aria-busy={reviewing}
+                        onClick={() => { void handleDeletionReview(req.id, 'APPROVED') }}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 transition-colors disabled:cursor-wait disabled:opacity-50">
                         <CheckCircle2 size={12} /> Approve
                       </button>
                       <button
-                        onClick={() => { reviewDeletionRequest(req.id, 'DECLINED', currentUser?.username ?? ''); toast.success('Deletion declined') }}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-red-600 bg-red-50 border border-red-200 hover:bg-red-100 transition-colors">
+                        type="button"
+                        disabled={reviewingRequestId !== null}
+                        aria-busy={reviewing}
+                        onClick={() => { void handleDeletionReview(req.id, 'DECLINED') }}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-red-600 bg-red-50 border border-red-200 hover:bg-red-100 transition-colors disabled:cursor-wait disabled:opacity-50">
                         <XCircle size={12} /> Decline
                       </button>
                     </div>

@@ -67,16 +67,21 @@ describe('generic data request compiler', () => {
     }
   })
 
-  it('scopes every app-settings read to the two non-secret keys', () => {
+  it('scopes every app-settings read to the three non-secret keys', () => {
     const request = __test.withAppSettingsScope(__test.parseCommon({ table: 'app_settings' }))
     const values: unknown[] = []
-    expect(__test.whereSql(request, values)).toBe(' where "key" in ($1, $2)')
-    expect(values).toEqual(['non_sub_grace_hours', 'non_sub_grace_minutes'])
+    expect(__test.whereSql(request, values)).toBe(' where "key" in ($1, $2, $3)')
+    expect(values).toEqual([
+      'non_sub_grace_hours',
+      'non_sub_grace_minutes',
+      'require_associate_for_active_pipeline',
+    ])
   })
 
   it('rejects writes to app-settings keys outside the server allowlist', () => {
     expect(() => __test.assertAppSettingsRows('app_settings', [
       { key: 'non_sub_grace_hours', value: '12' },
+      { key: 'require_associate_for_active_pipeline', value: 'false' },
     ])).not.toThrow()
     expect(() => __test.assertAppSettingsRows('app_settings', [
       { key: 'sam_gov_api_key', value: 'must-not-reach-the-browser' },

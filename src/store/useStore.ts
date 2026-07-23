@@ -72,11 +72,17 @@ import {
   getAssignmentChain,
   isAssignedToAssociate,
   findUserForEmployee,
+  findUserByExactIdentity,
 } from '../lib/team'
 import { hasPermission, applyPermissionOverrides, type Permission } from '../lib/permissions'
 import { nextInvoiceSequenceFromContracts } from '../lib/invoiceNumbers'
 import { hasSourcingQuote } from '../lib/subcontractorQuotes'
 import { mergeNotificationSnapshot } from '../lib/notifications'
+import {
+  contractCreationValidationError,
+  hasDuplicateHumanContractId,
+  normalizeContractForCreation,
+} from '../lib/contractCreation'
 import {
   authenticateWithPassword,
   completeFirstLoginPassword,
@@ -96,6 +102,7 @@ import {
   transitionOpportunityWorkflow,
   type OpportunityWorkflowEditValues,
 } from '../lib/opportunityWorkflow'
+import { reviewDeletionRequestWorkflow } from '../lib/deletionReview'
 
 interface AppState {
   // Auth
@@ -310,7 +317,7 @@ interface AppState {
 
   // ── Deletion requests ──────────────────────────────────────────────
   requestDeletion: (opportunityId: string, requestedBy: string, reason: string) => void
-  reviewDeletionRequest: (id: string, action: 'APPROVED' | 'DECLINED', reviewedBy: string) => void
+  reviewDeletionRequest: (id: string, action: 'APPROVED' | 'DECLINED') => Promise<boolean>
 
   // ── Notifications ──────────────────────────────────────────────────
   markNotificationRead: (id: string) => void
@@ -324,7 +331,7 @@ interface AppState {
   // ── UI ─────────────────────────────────────────────────────────────
   toggleSidebar: () => void
   updateNonSubGracePeriod: (hours: number, minutes: number) => void
-  setRequireAssociateForActivePipeline: (value: boolean) => void
+  setRequireAssociateForActivePipeline: (value: boolean) => Promise<boolean>
   setAppSetting: (key: string, value: string) => Promise<{ ok: boolean; missingTable: boolean }>
   consumeInvoiceNumber: () => number
   setPref: <K extends keyof UserPreferences>(key: K, value: UserPreferences[K]) => void
@@ -439,6 +446,58 @@ function normalizeOpportunityAssignmentStatus(
 // value looked ignored.
 const NON_SUB_GRACE_HOURS_KEY = 'non_sub_grace_hours'
 const NON_SUB_GRACE_MINUTES_KEY = 'non_sub_grace_minutes'
+const REQUIRE_ASSOCIATE_FOR_ACTIVE_PIPELINE_KEY = 'require_associate_for_active_pipeline'
+let activationSettingPendingValue: boolean | undefined
+
+function parseSharedBoolean(value: string | undefined): boolean | undefined {
+  if (value === 'true') return true
+  if (value === 'false') return false
+  return undefined
+}
+
+function sharedAppSettingsPatch(
+  state: AppState,
+  payload: Record<string, string>,
+): Partial<AppState> {
+  const appSettings = activationSettingPendingValue === undefined
+    ? payload
+    : {
+        ...payload,
+        [REQUIRE_ASSOCIATE_FOR_ACTIVE_PIPELINE_KEY]: String(activationSettingPendingValue),
+      }
+  const patch: Partial<AppState> = {
+    appSettings,
+    appSettingsSyncStatus: activationSettingPendingValue === undefined ? 'synced' : 'unknown',
+  }
+  const rawHours = payload[NON_SUB_GRACE_HOURS_KEY]
+  const rawMinutes = payload[NON_SUB_GRACE_MINUTES_KEY]
+  if (rawHours !== undefined) {
+    patch.nonSubGraceHours = Math.max(0, Math.trunc(Number(rawHours) || 0))
+  }
+  if (rawMinutes !== undefined) {
+    patch.nonSubGraceMinutes = Math.max(0, Math.trunc(Number(rawMinutes) || 0))
+  }
+
+  const requireAssociate = activationSettingPendingValue === undefined
+    ? parseSharedBoolean(payload[REQUIRE_ASSOCIATE_FOR_ACTIVE_PIPELINE_KEY])
+    : undefined
+  if (requireAssociate !== undefined) {
+    patch.requireAssociateForActivePipeline = requireAssociate
+    patch.opportunities = state.opportunities.map(opportunity =>
+      normalizeOpportunityAssignmentStatus(
+        opportunity,
+        state.employees,
+        requireAssociate,
+      )
+    )
+  }
+  return patch
+}
+
+let activationSettingWriteQueue = Promise.resolve({
+  ok: true,
+  missingTable: false,
+})
 
 // Fixed 12-hour non-submission window. This used to be an admin-configurable
 // grace period, but the variable timer produced early/duplicate reports, so it
@@ -871,7 +930,6 @@ function clearedAuthState(): Partial<AppState> {
     appSettingsSyncStatus: 'unknown',
     nonSubGraceHours: 0,
     nonSubGraceMinutes: 5,
-    requireAssociateForActivePipeline: true,
     nextInvoiceNumber: 1,
     goalProgressLastNotifiedAt: undefined,
     needsPurge: false,
@@ -2258,11 +2316,25 @@ export const useStore = create<AppState>()(
 
       createContract: async (data) => {
         const actor = get().currentUser
-        if (data.assignedTo && !employeeBelongsToTeam(get().employees.find(e => e.id === data.assignedTo), 'OPS')) {
+        if (!hasPermission(actor, 'contract:edit')) {
+          toast.error('You do not have permission to create contracts.')
+          return false
+        }
+        const normalized = normalizeContractForCreation(data)
+        const validationError = contractCreationValidationError(normalized)
+        if (validationError) {
+          toast.error(validationError)
+          return false
+        }
+        if (hasDuplicateHumanContractId(get().contracts, normalized.contractId)) {
+          toast.error(`Contract ID ${normalized.contractId} already exists.`)
+          return false
+        }
+        if (normalized.assignedTo && !employeeBelongsToTeam(get().employees.find(e => e.id === normalized.assignedTo), 'OPS')) {
           toast.error('Contracts can only be assigned to Operations users.')
           return false
         }
-        const contract: Contract = { ...data, id: `c${Date.now()}` }
+        const contract: Contract = { ...normalized, id: `c${Date.now()}` }
         if (contract.assignedTo && !(await ensureAssignmentEmployeesSynced(get().employees))) return false
         const saved = await upsertContract(contract)
         if (!saved) {
@@ -2273,7 +2345,7 @@ export const useStore = create<AppState>()(
         get().addNotification({
           type: 'CONTRACT_CREATED',
           title: 'New contract created',
-          message: `${data.title} has been added to active contracts.`,
+          message: `${contract.title} has been added to Contract Admin.`,
           read: false,
           relatedId: contract.id,
         })
@@ -3597,10 +3669,11 @@ export const useStore = create<AppState>()(
           toast.error('You do not have permission to request opportunity deletion.')
           return
         }
+        const requesterId = get().currentUser?.id ?? requestedBy.trim()
         const req: DeletionRequest = {
           id: `dr${Date.now()}`,
           opportunityId,
-          requestedBy,
+          requestedBy: requesterId,
           reason,
           status: 'PENDING',
           requestedAt: new Date().toISOString(),
@@ -3624,39 +3697,76 @@ export const useStore = create<AppState>()(
         })
       },
 
-      reviewDeletionRequest: (id, action, reviewedBy) => {
-        if (!hasPermission(get().currentUser, 'opportunity:deleteApprove')) {
+      reviewDeletionRequest: async (id, action) => {
+        const state = get()
+        if (!hasPermission(state.currentUser, 'opportunity:deleteApprove')) {
           toast.error('Only the Capture Manager can approve deletion requests.')
-          return
+          return false
         }
-        set(s => ({
-          deletionRequests: s.deletionRequests.map(r =>
-            r.id === id
-              ? { ...r, status: action, reviewedBy, reviewedAt: new Date().toISOString() }
-              : r
-          )
+
+        const pendingRequest = state.deletionRequests.find(request => request.id === id)
+        if (!pendingRequest || pendingRequest.status !== 'PENDING') return false
+
+        const requester = findUserByExactIdentity(state.users, pendingRequest.requestedBy)
+        if (!requester) {
+          toast.error('The original deletion requester could not be identified safely. Review was not saved.')
+          return false
+        }
+
+        const result = await reviewDeletionRequestWorkflow(id, action)
+        if (
+          !result
+          || result.requestId !== id
+          || result.opportunityId !== pendingRequest.opportunityId
+          || result.decision !== action
+          || result.requesterId !== requester.id
+        ) {
+          toast.error('The deletion review was not saved. Refresh the requests and try again.')
+          return false
+        }
+
+        const reviewedRequest: DeletionRequest = {
+          ...pendingRequest,
+          status: action,
+          reviewedBy: result.reviewedBy,
+          reviewedAt: result.reviewedAt,
+        }
+        const opportunity = state.opportunities.find(
+          item => item.id === pendingRequest.opportunityId,
+        )
+        const reviewedOpportunity = opportunity
+          ? {
+              ...opportunity,
+              ...(action === 'APPROVED' ? { isDeleted: true } : {}),
+              deletionRequested: false,
+            }
+          : undefined
+        const notification: Notification = {
+          id: result.notificationId,
+          type: 'DELETION_REQUEST',
+          title: result.notificationTitle,
+          message: result.notificationMessage,
+          read: false,
+          createdAt: result.reviewedAt,
+          relatedId: pendingRequest.opportunityId,
+          targetUserId: requester.id,
+        }
+
+        set(current => ({
+          deletionRequests: current.deletionRequests.map(request =>
+            request.id === id ? reviewedRequest : request
+          ),
+          opportunities: reviewedOpportunity
+            ? current.opportunities.map(item =>
+                item.id === reviewedOpportunity.id ? reviewedOpportunity : item
+              )
+            : current.opportunities,
+          notifications: [
+            notification,
+            ...current.notifications.filter(item => item.id !== notification.id),
+          ],
         }))
-        const req = get().deletionRequests.find(r => r.id === id)
-        if (req) upsertDeletionRequest(req)
-        if (req && action === 'APPROVED') {
-          set(s => ({
-            opportunities: s.opportunities.map(o =>
-              o.id === req.opportunityId
-                ? { ...o, isDeleted: true, deletionRequested: false }
-                : o
-            ),
-          }))
-          const deletedOpp = get().opportunities.find(o => o.id === req.opportunityId)
-          if (deletedOpp) upsertOpportunity(deletedOpp)
-        } else if (req && action === 'DECLINED') {
-          set(s => ({
-            opportunities: s.opportunities.map(o =>
-              o.id === req.opportunityId ? { ...o, deletionRequested: false } : o
-            )
-          }))
-          const reinstatedOpp = get().opportunities.find(o => o.id === req.opportunityId)
-          if (reinstatedOpp) upsertOpportunity(reinstatedOpp)
-        }
+        return true
       },
 
       // ── Notifications ───────────────────────────────────────────────
@@ -3954,15 +4064,9 @@ export const useStore = create<AppState>()(
             const s = await fetchAppSettings()
             if (!sessionIsCurrent()) return
             if (s.ok && s.payload) {
-              // Hydrate the grace window from the workspace-wide value so this
-              // browser's sweep matches every other session instead of its own
-              // localStorage default.
-              const gracePatch: { nonSubGraceHours?: number; nonSubGraceMinutes?: number } = {}
-              const rawHours = s.payload[NON_SUB_GRACE_HOURS_KEY]
-              const rawMinutes = s.payload[NON_SUB_GRACE_MINUTES_KEY]
-              if (rawHours !== undefined) gracePatch.nonSubGraceHours = Math.max(0, Math.trunc(Number(rawHours) || 0))
-              if (rawMinutes !== undefined) gracePatch.nonSubGraceMinutes = Math.max(0, Math.trunc(Number(rawMinutes) || 0))
-              set({ appSettings: s.payload, appSettingsSyncStatus: 'synced', ...gracePatch })
+              // Hydrate every workspace-wide operational setting, including an
+              // explicit "false" activation mode, from the shared source.
+              set(state => sharedAppSettingsPatch(state, s.payload as Record<string, string>))
             } else if (s.missingTable) {
               set({ appSettingsSyncStatus: 'local' })
             }
@@ -4106,11 +4210,12 @@ export const useStore = create<AppState>()(
             })
           }
 
-          const [nRes, readRes, rRes, aRes] = await Promise.all([
+          const [nRes, readRes, rRes, aRes, settingsRes] = await Promise.all([
             fetchNotifications(),
             fetchNotificationReadIds(),
             fetchEmployeeRequests(),
             fetchActivityLogs(),
+            fetchAppSettings(),
           ])
           const afterCollaborationLoad = get()
           if (
@@ -4118,6 +4223,14 @@ export const useStore = create<AppState>()(
             afterCollaborationLoad.currentUser?.id !== refreshedProfile.id ||
             afterCollaborationLoad.loginTimestamp !== startedAt
           ) return
+          if (settingsRes.ok && settingsRes.payload) {
+            set(state => sharedAppSettingsPatch(
+              state,
+              settingsRes.payload as Record<string, string>,
+            ))
+          } else if (settingsRes.missingTable) {
+            set({ appSettingsSyncStatus: 'local' })
+          }
           const collabPatch: { notifications?: Notification[]; notificationsReady?: boolean; employeeRequests?: EmployeeRequest[]; activityLogs?: ActivityLog[] } = {}
           if (nRes.ok && nRes.payload) {
             collabPatch.notifications = mergeNotificationSnapshot(
@@ -4178,21 +4291,89 @@ export const useStore = create<AppState>()(
         }
         return { ok: r.ok, missingTable: r.missingTable }
       },
-      setRequireAssociateForActivePipeline: (value) => {
+      setRequireAssociateForActivePipeline: async (value) => {
         const next = !!value
-        const prev = get().requireAssociateForActivePipeline
-        if (prev === next) return
+        const before = get()
+        const prev = before.requireAssociateForActivePipeline
+        const previousSetting = before.appSettings[REQUIRE_ASSOCIATE_FOR_ACTIVE_PIPELINE_KEY]
+        if (prev === next && previousSetting === String(next)) return true
+
         // Retroactively re-evaluate every opportunity so ACTIVE/NEW_ASSIGNMENT
         // matches the new mode immediately; bulk-upsert anything that flipped.
-        const employees = get().employees
+        const employees = before.employees
         const changed: Opportunity[] = []
-        const renormalized = get().opportunities.map(opp => {
+        const renormalized = before.opportunities.map(opp => {
           const updated = normalizeOpportunityAssignmentStatus(opp, employees, next)
           if (updated.status !== opp.status) changed.push(updated)
           return updated
         })
-        set({ requireAssociateForActivePipeline: next, opportunities: renormalized })
-        if (changed.length > 0 && isApiConnected) {
+        activationSettingPendingValue = next
+        set(state => ({
+          requireAssociateForActivePipeline: next,
+          opportunities: renormalized,
+          appSettings: {
+            ...state.appSettings,
+            [REQUIRE_ASSOCIATE_FOR_ACTIVE_PIPELINE_KEY]: String(next),
+          },
+          appSettingsSyncStatus: 'unknown',
+        }))
+
+        // Serialize rapid toggle writes so an older, slower request can never
+        // overwrite the user's latest choice in the shared settings table.
+        const write = activationSettingWriteQueue.then(() =>
+          saveAppSetting(REQUIRE_ASSOCIATE_FOR_ACTIVE_PIPELINE_KEY, String(next))
+        )
+        activationSettingWriteQueue = write.catch(() => ({
+          ok: false,
+          missingTable: false,
+        }))
+        const result = await write.catch(() => ({
+          ok: false,
+          missingTable: false,
+        }))
+        if (activationSettingPendingValue === next) {
+          activationSettingPendingValue = undefined
+        }
+
+        if (!result.ok) {
+          let rolledBack = false
+          set(state => {
+            if (
+              state.requireAssociateForActivePipeline !== next ||
+              state.appSettings[REQUIRE_ASSOCIATE_FOR_ACTIVE_PIPELINE_KEY] !== String(next)
+            ) {
+              return {}
+            }
+            rolledBack = true
+            const appSettings = { ...state.appSettings }
+            if (previousSetting === undefined) {
+              delete appSettings[REQUIRE_ASSOCIATE_FOR_ACTIVE_PIPELINE_KEY]
+            } else {
+              appSettings[REQUIRE_ASSOCIATE_FOR_ACTIVE_PIPELINE_KEY] = previousSetting
+            }
+            return {
+              requireAssociateForActivePipeline: prev,
+              opportunities: state.opportunities.map(opportunity =>
+                normalizeOpportunityAssignmentStatus(opportunity, state.employees, prev)
+              ),
+              appSettings,
+              appSettingsSyncStatus: result.missingTable ? 'local' : 'unknown',
+            }
+          })
+          if (rolledBack) {
+            toast.error('Activation mode could not be saved. The previous setting was restored.')
+          }
+          return false
+        }
+
+        set(state => (
+          state.requireAssociateForActivePipeline === next &&
+          state.appSettings[REQUIRE_ASSOCIATE_FOR_ACTIVE_PIPELINE_KEY] === String(next)
+            ? { appSettingsSyncStatus: 'synced' }
+            : {}
+        ))
+
+        if (changed.length > 0 && isApiConnected && get().requireAssociateForActivePipeline === next) {
           void ensureAssignmentEmployeesSynced(employees).then(synced => {
             if (!synced) return
             void Promise.all(changed.map(opp => upsertOpportunity(opp))).then(results => {
@@ -4203,6 +4384,7 @@ export const useStore = create<AppState>()(
             })
           })
         }
+        return true
       },
       consumeInvoiceNumber: () => {
         const current = Math.max(1, Math.trunc(Number(get().nextInvoiceNumber) || 1))

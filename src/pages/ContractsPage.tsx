@@ -40,6 +40,17 @@ import {
 } from '../lib/invoicePdf'
 import { formatInvoiceSequence } from '../lib/invoiceNumbers'
 import { normalizeContractDeliverables } from '../lib/contractDeliverables'
+import {
+  buildLegacyContractFromDraft,
+  CONTRACT_FINANCE_TYPE_OPTIONS,
+  CONTRACT_SET_ASIDE_OPTIONS,
+  CONTRACT_STATUS_OPTIONS,
+  CONTRACT_TYPE_OPTIONS,
+  emptyLegacyContractDraft,
+  hasDuplicateHumanContractId,
+  normalizeHumanContractId,
+  type LegacyContractDraft,
+} from '../lib/contractCreation'
 import { SourcingModal, SamGovContactsPanel } from './PipelinePage'
 import HierarchyAssignPicker from '../components/shared/HierarchyAssignPicker'
 import SamGovListingButton from '../components/shared/SamGovListingButton'
@@ -1552,6 +1563,7 @@ function ContractDetailDrawer({
   onOpenSourcing?: (opp: Opportunity) => void
 }) {
   const { updateContract, addContractPoC, updateContractPoC, removeContractPoC, addContractInvoice, addLockedSubcontractor, updateLockedSubcontractor, addGovernmentWarning, updateGovernmentWarning, removeGovernmentWarning, resolveGovernmentWarning, advanceContractStatus, setContractStatus, terminateContract, currentUser, employees, opportunities, subcontractors, subkDatabase, nextInvoiceNumber, consumeInvoiceNumber, addContractLineItem, updateContractLineItem, removeContractLineItem, addContractVehicleOrder, updateContractVehicleOrder, removeContractVehicleOrder } = useStore()
+  const canEditContract = hasPermission(currentUser, 'contract:edit')
   const [tab, setTab] = useState<ContractDrawerTab>(initialTab)
   const [deliverableForm, setDeliverableForm] = useState({
     title: '',
@@ -1976,16 +1988,18 @@ function ContractDetailDrawer({
         {/* OVERVIEW */}
         {tab === 'overview' && (
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <div className="flex items-center justify-end lg:col-span-2">
-              <button
-                type="button"
-                onClick={() => { setEditForm(buildEditForm(contract)); setShowEditDetails(true) }}
-                className="btn-secondary justify-center gap-1.5 text-xs"
-                title="Edit contract details (fix typos and human errors)"
-              >
-                <Pencil size={12} /> Edit Details
-              </button>
-            </div>
+            {canEditContract && (
+              <div className="flex items-center justify-end lg:col-span-2">
+                <button
+                  type="button"
+                  onClick={() => { setEditForm(buildEditForm(contract)); setShowEditDetails(true) }}
+                  className="btn-secondary justify-center gap-1.5 text-xs"
+                  title="Edit contract details (fix typos and human errors)"
+                >
+                  <Pencil size={12} /> Edit Details
+                </button>
+              </div>
+            )}
 
             {/* ──── Snapshot: hero + tile row ──── */}
             <div className="lg:col-span-2 space-y-3">
@@ -4314,6 +4328,429 @@ function ContractDetailDrawer({
 // ─────────────────────────────────────────────────────────────────────────
 // Main Page
 // ─────────────────────────────────────────────────────────────────────────
+function AddLegacyContractModal({
+  contracts,
+  onClose,
+  onCreated,
+}: {
+  contracts: Contract[]
+  onClose: () => void
+  onCreated: (contract: Contract) => void
+}) {
+  const { createContract, employees } = useStore()
+  const [draft, setDraft] = useState<LegacyContractDraft>(() => emptyLegacyContractDraft())
+  const [saving, setSaving] = useState(false)
+  const [formError, setFormError] = useState<string | null>(null)
+  const savingRef = useRef(false)
+  useEscapeKey(onClose, !saving)
+
+  const opsEmployees = useMemo(
+    () => employees
+      .filter(employee => (employee.team ?? 'BD') === 'OPS')
+      .sort((a, b) => a.name.localeCompare(b.name)),
+    [employees],
+  )
+  const duplicateContractId = hasDuplicateHumanContractId(contracts, draft.contractId)
+
+  const setField = <K extends keyof LegacyContractDraft>(field: K, value: LegacyContractDraft[K]) => {
+    setDraft(current => ({ ...current, [field]: value }))
+    setFormError(null)
+  }
+
+  const submit = async () => {
+    if (savingRef.current) return
+    if (duplicateContractId) {
+      const message = `Contract ID ${draft.contractId.trim()} already exists.`
+      setFormError(message)
+      toast.error(message)
+      return
+    }
+    const built = buildLegacyContractFromDraft(draft)
+    if (!built.ok) {
+      setFormError(built.message)
+      toast.error(built.message)
+      return
+    }
+
+    savingRef.current = true
+    setSaving(true)
+    let created: Contract | undefined
+    try {
+      const saved = await createContract(built.contract)
+      if (!saved) return
+      const contractIdKey = normalizeHumanContractId(built.contract.contractId)
+      created = useStore.getState().contracts.find(
+        contract => normalizeHumanContractId(contract.contractId) === contractIdKey,
+      )
+      if (!created) {
+        const message = 'The contract was saved, but its detail record could not be opened. Refresh Contract Admin to continue.'
+        setFormError(message)
+        toast.error(message)
+      }
+    } catch {
+      const message = 'The contract could not be created. Check the connection and try again.'
+      setFormError(message)
+      toast.error(message)
+    } finally {
+      savingRef.current = false
+      setSaving(false)
+    }
+
+    if (!created) return
+    toast.success('Contract created. Complete any remaining details in the contract workspace.')
+    onCreated(created)
+  }
+
+  return createPortal(
+    <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+      <div
+        className="absolute inset-0"
+        style={{ background: 'var(--bg-overlay)', backdropFilter: 'blur(6px)' }}
+        onClick={saving ? undefined : onClose}
+      />
+      <motion.form
+        initial={{ opacity: 0, scale: 0.97, y: 12 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.97, y: 12 }}
+        transition={{ type: 'spring', stiffness: 340, damping: 28 }}
+        onSubmit={event => {
+          event.preventDefault()
+          void submit()
+        }}
+        className="modal-panel legacy-contract-modal relative z-10 flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border shadow-2xl"
+        style={{
+          background: 'linear-gradient(180deg, var(--bg-raised), var(--bg-card))',
+          borderColor: 'var(--border-default)',
+          color: 'var(--text-primary)',
+        }}
+      >
+        <div className="flex flex-shrink-0 items-start justify-between gap-4 border-b border-[var(--border-default)] px-7 py-5">
+          <div className="min-w-0">
+            <div className="mb-2 flex items-center gap-2">
+              <span
+                className="rounded-full border px-2 py-1 text-[10px] font-black uppercase tracking-[0.14em]"
+                style={{
+                  borderColor: 'color-mix(in srgb, var(--accent) 38%, transparent)',
+                  background: 'var(--accent-soft)',
+                  color: 'var(--accent)',
+                }}
+              >
+                Legacy award
+              </span>
+              <span className="text-[10px] font-semibold text-slate-500">No SAM.gov opportunity required</span>
+            </div>
+            <h2 className="text-lg font-black text-slate-100">Add Contract</h2>
+            <p className="mt-1 text-xs text-slate-400">
+              Create the awarded contract record, then continue in the full Contract Admin workspace.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={saving}
+            className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-xl text-slate-400 transition-colors hover:bg-white/5 hover:text-slate-100 disabled:opacity-45"
+            aria-label="Close add contract"
+          >
+            <X size={15} />
+          </button>
+        </div>
+
+        <div className="flex-1 space-y-5 overflow-y-auto px-7 py-6">
+          {formError && (
+            <div
+              className="flex items-start gap-2 rounded-xl border px-4 py-3 text-xs font-semibold"
+              style={{
+                borderColor: 'color-mix(in srgb, var(--error-fg) 34%, transparent)',
+                background: 'var(--error-bg)',
+                color: 'var(--error-fg)',
+              }}
+              role="alert"
+            >
+              <AlertCircle size={14} className="mt-0.5 flex-shrink-0" />
+              <span>{formError}</span>
+            </div>
+          )}
+
+          <section
+            className="rounded-2xl border border-[var(--border-default)] p-5"
+            style={{ background: 'color-mix(in srgb, var(--bg-input) 62%, transparent)' }}
+          >
+            <div className="mb-4">
+              <p className="text-[10px] font-black uppercase tracking-[0.16em]" style={{ color: 'var(--accent)' }}>1 · Contract identity</p>
+              <p className="mt-1 text-xs text-slate-400">Use the official award identifiers. Contract IDs must be unique.</p>
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <label className="md:col-span-2">
+                <span className="mb-1.5 block text-xs font-semibold text-slate-300">Contract title *</span>
+                <input
+                  autoFocus
+                  value={draft.title}
+                  onChange={event => setField('title', event.target.value)}
+                  className="input-field"
+                  placeholder="Official awarded contract title"
+                />
+              </label>
+              <label>
+                <span className="mb-1.5 block text-xs font-semibold text-slate-300">Contract ID *</span>
+                <input
+                  value={draft.contractId}
+                  onChange={event => setField('contractId', event.target.value)}
+                  className={`input-field font-mono ${duplicateContractId ? 'border-red-400/70' : ''}`}
+                  placeholder="e.g. FA4890-26-C-0012"
+                  aria-invalid={duplicateContractId}
+                />
+                {duplicateContractId && (
+                  <span className="mt-1 block text-[11px] font-semibold" style={{ color: 'var(--error-fg)' }}>This Contract ID already exists.</span>
+                )}
+              </label>
+              <label>
+                <span className="mb-1.5 block text-xs font-semibold text-slate-300">Contract number</span>
+                <input
+                  value={draft.contractNumber}
+                  onChange={event => setField('contractNumber', event.target.value)}
+                  className="input-field font-mono"
+                  placeholder="Customer-facing number, if different"
+                />
+              </label>
+              <label>
+                <span className="mb-1.5 block text-xs font-semibold text-slate-300">Client / agency</span>
+                <input
+                  value={draft.client}
+                  onChange={event => setField('client', event.target.value)}
+                  className="input-field"
+                  placeholder="Awarding agency"
+                />
+              </label>
+              <label>
+                <span className="mb-1.5 block text-xs font-semibold text-slate-300">NAICS code</span>
+                <input
+                  value={draft.naicsCode}
+                  onChange={event => setField('naicsCode', event.target.value)}
+                  className="input-field"
+                  inputMode="numeric"
+                  placeholder="e.g. 541330"
+                />
+              </label>
+              <label className="md:col-span-2">
+                <span className="mb-1.5 block text-xs font-semibold text-slate-300">Performance location</span>
+                <input
+                  value={draft.location}
+                  onChange={event => setField('location', event.target.value)}
+                  className="input-field"
+                  placeholder="City, state or performance site"
+                />
+              </label>
+            </div>
+          </section>
+
+          <section
+            className="rounded-2xl border border-[var(--border-default)] p-5"
+            style={{ background: 'color-mix(in srgb, var(--bg-input) 62%, transparent)' }}
+          >
+            <div className="mb-4">
+              <p className="text-[10px] font-black uppercase tracking-[0.16em]" style={{ color: 'var(--accent)' }}>2 · Award classification</p>
+              <p className="mt-1 text-xs text-slate-400">Record the contract vehicle and its current execution stage.</p>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <label>
+                <span className="mb-1.5 block text-xs font-semibold text-slate-300">Contract type *</span>
+                <select
+                  value={draft.type}
+                  onChange={event => setField('type', event.target.value as ContractType)}
+                  className="select-field"
+                >
+                  {CONTRACT_TYPE_OPTIONS.map(type => <option key={type} value={type}>{type}</option>)}
+                </select>
+              </label>
+              <label>
+                <span className="mb-1.5 block text-xs font-semibold text-slate-300">Current status *</span>
+                <select
+                  value={draft.status}
+                  onChange={event => setField('status', event.target.value as ContractStatus)}
+                  className="select-field"
+                >
+                  {CONTRACT_STATUS_OPTIONS.map(status => (
+                    <option key={status} value={status}>{STATUS_META[status].label}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span className="mb-1.5 block text-xs font-semibold text-slate-300">Finance type</span>
+                <select
+                  value={draft.financeType}
+                  onChange={event => setField('financeType', event.target.value as ContractFinanceType | '')}
+                  className="select-field"
+                >
+                  <option value="">Not specified</option>
+                  {CONTRACT_FINANCE_TYPE_OPTIONS.map(type => <option key={type} value={type}>{type}</option>)}
+                </select>
+              </label>
+              <label>
+                <span className="mb-1.5 block text-xs font-semibold text-slate-300">Set-aside</span>
+                <select
+                  value={draft.setAside}
+                  onChange={event => setField('setAside', event.target.value as SetAside | '')}
+                  className="select-field"
+                >
+                  <option value="">Not specified</option>
+                  {CONTRACT_SET_ASIDE_OPTIONS.map(value => <option key={value} value={value}>{value}</option>)}
+                </select>
+              </label>
+            </div>
+          </section>
+
+          <section
+            className="rounded-2xl border border-[var(--border-default)] p-5"
+            style={{ background: 'color-mix(in srgb, var(--bg-input) 62%, transparent)' }}
+          >
+            <div className="mb-4">
+              <p className="text-[10px] font-black uppercase tracking-[0.16em]" style={{ color: 'var(--accent)' }}>3 · POP and value</p>
+              <p className="mt-1 text-xs text-slate-400">Dates are inclusive. Amounts must be finite, non-negative values.</p>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <label>
+                <span className="mb-1.5 block text-xs font-semibold text-slate-300">POP start *</span>
+                <input
+                  type="date"
+                  value={draft.popStart}
+                  onChange={event => setField('popStart', event.target.value)}
+                  className="input-field"
+                />
+              </label>
+              <label>
+                <span className="mb-1.5 block text-xs font-semibold text-slate-300">POP end *</span>
+                <input
+                  type="date"
+                  min={draft.popStart || undefined}
+                  value={draft.popEnd}
+                  onChange={event => setField('popEnd', event.target.value)}
+                  className="input-field"
+                />
+              </label>
+              <label>
+                <span className="mb-1.5 block text-xs font-semibold text-slate-300">Total contract value ($) *</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={draft.value}
+                  onChange={event => setField('value', event.target.value)}
+                  className="input-field"
+                  placeholder="0.00"
+                />
+              </label>
+              <label>
+                <span className="mb-1.5 block text-xs font-semibold text-slate-300">Base amount ($)</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={draft.baseAmount}
+                  onChange={event => setField('baseAmount', event.target.value)}
+                  className="input-field"
+                  placeholder="Optional"
+                />
+              </label>
+              <label>
+                <span className="mb-1.5 block text-xs font-semibold text-slate-300">Monthly payment ($)</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={draft.monthlyPayment}
+                  onChange={event => setField('monthlyPayment', event.target.value)}
+                  className="input-field"
+                  placeholder="Optional"
+                />
+              </label>
+              <label>
+                <span className="mb-1.5 block text-xs font-semibold text-slate-300">Option years</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={draft.optionYears}
+                  onChange={event => setField('optionYears', event.target.value)}
+                  className="input-field"
+                  placeholder="Optional"
+                />
+              </label>
+              <label className="sm:col-span-2">
+                <span className="mb-1.5 block text-xs font-semibold text-slate-300">Option-year deadline</span>
+                <input
+                  type="date"
+                  value={draft.optionYearDeadline}
+                  onChange={event => setField('optionYearDeadline', event.target.value)}
+                  className="input-field"
+                />
+              </label>
+            </div>
+          </section>
+
+          <section
+            className="rounded-2xl border border-[var(--border-default)] p-5"
+            style={{ background: 'color-mix(in srgb, var(--bg-input) 62%, transparent)' }}
+          >
+            <div className="mb-4">
+              <p className="text-[10px] font-black uppercase tracking-[0.16em]" style={{ color: 'var(--accent)' }}>4 · Ownership and notes</p>
+              <p className="mt-1 text-xs text-slate-400">Assignment is optional and limited to the Operations organization.</p>
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <label>
+                <span className="mb-1.5 block text-xs font-semibold text-slate-300">Operations owner</span>
+                <select
+                  value={draft.assignedTo}
+                  onChange={event => setField('assignedTo', event.target.value)}
+                  className="select-field"
+                >
+                  <option value="">Unassigned</option>
+                  {opsEmployees.map(employee => (
+                    <option key={employee.id} value={employee.id}>
+                      {employee.name} · {ROLE_LABEL_C[employee.role] ?? employee.role}
+                    </option>
+                  ))}
+                </select>
+                {opsEmployees.length === 0 && (
+                  <span className="mt-1 block text-[11px] text-slate-500">No active Operations users are available.</span>
+                )}
+              </label>
+              <label>
+                <span className="mb-1.5 block text-xs font-semibold text-slate-300">Internal billing notes</span>
+                <textarea
+                  value={draft.billingNotes}
+                  onChange={event => setField('billingNotes', event.target.value)}
+                  className="input-field min-h-[86px] resize-y"
+                  placeholder="Optional context for the finance team"
+                />
+              </label>
+            </div>
+          </section>
+        </div>
+
+        <div className="flex flex-shrink-0 items-center justify-between gap-3 border-t border-[var(--border-default)] bg-[var(--bg-app)] px-7 py-4">
+          <p className="hidden text-[11px] text-slate-500 sm:block">
+            PoCs, deliverables, line items, warnings and documents can be added after creation.
+          </p>
+          <div className="ml-auto flex gap-3">
+            <button type="button" onClick={onClose} disabled={saving} className="btn-secondary disabled:opacity-45">
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={saving || duplicateContractId}
+              className="btn-primary min-w-[144px] justify-center disabled:cursor-not-allowed disabled:opacity-45"
+            >
+              {saving ? <Clock size={13} className="animate-spin" /> : <Plus size={13} />}
+              {saving ? 'Creating…' : 'Create Contract'}
+            </button>
+          </div>
+        </div>
+      </motion.form>
+    </div>,
+    document.body,
+  )
+}
+
 function SortHeader({ col, label, currentKey, dir, onSort }: {
   col: string; label: string; currentKey: string; dir: 'asc' | 'desc'; onSort: (k: string) => void
 }) {
@@ -4334,6 +4771,7 @@ function SortHeader({ col, label, currentKey, dir, onSort }: {
 export default function ContractsPage() {
   const { contracts, employees, currentUser } = useStore()
   const hidePricing = isOpsAgent(currentUser) && currentUser?.role === 'ASSOCIATE'
+  const canCreateContract = hasPermission(currentUser, 'contract:edit')
   const [searchParams, setSearchParams] = useSearchParams()
   const globalRecordId = searchParams.get('record')
   const globalTab = searchParams.get('tab') as CTab | null
@@ -4341,6 +4779,7 @@ export default function ContractsPage() {
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<Contract | null>(null)
   const [selectedInitialTab, setSelectedInitialTab] = useState<ContractDrawerTab>('overview')
+  const [showAddContract, setShowAddContract] = useState(false)
   const [sourcingOpp, setSourcingOpp] = useState<Opportunity | null>(null)
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
   const [period, setPeriod] = useState<Period | null>(null)
@@ -4496,12 +4935,23 @@ export default function ContractsPage() {
   return (
     <div className="p-6 page-enter">
       {/* Header */}
-      <div className="mb-5">
-        <p className="text-[10px] font-bold text-slate-400 tracking-[0.2em] mb-1">CES · CONTRACT ADMIN</p>
-        <h1 className="text-2xl font-black text-slate-900 flex items-center gap-3">
-          <FileCheck2 size={22} className="text-indigo-500" /> Contract Admin
-        </h1>
-        <p className="text-slate-500 text-sm mt-0.5">Contract portfolio - {contracts.length} total</p>
+      <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-[10px] font-bold text-slate-400 tracking-[0.2em] mb-1">CES · CONTRACT ADMIN</p>
+          <h1 className="text-2xl font-black text-slate-900 flex items-center gap-3">
+            <FileCheck2 size={22} className="text-indigo-500" /> Contract Admin
+          </h1>
+          <p className="text-slate-500 text-sm mt-0.5">Contract portfolio - {contracts.length} total</p>
+        </div>
+        {canCreateContract && (
+          <button
+            type="button"
+            onClick={() => setShowAddContract(true)}
+            className="btn-primary"
+          >
+            <Plus size={14} /> Add Contract
+          </button>
+        )}
       </div>
 
       {/* KPI cards */}
@@ -4770,6 +5220,24 @@ export default function ContractsPage() {
       {sourcingOpp && (
         <SourcingModal opp={sourcingOpp} onClose={() => setSourcingOpp(null)} />
       )}
+
+      <AnimatePresence>
+        {showAddContract && (
+          <AddLegacyContractModal
+            contracts={contracts}
+            onClose={() => setShowAddContract(false)}
+            onCreated={contract => {
+              setShowAddContract(false)
+              setTab(C_TABS.find(item => item.statuses.includes(contract.status))?.key ?? 'ACTIVE_GROUP')
+              setSearch('')
+              setPeriod(null)
+              setColumnFilters({})
+              setSelectedInitialTab('overview')
+              setSelected(contract)
+            }}
+          />
+        )}
+      </AnimatePresence>
 
     </div>
   )

@@ -29,6 +29,7 @@ import {
   Zap,
 } from 'lucide-react'
 import { useStore } from '../../store/useStore'
+import InstallAppButton from './InstallAppButton'
 import { avatarColor, formatCurrency, useEscapeKey } from '../../lib/utils'
 import { getAssignmentChain, isOpsAgent, ROLE_DISPLAY_LABELS } from '../../lib/team'
 import type { Contract, Employee, NotifType, Notification as AppNotification, Opportunity } from '../../types'
@@ -374,6 +375,7 @@ export default function TopBar() {
       <div className="ml-auto flex items-center gap-2">
         <AppearanceMenu />
         <PreferencesMenu />
+        <InstallAppButton />
 
         <div className="relative">
           <button
