@@ -47,6 +47,8 @@ function ReviewModal({ reportId, onClose }: { reportId: string; onClose: () => v
   const [newComment, setNewComment] = useState('')
   const [sourcingOpen, setSourcingOpen] = useState(false)
   const [reviewing, setReviewing] = useState(false)
+  const [savingReason, setSavingReason] = useState(false)
+  const [postingComment, setPostingComment] = useState(false)
   const [deletingSourcingId, setDeletingSourcingId] = useState<string | null>(null)
 
   const canReview = hasPermission(currentUser, 'nonSubmission:review')
@@ -76,15 +78,23 @@ function ReviewModal({ reportId, onClose }: { reportId: string; onClose: () => v
     toast.success('Opportunity moved back to Contract Opportunities')
     onClose()
   }
-  const saveReason = () => {
+  const saveReason = async () => {
     if (reasonDraft.trim().length < 20) { toast.error('Minimum 20 characters required'); return }
-    updateNonSubReportReason(reportId, reasonDraft.trim())
+    if (savingReason) return
+    setSavingReason(true)
+    const saved = await updateNonSubReportReason(reportId, reasonDraft.trim())
+    setSavingReason(false)
+    if (!saved) return
     toast.success('Reason updated')
     setEditingReason(false)
   }
-  const postComment = () => {
+  const postComment = async () => {
     if (!newComment.trim()) return
-    addNonSubReportComment(reportId, newComment.trim())
+    if (postingComment) return
+    setPostingComment(true)
+    const saved = await addNonSubReportComment(reportId, newComment.trim())
+    setPostingComment(false)
+    if (!saved) return
     setNewComment('')
   }
   const handleDeleteSourcing = async (subId: string, companyName?: string) => {
@@ -160,8 +170,8 @@ function ReviewModal({ reportId, onClose }: { reportId: string; onClose: () => v
                   <div className="flex items-center justify-between mt-1.5">
                     <p className={`text-[10px] font-semibold ${reasonDraft.trim().length >= 20 ? 'text-emerald-500' : 'text-slate-400'}`}>{reasonDraft.trim().length} / 20 min</p>
                     <div className="flex gap-2">
-                      <button onClick={() => setEditingReason(false)} className="btn-secondary text-xs">Cancel</button>
-                      <button onClick={saveReason} disabled={reasonDraft.trim().length < 20} className="btn-primary text-xs disabled:opacity-40">Save reason</button>
+                      <button onClick={() => setEditingReason(false)} disabled={savingReason} className="btn-secondary text-xs disabled:opacity-40">Cancel</button>
+                      <button onClick={() => { void saveReason() }} disabled={reasonDraft.trim().length < 20 || savingReason} className="btn-primary text-xs disabled:opacity-40">{savingReason ? 'Saving…' : 'Save reason'}</button>
                     </div>
                   </div>
                 </>
@@ -213,8 +223,8 @@ function ReviewModal({ reportId, onClose }: { reportId: string; onClose: () => v
               <div className="flex items-end gap-2 pt-1">
                 <textarea value={newComment} onChange={e => setNewComment(e.target.value)} rows={2}
                   className="input-field flex-1 resize-none text-sm" placeholder="Add a comment to the report thread…" />
-                <button onClick={postComment} disabled={!newComment.trim()} className="btn-primary text-xs gap-1.5 disabled:opacity-40">
-                  <Send size={12} /> Post
+                <button onClick={() => { void postComment() }} disabled={!newComment.trim() || postingComment} className="btn-primary text-xs gap-1.5 disabled:opacity-40">
+                  <Send size={12} /> {postingComment ? 'Posting…' : 'Post'}
                 </button>
               </div>
             )}

@@ -13,6 +13,14 @@ const { fromMock } = vi.hoisted(() => ({
 vi.mock('../lib/api', () => ({
   isApiConnected: true,
   api: { from: fromMock },
+  apiRequest: vi.fn().mockResolvedValue({
+    data: {
+      opportunities: [],
+      nonSubmissionReports: [],
+      bdSubmissions: [],
+    },
+  }),
+  envelopeData: vi.fn((payload: { data: unknown }) => payload.data),
 }))
 
 import { loadAllData } from '../lib/db'

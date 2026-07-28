@@ -409,6 +409,7 @@ interface QueryPayload {
   values?: Record<string, unknown>
   onConflict?: string | string[]
   ignoreDuplicates?: boolean
+  patchExisting?: boolean
 }
 
 export interface DataResult<T = Record<string, any>[]> {
@@ -467,12 +468,13 @@ class DataQueryBuilder implements PromiseLike<DataResult> {
 
   upsert(
     rows: Record<string, unknown> | Record<string, unknown>[],
-    options: { onConflict?: string; ignoreDuplicates?: boolean } = {},
+    options: { onConflict?: string; ignoreDuplicates?: boolean; patchExisting?: boolean } = {},
   ): this {
     this.operation = 'upsert'
     this.payload.rows = rows
     this.payload.onConflict = options.onConflict ?? 'id'
     this.payload.ignoreDuplicates = options.ignoreDuplicates
+    this.payload.patchExisting = options.patchExisting
     return this
   }
 

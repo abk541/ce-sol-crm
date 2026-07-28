@@ -2,12 +2,17 @@ import type { FastifyInstance } from 'fastify'
 import type { QueryResultRow } from 'pg'
 import { requireCompleted } from './auth.js'
 import { asAuthenticatedUser, type Queryable } from './db.js'
+import { opportunityDeadlineTimeMs } from './deadline.js'
 import { ApiError, asRecord, assertAllowedKeys, requiredString } from './errors.js'
 import type { Dependencies } from './types.js'
 
 const TRACKER_STATUSES = new Set([
   'SUBMITTED', 'DISCUSSING', 'AWARDED', 'LOST', 'CANCELED', 'NOT_SUBMITTED', 'DROPPED',
 ])
+
+const PRE_SUBMISSION_STATUSES = new Set(['ACTIVE', 'NEW_ASSIGNMENT', 'DISCUSSION'])
+const NON_SUBMISSION_GRACE_MS = 12 * 60 * 60 * 1000
+const REQUIRE_ASSOCIATE_SETTING = 'require_associate_for_active_pipeline'
 
 const SUBMIT_VALUE_COLUMNS = {
   contractAmount: 'contract_amount',
@@ -84,10 +89,18 @@ const PERMISSIONS = [
   'opportunity:assign',
   'opportunity:cancel',
   'opportunity:deleteApprove',
+  'nonSubmission:submit',
   'nonSubmission:review',
 ] as const
 
-type WorkflowAction = 'submit' | 'transition' | 'edit' | 'delete' | 'return'
+type WorkflowAction =
+  | 'submit'
+  | 'transition'
+  | 'edit'
+  | 'delete'
+  | 'return'
+  | 'create_pending_report'
+  | 'create_manual_report'
 
 interface WorkflowRequest {
   action: WorkflowAction
@@ -107,7 +120,8 @@ interface WorkflowRequest {
 
 interface WorkflowResult {
   opportunity: QueryResultRow | null
-  submission: QueryResultRow
+  submission: QueryResultRow | null
+  report?: QueryResultRow | null
 }
 
 function optionalString(value: unknown, label: string, maxLength: number): string | undefined {
@@ -137,9 +151,21 @@ function parseRequest(value: unknown): WorkflowRequest {
     'expectedSubmissionStatus', 'status', 'comment', 'nonSubmissionReportId',
     'nonSubmissionExempt', 'reviewNote', 'targetOpportunityStatus', 'values', 'opportunityValues',
   ])
-  const action = requiredString(body.action, 'action', 20) as WorkflowAction
-  if (!['submit', 'transition', 'edit', 'delete', 'return'].includes(action)) {
-    throw new ApiError(400, 'invalid_request', 'action must be submit, transition, edit, delete, or return.')
+  const action = requiredString(body.action, 'action', 40) as WorkflowAction
+  if (![
+    'submit',
+    'transition',
+    'edit',
+    'delete',
+    'return',
+    'create_pending_report',
+    'create_manual_report',
+  ].includes(action)) {
+    throw new ApiError(
+      400,
+      'invalid_request',
+      'action must be submit, transition, edit, delete, return, create_pending_report, or create_manual_report.',
+    )
   }
   if (body.comment !== undefined && body.comment !== null && typeof body.comment !== 'string') {
     throw new ApiError(400, 'invalid_request', 'comment must be a string or null.')
@@ -149,7 +175,20 @@ function parseRequest(value: unknown): WorkflowRequest {
     'values',
     action === 'submit'
       ? Object.keys(SUBMIT_VALUE_COLUMNS)
-      : action === 'edit' ? Object.keys(TRACKER_EDIT_COLUMNS) : [],
+      : action === 'edit'
+        ? Object.keys(TRACKER_EDIT_COLUMNS)
+        : action === 'create_pending_report'
+          ? [
+              'agentUsername',
+              'reason',
+              'expectedDueDate',
+              'expectedLocalTime',
+              'expectedTimezone',
+              'expectedDeadlineMs',
+            ]
+          : action === 'create_manual_report'
+            ? ['agentUsername', 'reason']
+          : [],
   )
   const opportunityValues = parseObject(
     body.opportunityValues,
@@ -170,8 +209,25 @@ function parseRequest(value: unknown): WorkflowRequest {
   if (opportunityId !== undefined && submissionId !== undefined) {
     throw new ApiError(400, 'invalid_request', 'Provide either opportunityId or submissionId, not both.')
   }
-  if ((action === 'delete' || action === 'return') && submissionId === undefined) {
-    throw new ApiError(400, 'invalid_request', `${action} requires submissionId.`)
+  if (action === 'delete' && submissionId === undefined) {
+    throw new ApiError(400, 'invalid_request', 'delete requires submissionId.')
+  }
+  if (action === 'return' && submissionId === undefined && body.nonSubmissionReportId === undefined) {
+    throw new ApiError(
+      400,
+      'invalid_request',
+      'return by opportunityId requires nonSubmissionReportId.',
+    )
+  }
+  if (
+    (action === 'create_pending_report' || action === 'create_manual_report')
+    && (!opportunityId || submissionId !== undefined)
+  ) {
+    throw new ApiError(
+      400,
+      'invalid_request',
+      `${action} requires opportunityId and does not accept submissionId.`,
+    )
   }
   let status: string | undefined
   if (action === 'transition') {
@@ -226,11 +282,51 @@ function parseRequest(value: unknown): WorkflowRequest {
     'expectedSubmissionStatus',
     40,
   )
-  if ((action === 'submit' || action === 'return') && expectedOpportunityStatus === undefined) {
+  if (
+    (
+      action === 'submit'
+      || action === 'return'
+      || action === 'create_pending_report'
+      || action === 'create_manual_report'
+    )
+    && expectedOpportunityStatus === undefined
+  ) {
     throw new ApiError(400, 'invalid_request', `${action} requires expectedOpportunityStatus.`)
   }
-  if ((action === 'edit' || action === 'delete' || action === 'return') && expectedSubmissionStatus === undefined) {
+  if (
+    (action === 'edit' || action === 'delete' || (action === 'return' && submissionId !== undefined))
+    && expectedSubmissionStatus === undefined
+  ) {
     throw new ApiError(400, 'invalid_request', `${action} requires expectedSubmissionStatus.`)
+  }
+  if (action === 'return' && submissionId === undefined && expectedSubmissionStatus !== undefined) {
+    throw new ApiError(
+      400,
+      'invalid_request',
+      'return by opportunityId does not accept expectedSubmissionStatus.',
+    )
+  }
+  if (action === 'create_pending_report' || action === 'create_manual_report') {
+    values.agentUsername = requiredString(values.agentUsername, 'values.agentUsername', 320)
+    values.reason = requiredString(values.reason, 'values.reason', 5000)
+  }
+  if (action === 'create_pending_report') {
+    values.expectedDueDate = requiredString(values.expectedDueDate, 'values.expectedDueDate', 100)
+    values.expectedLocalTime = requiredString(values.expectedLocalTime, 'values.expectedLocalTime', 100)
+    if (values.expectedTimezone !== undefined) {
+      values.expectedTimezone = requiredString(values.expectedTimezone, 'values.expectedTimezone', 100)
+    }
+    if (
+      typeof values.expectedDeadlineMs !== 'number'
+      || !Number.isSafeInteger(values.expectedDeadlineMs)
+      || values.expectedDeadlineMs <= 0
+    ) {
+      throw new ApiError(
+        400,
+        'invalid_request',
+        'values.expectedDeadlineMs must be a positive integer timestamp.',
+      )
+    }
   }
   return {
     action,
@@ -837,30 +933,35 @@ async function returnToPipeline(
 ): Promise<WorkflowResult> {
   requirePermission(permissions, 'opportunity:edit')
   const located = await locateForLinkedAction(client, request)
-  if (!located.opportunity || !located.submission) {
+  if (!located.opportunity) {
     throw new ApiError(409, 'orphan_submission', 'The tracker row is not linked to an opportunity.')
   }
   assertExpectedStatus(located.opportunity, request.expectedOpportunityStatus, 'Opportunity')
-  assertExpectedStatus(located.submission, request.expectedSubmissionStatus, 'BD submission')
+  if (request.expectedSubmissionStatus !== undefined) {
+    if (!located.submission) stale('BD submission')
+    assertExpectedStatus(located.submission, request.expectedSubmissionStatus, 'BD submission')
+  } else if (located.submission) {
+    // A return initiated from a pending report deliberately has no tracker row.
+    // If one appeared after the caller loaded the page, force a refresh rather
+    // than deleting a row whose status the caller never confirmed.
+    stale('BD submission')
+  }
   const previousStatuses = new Set([
     String(located.opportunity.status ?? ''),
-    String(located.submission.status ?? ''),
+    String(located.submission?.status ?? ''),
   ].filter(Boolean))
   if (previousStatuses.has('CANCELED')) requirePermission(permissions, 'opportunity:cancel')
   const returningNonSubmission = previousStatuses.has('NOT_SUBMITTED') || previousStatuses.has('DROPPED')
-  if (returningNonSubmission || request.nonSubmissionReportId !== undefined) {
-    requirePermission(permissions, 'nonSubmission:review')
-  }
 
   const opportunityReportId = typeof located.opportunity.non_submission_report_id === 'string'
     && located.opportunity.non_submission_report_id.trim()
     ? located.opportunity.non_submission_report_id.trim()
     : undefined
+  const nonSubmissionReportId = request.nonSubmissionReportId ?? opportunityReportId
   if (request.nonSubmissionReportId && opportunityReportId
     && request.nonSubmissionReportId !== opportunityReportId) {
     stale('Non-submission report')
   }
-  const nonSubmissionReportId = request.nonSubmissionReportId ?? opportunityReportId
   if (returningNonSubmission && !nonSubmissionReportId) {
     throw new ApiError(
       409,
@@ -869,17 +970,42 @@ async function returnToPipeline(
     )
   }
 
+  let reportToDelete: string | undefined
   if (nonSubmissionReportId) {
-    const report = await client.query(
-      `select id from public.non_submission_reports
+    const report = await client.query<{ id: string; status: string }>(
+      `select id::text as id, status::text as status
+         from public.non_submission_reports
         where id = $1 and opportunity_id = $2
         for update`,
       [nonSubmissionReportId, located.opportunity.id],
     )
     if (report.rows.length !== 1) stale('Non-submission report')
+    const reportStatus = report.rows[0]!.status
+    if (returningNonSubmission) {
+      if (reportStatus !== 'APPROVED' && reportStatus !== 'DECLINED') {
+        throw new ApiError(
+          409,
+          'workflow_conflict',
+          'The reviewed non-submission outcome is not linked to a reviewed report.',
+        )
+      }
+      requirePermission(permissions, 'nonSubmission:review')
+      reportToDelete = nonSubmissionReportId
+    } else if (reportStatus === 'PENDING') {
+      requirePermission(permissions, 'nonSubmission:review')
+      reportToDelete = nonSubmissionReportId
+    } else if (request.nonSubmissionReportId) {
+      throw new ApiError(
+        409,
+        'historical_report',
+        'A reviewed non-submission report is history and cannot be removed by this return.',
+      )
+    }
   }
 
-  const submission = await deleteSubmission(client, located.submission)
+  const submission = located.submission
+    ? await deleteSubmission(client, located.submission)
+    : null
   const values: unknown[] = [request.targetOpportunityStatus]
   let exemptAssignment = ''
   if (request.nonSubmissionExempt !== undefined) {
@@ -896,14 +1022,187 @@ async function returnToPipeline(
   )
   if (updated.rows.length !== 1) stale('Opportunity')
 
-  if (nonSubmissionReportId) {
+  if (reportToDelete) {
     const deletedReport = await client.query(
       'delete from public.non_submission_reports where id = $1 and opportunity_id = $2 returning id',
-      [nonSubmissionReportId, located.opportunity.id],
+      [reportToDelete, located.opportunity.id],
     )
     if (deletedReport.rows.length !== 1) stale('Non-submission report')
   }
   return { opportunity: updated.rows[0]!, submission }
+}
+
+async function assertAutomaticReportEligibility(
+  client: Queryable,
+  opportunity: QueryResultRow,
+): Promise<void> {
+  const assignedTo = typeof opportunity.assigned_to === 'string'
+    ? opportunity.assigned_to.trim()
+    : ''
+  if (!assignedTo) {
+    throw new ApiError(
+      409,
+      'non_submission_not_eligible',
+      'The opportunity is no longer assigned for automatic non-submission reporting.',
+    )
+  }
+
+  // Lock the shared mode row for the remainder of this workflow. Together with
+  // the already-locked opportunity, this prevents an assignment or activation
+  // mode change from racing the eligibility decision.
+  const setting = await client.query<{ value: string }>(
+    `select value::text as value
+       from public.app_settings
+      where key = $1
+      for share`,
+    [REQUIRE_ASSOCIATE_SETTING],
+  )
+  const requireAssociate = setting.rows[0]?.value !== 'false'
+  if (!requireAssociate) return
+
+  const assigned = await client.query<{ role: string }>(
+    `select role::text as role
+       from public.employees
+      where id = $1
+      for share`,
+    [assignedTo],
+  )
+  if (assigned.rows.length !== 1 || assigned.rows[0]?.role !== 'ASSOCIATE') {
+    throw new ApiError(
+      409,
+      'non_submission_not_eligible',
+      'The opportunity is no longer assigned to an Associate for automatic non-submission reporting.',
+    )
+  }
+}
+
+async function createPendingReport(
+  client: Queryable,
+  request: WorkflowRequest,
+  permissions: ReadonlySet<string>,
+  now: Date,
+): Promise<WorkflowResult> {
+  const manual = request.action === 'create_manual_report'
+  if (manual) requirePermission(permissions, 'nonSubmission:review')
+  else requireAnyPermission(permissions, ['nonSubmission:submit', 'nonSubmission:review'])
+  const opportunity = await lockOpportunity(client, request.opportunityId as string)
+  assertExpectedStatus(opportunity, request.expectedOpportunityStatus, 'Opportunity')
+
+  if (
+    opportunity.is_deleted === true
+    || !PRE_SUBMISSION_STATUSES.has(String(opportunity.status ?? ''))
+    || (!manual && opportunity.non_submission_exempt === true)
+  ) {
+    stale('Opportunity')
+  }
+
+  if (!manual) {
+    const expectedSchedule = {
+      due_date: request.values.expectedDueDate,
+      local_time: request.values.expectedLocalTime,
+      timezone: request.values.expectedTimezone,
+    }
+    for (const [column, expected] of Object.entries(expectedSchedule)) {
+      if (normalizedScheduleValue(opportunity[column]) !== normalizedScheduleValue(expected)) {
+        stale('Opportunity deadline')
+      }
+    }
+    const expectedDeadlineMs = request.values.expectedDeadlineMs as number
+    const storedDeadlineMs = opportunityDeadlineTimeMs({
+      dueDate: opportunity.due_date,
+      localTime: opportunity.local_time,
+      timezone: opportunity.timezone,
+    })
+    if (storedDeadlineMs === null) {
+      throw new ApiError(
+        409,
+        'invalid_opportunity_deadline',
+        'The opportunity deadline could not be validated.',
+      )
+    }
+    if (storedDeadlineMs !== expectedDeadlineMs) stale('Opportunity deadline')
+    if (now.getTime() < storedDeadlineMs + NON_SUBMISSION_GRACE_MS) {
+      throw new ApiError(
+        409,
+        'non_submission_not_due',
+        'The opportunity has not reached its non-submission deadline.',
+      )
+    }
+    await assertAutomaticReportEligibility(client, opportunity)
+  }
+
+  const submission = await linkedSubmission(client, opportunity)
+  if (submission) {
+    throw new ApiError(
+      409,
+      'workflow_conflict',
+      'The opportunity already has a BD Tracker row.',
+    )
+  }
+
+  const existing = await client.query(
+    `select * from public.non_submission_reports
+      where opportunity_id = $1
+      for update`,
+    [opportunity.id],
+  )
+  if (existing.rows.length > 1) {
+    throw new ApiError(
+      409,
+      'ambiguous_report',
+      'More than one non-submission report matched the opportunity.',
+    )
+  }
+
+  let report = existing.rows[0] as QueryResultRow | undefined
+  if (report && report.status !== 'PENDING') {
+    throw new ApiError(
+      409,
+      'workflow_conflict',
+      'The opportunity already has a reviewed non-submission report.',
+    )
+  }
+  if (
+    report
+    && opportunity.non_submission_report_id
+    && opportunity.non_submission_report_id !== report.id
+  ) {
+    stale('Non-submission report')
+  }
+  if (!report && opportunity.non_submission_report_id) {
+    stale('Non-submission report')
+  }
+
+  if (!report) {
+    const reportId = `nsr-${String(opportunity.id)}`
+    const inserted = await client.query(
+      `insert into public.non_submission_reports
+        (id, opportunity_id, agent_username, reason, status, submitted_at)
+       values ($1, $2, $3, $4, 'PENDING', $5)
+       returning *`,
+      [
+        reportId,
+        opportunity.id,
+        request.values.agentUsername,
+        request.values.reason,
+        now.toISOString(),
+      ],
+    )
+    if (inserted.rows.length !== 1) {
+      throw new ApiError(409, 'workflow_conflict', 'The non-submission report was not created.')
+    }
+    report = inserted.rows[0]!
+  }
+
+  const updated = await client.query(
+    `update public.opportunities
+        set non_submission_report_id = $1
+      where id = $2
+      returning *`,
+    [report.id, opportunity.id],
+  )
+  if (updated.rows.length !== 1) stale('Opportunity')
+  return { opportunity: updated.rows[0]!, submission: null, report }
 }
 
 export async function executeOpportunityWorkflow(
@@ -917,6 +1216,9 @@ export async function executeOpportunityWorkflow(
   if (request.action === 'transition') return transition(client, request, permissions, now)
   if (request.action === 'edit') return edit(client, request, permissions)
   if (request.action === 'delete') return hardDelete(client, request, permissions)
+  if (request.action === 'create_pending_report' || request.action === 'create_manual_report') {
+    return createPendingReport(client, request, permissions, now)
+  }
   return returnToPipeline(client, request, permissions)
 }
 
@@ -932,7 +1234,69 @@ function pgError(error: unknown): never {
   throw error
 }
 
+async function loadWorkflowSnapshot(client: Queryable): Promise<{
+  opportunities: QueryResultRow[]
+  nonSubmissionReports: QueryResultRow[]
+  bdSubmissions: QueryResultRow[]
+}> {
+  // One SQL statement means all three lifecycle collections come from the
+  // same PostgreSQL snapshot even under the default READ COMMITTED isolation.
+  const result = await client.query<{
+    opportunities: QueryResultRow[]
+    non_submission_reports: QueryResultRow[]
+    bd_submissions: QueryResultRow[]
+  }>(
+    `select
+       coalesce((
+         select jsonb_agg(to_jsonb(opportunity_rows))
+           from (
+             select * from public.opportunities
+              order by created_at desc nulls last, id
+           ) opportunity_rows
+       ), '[]'::jsonb) as opportunities,
+       coalesce((
+         select jsonb_agg(to_jsonb(report_rows))
+           from (
+             select * from public.non_submission_reports
+              order by submitted_at desc nulls last, id
+           ) report_rows
+       ), '[]'::jsonb) as non_submission_reports,
+       coalesce((
+         select jsonb_agg(to_jsonb(submission_rows))
+           from (
+             select * from public.bd_submissions
+              order by id
+           ) submission_rows
+       ), '[]'::jsonb) as bd_submissions`,
+  )
+  if (result.rows.length !== 1) {
+    throw new ApiError(503, 'snapshot_unavailable', 'The opportunity workflow snapshot could not be loaded.')
+  }
+  const row = result.rows[0]!
+  return {
+    opportunities: Array.isArray(row.opportunities) ? row.opportunities : [],
+    nonSubmissionReports: Array.isArray(row.non_submission_reports) ? row.non_submission_reports : [],
+    bdSubmissions: Array.isArray(row.bd_submissions) ? row.bd_submissions : [],
+  }
+}
+
 export function registerOpportunityWorkflowRoutes(app: FastifyInstance, dependencies: Dependencies): void {
+  app.get(
+    '/api/v1/opportunity-workflow-snapshot',
+    { preHandler: (request) => requireCompleted(request, dependencies) },
+    async (request) => {
+      try {
+        const result = await asAuthenticatedUser(
+          dependencies.db,
+          request.auth?.accountId as string,
+          loadWorkflowSnapshot,
+        )
+        return { data: result, error: null }
+      } catch (error) {
+        pgError(error)
+      }
+    },
+  )
   app.post(
     '/api/v1/opportunity-workflows',
     { preHandler: (request) => requireCompleted(request, dependencies) },
@@ -951,4 +1315,9 @@ export function registerOpportunityWorkflowRoutes(app: FastifyInstance, dependen
   )
 }
 
-export const __test = { parseRequest, generatedCancellationComment }
+export const __test = {
+  parseRequest,
+  generatedCancellationComment,
+  loadWorkflowSnapshot,
+  assertAutomaticReportEligibility,
+}

@@ -54,6 +54,9 @@ const OPPORTUNITY_PERMISSION_FIELDS = {
     // Deadline flags are schedule bookkeeping written by the app shell.
     'notified_due_24h',
     'notified_due_4h',
+    // A successful replacement deadline re-arms automatic non-submission
+    // handling after a deliberate overdue return to the pipeline.
+    'non_submission_exempt',
   ]),
   'sourcing:write': new Set(['quoted']),
   'opportunity:submitProposal': new Set([
@@ -66,7 +69,9 @@ const OPPORTUNITY_PERMISSION_FIELDS = {
     'assigned_opportunities',
     'proposal_attachments',
   ]),
-  'opportunity:assign': new Set(['assigned_to', 'bdm', 'bds', 'support_agent']),
+  // Assignment normalization may move only between the two pre-submission
+  // placement states; assertOpportunityFieldAuthorization guards that range.
+  'opportunity:assign': new Set(['assigned_to', 'bdm', 'bds', 'support_agent', 'status']),
   'opportunity:deleteRequest': new Set(['deletion_requested']),
   'opportunity:deleteApprove': new Set(['is_deleted', 'deletion_requested']),
   'nonSubmission:submit': new Set(['non_submission_report_id']),
@@ -124,19 +129,183 @@ const OPPORTUNITY_EMPTY_ARRAY_COLUMNS = new Set([
 // one transaction. ACTIVE <-> NEW_ASSIGNMENT is the sole generic exception.
 const GENERIC_OPPORTUNITY_STATUSES = new Set(['ACTIVE', 'NEW_ASSIGNMENT'])
 
-const GENERIC_NON_SUBMISSION_EDIT_COLUMNS = new Set([
-  'reason',
-  'comments',
-  'last_reminder_at',
-  'reason_edited_at',
+// These columns are workflow ownership/sentinel state, not editable data.
+// Current clients must never include them in an existing-row patch, even when
+// the submitted value happens to match the locked row.
+const GENERIC_OPPORTUNITY_PATCH_FORBIDDEN_COLUMNS = new Set([
+  'submitted_at',
+  'non_submission_report_id',
+  'is_deleted',
 ])
 
-const NON_SUBMISSION_REVIEW_COLUMNS = new Set([
-  'status',
-  'reviewed_by',
-  'reviewed_at',
-  'review_note',
-])
+type NonSubmissionPatchKind = 'reason' | 'reminder' | 'comment'
+
+interface NonSubmissionActor {
+  id: string
+  author: string
+  username: string
+  name: string
+  email: string
+}
+
+function parseIsoTimestamp(value: unknown, label: string): string {
+  const timestamp = requiredString(value, label, 100)
+  if (!Number.isFinite(Date.parse(timestamp))) {
+    throw new ApiError(400, 'invalid_request', `${label} must be a valid timestamp.`)
+  }
+  return timestamp
+}
+
+function validateNonSubmissionComment(value: unknown): void {
+  const comment = asRecord(value, 'comments[0]')
+  assertAllowedKeys(comment, ['id', 'text', 'author', 'authorId', 'createdAt', 'editedAt'], 'comments[0]')
+  requiredString(comment.id, 'comments[0].id', 200)
+  requiredString(comment.text, 'comments[0].text', 5000)
+  requiredString(comment.author, 'comments[0].author', 320)
+  parseIsoTimestamp(comment.createdAt, 'comments[0].createdAt')
+  if (comment.authorId !== undefined) requiredString(comment.authorId, 'comments[0].authorId', 200)
+  if (comment.editedAt !== undefined) parseIsoTimestamp(comment.editedAt, 'comments[0].editedAt')
+}
+
+function nonSubmissionPatchKind(row: Readonly<Record<string, unknown>>): NonSubmissionPatchKind {
+  const keys = Object.keys(row).filter((key) => key !== 'id').sort()
+  if (keys.join(',') === 'reason,reason_edited_at') {
+    requiredString(row.reason, 'reason', 5000)
+    parseIsoTimestamp(row.reason_edited_at, 'reason_edited_at')
+    return 'reason'
+  }
+  if (keys.join(',') === 'last_reminder_at') {
+    parseIsoTimestamp(row.last_reminder_at, 'last_reminder_at')
+    return 'reminder'
+  }
+  if (keys.join(',') === 'comments') {
+    if (!Array.isArray(row.comments) || row.comments.length !== 1) {
+      throw new ApiError(400, 'invalid_request', 'comments must contain exactly one new comment.')
+    }
+    validateNonSubmissionComment(row.comments[0])
+    return 'comment'
+  }
+  throw new ApiError(
+    403,
+    'workflow_required',
+    'Non-submission edits must use one narrow reason, reminder, or comment patch.',
+  )
+}
+
+function mergeNonSubmissionComments(existing: unknown, additions: unknown): unknown[] {
+  if (existing !== null && existing !== undefined && !Array.isArray(existing)) {
+    throw new ApiError(409, 'stale_report', 'The report comment thread could not be safely updated.')
+  }
+  if (!Array.isArray(additions)) {
+    throw new ApiError(400, 'invalid_request', 'comments must be an array.')
+  }
+  const merged = [...(existing ?? []) as unknown[]]
+  const knownIds = new Set(
+    merged
+      .filter((value): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value))
+      .map((value) => value.id)
+      .filter((id): id is string => typeof id === 'string' && id.length > 0),
+  )
+  for (const addition of additions) {
+    const id = (addition as Record<string, unknown>).id as string
+    if (knownIds.has(id)) continue
+    knownIds.add(id)
+    merged.push(addition)
+  }
+  return merged
+}
+
+async function currentNonSubmissionActor(client: Queryable): Promise<NonSubmissionActor> {
+  const result = await client.query<NonSubmissionActor>(
+    `select id::text as id,
+            coalesce(nullif(btrim(name), ''), nullif(btrim(username), ''), 'System') as author,
+            coalesce(username, '')::text as username,
+            coalesce(name, '')::text as name,
+            coalesce(email, '')::text as email
+       from public.users
+      where auth_user_id = app_auth.request_account_id()`,
+  )
+  if (result.rows.length !== 1) {
+    throw new ApiError(403, 'forbidden', 'The current user profile could not be verified.')
+  }
+  return result.rows[0]!
+}
+
+async function assertNonSubmissionReasonOwnership(
+  client: Queryable,
+  report: Readonly<Record<string, unknown>>,
+  actor: NonSubmissionActor,
+): Promise<void> {
+  const normalized = (value: unknown) => typeof value === 'string' ? value.trim().toLowerCase() : ''
+  if (
+    normalized(report.agent_username) !== ''
+    && normalized(report.agent_username) === normalized(actor.username)
+  ) return
+  const opportunityId = typeof report.opportunity_id === 'string'
+    ? report.opportunity_id.trim()
+    : ''
+  if (!opportunityId) {
+    throw new ApiError(403, 'forbidden', 'You may edit only your own non-submission report.')
+  }
+  const result = await client.query<{
+    assigned_to: string | null
+    bds: string | null
+    bdm: string | null
+    support_agent: string | null
+    assigned_employee_id: string | null
+    assigned_employee_name: string | null
+    assigned_employee_email: string | null
+  }>(
+    `select opportunity.assigned_to::text as assigned_to,
+            opportunity.bds::text as bds,
+            opportunity.bdm::text as bdm,
+            opportunity.support_agent::text as support_agent,
+            assigned.id::text as assigned_employee_id,
+            assigned.name::text as assigned_employee_name,
+            assigned.email::text as assigned_employee_email
+       from public.opportunities opportunity
+       left join public.employees assigned on assigned.id = opportunity.assigned_to
+      where opportunity.id = $1
+      for share of opportunity`,
+    [opportunityId],
+  )
+  const opportunity = result.rows[0]
+  const actorId = normalized(actor.id)
+  const actorName = normalized(actor.name)
+  const actorEmail = normalized(actor.email)
+  const assignedIdentityMatches = !!opportunity && (
+    (actorId !== '' && normalized(opportunity.assigned_employee_id) === actorId)
+    || (actorName !== '' && normalized(opportunity.assigned_employee_name) === actorName)
+    || (actorEmail !== '' && normalized(opportunity.assigned_employee_email) === actorEmail)
+  )
+  const assignmentLabels = [
+    opportunity?.bds,
+    opportunity?.bdm,
+    opportunity?.support_agent,
+  ].map(normalized).filter(Boolean)
+  const actorLabels = [actor.username, actor.name, actor.email, actor.id]
+    .map(normalized)
+    .filter(Boolean)
+  const labelMatches = actorLabels.some((identity) => assignmentLabels.includes(identity))
+  if (assignedIdentityMatches || labelMatches) return
+  throw new ApiError(403, 'forbidden', 'You may edit only your own non-submission report.')
+}
+
+function bindNonSubmissionCommentActor(
+  row: Record<string, unknown>,
+  actor: NonSubmissionActor,
+  createdAt: string,
+): void {
+  const comments = row.comments as unknown[]
+  const comment = asRecord(comments[0], 'comments[0]')
+  row.comments = [{
+    id: comment.id,
+    text: comment.text,
+    author: actor.author,
+    authorId: actor.id,
+    createdAt,
+  }]
+}
 
 const NON_SUBMISSION_WRITE_PERMISSIONS = new Set([
   'admin:manageUsers',
@@ -524,6 +693,13 @@ function assertOpportunityFieldAuthorization(
   incoming?: Readonly<Record<string, unknown>>,
   existing?: Readonly<Record<string, unknown>>,
 ): void {
+  if (changed.has('non_submission_report_id')) {
+    throw new ApiError(
+      403,
+      'workflow_required',
+      'Non-submission report links must use the atomic opportunity workflow API.',
+    )
+  }
   if (changed.has('status')) {
     const previousStatus = existing?.status
     const nextStatus = incoming?.status
@@ -536,6 +712,24 @@ function assertOpportunityFieldAuthorization(
         403,
         'workflow_required',
         'Opportunity lifecycle changes must use the atomic opportunity workflow API.',
+      )
+    }
+  }
+  if (
+    changed.has('non_submission_exempt')
+    && !permissions.has('admin:manageUsers')
+    && !permissions.has('opportunity:edit')
+    && !permissions.has('nonSubmission:review')
+  ) {
+    const deadlineChanged = ['due_date', 'local_time', 'timezone']
+      .some((column) => changed.has(column))
+    const clearsTemporaryExemption = existing?.non_submission_exempt === true
+      && incoming?.non_submission_exempt === false
+    if (!deadlineChanged || !clearsTemporaryExemption) {
+      throw new ApiError(
+        403,
+        'forbidden_opportunity_fields',
+        'Schedule-only access can clear the temporary non-submission exemption only while replacing the deadline.',
       )
     }
   }
@@ -566,11 +760,17 @@ function assertOpportunityFieldAuthorization(
 }
 
 function assertGenericOpportunityCreateStatus(row: Readonly<Record<string, unknown>>): void {
-  if (row.status === undefined || GENERIC_OPPORTUNITY_STATUSES.has(String(row.status))) return
+  const invalidStatus = row.status !== undefined && !GENERIC_OPPORTUNITY_STATUSES.has(String(row.status))
+  const invalidWorkflowState = row.submitted_at != null
+    || row.non_submission_report_id != null
+    || row.is_deleted === true
+    || row.non_submission_exempt === true
+    || row.deletion_requested === true
+  if (!invalidStatus && !invalidWorkflowState) return
   throw new ApiError(
     403,
     'workflow_required',
-    'New opportunities created through the generic data API must start in the active pipeline.',
+    'New opportunities must start in the active pipeline without existing workflow state.',
   )
 }
 
@@ -632,6 +832,7 @@ async function authorizeOpportunityRows(
   rows: readonly Record<string, unknown>[],
   upsert: boolean,
   conflictColumns: readonly string[],
+  patchExisting = false,
 ): Promise<Map<string, Record<string, unknown>>> {
   if (!rows.length) return new Map()
   const permissions = await effectiveOpportunityPermissions(client)
@@ -662,30 +863,56 @@ async function authorizeOpportunityRows(
     const id = ids[index] as string
     const existing = existingById.get(id)
     if (!existing) {
+      if (patchExisting) {
+        throw new ApiError(
+          409,
+          'stale_opportunity',
+          'The opportunity no longer exists. Reload the app and try again.',
+        )
+      }
       if (!hasAnyPermission(permissions, OPPORTUNITY_CREATE_PERMISSIONS)) {
         throw new ApiError(403, 'forbidden', 'You do not have permission to create opportunities.')
       }
       assertGenericOpportunityCreateStatus(row)
       continue
     }
-    assertOpportunityFieldAuthorization(changedColumns(existing, row), permissions, row, existing)
+    const changed = changedColumns(existing, row)
+    if (!patchExisting) {
+      if (changed.size === 0) {
+        if (
+          !hasAnyPermission(permissions, OPPORTUNITY_CREATE_PERMISSIONS)
+          && !hasAnyPermission(permissions, OPPORTUNITY_NOOP_WRITE_PERMISSIONS)
+        ) {
+          throw new ApiError(403, 'forbidden', 'You do not have permission to save opportunities.')
+        }
+        continue
+      }
+      throw new ApiError(
+        409,
+        'patch_required',
+        'This opportunity was sent by an older app version and was not saved. Refresh the app and try again.',
+      )
+    }
+    const protectedColumns = Object.keys(row)
+      .filter((column) => GENERIC_OPPORTUNITY_PATCH_FORBIDDEN_COLUMNS.has(column))
+    if (protectedColumns.length > 0) {
+      throw new ApiError(
+        403,
+        'workflow_required',
+        'Protected opportunity workflow fields must use the atomic opportunity workflow API.',
+      )
+    }
+    assertOpportunityFieldAuthorization(changed, permissions, row, existing)
   }
   return existingById
 }
 
-function assertNewNonSubmissionReport(row: Readonly<Record<string, unknown>>): void {
-  const reviewedValuePresent = [...NON_SUBMISSION_REVIEW_COLUMNS].some((column) => {
-    const value = row[column]
-    if (column === 'status') return value !== undefined && value !== 'PENDING'
-    return value !== undefined && value !== null && value !== ''
-  })
-  if (reviewedValuePresent) {
-    throw new ApiError(
-      403,
-      'workflow_required',
-      'Non-submission review lifecycle changes must use the atomic opportunity workflow API.',
-    )
-  }
+function rejectNewNonSubmissionReport(): never {
+  throw new ApiError(
+    403,
+    'workflow_required',
+    'New non-submission reports must use the atomic opportunity workflow API.',
+  )
 }
 
 async function authorizeNonSubmissionRows(
@@ -699,8 +926,7 @@ async function authorizeNonSubmissionRows(
     throw new ApiError(403, 'forbidden', 'You do not have permission to create or edit non-submission reports.')
   }
   if (!upsert) {
-    rows.forEach(assertNewNonSubmissionReport)
-    return new Map()
+    rejectNewNonSubmissionReport()
   }
   if (conflictColumns.length !== 1 || conflictColumns[0] !== 'id') {
     throw new ApiError(400, 'invalid_request', 'Non-submission report upserts must use id as the conflict column.')
@@ -717,22 +943,26 @@ async function authorizeNonSubmissionRows(
     [ids],
   )
   const existingById = new Map(existing.rows.map((row) => [row.id, row.snapshot]))
-  rows.forEach((row, index) => {
+  const canReview = permissions.has('admin:manageUsers') || permissions.has('nonSubmission:review')
+  const serverTimestamp = new Date().toISOString()
+  let actor: NonSubmissionActor | undefined
+  for (const [index, row] of rows.entries()) {
     const snapshot = existingById.get(ids[index] as string)
     if (!snapshot) {
-      assertNewNonSubmissionReport(row)
-      return
+      rejectNewNonSubmissionReport()
     }
-    const denied = [...changedColumns(snapshot, row)]
-      .filter((column) => !GENERIC_NON_SUBMISSION_EDIT_COLUMNS.has(column))
-    if (denied.length > 0) {
-      throw new ApiError(
-        403,
-        'workflow_required',
-        'Non-submission review lifecycle changes must use the atomic opportunity workflow API.',
-      )
+    const patchKind = nonSubmissionPatchKind(row)
+    if (patchKind === 'reason' && !canReview) {
+      actor ??= await currentNonSubmissionActor(client)
+      await assertNonSubmissionReasonOwnership(client, snapshot, actor)
     }
-  })
+    if (patchKind === 'reason') row.reason_edited_at = serverTimestamp
+    if (patchKind === 'reminder') row.last_reminder_at = serverTimestamp
+    if (patchKind === 'comment') {
+      actor ??= await currentNonSubmissionActor(client)
+      bindNonSubmissionCommentActor(row, actor, serverTimestamp)
+    }
+  }
   return existingById
 }
 
@@ -747,18 +977,19 @@ async function upsertNonSubmissionData(
     ? ''
     : ` returning ${common.columns === '*' ? '*' : common.columns.map(quoted).join(', ')}`
   const returnedRows: QueryResultRow[] = []
-  const newRows: Record<string, unknown>[] = []
   const ignoreDuplicates = common.ignoreDuplicates === true
   let affected = 0
 
   for (const row of rows) {
     const existing = existingById.get(String(row.id))
     if (!existing) {
-      newRows.push(row)
-      continue
+      rejectNewNonSubmissionReport()
     }
     if (ignoreDuplicates) continue
-    const changed = changedColumns(existing, row)
+    const effectiveRow = nonSubmissionPatchKind(row) === 'comment'
+      ? { ...row, comments: mergeNonSubmissionComments(existing.comments, row.comments) }
+      : row
+    const changed = changedColumns(existing, effectiveRow)
     const updateColumns = keys.filter((key) => key !== 'id' && changed.has(key))
     if (updateColumns.length === 0) {
       if (!common.head) {
@@ -771,7 +1002,7 @@ async function upsertNonSubmissionData(
     }
     const values: unknown[] = []
     const assignments = updateColumns.map((column) => (
-      `${quoted(column)} = ${pushColumnParameter(values, common.table, column, row[column])}`
+      `${quoted(column)} = ${pushColumnParameter(values, common.table, column, effectiveRow[column])}`
     ))
     values.push(row.id)
     const result = await client.query<QueryResultRow>(
@@ -780,22 +1011,6 @@ async function upsertNonSubmissionData(
     )
     if ((result.rowCount ?? 0) !== 1) {
       throw new ApiError(409, 'stale_report', 'The non-submission report changed. Reload it and try again.')
-    }
-    returnedRows.push(...result.rows)
-    affected += result.rowCount ?? 0
-  }
-
-  if (newRows.length > 0) {
-    const values: unknown[] = []
-    const tuples = newRows.map((row) => `(${keys.map((key) => {
-      return pushColumnParameter(values, common.table, key, row[key])
-    }).join(', ')})`)
-    const result = await client.query<QueryResultRow>(
-      `insert into public.non_submission_reports (${keys.map(quoted).join(', ')}) values ${tuples.join(', ')} on conflict ("id") do nothing${returning}`,
-      values,
-    )
-    if (!ignoreDuplicates && (result.rowCount ?? 0) !== newRows.length) {
-      throw new ApiError(409, '23505', 'A non-submission report changed while it was being saved. Reload and try again.')
     }
     returnedRows.push(...result.rows)
     affected += result.rowCount ?? 0
@@ -943,6 +1158,14 @@ async function insertData(
   common: CommonRequest & Record<string, unknown>,
   upsert: boolean,
 ): Promise<Record<string, unknown>> {
+  const patchExisting = bool(common.patchExisting, 'patchExisting')
+  if (common.patchExisting !== undefined && (!upsert || common.table !== 'opportunities')) {
+    throw new ApiError(
+      400,
+      'invalid_request',
+      'patchExisting is available only for opportunity upserts.',
+    )
+  }
   const rows = parseRows(common.rows)
   const available = await tableColumns(client, common.table)
   validateCommonColumns(common, available)
@@ -981,7 +1204,13 @@ async function insertData(
     }
   }
   if (common.table === 'opportunities') {
-    existingOpportunities = await authorizeOpportunityRows(client, rows, upsert, conflictColumns)
+    existingOpportunities = await authorizeOpportunityRows(
+      client,
+      rows,
+      upsert,
+      conflictColumns,
+      patchExisting,
+    )
     if (upsert) {
       return upsertOpportunityData(client, common, rows, keys, conflictColumns, existingOpportunities)
     }
@@ -1039,26 +1268,15 @@ async function updateOrDeleteData(
     const keys = Object.keys(patch).sort()
     if (keys.length === 0) throw new ApiError(400, 'invalid_request', 'values cannot be empty.')
     assertColumnsExist(keys, available, common.table)
+    if (common.table === 'opportunities' || common.table === 'non_submission_reports') {
+      throw new ApiError(
+        409,
+        'patch_required',
+        'Opportunity and non-submission report edits must use the row-locked ID upsert route.',
+      )
+    }
     if (common.table === 'app_settings' && Object.hasOwn(patch, 'key')) {
       assertAllowedAppSettingKey(patch.key)
-    }
-    if (common.table === 'opportunities') {
-      const permissions = await effectiveOpportunityPermissions(client)
-      assertOpportunityFieldAuthorization(new Set(keys), permissions, patch)
-    }
-    if (common.table === 'non_submission_reports') {
-      const permissions = await effectiveOpportunityPermissions(client)
-      if (!hasAnyPermission(permissions, NON_SUBMISSION_WRITE_PERMISSIONS)) {
-        throw new ApiError(403, 'forbidden', 'You do not have permission to edit non-submission reports.')
-      }
-      const denied = keys.filter((key) => !GENERIC_NON_SUBMISSION_EDIT_COLUMNS.has(key))
-      if (denied.length > 0) {
-        throw new ApiError(
-          403,
-          'workflow_required',
-          'Non-submission review lifecycle changes must use the atomic opportunity workflow API.',
-        )
-      }
     }
     if (common.table === 'subcontractors') {
       await requireAnyDataPermission(
@@ -1166,7 +1384,7 @@ export function registerDataRoutes(app: FastifyInstance, dependencies: Dependenc
   route('/api/v1/data/insert', ['rows'], (client, common) => insertData(client, common, false))
   route(
     '/api/v1/data/upsert',
-    ['rows', 'onConflict', 'ignoreDuplicates'],
+    ['rows', 'onConflict', 'ignoreDuplicates', 'patchExisting'],
     (client, common) => insertData(client, common, true),
   )
   route('/api/v1/data/update', ['values'], (client, common) => updateOrDeleteData(client, common, 'update'))

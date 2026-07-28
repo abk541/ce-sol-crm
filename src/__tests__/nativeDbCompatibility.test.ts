@@ -11,6 +11,14 @@ const dbState = vi.hoisted(() => ({
 
 vi.mock('../lib/api', () => ({
   isApiConnected: true,
+  apiRequest: vi.fn().mockResolvedValue({
+    data: {
+      opportunities: [],
+      nonSubmissionReports: [],
+      bdSubmissions: [],
+    },
+  }),
+  envelopeData: vi.fn((payload: { data: unknown }) => payload.data),
   api: {
     from: vi.fn((table: string) => ({
       select: vi.fn().mockResolvedValue({

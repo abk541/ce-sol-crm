@@ -15,7 +15,8 @@ const mocks = vi.hoisted(() => ({
   fetchPermissionOverrides: vi.fn().mockResolvedValue({ ok: false }),
   fetchAppSettings: vi.fn().mockResolvedValue({ ok: false }),
   saveAppSetting: vi.fn().mockResolvedValue({ ok: true, missingTable: false }),
-  upsertOpportunity: vi.fn().mockResolvedValue(true),
+  updateOpportunityRecord: vi.fn().mockResolvedValue(true),
+  submitOpportunityWorkflow: vi.fn(),
 }))
 
 vi.mock('../lib/auth', () => ({
@@ -46,7 +47,15 @@ vi.mock('../lib/db', async (importOriginal) => {
     fetchPermissionOverrides: mocks.fetchPermissionOverrides,
     fetchAppSettings: mocks.fetchAppSettings,
     saveAppSetting: mocks.saveAppSetting,
-    upsertOpportunity: mocks.upsertOpportunity,
+    updateOpportunityRecord: mocks.updateOpportunityRecord,
+  }
+})
+
+vi.mock('../lib/opportunityWorkflow', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../lib/opportunityWorkflow')>()
+  return {
+    ...actual,
+    submitOpportunityWorkflow: mocks.submitOpportunityWorkflow,
   }
 })
 
@@ -128,6 +137,7 @@ describe('background profile revalidation', () => {
     mocks.fetchActivityLogs.mockResolvedValue({ ok: false })
     mocks.fetchAppSettings.mockResolvedValue({ ok: false, missingTable: false })
     mocks.saveAppSetting.mockResolvedValue({ ok: true, missingTable: false })
+    mocks.submitOpportunityWorkflow.mockResolvedValue(null)
     setAuthenticatedWorkspace()
   })
 
@@ -317,12 +327,13 @@ describe('background profile revalidation', () => {
         }),
       ],
     })
-    await vi.waitFor(() => expect(mocks.upsertOpportunity).toHaveBeenCalledOnce())
-    expect(mocks.upsertOpportunity).toHaveBeenCalledWith(
+    await vi.waitFor(() => expect(mocks.updateOpportunityRecord).toHaveBeenCalledOnce())
+    expect(mocks.updateOpportunityRecord).toHaveBeenCalledWith(
       expect.objectContaining({
         id: managerOnlyOpportunity.id,
         status: 'ACTIVE',
       }),
+      ['status'],
     )
   })
 
@@ -354,7 +365,7 @@ describe('background profile revalidation', () => {
         }),
       ],
     })
-    expect(mocks.upsertOpportunity).not.toHaveBeenCalled()
+    expect(mocks.updateOpportunityRecord).not.toHaveBeenCalled()
   })
 
   it('does not let a periodic refresh overwrite an activation change that is still saving', async () => {
@@ -389,6 +400,65 @@ describe('background profile revalidation', () => {
       requireAssociateForActivePipeline: false,
       appSettingsSyncStatus: 'synced',
     })
+  })
+
+  it('queues a periodic refresh until an atomic proposal submission finishes', async () => {
+    const activeOpportunity = {
+      ...opportunity,
+      solicitationId: 'SOL-1',
+      client: 'Agency',
+      status: 'ACTIVE',
+      dueDate: '2026-08-01',
+      localTime: '10:00',
+      timezone: 'UTC',
+    } as Opportunity
+    const submittedOpportunity = {
+      ...activeOpportunity,
+      status: 'SUBMITTED',
+      submittedAt: '2026-07-28T16:00:00.000Z',
+    } as Opportunity
+    const tracker = {
+      id: 41,
+      opportunityId: activeOpportunity.id,
+      submittedOn: '2026-07-28',
+      solicitationId: activeOpportunity.solicitationId,
+      solicitation: activeOpportunity.solicitation,
+      status: 'SUBMITTED',
+    } as const
+    let resolveSubmission!: (value: {
+      opportunity: Partial<Opportunity>
+      submission: typeof tracker
+    }) => void
+    mocks.submitOpportunityWorkflow.mockReturnValueOnce(new Promise(resolve => {
+      resolveSubmission = resolve
+    }))
+    mocks.revalidateAuthenticatedProfile.mockResolvedValue({ ok: true, profile: user })
+    mocks.loadAllData.mockResolvedValue({
+      ...loadedWorkspace([submittedOpportunity]),
+      bdSubmissions: [tracker],
+    })
+    useStore.setState({
+      opportunities: [activeOpportunity],
+      bdSubmissions: [],
+    })
+
+    const pendingSubmission = useStore.getState().submitOpportunity(activeOpportunity.id, {})
+    await vi.waitFor(() => expect(mocks.submitOpportunityWorkflow).toHaveBeenCalledOnce())
+
+    await useStore.getState().refreshFromDb()
+    expect(mocks.revalidateAuthenticatedProfile).not.toHaveBeenCalled()
+    expect(mocks.loadAllData).not.toHaveBeenCalled()
+
+    resolveSubmission({
+      opportunity: submittedOpportunity,
+      submission: tracker,
+    })
+    await expect(pendingSubmission).resolves.toBe(true)
+    await vi.waitFor(() => expect(mocks.loadAllData).toHaveBeenCalledOnce())
+    expect(useStore.getState().opportunities[0]?.status).toBe('SUBMITTED')
+    expect(useStore.getState().bdSubmissions).toContainEqual(
+      expect.objectContaining({ id: tracker.id, status: 'SUBMITTED' }),
+    )
   })
 
   it('ignores a stale activation response from a refresh that started before a newer saved choice', async () => {
@@ -607,7 +677,7 @@ describe('background profile revalidation', () => {
     let resolveFirstStatus!: (value: boolean) => void
     let resolveLatestStatus!: (value: boolean) => void
     let latestStatusSettled = false
-    mocks.upsertOpportunity
+    mocks.updateOpportunityRecord
       .mockReturnValueOnce(new Promise(resolve => { resolveFirstStatus = resolve }))
       .mockReturnValueOnce(
         new Promise<boolean>(resolve => { resolveLatestStatus = resolve })
@@ -627,10 +697,11 @@ describe('background profile revalidation', () => {
     await expect(
       useStore.getState().setRequireAssociateForActivePipeline(false),
     ).resolves.toBe(true)
-    await vi.waitFor(() => expect(mocks.upsertOpportunity).toHaveBeenCalledTimes(1))
-    expect(mocks.upsertOpportunity).toHaveBeenNthCalledWith(
+    await vi.waitFor(() => expect(mocks.updateOpportunityRecord).toHaveBeenCalledTimes(1))
+    expect(mocks.updateOpportunityRecord).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({ status: 'ACTIVE' }),
+      ['status'],
     )
 
     await expect(
@@ -638,13 +709,14 @@ describe('background profile revalidation', () => {
     ).resolves.toBe(true)
     // The newest NEW_ASSIGNMENT write must wait for the older ACTIVE request;
     // otherwise a slow first response could land last in the database.
-    expect(mocks.upsertOpportunity).toHaveBeenCalledTimes(1)
+    expect(mocks.updateOpportunityRecord).toHaveBeenCalledTimes(1)
 
     resolveFirstStatus(true)
-    await vi.waitFor(() => expect(mocks.upsertOpportunity).toHaveBeenCalledTimes(2))
-    expect(mocks.upsertOpportunity).toHaveBeenNthCalledWith(
+    await vi.waitFor(() => expect(mocks.updateOpportunityRecord).toHaveBeenCalledTimes(2))
+    expect(mocks.updateOpportunityRecord).toHaveBeenNthCalledWith(
       2,
       expect.objectContaining({ status: 'NEW_ASSIGNMENT' }),
+      ['status'],
     )
     resolveLatestStatus(true)
     await vi.waitFor(() => expect(latestStatusSettled).toBe(true))

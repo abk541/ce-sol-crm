@@ -1238,6 +1238,24 @@ function OppModalShell({ title, subtitle, tab, setTab, onClose, extraHeader, foo
 }
 
 // ── Edit Modal ────────────────────────────────────────────────────────
+function opportunityEditValuesMatch(left: unknown, right: unknown): boolean {
+  const leftEmptyCollection = left == null || (Array.isArray(left) && left.length === 0)
+  const rightEmptyCollection = right == null || (Array.isArray(right) && right.length === 0)
+  if (leftEmptyCollection && rightEmptyCollection) return true
+  return JSON.stringify(left ?? null) === JSON.stringify(right ?? null)
+}
+
+export function opportunityChangesSinceModalOpened(
+  original: Opportunity,
+  draft: Partial<Opportunity>,
+): Partial<Opportunity> {
+  return Object.fromEntries(
+    (Object.keys(draft) as (keyof Opportunity)[])
+      .filter(field => !opportunityEditValuesMatch(original[field], draft[field]))
+      .map(field => [field, draft[field]]),
+  ) as Partial<Opportunity>
+}
+
 export function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }) {
   const { updateOpportunity, requestDeletion, deletionRequests, currentUser, employees } = useStore()
   const [tab, setTab] = useState<OppFormTab>('details')
@@ -1298,15 +1316,18 @@ export function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => v
           })
         }
         setSaving(true)
-        const saved = await updateOpportunity(opp.id, {
+        const changes = opportunityChangesSinceModalOpened(opp, {
           dueDate: form.dueDate,
           localTime: form.localTime,
           timezone: form.timezone,
           moroccoTime: form.moroccoTime,
           moroccoDate: form.moroccoDate,
           mandatoryEventsList: form.mandatoryEventsList,
-          comments: updatedComments,
         })
+        if (!opportunityEditValuesMatch(opp.comments, updatedComments)) {
+          changes.comments = updatedComments
+        }
+        const saved = await updateOpportunity(opp.id, changes)
         setSaving(false)
         if (saved) {
           toast.success('Schedule updated')
@@ -1364,7 +1385,16 @@ export function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => v
       })
     }
     setSaving(true)
-    const saved = await updateOpportunity(opp.id, { ...form, comments: updatedComments, samGovContacts: cleanedContacts })
+    const changes = opportunityChangesSinceModalOpened(opp, form)
+    if (!opportunityEditValuesMatch(opp.comments, updatedComments)) {
+      changes.comments = updatedComments
+    } else {
+      delete changes.comments
+    }
+    if (Object.prototype.hasOwnProperty.call(changes, 'samGovContacts')) {
+      changes.samGovContacts = cleanedContacts
+    }
+    const saved = await updateOpportunity(opp.id, changes)
     setSaving(false)
     if (saved) {
       toast.success('Opportunity updated')
@@ -4210,7 +4240,7 @@ export default function PipelinePage() {
     setDeleteOpp(o)
   }
 
-  const handleFileNonSubmission = (o: Opportunity) => {
+  const handleFileNonSubmission = async (o: Opportunity) => {
     if (!canFileNonSubmission) {
       toast.error('Only the Capture Manager can file non-submission reports.')
       return
@@ -4221,11 +4251,12 @@ export default function PipelinePage() {
     }
     const chain = getAssignmentChain(employees, o.assignedTo)
     const agentUsername = chain.associate?.email.split('@')[0] || o.supportAgent || currentUser?.username || 'system'
-    submitNonSubReport({
+    const saved = await submitNonSubReport({
       opportunityId: o.id,
       agentUsername,
       reason: `Manually filed by ${currentUser?.name ?? 'Capture Manager'} — proposal was not submitted by the deadline.`,
     })
+    if (!saved) return
     toast.success(`Non-submission report filed for "${o.solicitation}".`)
     setSelectedOpp(null)
   }

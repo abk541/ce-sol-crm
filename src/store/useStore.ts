@@ -28,6 +28,7 @@ import {
   seedEmployeesIfEmpty,
   findActiveOpportunityDuplicate,
   upsertOpportunity,
+  updateOpportunityRecord,
   syncOpportunityComments,
   upsertSubcontractor,
   deleteSubcontractorRecord,
@@ -49,6 +50,9 @@ import {
   upsertSubkDatabaseEntry,
   deleteSubkDatabaseEntryRecord,
   upsertNonSubReport,
+  updateNonSubReportReasonRecord,
+  updateNonSubReportReminderRecord,
+  appendNonSubReportCommentRecord,
   upsertDeletionRequest,
   bulkDeleteFromTable,
   fetchPermissionOverrides,
@@ -95,6 +99,8 @@ import {
 import { invokeManageUsers } from '../lib/userManagement'
 import { mergeSafeUser, toSafeUser } from '../lib/userProfile'
 import {
+  createManualNonSubmissionWorkflow,
+  createPendingNonSubmissionWorkflow,
   deleteOpportunityWorkflow,
   editOpportunityWorkflow,
   returnOpportunityToPipelineWorkflow,
@@ -309,11 +315,13 @@ interface AppState {
   logActivity: (entry: Omit<ActivityLog, 'id' | 'createdAt'>) => void
 
   // ── Non-submission reports ─────────────────────────────────────────
-  submitNonSubReport: (data: Omit<NonSubmissionReport, 'id' | 'submittedAt' | 'status'>) => void
+  submitNonSubReport: (
+    data: Omit<NonSubmissionReport, 'id' | 'submittedAt' | 'status'>,
+  ) => Promise<boolean>
   reviewNonSubReport: (id: string, action: 'APPROVED' | 'DECLINED', reviewNote: string, reviewedBy: string) => Promise<boolean>
   returnNonSubmissionToPipeline: (reportId: string) => Promise<boolean>
-  updateNonSubReportReason: (reportId: string, reason: string) => void
-  addNonSubReportComment: (reportId: string, text: string) => void
+  updateNonSubReportReason: (reportId: string, reason: string) => Promise<boolean>
+  addNonSubReportComment: (reportId: string, text: string) => Promise<boolean>
 
   // ── Deletion requests ──────────────────────────────────────────────
   requestDeletion: (opportunityId: string, requestedBy: string, reason: string) => void
@@ -679,7 +687,7 @@ async function ensureAssignmentEmployeesSynced(employees: Employee[]): Promise<b
 function persistAssignedOpportunity(opp: Opportunity, employees: Employee[], recordLabel = 'Opportunity') {
   void ensureAssignmentEmployeesSynced(employees).then(synced => {
     if (!synced) return
-    void upsertOpportunity(opp).then(saved => {
+    void updateOpportunityRecord(opp, ['assignedTo', 'status']).then(saved => {
       if (!saved) showDatabaseSaveError(recordLabel)
     })
   })
@@ -755,6 +763,24 @@ function userToEmployee(user: User): Employee | null {
 // Guards against overlapping refreshFromDb runs (poll + focus + realtime can all
 // fire near-simultaneously). Overlaps are harmless but wasteful.
 let refreshInFlight = false
+let refreshRequestedAfterMutation = false
+let workflowMutationRevision = 0
+let workflowMutationsInFlight = 0
+const pendingNonSubmissionCreates = new Set<string>()
+const pendingNonSubmissionReminders = new Set<string>()
+
+function beginWorkflowMutation(): void {
+  workflowMutationsInFlight += 1
+  workflowMutationRevision += 1
+}
+
+function finishWorkflowMutation(): boolean {
+  workflowMutationsInFlight = Math.max(0, workflowMutationsInFlight - 1)
+  workflowMutationRevision += 1
+  if (workflowMutationsInFlight > 0 || !refreshRequestedAfterMutation) return false
+  refreshRequestedAfterMutation = false
+  return true
+}
 
 // One non-submission report per opportunity is the invariant: an opportunity has
 // a single due datetime, so it can miss submission only once. The auto-sweep and
@@ -1770,10 +1796,19 @@ export const useStore = create<AppState>()(
         const deadlineChanged = opportunityDeadlineChanged(current, proposed)
         if (deadlineChanged) {
           // A new/extended deadline gets its own future 24h and 4h reminders.
-          // Persist the reset in the same successful opportunity write.
-          data = { ...data, notifiedDue24h: false, notifiedDue4h: false }
+          // It also completes a deliberate return-to-pipeline extension: clear
+          // the temporary overdue exemption in this same narrow patch so the
+          // replacement deadline participates in future automatic checks.
+          data = {
+            ...data,
+            notifiedDue24h: false,
+            notifiedDue4h: false,
+            nonSubmissionExempt: false,
+          }
         }
 
+        beginWorkflowMutation()
+        try {
         const previous = get().opportunities
         set(s => ({
           opportunities: s.opportunities.map(o =>
@@ -1792,7 +1827,12 @@ export const useStore = create<AppState>()(
           set({ opportunities: previous })
           return false
         }
-        const saved = await upsertOpportunity(updated)
+        const persistedFields = (Object.keys(data) as (keyof Opportunity)[])
+          .filter(field => JSON.stringify(current[field] ?? null) !== JSON.stringify(updated[field] ?? null))
+        if (updated.status !== current.status && !persistedFields.includes('status')) {
+          persistedFields.push('status')
+        }
+        const saved = await updateOpportunityRecord(updated, persistedFields)
         if (!saved) {
           set({ opportunities: previous })
           showDatabaseSaveError('Opportunity update')
@@ -1865,6 +1905,9 @@ export const useStore = create<AppState>()(
         }
         get().syncDueOpportunities()
         return true
+        } finally {
+          if (finishWorkflowMutation()) queueMicrotask(() => { void get().refreshFromDb() })
+        }
       },
 
       assignOpportunity: (id, bdm, bds) => {
@@ -1874,7 +1917,9 @@ export const useStore = create<AppState>()(
         }))
         const opp = get().opportunities.find(o => o.id === id)
         if (opp) {
-          upsertOpportunity(opp)
+          void updateOpportunityRecord(opp, ['bdm', 'bds']).then(saved => {
+            if (!saved) showDatabaseSaveError('Opportunity assignment')
+          })
           get().addNotification({
             type: 'ASSIGNMENT',
             title: 'Opportunity assigned',
@@ -1911,6 +1956,8 @@ export const useStore = create<AppState>()(
           ...values,
         }
         const existing = findBDSubmissionForOpportunity(get().bdSubmissions, opp, get().opportunities)
+        beginWorkflowMutation()
+        try {
         const committed = await submitOpportunityWorkflow(
           original.id,
           original.status,
@@ -1918,6 +1965,7 @@ export const useStore = create<AppState>()(
           existing?.status,
         )
         if (!committed) {
+          refreshRequestedAfterMutation = true
           showDatabaseSaveError('Proposal submission')
           return false
         }
@@ -1992,6 +2040,9 @@ export const useStore = create<AppState>()(
             entityName: committedOpportunity.solicitation,
           })
         return true
+        } finally {
+          if (finishWorkflowMutation()) queueMicrotask(() => { void get().refreshFromDb() })
+        }
       },
 
       moveOpportunityToBDTracker: async (id, status, comment) => {
@@ -2007,6 +2058,8 @@ export const useStore = create<AppState>()(
             report.id === opp.nonSubmissionReportId && report.status === 'PENDING')?.id
 
         const existing = findBDSubmissionForOpportunity(get().bdSubmissions, opp, get().opportunities)
+        beginWorkflowMutation()
+        try {
         const committed = await transitionOpportunityWorkflow({
           opportunityId: opp.id,
           status,
@@ -2015,6 +2068,7 @@ export const useStore = create<AppState>()(
           ...(comment !== undefined ? { comment } : {}),
         })
         if (!committed) {
+          refreshRequestedAfterMutation = true
           showDatabaseSaveError('BD Tracker status')
           return false
         }
@@ -2061,6 +2115,9 @@ export const useStore = create<AppState>()(
 
         if (status === 'AWARDED' && !(await get().markOpportunityWon(id))) return false
         return true
+        } finally {
+          if (finishWorkflowMutation()) queueMicrotask(() => { void get().refreshFromDb() })
+        }
       },
 
       markOpportunityWon: async (id) => {
@@ -2162,6 +2219,69 @@ export const useStore = create<AppState>()(
           submittedAt: now.toISOString(),
         }))
 
+        if (isApiConnected) {
+          reports.forEach(report => {
+            const source = reportableOpps.find(opp => opp.id === report.opportunityId)
+            const expectedDeadlineMs = source ? deadlineTimeMs(source) : null
+            if (!source || expectedDeadlineMs === null || pendingNonSubmissionCreates.has(source.id)) {
+              return
+            }
+            pendingNonSubmissionCreates.add(source.id)
+            beginWorkflowMutation()
+            void createPendingNonSubmissionWorkflow({
+              opportunityId: source.id,
+              expectedOpportunityStatus: source.status,
+              expectedDueDate: source.dueDate,
+              expectedLocalTime: source.localTime,
+              ...(source.timezone ? { expectedTimezone: source.timezone } : {}),
+              expectedDeadlineMs,
+              agentUsername: report.agentUsername,
+              reason: report.reason,
+            }).then(committed => {
+              if (!committed) {
+                refreshRequestedAfterMutation = true
+                return
+              }
+              const current = get().opportunities.find(opp => opp.id === source.id)
+              if (
+                !current
+                || current.status !== source.status
+                || deadlineTimeMs(current) !== expectedDeadlineMs
+                || current.nonSubmissionExempt
+              ) {
+                refreshRequestedAfterMutation = true
+                return
+              }
+              set(state => ({
+                opportunities: state.opportunities.map(opp =>
+                  opp.id === source.id
+                    ? { ...opp, nonSubmissionReportId: committed.report.id }
+                    : opp),
+                nonSubReports: dedupeNonSubReports([
+                  committed.report,
+                  ...state.nonSubReports,
+                ]),
+              }))
+              get().addNotification({
+                type: 'NON_SUB_REVIEW',
+                title: 'Non-submission report pending',
+                message: `${source.solicitation} passed the 12-hour non-submission window and moved to Non-Submission Reports.`,
+                read: false,
+                relatedId: source.id,
+                targetRole: 'CAPTURE_MANAGER',
+              })
+            }).finally(() => {
+              pendingNonSubmissionCreates.delete(source.id)
+              if (finishWorkflowMutation()) queueMicrotask(() => { void get().refreshFromDb() })
+            })
+          })
+          return
+        }
+
+        // Legacy/offline mode keeps the local-only behavior used by the
+        // deterministic workflow test harness. Production uses the atomic API
+        // branch above so report creation and the opportunity pointer cannot
+        // split or overwrite a newer deadline.
         set(s => ({
           nonSubReports: dedupeNonSubReports([...reports, ...s.nonSubReports]),
           opportunities: s.opportunities.map(opp => {
@@ -2286,7 +2406,11 @@ export const useStore = create<AppState>()(
         }))
         updates.forEach((_, id) => {
           const updated = get().opportunities.find(o => o.id === id)
-          if (updated) upsertOpportunity(updated)
+          if (updated) {
+            void updateOpportunityRecord(updated, ['notifiedDue24h', 'notifiedDue4h']).then(saved => {
+              if (!saved) showDatabaseSaveError('Opportunity deadline reminder')
+            })
+          }
         })
       },
 
@@ -2294,29 +2418,41 @@ export const useStore = create<AppState>()(
         const now = Date.now()
         const DAY_MS = 24 * 60 * 60 * 1000
         const dueReports = get().nonSubReports.filter(r => {
-          if (r.status !== 'PENDING') return false
+          if (r.status !== 'PENDING' || pendingNonSubmissionReminders.has(r.id)) return false
           const last = r.lastReminderAt ? new Date(r.lastReminderAt).getTime() : new Date(r.submittedAt).getTime()
           return now - last >= DAY_MS
         })
         if (dueReports.length === 0) return
         const stampIso = new Date(now).toISOString()
-        const refreshed = dueReports.map(r => ({ ...r, lastReminderAt: stampIso }))
-        set(s => ({
-          nonSubReports: s.nonSubReports.map(r => {
-            const match = refreshed.find(x => x.id === r.id)
-            return match ?? r
-          })
-        }))
-        refreshed.forEach(report => {
-          upsertNonSubReport(report)
-          const opp = get().opportunities.find(o => o.id === report.opportunityId)
-          get().addNotification({
-            type: 'REPORT_REMINDER',
-            title: 'Non-submission report still pending',
-            message: `${opp?.solicitation ?? 'A non-submission report'} is still awaiting review.`,
-            read: false,
-            relatedId: report.opportunityId,
-            targetRole: 'CAPTURE_MANAGER',
+        dueReports.forEach(report => {
+          const applyReminder = () => {
+            set(s => ({
+              nonSubReports: s.nonSubReports.map(current =>
+                current.id === report.id ? { ...current, lastReminderAt: stampIso } : current),
+            }))
+            const opp = get().opportunities.find(o => o.id === report.opportunityId)
+            get().addNotification({
+              type: 'REPORT_REMINDER',
+              title: 'Non-submission report still pending',
+              message: `${opp?.solicitation ?? 'A non-submission report'} is still awaiting review.`,
+              read: false,
+              relatedId: report.opportunityId,
+              targetRole: 'CAPTURE_MANAGER',
+            })
+          }
+          if (!isApiConnected) {
+            applyReminder()
+            return
+          }
+          pendingNonSubmissionReminders.add(report.id)
+          void updateNonSubReportReminderRecord(report.id, stampIso).then(saved => {
+            if (!saved) {
+              showDatabaseSaveError('Non-submission reminder')
+              return
+            }
+            applyReminder()
+          }).finally(() => {
+            pendingNonSubmissionReminders.delete(report.id)
           })
         })
       },
@@ -3311,6 +3447,8 @@ export const useStore = create<AppState>()(
         const pendingReportId = opp?.nonSubmissionReportId
           && get().nonSubReports.find(report =>
             report.id === opp.nonSubmissionReportId && report.status === 'PENDING')?.id
+        beginWorkflowMutation()
+        try {
         const committed = await transitionOpportunityWorkflow({
           ...(opp ? { opportunityId: opp.id } : { submissionId: current.id }),
           status,
@@ -3318,6 +3456,7 @@ export const useStore = create<AppState>()(
           ...(opp ? { expectedOpportunityStatus: opp.status } : {}),
         })
         if (!committed) {
+          refreshRequestedAfterMutation = true
           showDatabaseSaveError('BD Tracker status')
           return false
         }
@@ -3347,6 +3486,9 @@ export const useStore = create<AppState>()(
           return false
         }
         return true
+        } finally {
+          if (finishWorkflowMutation()) queueMicrotask(() => { void get().refreshFromDb() })
+        }
       },
 
       updateBDSubmissionDetails: async (id, data, opportunityData) => {
@@ -3354,6 +3496,8 @@ export const useStore = create<AppState>()(
         const current = get().bdSubmissions.find(b => b.id === id)
         if (!current) return false
         const opp = findBDSubmissionOpportunity(current, get().opportunities)
+        beginWorkflowMutation()
+        try {
         const committed = await editOpportunityWorkflow({
           ...(opp ? { opportunityId: opp.id } : { submissionId: current.id }),
           expectedSubmissionStatus: current.status,
@@ -3362,6 +3506,7 @@ export const useStore = create<AppState>()(
           ...(opportunityData ? { opportunityValues: opportunityData } : {}),
         })
         if (!committed) {
+          refreshRequestedAfterMutation = true
           showDatabaseSaveError('BD Tracker details')
           return false
         }
@@ -3386,6 +3531,9 @@ export const useStore = create<AppState>()(
           recordOpportunityDeadlineChange(get, opp, updatedOpp, actor)
         }
         return true
+        } finally {
+          if (finishWorkflowMutation()) queueMicrotask(() => { void get().refreshFromDb() })
+        }
       },
 
       deleteBDSubmission: async (id) => {
@@ -3398,12 +3546,15 @@ export const useStore = create<AppState>()(
         if (!submission) return false
 
         const linkedOpp = findBDSubmissionOpportunity(submission, get().opportunities)
+        beginWorkflowMutation()
+        try {
         const committed = await deleteOpportunityWorkflow({
           submissionId: submission.id,
           expectedSubmissionStatus: submission.status,
           ...(linkedOpp ? { expectedOpportunityStatus: linkedOpp.status } : {}),
         })
         if (!committed) {
+          refreshRequestedAfterMutation = true
           showDatabaseSaveError('Submitted opportunity deletion')
           return false
         }
@@ -3442,6 +3593,9 @@ export const useStore = create<AppState>()(
           entityName: submission.solicitation,
         })
         return true
+        } finally {
+          if (finishWorkflowMutation()) queueMicrotask(() => { void get().refreshFromDb() })
+        }
       },
 
       returnBDSubmissionToPipeline: async (id) => {
@@ -3457,27 +3611,51 @@ export const useStore = create<AppState>()(
           toast.error('The original opportunity could not be found.')
           return false
         }
-
+        const returningNonSubmission = [submission.status, linkedOpp.status].some(status =>
+          status === 'NOT_SUBMITTED' || status === 'DROPPED')
+        const linkedReports = get().nonSubReports.filter(report =>
+          report.opportunityId === linkedOpp.id)
+        const pointedReport = linkedOpp.nonSubmissionReportId
+          ? linkedReports.find(report => report.id === linkedOpp.nonSubmissionReportId)
+          : undefined
+        const expectedReviewedStatus = [submission.status, linkedOpp.status].includes('NOT_SUBMITTED')
+          ? 'APPROVED'
+          : 'DECLINED'
+        const fallbackReport = returningNonSubmission
+          ? linkedReports.find(report => report.status === expectedReviewedStatus)
+          : linkedReports.find(report => report.status === 'PENDING')
+        const pointedReportCanBeRemoved = !pointedReport
+          || returningNonSubmission
+          || pointedReport.status === 'PENDING'
+        const relatedReportId = pointedReportCanBeRemoved
+          ? linkedOpp.nonSubmissionReportId ?? fallbackReport?.id
+          : fallbackReport?.id
+        const linkedDeadlineMs = deadlineTimeMs(linkedOpp)
+        const protectOverdueDeadline = linkedDeadlineMs !== null && linkedDeadlineMs <= Date.now()
+        const nonSubmissionExempt = Boolean(
+          linkedOpp.nonSubmissionExempt || returningNonSubmission || protectOverdueDeadline,
+        )
         const target = normalizeOpportunityAssignmentStatus({
           ...linkedOpp,
           status: 'ACTIVE',
           submittedAt: undefined,
           nonSubmissionReportId: undefined,
+          nonSubmissionExempt,
         }, get().employees, get().requireAssociateForActivePipeline)
+        beginWorkflowMutation()
+        try {
         const committed = await returnOpportunityToPipelineWorkflow({
           submissionId: submission.id,
           expectedOpportunityStatus: linkedOpp.status,
           expectedSubmissionStatus: submission.status,
           targetOpportunityStatus: target.status as 'ACTIVE' | 'NEW_ASSIGNMENT',
-          ...(linkedOpp.nonSubmissionReportId
-            ? { nonSubmissionReportId: linkedOpp.nonSubmissionReportId }
+          ...(relatedReportId
+            ? { nonSubmissionReportId: relatedReportId }
             : {}),
-          ...([submission.status, linkedOpp.status].some(status =>
-            status === 'NOT_SUBMITTED' || status === 'DROPPED')
-            ? { nonSubmissionExempt: true }
-            : {}),
+          nonSubmissionExempt,
         })
         if (!committed) {
+          refreshRequestedAfterMutation = true
           showDatabaseSaveError('Return to General Pipeline')
           return false
         }
@@ -3490,6 +3668,9 @@ export const useStore = create<AppState>()(
         set(s => ({
           opportunities: s.opportunities.map(opp => opp.id === restored.id ? restored : opp),
           bdSubmissions: s.bdSubmissions.filter(row => row.id !== id),
+          nonSubReports: relatedReportId
+            ? s.nonSubReports.filter(report => report.id !== relatedReportId)
+            : s.nonSubReports,
         }))
 
         get().logActivity({
@@ -3501,6 +3682,9 @@ export const useStore = create<AppState>()(
           entityName: submission.solicitation,
         })
         return true
+        } finally {
+          if (finishWorkflowMutation()) queueMicrotask(() => { void get().refreshFromDb() })
+        }
       },
 
       // ── Activity Logs ───────────────────────────────────────────────
@@ -3518,26 +3702,55 @@ export const useStore = create<AppState>()(
       },
 
       // ── Non-submission reports ──────────────────────────────────────
-      submitNonSubReport: (data) => {
-        if (!hasPermission(get().currentUser, 'nonSubmission:submit')) {
-          toast.error('You do not have permission to submit non-submission reports.')
-          return
+      submitNonSubReport: async (data) => {
+        if (!hasPermission(get().currentUser, 'nonSubmission:review')) {
+          toast.error('Only the Capture Manager can file non-submission reports.')
+          return false
         }
-        const report: NonSubmissionReport = {
-          ...data,
-          id: `nsr-${data.opportunityId}`,
-          status: 'PENDING',
-          submittedAt: new Date().toISOString(),
+        const source = get().opportunities.find(o => o.id === data.opportunityId)
+        if (!source) return false
+
+        let report: NonSubmissionReport
+        let updatedOpp: Opportunity
+        if (isApiConnected) {
+          beginWorkflowMutation()
+          try {
+            const committed = await createManualNonSubmissionWorkflow({
+              opportunityId: source.id,
+              expectedOpportunityStatus: source.status,
+              agentUsername: data.agentUsername,
+              reason: data.reason,
+            })
+            if (!committed) {
+              refreshRequestedAfterMutation = true
+              showDatabaseSaveError('Non-submission report')
+              return false
+            }
+            report = committed.report
+            updatedOpp = mergeCommittedOpportunity(source, committed.opportunity)
+            set(s => ({
+              nonSubReports: dedupeNonSubReports([report, ...s.nonSubReports]),
+              opportunities: s.opportunities.map(o => o.id === updatedOpp.id ? updatedOpp : o),
+            }))
+          } finally {
+            if (finishWorkflowMutation()) queueMicrotask(() => { void get().refreshFromDb() })
+          }
+        } else {
+          report = {
+            ...data,
+            id: `nsr-${data.opportunityId}`,
+            status: 'PENDING',
+            submittedAt: new Date().toISOString(),
+          }
+          updatedOpp = { ...source, nonSubmissionReportId: report.id }
+          set(s => ({
+            nonSubReports: dedupeNonSubReports([report, ...s.nonSubReports]),
+            opportunities: s.opportunities.map(o => o.id === updatedOpp.id ? updatedOpp : o),
+          }))
+          void upsertNonSubReport(report)
+          void updateOpportunityRecord(updatedOpp, ['nonSubmissionReportId'])
         }
-        set(s => ({ nonSubReports: dedupeNonSubReports([report, ...s.nonSubReports]) }))
-        set(s => ({
-          opportunities: s.opportunities.map(o =>
-            o.id === data.opportunityId ? { ...o, nonSubmissionReportId: report.id } : o
-          )
-        }))
-        upsertNonSubReport(report)
-        const updatedOpp = get().opportunities.find(o => o.id === data.opportunityId)
-        if (updatedOpp) upsertOpportunity(updatedOpp)
+
         get().addNotification({
           type: 'NON_SUB_REVIEW',
           title: 'Non-submission report pending',
@@ -3554,38 +3767,48 @@ export const useStore = create<AppState>()(
           entityId: report.id,
           entityName: updatedOpp?.solicitation,
         })
+        return true
       },
 
-      updateNonSubReportReason: (reportId, reason) => {
+      updateNonSubReportReason: async (reportId, reason) => {
         const actor = get().currentUser
         const canEdit = hasPermission(actor, 'nonSubmission:submit') || hasPermission(actor, 'nonSubmission:review')
         if (!canEdit) {
           toast.error('You do not have permission to edit this report.')
-          return
+          return false
         }
         const trimmed = reason.trim()
         if (!trimmed) {
           toast.error('The reason cannot be empty.')
-          return
+          return false
+        }
+        const report = get().nonSubReports.find(r => r.id === reportId)
+        if (!report) return false
+        const reasonEditedAt = new Date().toISOString()
+        if (isApiConnected) {
+          const saved = await updateNonSubReportReasonRecord(reportId, trimmed, reasonEditedAt)
+          if (!saved) {
+            showDatabaseSaveError('Non-submission reason')
+            return false
+          }
         }
         set(s => ({
           nonSubReports: s.nonSubReports.map(r =>
-            r.id === reportId ? { ...r, reason: trimmed, reasonEditedAt: new Date().toISOString() } : r
+            r.id === reportId ? { ...r, reason: trimmed, reasonEditedAt } : r
           )
         }))
-        const report = get().nonSubReports.find(r => r.id === reportId)
-        if (report) upsertNonSubReport(report)
+        return true
       },
 
-      addNonSubReportComment: (reportId, text) => {
+      addNonSubReportComment: async (reportId, text) => {
         const actor = get().currentUser
         const canComment = hasPermission(actor, 'nonSubmission:submit') || hasPermission(actor, 'nonSubmission:review')
         if (!canComment) {
           toast.error('You do not have permission to comment on this report.')
-          return
+          return false
         }
         const trimmed = text.trim()
-        if (!trimmed) return
+        if (!trimmed || !get().nonSubReports.some(r => r.id === reportId)) return false
         const comment: Comment = {
           id: `nsc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
           text: trimmed,
@@ -3593,13 +3816,21 @@ export const useStore = create<AppState>()(
           authorId: actor?.id,
           createdAt: new Date().toISOString(),
         }
+        if (isApiConnected) {
+          const saved = await appendNonSubReportCommentRecord(reportId, comment)
+          if (!saved) {
+            showDatabaseSaveError('Non-submission comment')
+            return false
+          }
+        }
         set(s => ({
           nonSubReports: s.nonSubReports.map(r =>
-            r.id === reportId ? { ...r, comments: [...(r.comments ?? []), comment] } : r
+            r.id === reportId && !(r.comments ?? []).some(existing => existing.id === comment.id)
+              ? { ...r, comments: [...(r.comments ?? []), comment] }
+              : r
           )
         }))
-        const report = get().nonSubReports.find(r => r.id === reportId)
-        if (report) upsertNonSubReport(report)
+        return true
       },
 
       reviewNonSubReport: async (id, action, reviewNote, reviewedBy) => {
@@ -3616,6 +3847,8 @@ export const useStore = create<AppState>()(
         }
         const trackerStatus: BDSubmission['status'] = action === 'APPROVED' ? 'NOT_SUBMITTED' : 'DROPPED'
         const existing = findBDSubmissionForOpportunity(get().bdSubmissions, opp, get().opportunities)
+        beginWorkflowMutation()
+        try {
         const committed = await transitionOpportunityWorkflow({
           opportunityId: opp.id,
           status: trackerStatus,
@@ -3626,6 +3859,7 @@ export const useStore = create<AppState>()(
           ...(reviewNote ? { reviewNote } : {}),
         })
         if (!committed) {
+          refreshRequestedAfterMutation = true
           showDatabaseSaveError('Non-submission review')
           return false
         }
@@ -3646,6 +3880,9 @@ export const useStore = create<AppState>()(
             : [trackerRow, ...s.bdSubmissions],
         }))
         return true
+        } finally {
+          if (finishWorkflowMutation()) queueMicrotask(() => { void get().refreshFromDb() })
+        }
       },
 
       returnNonSubmissionToPipeline: async (reportId) => {
@@ -3667,10 +3904,6 @@ export const useStore = create<AppState>()(
           linkedOpp,
           get().opportunities,
         )
-        if (!relatedSubmission) {
-          toast.error('The related BD Tracker row could not be found.')
-          return false
-        }
         const target = normalizeOpportunityAssignmentStatus({
           ...linkedOpp,
           status: 'ACTIVE',
@@ -3678,17 +3911,28 @@ export const useStore = create<AppState>()(
           nonSubmissionReportId: undefined,
           nonSubmissionExempt: true,
         }, get().employees, get().requireAssociateForActivePipeline)
-        const committed = await returnOpportunityToPipelineWorkflow({
-          submissionId: relatedSubmission.id,
-          expectedOpportunityStatus: linkedOpp.status,
-          expectedSubmissionStatus: relatedSubmission.status,
-          targetOpportunityStatus: target.status as 'ACTIVE' | 'NEW_ASSIGNMENT',
-          nonSubmissionReportId: report.id,
-          // Deliberate manager override: keep it in the pipeline. Without this the
-          // next sweep would instantly re-report it after its overdue deadline.
-          nonSubmissionExempt: true,
-        })
+        beginWorkflowMutation()
+        try {
+        const committed = await returnOpportunityToPipelineWorkflow(relatedSubmission
+          ? {
+              submissionId: relatedSubmission.id,
+              expectedOpportunityStatus: linkedOpp.status,
+              expectedSubmissionStatus: relatedSubmission.status,
+              targetOpportunityStatus: target.status as 'ACTIVE' | 'NEW_ASSIGNMENT',
+              nonSubmissionReportId: report.id,
+              // Deliberate manager override: keep it in the pipeline. Without this
+              // the next sweep would instantly re-report its overdue deadline.
+              nonSubmissionExempt: true,
+            }
+          : {
+              opportunityId: linkedOpp.id,
+              expectedOpportunityStatus: linkedOpp.status,
+              targetOpportunityStatus: target.status as 'ACTIVE' | 'NEW_ASSIGNMENT',
+              nonSubmissionReportId: report.id,
+              nonSubmissionExempt: true,
+            })
         if (!committed) {
+          refreshRequestedAfterMutation = true
           showDatabaseSaveError('Return from Non-Submission')
           return false
         }
@@ -3713,6 +3957,9 @@ export const useStore = create<AppState>()(
           entityName: linkedOpp.solicitation,
         })
         return true
+        } finally {
+          if (finishWorkflowMutation()) queueMicrotask(() => { void get().refreshFromDb() })
+        }
       },
 
       // ── Deletion requests ───────────────────────────────────────────
@@ -3738,7 +3985,11 @@ export const useStore = create<AppState>()(
         }))
         upsertDeletionRequest(req)
         const markedOpp = get().opportunities.find(o => o.id === opportunityId)
-        if (markedOpp) upsertOpportunity(markedOpp)
+        if (markedOpp) {
+          void updateOpportunityRecord(markedOpp, ['deletionRequested']).then(saved => {
+            if (!saved) showDatabaseSaveError('Deletion request link')
+          })
+        }
         get().addNotification({
           type: 'DELETION_REQUEST',
           title: 'Deletion request submitted',
@@ -4193,7 +4444,12 @@ export const useStore = create<AppState>()(
           !initial.currentUser ||
           refreshInFlight
         ) return
+        if (workflowMutationsInFlight > 0) {
+          refreshRequestedAfterMutation = true
+          return
+        }
         refreshInFlight = true
+        const refreshRevision = workflowMutationRevision
         try {
           // Revalidate identity/profile before touching workspace tables. This
           // makes inactive/deleted/admin-reset accounts fail closed even while
@@ -4253,6 +4509,13 @@ export const useStore = create<AppState>()(
             afterLoad.currentUser?.id !== refreshedProfile.id ||
             afterLoad.loginTimestamp !== startedAt
           ) return
+          if (workflowMutationRevision !== refreshRevision) {
+            // A workflow committed while the independent table reads were in
+            // flight. Applying that mixed before/after snapshot could briefly
+            // resurrect a deleted tracker row or an old deadline.
+            refreshRequestedAfterMutation = true
+            return
+          }
           if (data) {
             const dbUsers = data.users.length > 0 ? data.users : get().users
             const finalUsers = mergeSafeUser(dbUsers, refreshedProfile)
@@ -4326,6 +4589,10 @@ export const useStore = create<AppState>()(
           console.error('[Store] refreshFromDb failed', err)
         } finally {
           refreshInFlight = false
+          if (refreshRequestedAfterMutation && workflowMutationsInFlight === 0) {
+            refreshRequestedAfterMutation = false
+            queueMicrotask(() => { void get().refreshFromDb() })
+          }
         }
       },
 
@@ -4412,7 +4679,9 @@ export const useStore = create<AppState>()(
             // Status batches are serialized. If this request is already in
             // flight when a newer mode is selected, the newer corrective batch
             // waits and therefore reaches the database last.
-            const results = await Promise.all(statusChanges.map(opp => upsertOpportunity(opp)))
+            const results = await Promise.all(
+              statusChanges.map(opp => updateOpportunityRecord(opp, ['status'])),
+            )
             const failures = results.filter(saved => !saved).length
             if (failures > 0) {
               toast.error(`${failures} opportunit${failures === 1 ? 'y' : 'ies'} could not sync to the database.`)

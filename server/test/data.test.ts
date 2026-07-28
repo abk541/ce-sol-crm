@@ -20,6 +20,14 @@ function queryable(
   } as Queryable
 }
 
+const nonSubmissionActor = {
+  id: 'user-agent',
+  author: 'Agent Name',
+  username: 'agent',
+  name: 'Agent Name',
+  email: 'agent@example.test',
+}
+
 describe('generic data request compiler', () => {
   it('rejects arbitrary table identifiers', () => {
     expect(() => __test.parseCommon({ table: 'users; drop table users' })).toThrowError(ApiError)
@@ -156,6 +164,44 @@ describe('generic data request compiler', () => {
     )).toThrowError(/atomic opportunity workflow/)
   })
 
+  it('lets schedule-only access clear, but never create, a temporary deadline exemption', () => {
+    const schedule = new Set(['opportunity:editSchedule'])
+    expect(() => __test.assertOpportunityFieldAuthorization(
+      new Set(['due_date', 'non_submission_exempt']),
+      schedule,
+      { due_date: '2026-07-30', non_submission_exempt: false },
+      { due_date: '2026-07-14', non_submission_exempt: true },
+    )).not.toThrow()
+    expect(() => __test.assertOpportunityFieldAuthorization(
+      new Set(['due_date', 'non_submission_exempt']),
+      schedule,
+      { due_date: '2026-07-30', non_submission_exempt: true },
+      { due_date: '2026-07-14', non_submission_exempt: false },
+    )).toThrowError(/only while replacing the deadline/)
+    expect(() => __test.assertOpportunityFieldAuthorization(
+      new Set(['non_submission_exempt']),
+      schedule,
+      { non_submission_exempt: false },
+      { non_submission_exempt: true },
+    )).toThrowError(/only while replacing the deadline/)
+  })
+
+  it('allows assignment normalization only within the active pipeline states', () => {
+    const assign = new Set(['opportunity:assign'])
+    expect(() => __test.assertOpportunityFieldAuthorization(
+      new Set(['assigned_to', 'status']),
+      assign,
+      { assigned_to: 'employee-1', status: 'ACTIVE' },
+      { assigned_to: null, status: 'NEW_ASSIGNMENT' },
+    )).not.toThrow()
+    expect(() => __test.assertOpportunityFieldAuthorization(
+      new Set(['assigned_to', 'status']),
+      assign,
+      { assigned_to: 'employee-1', status: 'SUBMITTED' },
+      { assigned_to: null, status: 'NEW_ASSIGNMENT' },
+    )).toThrowError(/atomic opportunity workflow/)
+  })
+
   it('ignores unchanged full-row values after PostgreSQL date/numeric serialization', () => {
     const changed = __test.changedColumns({
       id: 'o1',
@@ -269,6 +315,15 @@ describe('generic data request compiler', () => {
     )).toThrowError(/atomic opportunity workflow/)
   })
 
+  it('routes opportunity non-submission report links through the workflow even for Admin', () => {
+    expect(() => __test.assertOpportunityFieldAuthorization(
+      new Set(['non_submission_report_id']),
+      new Set(['admin:manageUsers']),
+      { non_submission_report_id: 'report-2' },
+      { non_submission_report_id: 'report-1' },
+    )).toThrowError(/atomic opportunity workflow/)
+  })
+
   it('does not let cancellation-only permission bypass the atomic workflow', () => {
     const cancelOnly = new Set(['opportunity:cancel'])
     expect(() => __test.assertOpportunityFieldAuthorization(
@@ -316,7 +371,30 @@ describe('generic data request compiler', () => {
     )).resolves.toEqual(new Map())
   })
 
-  it('blocks stale-client non-submission review writes but permits ordinary report edits', async () => {
+  it.each([
+    ['submitted_at', '2026-07-28T16:00:00.000Z'],
+    ['non_submission_report_id', 'report-1'],
+    ['is_deleted', true],
+    ['non_submission_exempt', true],
+    ['deletion_requested', true],
+  ])('rejects new opportunities carrying pre-existing %s workflow state', async (column, value) => {
+    const creator = queryable((text) => {
+      if (text.includes('private.has_permission')) {
+        return [{ permission: 'opportunity:create', allowed: true }]
+      }
+      if (text.includes('from public.opportunities opportunity')) return []
+      throw new Error(`Unexpected query: ${text}`)
+    })
+
+    await expect(__test.authorizeOpportunityRows(
+      creator,
+      [{ id: `new-${column}`, status: 'ACTIVE', [column]: value }],
+      true,
+      ['id'],
+    )).rejects.toMatchObject({ code: 'workflow_required' })
+  })
+
+  it('accepts only narrow report patches and blocks full stale report snapshots', async () => {
     const existing = {
       id: 'report-1',
       opportunity_id: 'o1',
@@ -326,6 +404,7 @@ describe('generic data request compiler', () => {
       reviewed_at: null,
       review_note: null,
       comments: [],
+      agent_username: nonSubmissionActor.username,
     }
     const client = queryable((text) => {
       if (text.includes('private.has_permission')) {
@@ -334,33 +413,273 @@ describe('generic data request compiler', () => {
       if (text.includes('from public.non_submission_reports report')) {
         return [{ id: 'report-1', snapshot: existing }]
       }
+      if (text.includes('from public.users')) return [nonSubmissionActor]
       throw new Error(`Unexpected query: ${text}`)
     })
 
     await expect(__test.authorizeNonSubmissionRows(client, [{
-      ...existing,
+      id: existing.id,
       reason: 'Clarified reason',
+      reason_edited_at: '2026-07-28T16:00:00.000Z',
     }], true, ['id'])).resolves.toBeInstanceOf(Map)
     await expect(__test.authorizeNonSubmissionRows(client, [{
       ...existing,
-      status: 'APPROVED',
-      reviewed_by: 'manager',
+      reason: 'Clarified reason',
     }], true, ['id'])).rejects.toMatchObject({ code: 'workflow_required' })
   })
 
-  it('allows only pending reports to be created through generic CRUD', async () => {
+  it('denies a cross-user reason edit but allows the current assigned employee', async () => {
+    const report = {
+      id: 'report-1',
+      opportunity_id: 'o1',
+      agent_username: 'different-agent',
+      reason: 'Original reason',
+    }
+    const row = {
+      id: report.id,
+      reason: 'Clarified reason',
+      reason_edited_at: '2026-07-28T16:00:00.000Z',
+    }
+    const denied = queryable((text) => {
+      if (text.includes('private.has_permission')) {
+        return [{ permission: 'nonSubmission:submit', allowed: true }]
+      }
+      if (text.includes('from public.non_submission_reports report')) {
+        return [{ id: report.id, snapshot: report }]
+      }
+      if (text.includes('from public.users')) return [nonSubmissionActor]
+      if (text.includes('from public.opportunities opportunity')) {
+        return [{
+          assigned_to: 'employee-other',
+          bds: 'Other Lead',
+          bdm: 'Other Manager',
+          // A partial username match must not grant ownership.
+          support_agent: 'Agent Smith',
+          assigned_employee_id: 'employee-other',
+          assigned_employee_name: 'Other Associate',
+          assigned_employee_email: 'other@example.test',
+        }]
+      }
+      throw new Error(`Unexpected query: ${text}`)
+    })
+    await expect(__test.authorizeNonSubmissionRows(denied, [row], true, ['id']))
+      .rejects.toMatchObject({ statusCode: 403, code: 'forbidden' })
+
+    const assigned = queryable((text) => {
+      if (text.includes('private.has_permission')) {
+        return [{ permission: 'nonSubmission:submit', allowed: true }]
+      }
+      if (text.includes('from public.non_submission_reports report')) {
+        return [{ id: report.id, snapshot: report }]
+      }
+      if (text.includes('from public.users')) return [nonSubmissionActor]
+      if (text.includes('from public.opportunities opportunity')) {
+        return [{
+          assigned_to: 'employee-agent',
+          bds: null,
+          bdm: null,
+          support_agent: null,
+          assigned_employee_id: 'employee-agent',
+          assigned_employee_name: nonSubmissionActor.name,
+          assigned_employee_email: nonSubmissionActor.email,
+        }]
+      }
+      throw new Error(`Unexpected query: ${text}`)
+    })
+    await expect(__test.authorizeNonSubmissionRows(assigned, [row], true, ['id']))
+      .resolves.toBeInstanceOf(Map)
+  })
+
+  it('lets reviewers edit any reason and binds reminder watermarks to server time', async () => {
+    const snapshot = {
+      id: 'report-1',
+      opportunity_id: 'o1',
+      agent_username: 'different-agent',
+      reason: 'Original reason',
+      last_reminder_at: null,
+    }
+    const reasonClient = queryable((text) => {
+      if (text.includes('private.has_permission')) {
+        return [{ permission: 'nonSubmission:review', allowed: true }]
+      }
+      if (text.includes('from public.non_submission_reports report')) {
+        return [{ id: snapshot.id, snapshot }]
+      }
+      throw new Error(`Unexpected query: ${text}`)
+    })
+    await expect(__test.authorizeNonSubmissionRows(reasonClient, [{
+      id: snapshot.id,
+      reason: 'Reviewer clarification',
+      reason_edited_at: '2026-07-28T16:00:00.000Z',
+    }], true, ['id'])).resolves.toBeInstanceOf(Map)
+
+    const reminderClient = queryable((text) => {
+      if (text.includes('private.has_permission')) {
+        return [{ permission: 'nonSubmission:submit', allowed: true }]
+      }
+      if (text.includes('from public.non_submission_reports report')) {
+        return [{ id: snapshot.id, snapshot }]
+      }
+      throw new Error(`Unexpected query: ${text}`)
+    })
+    const reminderPatch = {
+      id: snapshot.id,
+      last_reminder_at: '2099-01-01T00:00:00.000Z',
+    }
+    const before = Date.now()
+    await expect(__test.authorizeNonSubmissionRows(reminderClient, [reminderPatch], true, ['id']))
+      .resolves.toBeInstanceOf(Map)
+    const after = Date.now()
+    expect(Date.parse(reminderPatch.last_reminder_at)).toBeGreaterThanOrEqual(before)
+    expect(Date.parse(reminderPatch.last_reminder_at)).toBeLessThanOrEqual(after)
+  })
+
+  it('updates ordinary fields on an existing non-submission report without inserting a row', async () => {
+    const row = {
+      id: 'report-1',
+      reason: 'Clarified reason',
+      reason_edited_at: '2026-07-28T16:00:00.000Z',
+    }
+    const statements: string[] = []
+    const client = queryable((text) => {
+      statements.push(text)
+      if (text.includes('information_schema.columns')) {
+        return Object.keys(row).map((column_name) => ({ column_name }))
+      }
+      if (text.includes('private.has_permission')) {
+        return [{ permission: 'nonSubmission:submit', allowed: true }]
+      }
+      if (text.includes('from public.non_submission_reports report')) {
+        return [{
+          id: 'report-1',
+          snapshot: {
+            id: 'report-1',
+            opportunity_id: 'o1',
+            agent_username: nonSubmissionActor.username,
+            reason: 'Original reason',
+            reason_edited_at: null,
+          },
+        }]
+      }
+      if (text.includes('from public.users')) return [nonSubmissionActor]
+      if (text.startsWith('update public.non_submission_reports')) return [row]
+      throw new Error(`Unexpected query: ${text}`)
+    })
+    const request = __test.parseCommon({
+      table: 'non_submission_reports',
+      rows: [row],
+      onConflict: 'id',
+    }, ['rows', 'onConflict', 'ignoreDuplicates'])
+
+    await expect(__test.insertData(client, request, true)).resolves.toMatchObject({ data: [row] })
+    expect(statements.some((text) => text.startsWith('update public.non_submission_reports'))).toBe(true)
+    expect(statements.some((text) => text.startsWith('insert into public.non_submission_reports'))).toBe(false)
+  })
+
+  it('appends a comment under the report lock without dropping a concurrent comment', async () => {
+    const existingComment = {
+      id: 'comment-existing',
+      text: 'Existing note',
+      author: 'Reviewer',
+      createdAt: '2026-07-28T15:00:00.000Z',
+    }
+    const newComment = {
+      id: 'comment-new',
+      text: 'New note',
+      author: 'Spoofed Author',
+      authorId: 'spoofed-user',
+      createdAt: '2026-07-28T16:00:00.000Z',
+    }
+    const canonicalComment = {
+      id: newComment.id,
+      text: newComment.text,
+      author: nonSubmissionActor.author,
+      authorId: nonSubmissionActor.id,
+      createdAt: expect.any(String),
+    }
+    const row = { id: 'report-1', comments: [newComment] }
+    let persistedComments: unknown
+    const client = queryable((text, values) => {
+      if (text.includes('information_schema.columns')) {
+        return Object.keys(row).map((column_name) => ({ column_name }))
+      }
+      if (text.includes('private.has_permission')) {
+        return [{ permission: 'nonSubmission:submit', allowed: true }]
+      }
+      if (text.includes('from public.non_submission_reports report')) {
+        return [{
+          id: 'report-1',
+          snapshot: { id: 'report-1', comments: [existingComment] },
+        }]
+      }
+      if (text.includes('from public.users')) return [nonSubmissionActor]
+      if (text.startsWith('update public.non_submission_reports')) {
+        persistedComments = JSON.parse(String(values?.[0]))
+        return [{ id: 'report-1' }]
+      }
+      throw new Error(`Unexpected query: ${text}`)
+    })
+    const request = __test.parseCommon({
+      table: 'non_submission_reports',
+      rows: [row],
+      onConflict: 'id',
+      columns: 'id',
+    }, ['rows', 'onConflict', 'ignoreDuplicates'])
+
+    await expect(__test.insertData(client, request, true)).resolves.toMatchObject({
+      data: [{ id: 'report-1' }],
+    })
+    expect(persistedComments).toEqual([existingComment, canonicalComment])
+  })
+
+  it('makes a repeated comment append idempotent by comment id', async () => {
+    const comment = {
+      id: 'comment-existing',
+      text: 'Existing note',
+      author: 'Reviewer',
+      createdAt: '2026-07-28T15:00:00.000Z',
+    }
+    const row = { id: 'report-1', comments: [comment] }
+    const statements: string[] = []
+    const client = queryable((text) => {
+      statements.push(text)
+      if (text.includes('information_schema.columns')) {
+        return Object.keys(row).map((column_name) => ({ column_name }))
+      }
+      if (text.includes('private.has_permission')) {
+        return [{ permission: 'nonSubmission:submit', allowed: true }]
+      }
+      if (text.includes('from public.non_submission_reports report')) {
+        return [{ id: 'report-1', snapshot: { id: 'report-1', comments: [comment] } }]
+      }
+      if (text.includes('from public.users')) return [nonSubmissionActor]
+      throw new Error(`Unexpected query: ${text}`)
+    })
+    const request = __test.parseCommon({
+      table: 'non_submission_reports',
+      rows: [row],
+      onConflict: 'id',
+    }, ['rows', 'onConflict', 'ignoreDuplicates'])
+
+    await expect(__test.insertData(client, request, true)).resolves.toMatchObject({
+      data: [{ id: 'report-1', comments: [comment] }],
+    })
+    expect(statements.some((text) => text.startsWith('update public.non_submission_reports'))).toBe(false)
+  })
+
+  it('requires the atomic workflow for every new non-submission report', async () => {
     const client = queryable((text) => text.includes('private.has_permission')
       ? [{ permission: 'nonSubmission:review', allowed: true }]
       : [])
     await expect(__test.authorizeNonSubmissionRows(client, [{
       id: 'report-1', status: 'PENDING', reason: 'Late proposal',
-    }], false, [])).resolves.toEqual(new Map())
+    }], false, [])).rejects.toMatchObject({ code: 'workflow_required' })
     await expect(__test.authorizeNonSubmissionRows(client, [{
       id: 'report-2', status: 'DECLINED', reviewed_by: 'manager',
     }], false, [])).rejects.toMatchObject({ code: 'workflow_required' })
   })
 
-  it('fails a concurrent non-submission insert instead of overwriting it through ON CONFLICT', async () => {
+  it('does not let an authorized generic upsert create a non-submission report', async () => {
     const row = { id: 'report-new', status: 'PENDING', reason: 'Late proposal' }
     const statements: string[] = []
     const client = queryable((text) => {
@@ -372,7 +691,6 @@ describe('generic data request compiler', () => {
         return [{ permission: 'nonSubmission:submit', allowed: true }]
       }
       if (text.includes('from public.non_submission_reports report')) return []
-      if (text.startsWith('insert into public.non_submission_reports')) return []
       throw new Error(`Unexpected query: ${text}`)
     })
     const request = __test.parseCommon({
@@ -381,10 +699,9 @@ describe('generic data request compiler', () => {
       onConflict: 'id',
     }, ['rows', 'onConflict', 'ignoreDuplicates'])
 
-    await expect(__test.insertData(client, request, true)).rejects.toMatchObject({ code: '23505' })
-    const insert = statements.find((text) => text.startsWith('insert into public.non_submission_reports'))
-    expect(insert).toContain('do nothing')
-    expect(insert).not.toContain('do update')
+    await expect(__test.insertData(client, request, true))
+      .rejects.toMatchObject({ code: 'workflow_required' })
+    expect(statements.some((text) => text.startsWith('insert into public.non_submission_reports'))).toBe(false)
   })
 
   it('marks a quote-backed opportunity in the same sourcing upsert transaction', async () => {
@@ -521,12 +838,11 @@ describe('generic data request compiler', () => {
     expect(statements.some((text) => /^(insert|update) /i.test(text))).toBe(false)
   })
 
-  it('rejects an unauthorized ordinary non-submission report update', async () => {
+  it('rejects generic non-submission report UPDATE in favor of the row-locked upsert path', async () => {
     const client = queryable((text) => {
       if (text.includes('information_schema.columns')) {
         return [{ column_name: 'id' }, { column_name: 'reason' }]
       }
-      if (text.includes('private.has_permission')) return []
       throw new Error(`Unexpected query: ${text}`)
     })
     const request = __test.parseCommon({
@@ -536,10 +852,108 @@ describe('generic data request compiler', () => {
     }, ['values'])
 
     await expect(__test.updateOrDeleteData(client, request, 'update'))
-      .rejects.toMatchObject({ statusCode: 403, code: 'forbidden' })
+      .rejects.toMatchObject({ statusCode: 409, code: 'patch_required' })
   })
 
-  it('diffs full-row upserts under a row lock before applying field authorization', async () => {
+  it('rejects an unmarked existing opportunity upsert from an older full-snapshot client', async () => {
+    const client = queryable((text) => {
+      if (text.includes('private.has_permission')) {
+        return [{ permission: 'opportunity:edit', allowed: true }]
+      }
+      if (text.includes('for update')) {
+        return [{
+          id: 'o1',
+          snapshot: {
+            id: 'o1',
+            status: 'ACTIVE',
+            due_date: '2026-07-30',
+            client: 'Current agency',
+          },
+        }]
+      }
+      throw new Error(`Unexpected query: ${text}`)
+    })
+
+    await expect(__test.authorizeOpportunityRows(client, [{
+      id: 'o1',
+      status: 'ACTIVE',
+      due_date: '2026-07-14',
+      client: 'Stale agency',
+    }], true, ['id'])).rejects.toMatchObject({ code: 'patch_required' })
+  })
+
+  it('rejects an unmarked existing opportunity upsert before any write', async () => {
+    const row = {
+      id: 'o1',
+      status: 'ACTIVE',
+      due_date: '2026-07-14',
+      client: 'Stale agency',
+    }
+    const statements: string[] = []
+    const client = queryable((text) => {
+      statements.push(text)
+      if (text.includes('information_schema.columns')) {
+        return Object.keys(row).map((column_name) => ({ column_name }))
+      }
+      if (text.includes('private.has_permission')) {
+        return [{ permission: 'opportunity:edit', allowed: true }]
+      }
+      if (text.includes('for update')) {
+        return [{
+          id: 'o1',
+          snapshot: {
+            id: 'o1',
+            status: 'ACTIVE',
+            due_date: '2026-07-30',
+            client: 'Current agency',
+          },
+        }]
+      }
+      throw new Error(`Unexpected query: ${text}`)
+    })
+    const request = __test.parseCommon({
+      table: 'opportunities',
+      rows: [row],
+      onConflict: 'id',
+    }, ['rows', 'onConflict', 'ignoreDuplicates'])
+
+    await expect(__test.insertData(client, request, true))
+      .rejects.toMatchObject({ code: 'patch_required' })
+    expect(statements.some((text) => text.startsWith('update public.opportunities'))).toBe(false)
+    expect(statements.some((text) => text.startsWith('insert into public.opportunities'))).toBe(false)
+  })
+
+  it('keeps an unmarked no-op create retry idempotent after a response is lost', async () => {
+    const row = {
+      id: 'o1',
+      status: 'ACTIVE',
+      due_date: '2026-07-30',
+      client: 'Current agency',
+    }
+    const statements: string[] = []
+    const client = queryable((text) => {
+      statements.push(text)
+      if (text.includes('information_schema.columns')) {
+        return Object.keys(row).map((column_name) => ({ column_name }))
+      }
+      if (text.includes('private.has_permission')) {
+        return [{ permission: 'opportunity:create', allowed: true }]
+      }
+      if (text.includes('for update')) return [{ id: 'o1', snapshot: row }]
+      throw new Error(`Unexpected query: ${text}`)
+    })
+    const request = __test.parseCommon({
+      table: 'opportunities',
+      rows: [row],
+      onConflict: 'id',
+    }, ['rows', 'onConflict', 'ignoreDuplicates'])
+
+    await expect(__test.insertData(client, request, true)).resolves.toMatchObject({ data: [row] })
+    expect(statements.some((text) => text.startsWith('update public.opportunities'))).toBe(false)
+    expect(statements.some((text) => text.startsWith('insert into public.opportunities'))).toBe(false)
+  })
+
+  it('diffs marked opportunity patches under a row lock before applying field authorization', async () => {
     const client = queryable((text) => {
       if (text.includes('private.has_permission')) {
         return [{ permission: 'opportunity:editSchedule', allowed: true }]
@@ -563,16 +977,40 @@ describe('generic data request compiler', () => {
       status: 'WON',
       due_date: '2026-07-21',
       contract_amount: 100,
-    }], true, ['id'])).rejects.toMatchObject({ code: 'workflow_required' })
+    }], true, ['id'], true)).rejects.toMatchObject({ code: 'workflow_required' })
   })
 
-  it('prevents the generic opportunity update route from bypassing Admin-only dollar fields', async () => {
+  it.each([
+    ['submitted_at', '2026-07-20T12:00:00.000Z'],
+    ['non_submission_report_id', 'report-1'],
+    ['is_deleted', false],
+  ])('rejects the protected %s sentinel by presence in a marked patch', async (column, value) => {
+    const client = queryable((text) => {
+      if (text.includes('private.has_permission')) {
+        return [{ permission: 'admin:manageUsers', allowed: true }]
+      }
+      if (text.includes('for update')) {
+        return [{ id: 'o1', snapshot: { id: 'o1', [column]: value } }]
+      }
+      throw new Error(`Unexpected query: ${text}`)
+    })
+
+    await expect(__test.authorizeOpportunityRows(
+      client,
+      [{ id: 'o1', [column]: value }],
+      true,
+      ['id'],
+      true,
+    )).rejects.toMatchObject({ code: 'workflow_required' })
+  })
+
+  it('rejects generic opportunity UPDATE in favor of marked row-locked patches', async () => {
     const request = __test.parseCommon({
       table: 'opportunities',
       values: { contract_amount: 900, base_amount: 120, monthly_payment: 10 },
       filters: [{ column: 'id', operator: 'eq', value: 'o1' }],
     }, ['values'])
-    const denied = queryable((text) => {
+    const client = queryable((text) => {
       if (text.includes('information_schema.columns')) {
         return [
           { column_name: 'id' },
@@ -580,37 +1018,50 @@ describe('generic data request compiler', () => {
           { column_name: 'base_amount' },
           { column_name: 'monthly_payment' },
         ]
-      }
-      if (text.includes('private.has_permission')) {
-        return [{ permission: 'opportunity:edit', allowed: true }]
       }
       throw new Error(`Unexpected query: ${text}`)
     })
 
-    await expect(__test.updateOrDeleteData(denied, request, 'update'))
-      .rejects.toMatchObject({ statusCode: 403, code: 'forbidden_opportunity_financial_fields' })
+    await expect(__test.updateOrDeleteData(client, request, 'update'))
+      .rejects.toMatchObject({ statusCode: 409, code: 'patch_required' })
+  })
 
-    const admin = queryable((text) => {
+  it('blocks generic UPDATE and marked upsert attempts to change the report link', async () => {
+    const statements: string[] = []
+    const client = queryable((text) => {
+      statements.push(text)
       if (text.includes('information_schema.columns')) {
-        return [
-          { column_name: 'id' },
-          { column_name: 'contract_amount' },
-          { column_name: 'base_amount' },
-          { column_name: 'monthly_payment' },
-        ]
+        return [{ column_name: 'id' }, { column_name: 'non_submission_report_id' }]
       }
       if (text.includes('private.has_permission')) {
         return [{ permission: 'admin:manageUsers', allowed: true }]
       }
-      if (text.startsWith('update public.') && text.includes('opportunities')) {
-        return [{ id: 'o1', contract_amount: 900, base_amount: 120, monthly_payment: 10 }]
+      if (text.includes('for update')) {
+        return [{
+          id: 'o1',
+          snapshot: { id: 'o1', non_submission_report_id: 'report-1' },
+        }]
       }
       throw new Error(`Unexpected query: ${text}`)
     })
+    const updateRequest = __test.parseCommon({
+      table: 'opportunities',
+      values: { non_submission_report_id: 'report-2' },
+      filters: [{ column: 'id', operator: 'eq', value: 'o1' }],
+    }, ['values'])
+    const upsertRequest = __test.parseCommon({
+      table: 'opportunities',
+      rows: [{ id: 'o1', non_submission_report_id: 'report-2' }],
+      onConflict: 'id',
+      patchExisting: true,
+    }, ['rows', 'onConflict', 'ignoreDuplicates', 'patchExisting'])
 
-    await expect(__test.updateOrDeleteData(admin, request, 'update')).resolves.toMatchObject({
-      data: [{ id: 'o1', contract_amount: 900, base_amount: 120, monthly_payment: 10 }],
-    })
+    await expect(__test.updateOrDeleteData(client, updateRequest, 'update'))
+      .rejects.toMatchObject({ code: 'patch_required' })
+    await expect(__test.insertData(client, upsertRequest, true))
+      .rejects.toMatchObject({ code: 'workflow_required' })
+    expect(statements.some((text) => text.startsWith('update public.opportunities'))).toBe(false)
+    expect(statements.some((text) => text.startsWith('insert into public.opportunities'))).toBe(false)
   })
 
   it.each([
@@ -637,7 +1088,8 @@ describe('generic data request compiler', () => {
       table: 'opportunities',
       rows: [row],
       onConflict: 'id',
-    }, ['rows', 'onConflict', 'ignoreDuplicates'])
+      patchExisting: true,
+    }, ['rows', 'onConflict', 'ignoreDuplicates', 'patchExisting'])
 
     await expect(__test.insertData(client, request, true)).resolves.toMatchObject({ data: [row] })
     expect(statements.some((text) => text.startsWith('update public.opportunities'))).toBe(true)
@@ -664,7 +1116,8 @@ describe('generic data request compiler', () => {
       table: 'opportunities',
       rows: [row],
       onConflict: 'id',
-    }, ['rows', 'onConflict', 'ignoreDuplicates'])
+      patchExisting: true,
+    }, ['rows', 'onConflict', 'ignoreDuplicates', 'patchExisting'])
 
     await expect(__test.insertData(client, request, true))
       .rejects.toMatchObject({ code: 'workflow_required' })
@@ -691,7 +1144,8 @@ describe('generic data request compiler', () => {
       table: 'opportunities',
       rows: [row],
       onConflict: 'id',
-    }, ['rows', 'onConflict', 'ignoreDuplicates'])
+      patchExisting: true,
+    }, ['rows', 'onConflict', 'ignoreDuplicates', 'patchExisting'])
 
     await expect(__test.insertData(client, request, true)).rejects.toMatchObject({ code: 'stale_opportunity' })
   })
@@ -715,6 +1169,35 @@ describe('generic data request compiler', () => {
     }, ['rows', 'onConflict', 'ignoreDuplicates'])
 
     await expect(__test.insertData(client, request, true)).rejects.toMatchObject({ code: 'forbidden' })
+  })
+
+  it('does not let a marked opportunity patch create a missing row', async () => {
+    const statements: string[] = []
+    const row = { id: 'missing-opportunity', due_date: '2026-07-30' }
+    const client = queryable((text) => {
+      statements.push(text)
+      if (text.includes('information_schema.columns')) {
+        return Object.keys(row).map((column_name) => ({ column_name }))
+      }
+      if (text.includes('private.has_permission')) {
+        return [
+          { permission: 'opportunity:create', allowed: true },
+          { permission: 'opportunity:editSchedule', allowed: true },
+        ]
+      }
+      if (text.includes('for update')) return []
+      throw new Error(`Unexpected query: ${text}`)
+    })
+    const request = __test.parseCommon({
+      table: 'opportunities',
+      rows: [row],
+      onConflict: 'id',
+      patchExisting: true,
+    }, ['rows', 'onConflict', 'ignoreDuplicates', 'patchExisting'])
+
+    await expect(__test.insertData(client, request, true))
+      .rejects.toMatchObject({ code: 'stale_opportunity' })
+    expect(statements.some((text) => text.startsWith('insert into public.opportunities'))).toBe(false)
   })
 
   it('keeps INSERT authorization for a genuinely new opportunity', async () => {

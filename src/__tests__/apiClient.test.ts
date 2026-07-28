@@ -50,6 +50,23 @@ describe('private data API compatibility client', () => {
     expect(JSON.parse(String(init?.body)).onConflict).toBe('key')
   })
 
+  it('marks an opportunity upsert as an existing-row patch only when explicitly requested', async () => {
+    const fetchMock = mockSuccess()
+
+    await api.from('opportunities').upsert(
+      { id: 'opp-1', due_date: '2026-07-30' },
+      { onConflict: 'id', patchExisting: true },
+    )
+
+    const [, init] = fetchMock.mock.calls[0]
+    expect(JSON.parse(String(init?.body))).toMatchObject({
+      table: 'opportunities',
+      rows: { id: 'opp-1', due_date: '2026-07-30' },
+      onConflict: 'id',
+      patchExisting: true,
+    })
+  })
+
   it('converts the one legacy OR expression to a validated filter AST', async () => {
     const fetchMock = mockSuccess()
 

@@ -1,8 +1,23 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { MemoryRouter } from 'react-router-dom'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import PipelinePage from '../pages/PipelinePage'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+const persistence = vi.hoisted(() => ({
+  updateOpportunityRecord: vi.fn().mockResolvedValue(true),
+  syncOpportunityComments: vi.fn().mockResolvedValue(true),
+}))
+
+vi.mock('../lib/db', async () => {
+  const actual = await vi.importActual<typeof import('../lib/db')>('../lib/db')
+  return {
+    ...actual,
+    updateOpportunityRecord: persistence.updateOpportunityRecord,
+    syncOpportunityComments: persistence.syncOpportunityComments,
+  }
+})
+
+import PipelinePage, { EditModal } from '../pages/PipelinePage'
 import { useStore } from '../store/useStore'
 import type { Opportunity, User } from '../types'
 
@@ -51,6 +66,8 @@ describe('General Opportunity Pipeline filter visibility', () => {
   let root: Root
 
   beforeEach(() => {
+    persistence.updateOpportunityRecord.mockClear()
+    persistence.syncOpportunityComments.mockClear()
     container = document.createElement('div')
     document.body.appendChild(container)
     root = createRoot(container)
@@ -61,6 +78,9 @@ describe('General Opportunity Pipeline filter visibility', () => {
       opportunities: [],
       deletionRequests: [],
       requireAssociateForActivePipeline: true,
+      rolePermissionOverrides: {},
+      userPermissionGrants: {},
+      userPermissionRevokes: {},
     })
   })
 
@@ -150,5 +170,79 @@ describe('General Opportunity Pipeline filter visibility', () => {
     expect(results).toContain('Matching active SDVOSB opportunity')
     expect(results).not.toContain('Different active VOSB opportunity')
     expect(results).not.toContain('Matching but submitted SDVOSB opportunity')
+  })
+
+  it('preserves a newer deadline and workflow state when an old edit modal changes only the title', async () => {
+    const modalSnapshot = makeOpportunity({
+      assignedTo: undefined,
+      status: 'NEW_ASSIGNMENT',
+      dueDate: '2026-07-14',
+      localTime: '13:00',
+      timezone: 'America/New_York',
+      nonSubmissionReportId: 'nsr-pipeline-opportunity',
+      nonSubmissionExempt: false,
+    })
+    useStore.setState({
+      opportunities: [modalSnapshot],
+      requireAssociateForActivePipeline: false,
+    })
+
+    await act(async () => {
+      root.render(
+        <MemoryRouter>
+          <EditModal opp={modalSnapshot} onClose={vi.fn()} />
+        </MemoryRouter>,
+      )
+    })
+
+    const refreshedOpportunity = {
+      ...modalSnapshot,
+      dueDate: '2026-07-30',
+      timezone: 'EDT',
+      nonSubmissionReportId: undefined,
+      nonSubmissionExempt: true,
+    }
+    await act(async () => {
+      useStore.setState({ opportunities: [refreshedOpportunity] })
+    })
+
+    const titleInput = Array.from(document.body.querySelectorAll<HTMLInputElement>('input'))
+      .find(input => input.value === modalSnapshot.solicitation)
+    expect(titleInput).toBeDefined()
+    const nativeValueSetter = Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      'value',
+    )?.set
+    await act(async () => {
+      nativeValueSetter?.call(titleInput, 'Updated pipeline opportunity')
+      titleInput?.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+
+    const saveButton = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+      .find(button => button.textContent?.includes('Save Changes'))
+    expect(saveButton).toBeDefined()
+    await act(async () => {
+      saveButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+    })
+
+    expect(persistence.updateOpportunityRecord).toHaveBeenCalledTimes(1)
+    const [savedOpportunity, savedFields] = persistence.updateOpportunityRecord.mock.calls[0]!
+    expect(savedFields).toEqual(['solicitation'])
+    expect(savedOpportunity).toMatchObject({
+      solicitation: 'Updated pipeline opportunity',
+      dueDate: '2026-07-30',
+      timezone: 'EDT',
+      nonSubmissionReportId: undefined,
+      nonSubmissionExempt: true,
+    })
+    expect(useStore.getState().opportunities[0]).toMatchObject({
+      solicitation: 'Updated pipeline opportunity',
+      dueDate: '2026-07-30',
+      timezone: 'EDT',
+      nonSubmissionReportId: undefined,
+      nonSubmissionExempt: true,
+    })
+    expect(persistence.syncOpportunityComments).not.toHaveBeenCalled()
   })
 })

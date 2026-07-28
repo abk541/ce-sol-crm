@@ -25,6 +25,7 @@ vi.mock('../lib/db', () => ({
   clearBusinessData: vi.fn().mockResolvedValue(null),
   findActiveOpportunityDuplicate: vi.fn().mockResolvedValue({ ok: true, duplicate: false }),
   upsertOpportunity: vi.fn().mockResolvedValue(true),
+  updateOpportunityRecord: vi.fn().mockResolvedValue(true),
   syncOpportunityComments: vi.fn().mockResolvedValue(true),
   deleteOpportunityRecord: vi.fn().mockResolvedValue(true),
   upsertSubcontractor: vi.fn().mockResolvedValue(null),
@@ -55,11 +56,13 @@ vi.mock('../lib/api', () => ({
 }))
 
 vi.mock('../lib/opportunityWorkflow', () => ({
+  createManualNonSubmissionWorkflow: vi.fn(),
   deleteOpportunityWorkflow: vi.fn(),
   submitOpportunityWorkflow: vi.fn(),
   transitionOpportunityWorkflow: vi.fn(),
   editOpportunityWorkflow: vi.fn(),
   returnOpportunityToPipelineWorkflow: vi.fn(),
+  createPendingNonSubmissionWorkflow: vi.fn(),
 }))
 
 vi.mock('../lib/deletionReview', () => ({
@@ -76,13 +79,16 @@ import {
   upsertContract,
   upsertContractVehicleOrder,
   upsertOpportunity,
+  updateOpportunityRecord,
   persistNotificationsRead,
   syncOpportunityComments,
   upsertDeletionRequest,
   upsertNotification,
 } from '../lib/db'
 import {
+  createManualNonSubmissionWorkflow,
   deleteOpportunityWorkflow,
+  createPendingNonSubmissionWorkflow,
   editOpportunityWorkflow,
   returnOpportunityToPipelineWorkflow,
   submitOpportunityWorkflow,
@@ -195,6 +201,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   vi.mocked(findActiveOpportunityDuplicate).mockResolvedValue({ ok: true, duplicate: false })
   vi.mocked(upsertOpportunity).mockResolvedValue(true)
+  vi.mocked(updateOpportunityRecord).mockResolvedValue(true)
   vi.mocked(syncOpportunityComments).mockResolvedValue(true)
   vi.mocked(upsertBDSubmission).mockResolvedValue(true)
   vi.mocked(upsertContract).mockResolvedValue(true)
@@ -333,10 +340,13 @@ beforeEach(() => {
   })
   vi.mocked(returnOpportunityToPipelineWorkflow).mockImplementation(async input => {
     const state = useStore.getState()
-    const submission = state.bdSubmissions.find(row => row.id === input.submissionId)
-    if (!submission) return null
-    const opportunity = state.opportunities.find(row => row.id === submission.opportunityId)
-      ?? state.opportunities.find(row => row.solicitationId === submission.solicitationId)
+    const submission = input.submissionId === undefined
+      ? undefined
+      : state.bdSubmissions.find(row => row.id === input.submissionId)
+    const opportunity = input.opportunityId
+      ? state.opportunities.find(row => row.id === input.opportunityId)
+      : state.opportunities.find(row => row.id === submission?.opportunityId)
+        ?? state.opportunities.find(row => row.solicitationId === submission?.solicitationId)
     if (!opportunity) return null
     return {
       opportunity: {
@@ -348,9 +358,11 @@ beforeEach(() => {
           ? { nonSubmissionExempt: input.nonSubmissionExempt }
           : {}),
       },
-      submission,
+      submission: submission ?? null,
     }
   })
+  vi.mocked(createPendingNonSubmissionWorkflow).mockResolvedValue(null)
+  vi.mocked(createManualNonSubmissionWorkflow).mockResolvedValue(null)
 })
 
 describe('deletion request review notifications', () => {
@@ -609,7 +621,12 @@ describe('associate comments and quoted workflow', () => {
       users: [CAPTURE_MANAGER_USER, ASSOCIATE_USER],
     })
 
-    const saved = await useStore.getState().updateOpportunity(opp.id, { dueDate: '2099-01-02' })
+    // The edit modal submits a complete form snapshot. Only the fields that
+    // actually changed may reach the database.
+    const saved = await useStore.getState().updateOpportunity(opp.id, {
+      ...opp,
+      dueDate: '2099-01-02',
+    })
 
     expect(saved).toBe(true)
     expect(useStore.getState().opportunities[0]).toMatchObject({
@@ -617,11 +634,24 @@ describe('associate comments and quoted workflow', () => {
       notifiedDue24h: false,
       notifiedDue4h: false,
     })
-    expect(upsertOpportunity).toHaveBeenCalledWith(expect.objectContaining({
-      id: opp.id,
-      notifiedDue24h: false,
-      notifiedDue4h: false,
-    }))
+    expect(updateOpportunityRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: opp.id,
+        notifiedDue24h: false,
+        notifiedDue4h: false,
+        nonSubmissionExempt: false,
+      }),
+      expect.arrayContaining([
+        'dueDate',
+        'notifiedDue24h',
+        'notifiedDue4h',
+        'nonSubmissionExempt',
+      ]),
+    )
+    const updateCalls = vi.mocked(updateOpportunityRecord).mock.calls
+    const persistedFields = updateCalls[updateCalls.length - 1]?.[1] ?? []
+    expect(persistedFields).not.toContain('status')
+    expect(persistedFields).not.toContain('nonSubmissionReportId')
     expect(useStore.getState().notifications).toContainEqual(expect.objectContaining({
       type: 'DEADLINE',
       title: 'Opportunity deadline extended',
@@ -634,6 +664,37 @@ describe('associate comments and quoted workflow', () => {
       entityId: opp.id,
       entityName: opp.solicitation,
     }))
+  })
+
+  it('persists reminder watermarks without sending a stale opportunity snapshot', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2099-01-01T12:00:00.000Z'))
+      const opp = makeOpp({
+        id: 'opp-reminder-patch',
+        assignedTo: 'emp-associate',
+        dueDate: '2099-01-01',
+        localTime: '15:00',
+        timezone: 'UTC',
+        notifiedDue24h: false,
+        notifiedDue4h: false,
+      })
+      useStore.setState({ opportunities: [opp], currentUser: CAPTURE_MANAGER_USER })
+
+      useStore.getState().scanDeadlineReminders()
+
+      expect(updateOpportunityRecord).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: opp.id,
+          notifiedDue24h: true,
+          notifiedDue4h: true,
+        }),
+        ['notifiedDue24h', 'notifiedDue4h'],
+      )
+      expect(upsertOpportunity).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('does not alert or reset reminders when deadline formatting changes but the effective time does not', async () => {
@@ -1337,6 +1398,173 @@ describe('3 · Non-Submission Report workflow', () => {
     await useStore.getState().reviewNonSubReport(reportId, 'DECLINED', 'Not approved', 'manager1')
 
     expect(useStore.getState().bdSubmissions.find(b => b.id === 22)?.status).toBe('DROPPED')
+  })
+
+  it('returns a pending report to the pipeline even when no BD Tracker row exists', async () => {
+    const opp = makeOpp({
+      id: 'opp-pending-return',
+      status: 'ACTIVE',
+      assignedTo: 'emp-associate',
+      dueDate: '2000-01-01',
+      localTime: '09:00 AM',
+      nonSubmissionReportId: 'nsr-opp-pending-return',
+    })
+    const report = {
+      id: 'nsr-opp-pending-return',
+      opportunityId: opp.id,
+      agentUsername: 'associate',
+      reason: 'No proposal submission was recorded within 12 hours after the due datetime.',
+      status: 'PENDING' as const,
+      submittedAt: '2026-07-27T15:21:06.000Z',
+    }
+    useStore.setState({
+      opportunities: [opp],
+      nonSubReports: [report],
+      bdSubmissions: [],
+    })
+
+    const saved = await useStore.getState().returnNonSubmissionToPipeline(report.id)
+
+    expect(saved).toBe(true)
+    expect(returnOpportunityToPipelineWorkflow).toHaveBeenCalledWith({
+      opportunityId: opp.id,
+      expectedOpportunityStatus: 'ACTIVE',
+      targetOpportunityStatus: 'ACTIVE',
+      nonSubmissionReportId: report.id,
+      nonSubmissionExempt: true,
+    })
+    expect(useStore.getState().nonSubReports).toHaveLength(0)
+    expect(useStore.getState().bdSubmissions).toHaveLength(0)
+    expect(useStore.getState().opportunities[0]).toMatchObject({
+      status: 'ACTIVE',
+      nonSubmissionExempt: true,
+    })
+    expect(useStore.getState().opportunities[0]?.nonSubmissionReportId).toBeUndefined()
+  })
+
+  it('removes a linked pending report when returning its BD Tracker row', async () => {
+    const opp = makeOpp({
+      id: 'opp-tracker-report-return',
+      status: 'SUBMITTED',
+      assignedTo: 'emp-associate',
+      nonSubmissionReportId: 'nsr-opp-tracker-report-return',
+    })
+    const tracker = trackerFor(opp, 'SUBMITTED')
+    const report = {
+      id: 'nsr-opp-tracker-report-return',
+      opportunityId: opp.id,
+      agentUsername: 'associate',
+      reason: 'Pending reconciliation report.',
+      status: 'PENDING' as const,
+      submittedAt: '2026-07-27T15:21:06.000Z',
+    }
+    useStore.setState({
+      opportunities: [opp],
+      bdSubmissions: [tracker],
+      nonSubReports: [report],
+    })
+
+    await expect(
+      useStore.getState().returnBDSubmissionToPipeline(tracker.id),
+    ).resolves.toBe(true)
+
+    expect(returnOpportunityToPipelineWorkflow).toHaveBeenCalledWith(
+      expect.objectContaining({ nonSubmissionReportId: report.id }),
+    )
+    expect(useStore.getState().bdSubmissions).toHaveLength(0)
+    expect(useStore.getState().nonSubReports).toHaveLength(0)
+    expect(useStore.getState().opportunities[0]?.nonSubmissionReportId).toBeUndefined()
+  })
+
+  it('preserves reviewed non-submission history when returning a resubmitted tracker row', async () => {
+    const opp = makeOpp({
+      id: 'opp-reviewed-history-return',
+      status: 'SUBMITTED',
+      assignedTo: 'emp-associate',
+      nonSubmissionReportId: 'nsr-reviewed-history',
+    })
+    const tracker = trackerFor(opp, 'SUBMITTED')
+    const report = {
+      id: 'nsr-reviewed-history',
+      opportunityId: opp.id,
+      agentUsername: 'associate',
+      reason: 'Previously reviewed non-submission.',
+      status: 'APPROVED' as const,
+      submittedAt: '2026-07-20T15:21:06.000Z',
+      reviewedAt: '2026-07-21T10:00:00.000Z',
+      reviewedBy: 'manager',
+    }
+    useStore.setState({
+      opportunities: [opp],
+      bdSubmissions: [tracker],
+      nonSubReports: [report],
+    })
+
+    await expect(
+      useStore.getState().returnBDSubmissionToPipeline(tracker.id),
+    ).resolves.toBe(true)
+
+    const workflowInput = vi.mocked(returnOpportunityToPipelineWorkflow).mock.calls[0]?.[0]
+    expect(workflowInput).not.toHaveProperty('nonSubmissionReportId')
+    expect(useStore.getState().bdSubmissions).toHaveLength(0)
+    expect(useStore.getState().nonSubReports).toEqual([report])
+    expect(useStore.getState().opportunities[0]?.nonSubmissionReportId).toBeUndefined()
+  })
+
+  it('protects an expired submitted return before the reporting grace window elapses', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-07-28T12:00:00.000Z'))
+      const opp = makeOpp({
+        id: 'opp-overdue-extension',
+        status: 'SUBMITTED',
+        assignedTo: 'emp-associate',
+        dueDate: '2026-07-28',
+        localTime: '11:00',
+        timezone: 'UTC',
+      })
+      const tracker = trackerFor(opp, 'SUBMITTED')
+      useStore.setState({
+        opportunities: [opp],
+        bdSubmissions: [tracker],
+        nonSubReports: [],
+      })
+
+      const saved = await useStore.getState().returnBDSubmissionToPipeline(tracker.id)
+
+      expect(saved).toBe(true)
+      expect(returnOpportunityToPipelineWorkflow).toHaveBeenCalledWith(expect.objectContaining({
+        submissionId: tracker.id,
+        nonSubmissionExempt: true,
+      }))
+      expect(useStore.getState().opportunities[0]).toMatchObject({
+        status: 'ACTIVE',
+        nonSubmissionExempt: true,
+      })
+      useStore.getState().syncDueOpportunities()
+      expect(useStore.getState().nonSubReports).toHaveLength(0)
+
+      const extended = await useStore.getState().updateOpportunity(opp.id, {
+        dueDate: '2026-07-30',
+      })
+      expect(extended).toBe(true)
+      expect(useStore.getState().opportunities[0]).toMatchObject({
+        dueDate: '2026-07-30',
+        nonSubmissionExempt: false,
+      })
+      expect(updateOpportunityRecord).toHaveBeenCalledWith(
+        expect.objectContaining({
+          dueDate: '2026-07-30',
+          nonSubmissionExempt: false,
+        }),
+        expect.arrayContaining(['dueDate', 'nonSubmissionExempt']),
+      )
+      expect(upsertOpportunity).not.toHaveBeenCalled()
+      useStore.getState().syncDueOpportunities()
+      expect(useStore.getState().nonSubReports).toHaveLength(0)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('review records the reviewer and note on the report', async () => {

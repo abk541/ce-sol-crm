@@ -202,6 +202,64 @@ function oppToDb(o: Opportunity, opts: { includeSamGovContacts?: boolean } = {})
   return row
 }
 
+const OPPORTUNITY_PATCH_COLUMNS: Partial<Record<keyof Opportunity, readonly string[]>> = {
+  solicitation: ['solicitation'],
+  solicitationId: ['solicitation_id'],
+  client: ['client'],
+  type: ['type'],
+  naicsCode: ['naics_code'],
+  setAside: ['set_aside'],
+  priority: ['priority'],
+  status: ['status'],
+  dueDate: ['due_date'],
+  localTime: ['local_time'],
+  timezone: ['timezone'],
+  location: ['location'],
+  pop: ['pop'],
+  bdm: ['bdm'],
+  bds: ['bds'],
+  supportAgent: ['support_agent'],
+  poc: ['poc'],
+  contractAmount: ['contract_amount'],
+  baseAmount: ['base_amount'],
+  monthlyPayment: ['monthly_payment'],
+  value: ['value'],
+  period: ['period'],
+  capturedOn: ['captured_on'],
+  mandatoryEvents: ['mandatory_events'],
+  mandatoryEventsList: ['mandatory_events_list'],
+  quoted: ['quoted'],
+  link: ['link'],
+  isDeleted: ['is_deleted'],
+  deletionRequested: ['deletion_requested'],
+  submittedAt: ['submitted_at'],
+  nonSubmissionReportId: ['non_submission_report_id'],
+  nonSubmissionExempt: ['non_submission_exempt'],
+  notifiedDue24h: ['notified_due_24h'],
+  notifiedDue4h: ['notified_due_4h'],
+  assignedTo: ['assigned_to'],
+  proposals: ['proposals'],
+  assignedOpportunities: ['assigned_opportunities'],
+  proposalAttachments: ['proposal_attachments'],
+  samGovContacts: ['sam_gov_contacts', 'poc'],
+}
+
+function opportunityPatchToDb(
+  opportunity: Opportunity,
+  fields: readonly (keyof Opportunity)[],
+): Record<string, unknown> {
+  const full = oppToDb(opportunity)
+  const patch: Record<string, unknown> = {}
+  for (const field of fields) {
+    for (const column of OPPORTUNITY_PATCH_COLUMNS[field] ?? []) {
+      patch[column] = column === 'non_submission_exempt'
+        ? opportunity.nonSubmissionExempt ?? false
+        : full[column]
+    }
+  }
+  return patch
+}
+
 export type OpportunityDuplicateCheckResult =
   | { ok: true; duplicate: boolean; opportunityId?: string }
   | { ok: false; error: unknown }
@@ -1182,7 +1240,7 @@ function nonSubReportToDb(report: NonSubmissionReport): Record<string, unknown> 
   }
 }
 
-function dbToNonSubReport(row: Record<string, unknown>): NonSubmissionReport {
+export function dbToNonSubReport(row: Record<string, unknown>): NonSubmissionReport {
   return {
     id: row.id as string,
     opportunityId: row.opportunity_id as string,
@@ -1286,7 +1344,7 @@ export async function loadAllData(): Promise<{
     const [
       userRes,
       empRes,
-      oppRes,
+      workflowRes,
       commentRes,
       subRes,
       conRes,
@@ -1298,14 +1356,25 @@ export async function loadAllData(): Promise<{
       vehicleOrderRes,
       faRes,
       ppRes,
-      nonSubRes,
       deletionRes,
-      bdRes,
       subkDatabaseRes,
     ] = await Promise.all([
       api.from('users').select(SAFE_USER_COLUMNS),
       api.from('employees').select('*'),
-      api.from('opportunities').select('*'),
+      apiRequest<{ data: {
+        opportunities: Record<string, unknown>[]
+        nonSubmissionReports: Record<string, unknown>[]
+        bdSubmissions: Record<string, unknown>[]
+      } }>('/opportunity-workflow-snapshot')
+        .then(response => ({
+          data: envelopeData<{
+            opportunities: Record<string, unknown>[]
+            nonSubmissionReports: Record<string, unknown>[]
+            bdSubmissions: Record<string, unknown>[]
+          }>(response),
+          error: null,
+        }))
+        .catch(error => ({ data: null, error })),
       api.from('comments').select('*'),
       api.from('subcontractors').select('*'),
       api.from('contracts').select('*'),
@@ -1317,11 +1386,21 @@ export async function loadAllData(): Promise<{
       api.from('contract_vehicle_orders').select('*'),
       api.from('fresh_awards').select('*'),
       api.from('past_performances').select('*'),
-      api.from('non_submission_reports').select('*'),
       api.from('deletion_requests').select('*'),
-      api.from('bd_submissions').select('*'),
       api.from('subk_database').select('*'),
     ])
+    const oppRes = {
+      data: workflowRes.data?.opportunities ?? null,
+      error: workflowRes.error,
+    }
+    const nonSubRes = {
+      data: workflowRes.data?.nonSubmissionReports ?? null,
+      error: workflowRes.error,
+    }
+    const bdRes = {
+      data: workflowRes.data?.bdSubmissions ?? null,
+      error: workflowRes.error,
+    }
 
     if (userRes.error) console.error('[db] users load error', userRes.error)
     if (empRes.error) console.error('[db] employees load error', empRes.error)
@@ -1449,6 +1528,52 @@ export async function upsertOpportunity(o: Opportunity): Promise<boolean> {
     return true
   } catch (err) {
     console.error('[db] upsertOpportunity failed', err)
+    return false
+  }
+}
+
+/**
+ * Persist only fields the user actually changed. Existing records must never be
+ * saved as a full stale browser snapshot: another session may have changed the
+ * deadline or workflow pointers since this tab last refreshed.
+ */
+export async function updateOpportunityRecord(
+  opportunity: Opportunity,
+  fields: readonly (keyof Opportunity)[],
+): Promise<boolean> {
+  if (!isApiConnected || !api) {
+    console.error('[db] updateOpportunityRecord skipped: API is not configured')
+    return false
+  }
+  let patch = opportunityPatchToDb(opportunity, fields)
+  if (Object.keys(patch).length === 0) return true
+  try {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const { data, error } = await api
+        .from('opportunities')
+        .upsert(
+          { id: opportunity.id, ...patch },
+          { onConflict: 'id', patchExisting: true },
+        )
+        .select('id')
+      if (!error) return Array.isArray(data) && data.length === 1
+      const message = `${error.message ?? ''} ${error.details ?? ''}`
+      if (
+        attempt === 0
+        && Object.prototype.hasOwnProperty.call(patch, 'sam_gov_contacts')
+        && message.includes('sam_gov_contacts')
+      ) {
+        const { sam_gov_contacts: _drop, ...fallback } = patch
+        void _drop
+        patch = fallback
+        continue
+      }
+      console.error('[db] updateOpportunityRecord error', error)
+      return false
+    }
+    return false
+  } catch (err) {
+    console.error('[db] updateOpportunityRecord failed', err)
     return false
   }
 }
@@ -1797,6 +1922,57 @@ export async function upsertNonSubReport(report: NonSubmissionReport): Promise<v
   } catch (err) {
     console.error('[db] upsertNonSubReport failed', err)
   }
+}
+
+async function patchNonSubmissionReport(
+  id: string,
+  patch: Record<string, unknown>,
+  label: string,
+): Promise<boolean> {
+  if (!isApiConnected || !api) return false
+  try {
+    const { data, error } = await api
+      .from('non_submission_reports')
+      .upsert({ id, ...patch }, { onConflict: 'id' })
+      .select('id')
+    if (error) {
+      console.error(`[db] ${label} error`, error)
+      return false
+    }
+    return Array.isArray(data) && data.length === 1
+  } catch (err) {
+    console.error(`[db] ${label} failed`, err)
+    return false
+  }
+}
+
+export function updateNonSubReportReasonRecord(
+  id: string,
+  reason: string,
+  reasonEditedAt: string,
+): Promise<boolean> {
+  return patchNonSubmissionReport(id, {
+    reason,
+    reason_edited_at: reasonEditedAt,
+  }, 'updateNonSubReportReasonRecord')
+}
+
+export function updateNonSubReportReminderRecord(
+  id: string,
+  lastReminderAt: string,
+): Promise<boolean> {
+  return patchNonSubmissionReport(id, {
+    last_reminder_at: lastReminderAt,
+  }, 'updateNonSubReportReminderRecord')
+}
+
+export function appendNonSubReportCommentRecord(
+  id: string,
+  comment: Comment,
+): Promise<boolean> {
+  return patchNonSubmissionReport(id, {
+    comments: [comment],
+  }, 'appendNonSubReportCommentRecord')
 }
 
 export async function upsertDeletionRequest(req: DeletionRequest): Promise<void> {

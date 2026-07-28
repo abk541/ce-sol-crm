@@ -104,6 +104,29 @@ describe('opportunity workflow request validation', () => {
   })
 })
 
+describe('opportunity workflow snapshot', () => {
+  it('loads opportunity, report, and tracker rows in one database statement', async () => {
+    const statements: string[] = []
+    const client = queryable((text) => {
+      expect(text).toContain('from public.opportunities')
+      expect(text).toContain('from public.non_submission_reports')
+      expect(text).toContain('from public.bd_submissions')
+      return [{
+        opportunities: [{ id: 'opp-1' }],
+        non_submission_reports: [{ id: 'report-1' }],
+        bd_submissions: [{ id: 41 }],
+      }]
+    }, statements)
+
+    await expect(__test.loadWorkflowSnapshot(client)).resolves.toEqual({
+      opportunities: [{ id: 'opp-1' }],
+      nonSubmissionReports: [{ id: 'report-1' }],
+      bdSubmissions: [{ id: 41 }],
+    })
+    expect(statements).toHaveLength(1)
+  })
+})
+
 describe('atomic opportunity workflows', () => {
   it('submits by locking/updating the opportunity before reconciling and creating a tracker row', async () => {
     const statements: string[] = []
@@ -1021,6 +1044,39 @@ describe('atomic opportunity workflows', () => {
     expect(statements.some((text) => /delete from public\./.test(text))).toBe(false)
   })
 
+  it('requires review permission before deleting a pending report discovered from the opportunity link', async () => {
+    const statements: string[] = []
+    const linkedOpportunity = {
+      ...opportunity,
+      status: 'ACTIVE',
+      non_submission_report_id: 'report-pending',
+    }
+    const client = queryable((text) => {
+      if (text.includes('private.has_permission')) return permissionRows('opportunity:edit')
+      if (text.startsWith('select id, opportunity_id')) return [{ id: 41, opportunity_id: 'opp-1' }]
+      if (text.includes('from public.opportunities') && text.includes('for update')) {
+        return [linkedOpportunity]
+      }
+      if (text.includes('from public.bd_submissions') && text.includes('for update')) return [submission]
+      if (text.startsWith('select id::text as id, status::text as status')) {
+        return [{ id: 'report-pending', status: 'PENDING' }]
+      }
+      throw new Error(`Unexpected query: ${text}`)
+    }, statements)
+
+    await expect(executeOpportunityWorkflow(client, {
+      action: 'return',
+      submissionId: 41,
+      targetOpportunityStatus: 'ACTIVE',
+      expectedOpportunityStatus: 'ACTIVE',
+      expectedSubmissionStatus: 'SUBMITTED',
+    }, new Date())).rejects.toMatchObject({ statusCode: 403, code: 'forbidden' })
+    expect(statements.some((text) => text.includes('from public.non_submission_reports'))).toBe(true)
+    expect(statements.some((text) => (
+      text.startsWith('update public.') || text.startsWith('delete from public.')
+    ))).toBe(false)
+  })
+
   it('reviews a non-submission report after updating both linked workflow records', async () => {
     const statements: string[] = []
     const reviewedAt = new Date('2026-07-21T15:30:00.000Z')
@@ -1077,7 +1133,9 @@ describe('atomic opportunity workflows', () => {
       if (text.includes('from public.bd_submissions') && text.includes('for update')) {
         return [{ ...submission, status: 'NOT_SUBMITTED' }]
       }
-      if (text.startsWith('select id from public.non_submission_reports')) return [{ id: 'report-1' }]
+      if (text.startsWith('select id::text as id, status::text as status')) {
+        return [{ id: 'report-1', status: 'APPROVED' }]
+      }
       if (text.startsWith('delete from public.bd_submissions')) return [{ ...submission, status: 'NOT_SUBMITTED' }]
       if (text.startsWith('update public.opportunities')) {
         expect(values).toEqual(['ACTIVE', true, 'opp-1'])
@@ -1112,6 +1170,357 @@ describe('atomic opportunity workflows', () => {
     const reportDelete = statements.findIndex((text) => text.startsWith('delete from public.non_submission_reports'))
     expect(opportunityUpdate).toBeGreaterThan(trackerDelete)
     expect(reportDelete).toBeGreaterThan(opportunityUpdate)
+  })
+
+  it('preserves reviewed report history when returning a newly submitted tracker', async () => {
+    const statements: string[] = []
+    const submittedOpportunity = {
+      ...opportunity,
+      status: 'SUBMITTED',
+      non_submission_report_id: 'report-history',
+    }
+    const client = queryable((text) => {
+      if (text.includes('private.has_permission')) {
+        return permissionRows('opportunity:edit')
+      }
+      if (text.startsWith('select id, opportunity_id')) {
+        return [{ id: 41, opportunity_id: 'opp-1' }]
+      }
+      if (text.includes('from public.opportunities') && text.includes('for update')) {
+        return [submittedOpportunity]
+      }
+      if (text.includes('from public.bd_submissions') && text.includes('for update')) {
+        return [{ ...submission, status: 'SUBMITTED' }]
+      }
+      if (text.startsWith('select id::text as id, status::text as status')) {
+        return [{ id: 'report-history', status: 'APPROVED' }]
+      }
+      if (text.startsWith('delete from public.bd_submissions')) {
+        return [{ ...submission, status: 'SUBMITTED' }]
+      }
+      if (text.startsWith('update public.opportunities')) {
+        return [{
+          ...submittedOpportunity,
+          status: 'ACTIVE',
+          submitted_at: null,
+          non_submission_report_id: null,
+        }]
+      }
+      throw new Error(`Unexpected query: ${text}`)
+    }, statements)
+
+    await expect(executeOpportunityWorkflow(client, {
+      action: 'return',
+      submissionId: 41,
+      targetOpportunityStatus: 'ACTIVE',
+      expectedOpportunityStatus: 'SUBMITTED',
+      expectedSubmissionStatus: 'SUBMITTED',
+    }, new Date())).resolves.toMatchObject({
+      opportunity: {
+        status: 'ACTIVE',
+        non_submission_report_id: null,
+      },
+    })
+    expect(statements.some((text) => text.startsWith('delete from public.non_submission_reports')))
+      .toBe(false)
+  })
+
+  it('returns a pending non-submission that legitimately has no BD Tracker row', async () => {
+    const statements: string[] = []
+    const pendingOpportunity = {
+      ...opportunity,
+      status: 'ACTIVE',
+      non_submission_report_id: 'report-pending',
+    }
+    const client = queryable((text, values) => {
+      if (text.includes('private.has_permission')) {
+        return permissionRows('opportunity:edit', 'nonSubmission:review')
+      }
+      if (text.includes('from public.opportunities') && text.includes('for update')) {
+        return [pendingOpportunity]
+      }
+      if (text.includes('from public.bd_submissions') && text.includes('where opportunity_id = $1')) {
+        return []
+      }
+      if (text.includes('opportunity_id is null')) return []
+      if (text.startsWith('select id::text as id, status::text as status')) {
+        return [{ id: 'report-pending', status: 'PENDING' }]
+      }
+      if (text.startsWith('update public.opportunities')) {
+        expect(values).toEqual(['ACTIVE', true, 'opp-1'])
+        return [{
+          ...pendingOpportunity,
+          non_submission_report_id: null,
+          non_submission_exempt: true,
+        }]
+      }
+      if (text.startsWith('delete from public.non_submission_reports')) {
+        return [{ id: 'report-pending' }]
+      }
+      throw new Error(`Unexpected query: ${text}`)
+    }, statements)
+
+    await expect(executeOpportunityWorkflow(client, {
+      action: 'return',
+      opportunityId: 'opp-1',
+      targetOpportunityStatus: 'ACTIVE',
+      expectedOpportunityStatus: 'ACTIVE',
+      nonSubmissionReportId: 'report-pending',
+      nonSubmissionExempt: true,
+    }, new Date())).resolves.toMatchObject({
+      opportunity: {
+        status: 'ACTIVE',
+        non_submission_report_id: null,
+        non_submission_exempt: true,
+      },
+      submission: null,
+    })
+    expect(statements.some((text) => text.startsWith('delete from public.bd_submissions'))).toBe(false)
+    expect(statements.some((text) => text.startsWith('delete from public.non_submission_reports'))).toBe(true)
+  })
+
+  it('creates and links an automatic pending report in one narrow workflow', async () => {
+    const statements: string[] = []
+    const now = new Date('2026-07-22T12:00:00.000Z')
+    const overdue = {
+      ...opportunity,
+      assigned_to: 'employee-associate',
+      due_date: '2026-07-20',
+      local_time: '10:00',
+      timezone: 'UTC',
+      non_submission_report_id: null,
+      non_submission_exempt: false,
+    }
+    const report = {
+      id: 'nsr-opp-1',
+      opportunity_id: 'opp-1',
+      agent_username: 'associate',
+      reason: 'No proposal submission was recorded within 12 hours after the due datetime.',
+      status: 'PENDING',
+      submitted_at: now.toISOString(),
+    }
+    const client = queryable((text, values) => {
+      if (text.includes('private.has_permission')) return permissionRows('nonSubmission:submit')
+      if (text.includes('from public.opportunities') && text.includes('for update')) return [overdue]
+      if (text.includes('from public.app_settings')) return [{ value: 'true' }]
+      if (text.includes('from public.employees')) return [{ role: 'ASSOCIATE' }]
+      if (text.includes('from public.bd_submissions') && text.includes('where opportunity_id = $1')) {
+        return []
+      }
+      if (text.includes('opportunity_id is null')) return []
+      if (text.startsWith('select * from public.non_submission_reports')) return []
+      if (text.startsWith('insert into public.non_submission_reports')) {
+        expect(values).toEqual([
+          'nsr-opp-1',
+          'opp-1',
+          'associate',
+          report.reason,
+          now.toISOString(),
+        ])
+        return [report]
+      }
+      if (text.startsWith('update public.opportunities')) {
+        expect(text).toContain('set non_submission_report_id = $1')
+        expect(text).not.toContain('due_date')
+        expect(values).toEqual(['nsr-opp-1', 'opp-1'])
+        return [{ ...overdue, non_submission_report_id: 'nsr-opp-1' }]
+      }
+      throw new Error(`Unexpected query: ${text}`)
+    }, statements)
+
+    await expect(executeOpportunityWorkflow(client, {
+      action: 'create_pending_report',
+      opportunityId: 'opp-1',
+      expectedOpportunityStatus: 'ACTIVE',
+      values: {
+        agentUsername: 'associate',
+        reason: report.reason,
+        expectedDueDate: '2026-07-20',
+        expectedLocalTime: '10:00',
+        expectedTimezone: 'UTC',
+        expectedDeadlineMs: Date.parse('2026-07-20T10:00:00Z'),
+      },
+    }, now)).resolves.toMatchObject({
+      opportunity: { non_submission_report_id: 'nsr-opp-1' },
+      submission: null,
+      report: { id: 'nsr-opp-1', status: 'PENDING' },
+    })
+    expect(statements.findIndex((text) => text.startsWith('insert into public.non_submission_reports')))
+      .toBeLessThan(statements.findIndex((text) => text.startsWith('update public.opportunities')))
+    expect(statements.find((text) => text.includes('from public.app_settings'))).toContain('for share')
+    expect(statements.find((text) => text.includes('from public.employees'))).toContain('for share')
+  })
+
+  it('rejects an automatic report after the opportunity becomes unassigned', async () => {
+    const statements: string[] = []
+    const client = queryable((text) => {
+      if (text.includes('private.has_permission')) return permissionRows('nonSubmission:submit')
+      if (text.includes('from public.opportunities') && text.includes('for update')) {
+        return [{
+          ...opportunity,
+          assigned_to: null,
+          due_date: '2026-07-20',
+          local_time: '10:00',
+          timezone: 'UTC',
+          non_submission_report_id: null,
+          non_submission_exempt: false,
+        }]
+      }
+      throw new Error(`Unexpected query: ${text}`)
+    }, statements)
+
+    await expect(executeOpportunityWorkflow(client, {
+      action: 'create_pending_report',
+      opportunityId: 'opp-1',
+      expectedOpportunityStatus: 'ACTIVE',
+      values: {
+        agentUsername: 'associate',
+        reason: 'No proposal submission was recorded within 12 hours after the due datetime.',
+        expectedDueDate: '2026-07-20',
+        expectedLocalTime: '10:00',
+        expectedTimezone: 'UTC',
+        expectedDeadlineMs: Date.parse('2026-07-20T10:00:00Z'),
+      },
+    }, new Date('2026-07-22T12:00:00.000Z')))
+      .rejects.toMatchObject({ statusCode: 409, code: 'non_submission_not_eligible' })
+    expect(statements.some((text) => (
+      text.startsWith('insert into public.non_submission_reports')
+      || text.startsWith('update public.opportunities')
+    ))).toBe(false)
+  })
+
+  it('requires an Associate assignment only when the shared activation mode requires it', async () => {
+    const assignedToManager = { assigned_to: 'employee-manager' }
+    const strictStatements: string[] = []
+    const strict = queryable((text) => {
+      if (text.includes('from public.app_settings')) return [{ value: 'true' }]
+      if (text.includes('from public.employees')) return [{ role: 'BD_MANAGER' }]
+      throw new Error(`Unexpected query: ${text}`)
+    }, strictStatements)
+    await expect(__test.assertAutomaticReportEligibility(strict, assignedToManager))
+      .rejects.toMatchObject({ statusCode: 409, code: 'non_submission_not_eligible' })
+
+    const flexibleStatements: string[] = []
+    const flexible = queryable((text) => {
+      if (text.includes('from public.app_settings')) return [{ value: 'false' }]
+      throw new Error(`Unexpected query: ${text}`)
+    }, flexibleStatements)
+    await expect(__test.assertAutomaticReportEligibility(flexible, assignedToManager))
+      .resolves.toBeUndefined()
+    expect(flexibleStatements.some((text) => text.includes('from public.employees'))).toBe(false)
+  })
+
+  it('rejects a client timestamp that does not match the stored deadline', async () => {
+    const statements: string[] = []
+    const overdue = {
+      ...opportunity,
+      due_date: '2026-07-20',
+      local_time: '10:00',
+      timezone: 'UTC',
+      non_submission_report_id: null,
+      non_submission_exempt: false,
+    }
+    const client = queryable((text) => {
+      if (text.includes('private.has_permission')) return permissionRows('nonSubmission:submit')
+      if (text.includes('from public.opportunities') && text.includes('for update')) return [overdue]
+      throw new Error(`Unexpected query: ${text}`)
+    }, statements)
+
+    await expect(executeOpportunityWorkflow(client, {
+      action: 'create_pending_report',
+      opportunityId: 'opp-1',
+      expectedOpportunityStatus: 'ACTIVE',
+      values: {
+        agentUsername: 'associate',
+        reason: 'No proposal submission was recorded within 12 hours after the due datetime.',
+        expectedDueDate: '2026-07-20',
+        expectedLocalTime: '10:00',
+        expectedTimezone: 'UTC',
+        expectedDeadlineMs: 1,
+      },
+    }, new Date('2026-07-22T12:00:00.000Z')))
+      .rejects.toMatchObject({ statusCode: 409, code: 'stale_workflow' })
+    expect(statements.some((text) => /^insert|^update|^delete/.test(text))).toBe(false)
+  })
+
+  it('creates and links a manager-filed report atomically without trusting browser timing', async () => {
+    const statements: string[] = []
+    const now = new Date('2026-07-20T09:00:00.000Z')
+    const active = {
+      ...opportunity,
+      due_date: '2026-08-01',
+      local_time: '10:00',
+      timezone: 'UTC',
+      non_submission_report_id: null,
+      non_submission_exempt: false,
+    }
+    const report = {
+      id: 'nsr-opp-1',
+      opportunity_id: 'opp-1',
+      agent_username: 'associate',
+      reason: 'Capture Manager filed this report.',
+      status: 'PENDING',
+      submitted_at: now.toISOString(),
+    }
+    const client = queryable((text) => {
+      if (text.includes('private.has_permission')) return permissionRows('nonSubmission:review')
+      if (text.includes('from public.opportunities') && text.includes('for update')) return [active]
+      if (text.includes('from public.bd_submissions') && text.includes('where opportunity_id = $1')) return []
+      if (text.includes('opportunity_id is null')) return []
+      if (text.startsWith('select * from public.non_submission_reports')) return []
+      if (text.startsWith('insert into public.non_submission_reports')) return [report]
+      if (text.startsWith('update public.opportunities')) {
+        return [{ ...active, non_submission_report_id: report.id }]
+      }
+      throw new Error(`Unexpected query: ${text}`)
+    }, statements)
+
+    await expect(executeOpportunityWorkflow(client, {
+      action: 'create_manual_report',
+      opportunityId: 'opp-1',
+      expectedOpportunityStatus: 'ACTIVE',
+      values: {
+        agentUsername: 'associate',
+        reason: report.reason,
+      },
+    }, now)).resolves.toMatchObject({
+      opportunity: { non_submission_report_id: report.id },
+      submission: null,
+      report: { id: report.id, status: 'PENDING' },
+    })
+    expect(statements.findIndex((text) => text.startsWith('insert into public.non_submission_reports')))
+      .toBeLessThan(statements.findIndex((text) => text.startsWith('update public.opportunities')))
+  })
+
+  it('does not recreate an automatic report for an exempt returned opportunity', async () => {
+    const statements: string[] = []
+    const client = queryable((text) => {
+      if (text.includes('private.has_permission')) return permissionRows('nonSubmission:submit')
+      if (text.includes('from public.opportunities') && text.includes('for update')) {
+        return [{
+          ...opportunity,
+          due_date: '2026-07-01',
+          non_submission_exempt: true,
+        }]
+      }
+      throw new Error(`Unexpected query: ${text}`)
+    }, statements)
+
+    await expect(executeOpportunityWorkflow(client, {
+      action: 'create_pending_report',
+      opportunityId: 'opp-1',
+      expectedOpportunityStatus: 'ACTIVE',
+      values: {
+        agentUsername: 'associate',
+        reason: 'No proposal submission was recorded within 12 hours after the due datetime.',
+        expectedDueDate: '2026-07-01',
+        expectedLocalTime: '10:00',
+        expectedTimezone: 'ET',
+        expectedDeadlineMs: Date.parse('2026-07-01T10:00:00Z'),
+      },
+    }, new Date('2026-07-22T12:00:00.000Z')))
+      .rejects.toMatchObject({ statusCode: 409, code: 'stale_workflow' })
+    expect(statements.some((text) => /^insert|^update|^delete/.test(text))).toBe(false)
   })
 
   it('rolls back the tracker deletion when the linked opportunity hard delete fails', async () => {
@@ -1242,8 +1651,8 @@ describe('atomic opportunity workflows', () => {
         if (text.includes('from public.bd_submissions') && text.includes('for update')) {
           return { rows: [{ ...submission, status: 'NOT_SUBMITTED' }], rowCount: 1 }
         }
-        if (text.startsWith('select id from public.non_submission_reports')) {
-          return { rows: [{ id: 'report-1' }], rowCount: 1 }
+        if (text.startsWith('select id::text as id, status::text as status')) {
+          return { rows: [{ id: 'report-1', status: 'APPROVED' }], rowCount: 1 }
         }
         if (text.startsWith('delete from public.bd_submissions')) {
           return { rows: [{ ...submission, status: 'NOT_SUBMITTED' }], rowCount: 1 }

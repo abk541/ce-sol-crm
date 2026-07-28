@@ -10,6 +10,7 @@ vi.mock('../lib/db', () => ({
   seedEmployeesIfEmpty: vi.fn().mockResolvedValue(null),
   findActiveOpportunityDuplicate: vi.fn().mockResolvedValue({ ok: true, duplicate: false }),
   upsertOpportunity: vi.fn().mockResolvedValue(true),
+  updateOpportunityRecord: vi.fn().mockResolvedValue(true),
   deleteOpportunityRecord: vi.fn().mockResolvedValue(null),
   upsertSubcontractor: vi.fn().mockResolvedValue(null),
   deleteSubcontractorRecord: vi.fn().mockResolvedValue(null),
