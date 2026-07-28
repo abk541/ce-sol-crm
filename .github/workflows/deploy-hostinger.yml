@@ -12,7 +12,7 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -75,12 +75,15 @@ jobs:
           set ftp:ssl-protect-data true;
           set ssl:verify-certificate false;
           set ftp:passive-mode true;
-          set net:timeout 20;
-          set net:max-retries 3;
+          set ftp:sync-mode true;
+          set net:timeout 30;
+          set net:max-retries 10;
           set net:reconnect-interval-base 5;
+          set net:reconnect-interval-multiplier 1;
+          set net:reconnect-interval-max 15;
           set cmd:fail-exit true;
           open -u '$FTP_USER','$FTP_PASS' '$FTP_HOST';
-          mirror -R --verbose --parallel=4 --exclude-glob .ftp-deploy-sync-state.json ./dist/ '$FTP_PATH';
+          mirror -R --verbose --parallel=1 --exclude-glob .ftp-deploy-sync-state.json ./dist/ '$FTP_PATH';
           put -O '$FTP_PATH' ./dist/.htaccess;
           bye;
           "
