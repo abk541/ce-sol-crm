@@ -1549,14 +1549,19 @@ export async function updateOpportunityRecord(
   if (Object.keys(patch).length === 0) return true
   try {
     for (let attempt = 0; attempt < 2; attempt++) {
-      const { data, error } = await api
+      const { error } = await api
         .from('opportunities')
         .upsert(
           { id: opportunity.id, ...patch },
           { onConflict: 'id', patchExisting: true },
         )
         .select('id')
-      if (!error) return Array.isArray(data) && data.length === 1
+      // The server locks the exact existing row and returns a non-2xx response
+      // when it is missing, stale, unauthorized, or not updated exactly once.
+      // An error-free response is therefore the commit acknowledgement. Do not
+      // turn a successful save into a false failure merely because a proxy or
+      // older response adapter omitted the optional selected-row body.
+      if (!error) return true
       const message = `${error.message ?? ''} ${error.details ?? ''}`
       if (
         attempt === 0

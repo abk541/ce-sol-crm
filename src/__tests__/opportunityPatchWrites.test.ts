@@ -7,6 +7,7 @@ const state = vi.hoisted(() => ({
     values: Record<string, unknown>
     options?: Record<string, unknown>
   }>,
+  responseData: undefined as Record<string, unknown>[] | null | undefined,
 }))
 
 vi.mock('../lib/api', () => ({
@@ -30,7 +31,9 @@ vi.mock('../lib/api', () => ({
           return builder
         }),
         select: vi.fn(async () => ({
-          data: [{ id: call.values.id }],
+          data: state.responseData === undefined
+            ? [{ id: call.values.id }]
+            : state.responseData,
           error: null,
         })),
       }
@@ -49,6 +52,7 @@ import {
 describe('narrow opportunity updates', () => {
   beforeEach(() => {
     state.updates = []
+    state.responseData = undefined
   })
 
   it('does not send stale workflow fields while saving a deadline extension', async () => {
@@ -102,6 +106,47 @@ describe('narrow opportunity updates', () => {
     expect(state.updates[0]?.values).not.toHaveProperty('non_submission_report_id')
     expect(state.updates[0]?.values).not.toHaveProperty('local_time')
     expect(state.updates[0]?.values).not.toHaveProperty('status')
+  })
+
+  it('accepts an error-free protected save when the optional selected row body is absent', async () => {
+    state.responseData = null
+    const opportunity = {
+      id: 'opp-confirmed-without-selection',
+      solicitation: 'Updated title',
+      solicitationId: 'SOL-200',
+      client: 'Agency',
+      type: 'OTJ',
+      naicsCode: '238220',
+      setAside: 'SB',
+      priority: 'MEDIUM',
+      status: 'ACTIVE',
+      dueDate: '2026-08-01',
+      localTime: '13:00',
+      timezone: 'America/New_York',
+      location: 'Dover, DE',
+      pop: '',
+      bdm: 'Manager',
+      bds: 'Lead',
+      comments: [],
+      period: 'AUG 2026',
+      capturedOn: '2026-07-29',
+    } satisfies Opportunity
+
+    await expect(
+      updateOpportunityRecord(opportunity, ['solicitation']),
+    ).resolves.toBe(true)
+
+    expect(state.updates).toEqual([{
+      table: 'opportunities',
+      values: {
+        id: 'opp-confirmed-without-selection',
+        solicitation: 'Updated title',
+      },
+      options: {
+        onConflict: 'id',
+        patchExisting: true,
+      },
+    }])
   })
 
   it('sends separate narrow reason, reminder, and comment report patches', async () => {

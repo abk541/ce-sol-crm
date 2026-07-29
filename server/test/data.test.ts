@@ -1096,6 +1096,103 @@ describe('generic data request compiler', () => {
     expect(statements.some((text) => text.startsWith('insert into public.opportunities'))).toBe(false)
   })
 
+  it('updates multiple ordinary detail and schedule fields in one marked admin patch', async () => {
+    const statements: Array<{ text: string; values: readonly unknown[] | undefined }> = []
+    const row = {
+      id: 'o1',
+      solicitation: 'Extended facilities contract',
+      client: 'Updated agency',
+      priority: 'HIGH',
+      due_date: '2026-08-14',
+      local_time: '15:30',
+      timezone: 'America/Chicago',
+      location: 'Dover, DE',
+    }
+    const existing = {
+      id: 'o1',
+      solicitation: 'Facilities contract',
+      client: 'Original agency',
+      priority: 'MEDIUM',
+      due_date: '2026-07-30',
+      local_time: '13:00',
+      timezone: 'America/New_York',
+      location: 'Newark, DE',
+    }
+    const client = queryable((text, values) => {
+      statements.push({ text, values })
+      if (text.includes('information_schema.columns')) {
+        return Object.keys(row).map((column_name) => ({ column_name }))
+      }
+      if (text.includes('private.has_permission')) {
+        return [{ permission: 'admin:manageUsers', allowed: true }]
+      }
+      if (text.includes('for update')) {
+        return [{ id: row.id, snapshot: existing }]
+      }
+      if (text.startsWith('update public.opportunities')) return [row]
+      throw new Error(`Unexpected query: ${text}`)
+    })
+    const request = __test.parseCommon({
+      table: 'opportunities',
+      columns: 'id,solicitation,client,priority,due_date,local_time,timezone,location',
+      rows: [row],
+      onConflict: 'id',
+      patchExisting: true,
+    }, ['rows', 'onConflict', 'ignoreDuplicates', 'patchExisting'])
+
+    await expect(__test.insertData(client, request, true)).resolves.toEqual({
+      data: [row],
+      error: null,
+    })
+
+    const updates = statements.filter(({ text }) => text.startsWith('update public.opportunities'))
+    expect(updates).toHaveLength(1)
+    expect(updates[0]?.text).toContain('"solicitation" = ')
+    expect(updates[0]?.text).toContain('"client" = ')
+    expect(updates[0]?.text).toContain('"priority" = ')
+    expect(updates[0]?.text).toContain('"due_date" = ')
+    expect(updates[0]?.text).toContain('"local_time" = ')
+    expect(updates[0]?.text).toContain('"timezone" = ')
+    expect(updates[0]?.text).toContain('"location" = ')
+    expect(statements.some(({ text }) => text.startsWith('insert into public.opportunities'))).toBe(false)
+  })
+
+  it.each([
+    ['submitted timestamp', 'submitted_at', null],
+    ['non-submission report link', 'non_submission_report_id', null],
+    ['deletion marker', 'is_deleted', false],
+  ])('keeps the protected %s out of marked admin detail patches', async (_label, column, value) => {
+    const statements: string[] = []
+    const row = { id: 'o1', client: 'Updated agency', [column]: value }
+    const client = queryable((text) => {
+      statements.push(text)
+      if (text.includes('information_schema.columns')) {
+        return Object.keys(row).map((column_name) => ({ column_name }))
+      }
+      if (text.includes('private.has_permission')) {
+        return [{ permission: 'admin:manageUsers', allowed: true }]
+      }
+      if (text.includes('for update')) {
+        return [{
+          id: row.id,
+          snapshot: { id: row.id, client: 'Original agency', [column]: value },
+        }]
+      }
+      throw new Error(`Unexpected query: ${text}`)
+    })
+    const request = __test.parseCommon({
+      table: 'opportunities',
+      rows: [row],
+      onConflict: 'id',
+      patchExisting: true,
+    }, ['rows', 'onConflict', 'ignoreDuplicates', 'patchExisting'])
+
+    await expect(__test.insertData(client, request, true))
+      .rejects.toMatchObject({ statusCode: 403, code: 'workflow_required' })
+    expect(statements.some((text) => text.startsWith('update public.opportunities'))).toBe(false)
+    expect(statements.some((text) => text.startsWith('insert into public.opportunities'))).toBe(false)
+  })
+
   it('rejects a stale-client submit before it can update only the opportunity row', async () => {
     const row = { id: 'o1', status: 'SUBMITTED', submitted_at: '2026-07-21T12:00:00.000Z' }
     const statements: string[] = []

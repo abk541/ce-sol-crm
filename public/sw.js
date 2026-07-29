@@ -1,4 +1,10 @@
-const SHELL_CACHE = 'ce-erp-shell-v2'
+// The production build replaces this token with a deterministic fingerprint
+// of the compiled entry bundle. That makes sw.js change with every application
+// release, so installed desktop PWAs cannot keep running an incompatible API
+// client after the backend is upgraded.
+const RELEASE = '__CE_ERP_RELEASE__'
+const SHELL_CACHE_PREFIX = 'ce-erp-shell-'
+const SHELL_CACHE = `${SHELL_CACHE_PREFIX}${RELEASE}`
 const SHELL_FILES = [
   './',
   './index.html',
@@ -32,15 +38,27 @@ async function networkFirst(request) {
 
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(SHELL_CACHE).then(cache => cache.addAll(SHELL_FILES)))
-  self.skipWaiting()
 })
 
 self.addEventListener('activate', event => {
   event.waitUntil(
     caches.keys()
-      .then(keys => Promise.all(keys.filter(key => key !== SHELL_CACHE).map(key => caches.delete(key))))
+      .then(keys => Promise.all(
+        keys
+          .filter(key => key.startsWith(SHELL_CACHE_PREFIX) && key !== SHELL_CACHE)
+          .map(key => caches.delete(key)),
+      ))
       .then(() => self.clients.claim()),
   )
+})
+
+self.addEventListener('message', event => {
+  // A waiting release is activated only after the user accepts the in-app
+  // reload prompt. This keeps long-running desktop installations current
+  // without discarding an opportunity form that is still being edited.
+  if (event.data?.type === 'SKIP_WAITING') {
+    event.waitUntil(self.skipWaiting())
+  }
 })
 
 self.addEventListener('fetch', event => {
