@@ -109,7 +109,7 @@ describe('private API authentication boundary', () => {
     expect(result.ok).toBe(true)
     expect(mocks.apiRequest).toHaveBeenCalledWith('/auth/login', {
       method: 'POST',
-      body: JSON.stringify({ email: 'user@example.com', password: 'not-logged', mfaSupported: true }),
+      body: JSON.stringify({ email: 'user@example.com', password: 'not-logged' }),
     }, { auth: false })
     expect(mocks.storeApiSession).toHaveBeenCalledWith(apiSession)
     expect(result.ok && result.profile).not.toHaveProperty('password')

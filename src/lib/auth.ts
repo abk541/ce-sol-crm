@@ -429,7 +429,7 @@ export async function authenticateWithPassword(email: string, password: string):
   try {
     const response = await apiRequest<unknown>('/auth/login', {
       method: 'POST',
-      body: JSON.stringify({ email: email.trim(), password, mfaSupported: true }),
+      body: JSON.stringify({ email: email.trim(), password }),
     }, { auth: false })
     if (!authTokenGenerationIsCurrent(generation)) return authStateChangedFailure()
     const result = acceptAuthPayload(envelopeData<AuthPayload>(response))

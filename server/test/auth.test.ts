@@ -3,7 +3,12 @@ import { describe, expect, it, vi } from 'vitest'
 import type { FastifyRequest } from 'fastify'
 import type { Database, Queryable } from '../src/db.js'
 import { buildApp } from '../src/app.js'
-import { createMfaChallenge, hashToken, passwordMeetsPolicy } from '../src/auth.js'
+import {
+  createMfaChallenge,
+  hashToken,
+  initializeMfaEnforcement,
+  passwordMeetsPolicy,
+} from '../src/auth.js'
 import { loadEnvironment } from '../src/env.js'
 
 describe('password migration compatibility', () => {
@@ -29,6 +34,46 @@ describe('opaque token hashing', () => {
     expect(digest).toMatch(/^[0-9a-f]{64}$/)
     expect(digest).not.toContain(token)
     expect(hashToken(token)).toBe(digest)
+  })
+})
+
+describe('MFA enforcement startup', () => {
+  it('consumes every pending challenge before reactivation begins serving requests', async () => {
+    const statements: Array<{ text: string; values?: readonly unknown[] }> = []
+    const client = {
+      query: vi.fn(async (text: string, values?: readonly unknown[]) => {
+        statements.push({ text, values })
+        return {
+          rows: [],
+          rowCount: 0,
+          command: 'UPDATE',
+          oid: 0,
+          fields: [],
+        }
+      }),
+      release: vi.fn(),
+    }
+    const now = new Date('2026-07-29T12:00:00.000Z')
+
+    await initializeMfaEnforcement({
+      env: loadEnvironment({
+        DATABASE_URL: 'postgresql://example.invalid/app',
+        MFA_ENFORCEMENT_ENABLED: 'true',
+        MFA_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString('base64'),
+      }),
+      db: {
+        connect: vi.fn(async () => client),
+      } as unknown as Database,
+      fetch: globalThis.fetch,
+      now: () => now,
+    })
+
+    const challengeCleanup = statements.find(({ text }) =>
+      text.includes('update app_auth.mfa_challenges'))
+    expect(challengeCleanup?.text).toContain('where consumed_at is null')
+    expect(challengeCleanup?.text).not.toContain('expires_at')
+    expect(challengeCleanup?.values).toEqual([now])
+    expect(client.release).toHaveBeenCalledOnce()
   })
 })
 
@@ -108,8 +153,8 @@ describe('MFA challenge serialization', () => {
   })
 })
 
-describe('legacy rollout session issuance', () => {
-  it('rechecks account status and password version under the deactivation lock', async () => {
+describe('server-controlled MFA rollout session issuance', () => {
+  async function createLoginHarness() {
     const now = new Date('2026-07-29T12:00:00.000Z')
     const accountId = '10000000-0000-4000-8000-000000000001'
     const password = 'Valid1!Password'
@@ -166,6 +211,12 @@ describe('legacy rollout session issuance', () => {
       connect: vi.fn(async () => client),
       end: vi.fn(async () => undefined),
     } as unknown as Database
+
+    return { db, now, password, row, statements }
+  }
+
+  it('ignores a cached client MFA preference while enforcement is disabled', async () => {
+    const { db, now, password, row, statements } = await createLoginHarness()
     const app = await buildApp({
       env: loadEnvironment({
         DATABASE_URL: 'postgresql://example.invalid/app',
@@ -180,7 +231,7 @@ describe('legacy rollout session issuance', () => {
       const response = await app.inject({
         method: 'POST',
         url: '/api/v1/auth/login',
-        payload: { email: row.email, password, mfaSupported: false },
+        payload: { email: row.email, password, mfaSupported: true },
       })
 
       expect(response.statusCode).toBe(200)
@@ -195,6 +246,78 @@ describe('legacy rollout session issuance', () => {
         'select pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1::text, 0))',
       )
       expect(guardIndex).toBeLessThan(insertIndex)
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('starts the MFA flow when server enforcement is enabled without a client hint', async () => {
+    const { db, now, password, row, statements } = await createLoginHarness()
+    const app = await buildApp({
+      env: loadEnvironment({
+        DATABASE_URL: 'postgresql://example.invalid/app',
+        LOG_LEVEL: 'silent',
+        MFA_ENFORCEMENT_ENABLED: 'true',
+        MFA_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString('base64'),
+      }),
+      db,
+      fetch: globalThis.fetch,
+      now: () => now,
+    })
+
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/v1/auth/login',
+        payload: { email: row.email, password },
+      })
+
+      expect(response.statusCode).toBe(200)
+      expect(response.json().data.stage).toBe('mfa_enroll')
+      expect(response.json().data.challenge.access_token).toEqual(expect.any(String))
+      expect(statements.some(text =>
+        text.includes('insert into app_auth.mfa_challenges'))).toBe(true)
+      expect(statements.some(text =>
+        text.includes('insert into app_auth.sessions'))).toBe(false)
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('rejects a previously issued MFA challenge while enforcement is disabled', async () => {
+    const query = vi.fn(async () => ({
+      rows: [],
+      rowCount: 0,
+      command: 'SELECT',
+      oid: 0,
+      fields: [],
+    }))
+    const app = await buildApp({
+      env: loadEnvironment({
+        DATABASE_URL: 'postgresql://example.invalid/app',
+        LOG_LEVEL: 'silent',
+      }),
+      db: {
+        query,
+        end: async () => undefined,
+      } as unknown as Database,
+      fetch: globalThis.fetch,
+      now: () => new Date('2026-07-29T12:00:00.000Z'),
+    })
+
+    try {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/v1/auth/session',
+        headers: {
+          authorization: 'Bearer previously-issued-mfa-challenge-token-that-is-long-enough',
+        },
+      })
+
+      expect(response.statusCode).toBe(401)
+      expect(response.json().error.code).toBe('challenge_invalid')
+      expect(query).toHaveBeenCalledTimes(1)
+      expect(query.mock.calls[0]?.[0]).toContain('from app_auth.sessions')
     } finally {
       await app.close()
     }

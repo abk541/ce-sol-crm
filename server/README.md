@@ -83,6 +83,12 @@ Use this order so old browser bundles are never locked out:
    again once.
 
 Only the literal `true` enables enforcement. Invalid flag values stop startup.
+The API is the single authority for this switch: older browser bundles may
+still send their historical `mfaSupported` capability field, but it cannot
+enable MFA while server enforcement is off. Disabling enforcement preserves
+all enrolled authenticator factors and recovery codes for a later reactivation.
+Pending sign-in challenges are rejected while enforcement is off and consumed
+when enforcement starts again, so a pre-disable challenge cannot revive.
 The setup script preserves an existing valid key and enforcement flag; it
 refuses duplicate or malformed installed values rather than silently rotating
 or disabling them.

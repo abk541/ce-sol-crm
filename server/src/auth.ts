@@ -315,6 +315,9 @@ export async function authenticateMfaChallenge(
 ): Promise<MfaChallenge> {
   const token = bearerToken(request)
   if (!token) throw new ApiError(401, 'challenge_invalid', 'The sign-in challenge is no longer valid.')
+  if (!dependencies.env.mfaEnforcementEnabled) {
+    throw new ApiError(401, 'challenge_invalid', 'The sign-in challenge is no longer valid.')
+  }
 
   const result = await dependencies.db.query<ChallengeLookupRow>(
     `select c.id as challenge_id,
@@ -410,8 +413,7 @@ export async function initializeMfaEnforcement(dependencies: Dependencies): Prom
     await client.query(
       `update app_auth.mfa_challenges
           set consumed_at = coalesce(consumed_at, $1)
-        where consumed_at is null
-          and expires_at <= $1`,
+        where consumed_at is null`,
       [now],
     )
   })
@@ -477,7 +479,10 @@ export function registerAuthRoutes(app: FastifyInstance, dependencies: Dependenc
       }
 
       const now = dependencies.now()
-      const useMfaFlow = dependencies.env.mfaEnforcementEnabled || body.mfaSupported === true
+      // The server flag is the single authority for MFA enforcement. Keep accepting
+      // mfaSupported from previously deployed clients, but never let a cached client
+      // opt users into MFA while administrators have enforcement disabled.
+      const useMfaFlow = dependencies.env.mfaEnforcementEnabled
       if (useMfaFlow) {
         if (!dependencies.env.mfaEncryptionKey) {
           throw new ApiError(
