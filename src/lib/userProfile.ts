@@ -12,6 +12,7 @@ export const SAFE_USER_COLUMNS = [
   'avatar',
   'status',
   'first_login',
+  'mfa_enabled',
   'team',
   'manager_id',
   'created_at',
@@ -43,6 +44,7 @@ export function mapSafeUserRow(row: Record<string, unknown>): User {
     avatar: typeof row.avatar === 'string' ? row.avatar : '',
     status,
     firstLogin: (row.first_login ?? row.firstLogin) === true,
+    mfaEnabled: (row.mfa_enabled ?? row.mfaEnabled) === true,
     createdAt: dateOnly(row.created_at ?? row.createdAt),
     team,
     managerId: typeof (row.manager_id ?? row.managerId) === 'string'
@@ -53,14 +55,18 @@ export function mapSafeUserRow(row: Record<string, unknown>): User {
 
 /** Strip credentials and legacy MFA material from untrusted/imported user data. */
 export function toSafeUser(user: User): User {
+  // Old browser snapshots may still contain the retired client-side MFA
+  // fields even though the current TypeScript shape no longer declares them.
+  // Strip both camelCase and database-style variants at this trust boundary.
   const {
     password: _password,
-    mfaEnabled: _mfaEnabled,
     mfaSecret: _mfaSecret,
     mfaRecoveryCodes: _mfaRecoveryCodes,
+    mfa_secret: _mfaSecretRow,
+    mfa_recovery_codes: _mfaRecoveryCodesRow,
     ...safe
-  } = user
-  return safe
+  } = user as User & Record<string, unknown>
+  return safe as User
 }
 
 export function mergeSafeUser(users: User[], profile: User): User[] {

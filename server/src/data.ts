@@ -377,7 +377,7 @@ const COMMON_KEYS = [
 const JSON_COLUMNS = new Map<string, ReadonlySet<string>>([
   ['contract_invoices', new Set(['line_item_ids'])],
   ['contract_vehicle_orders', new Set(['document'])],
-  ['contracts', new Set(['proposal_attachments', 'comms_log'])],
+  ['contracts', new Set(['proposal_attachments', 'award_documents', 'comms_log'])],
   ['employee_requests', new Set(['attachments'])],
   ['fresh_awards', new Set(['proposal_attachments'])],
   ['non_submission_reports', new Set(['comments'])],
@@ -400,6 +400,86 @@ function pushColumnParameter(
   const jsonValue = JSON_COLUMNS.get(table)?.has(column) === true
   values.push(jsonValue && value !== null ? JSON.stringify(value) : value)
   return `$${values.length}${jsonValue ? '::jsonb' : ''}`
+}
+
+function contractAwardStoragePaths(values: readonly unknown[]): string[] {
+  const paths = new Set<string>()
+  values.forEach((value, valueIndex) => {
+    if (value === undefined || value === null) return
+    let documents: unknown = value
+    if (typeof documents === 'string') {
+      try {
+        documents = JSON.parse(documents)
+      } catch {
+        throw new ApiError(
+          400,
+          'invalid_request',
+          `award_documents[${valueIndex}] must be a JSON array.`,
+        )
+      }
+    }
+    if (!Array.isArray(documents)) {
+      throw new ApiError(
+        400,
+        'invalid_request',
+        `award_documents[${valueIndex}] must be an array.`,
+      )
+    }
+    documents.forEach((document, documentIndex) => {
+      const record = asRecord(
+        document,
+        `award_documents[${valueIndex}][${documentIndex}]`,
+      )
+      for (const key of ['storagePath', 'storage_path'] as const) {
+        const candidate = record[key]
+        if (candidate === undefined || candidate === null || candidate === '') continue
+        if (typeof candidate !== 'string') {
+          throw new ApiError(
+            400,
+            'invalid_request',
+            `award_documents[${valueIndex}][${documentIndex}].${key} must be a string.`,
+          )
+        }
+        if (!candidate.startsWith('contract_awards/')) continue
+        if (candidate.length > 1024 || /[\u0000\r\n]/.test(candidate)) {
+          throw new ApiError(
+            400,
+            'invalid_request',
+            `award_documents[${valueIndex}][${documentIndex}].${key} is invalid.`,
+          )
+        }
+        paths.add(candidate)
+      }
+    })
+  })
+  return [...paths].sort()
+}
+
+async function lockExistingContractAwardFiles(
+  client: Queryable,
+  values: readonly unknown[],
+): Promise<void> {
+  const requestedPaths = contractAwardStoragePaths(values)
+  if (requestedPaths.length === 0) return
+
+  const result = await client.query<{ locked_paths: string[] }>(
+    'select private.lock_existing_contract_award_files($1::text[]) as locked_paths',
+    [requestedPaths],
+  )
+  const lockedPaths = new Set(
+    Array.isArray(result.rows[0]?.locked_paths)
+      ? result.rows[0].locked_paths.filter(path => typeof path === 'string')
+      : [],
+  )
+  const missingPaths = requestedPaths.filter(path => !lockedPaths.has(path))
+  if (missingPaths.length > 0) {
+    throw new ApiError(
+      409,
+      'contract_award_file_missing',
+      'An award document is no longer available. Reload the contract before saving again.',
+      { missingStoragePaths: missingPaths },
+    )
+  }
 }
 
 function bool(value: unknown, label: string): boolean {
@@ -1172,6 +1252,12 @@ async function insertData(
   const keys = Object.keys(rows[0] as Record<string, unknown>).sort()
   assertColumnsExist(keys, available, common.table)
   assertAppSettingsRows(common.table, rows)
+  if (common.table === 'contracts' && keys.includes('award_documents')) {
+    await lockExistingContractAwardFiles(
+      client,
+      rows.map(row => row.award_documents),
+    )
+  }
 
   let quotedOpportunityIds: string[] = []
   if (common.table === 'subcontractors') {
@@ -1268,6 +1354,9 @@ async function updateOrDeleteData(
     const keys = Object.keys(patch).sort()
     if (keys.length === 0) throw new ApiError(400, 'invalid_request', 'values cannot be empty.')
     assertColumnsExist(keys, available, common.table)
+    if (common.table === 'contracts' && Object.hasOwn(patch, 'award_documents')) {
+      await lockExistingContractAwardFiles(client, [patch.award_documents])
+    }
     if (common.table === 'opportunities' || common.table === 'non_submission_reports') {
       throw new ApiError(
         409,
@@ -1405,6 +1494,8 @@ export const __test = {
   authorizeNonSubmissionRows,
   quoteBackedOpportunityIds,
   markQuotedOpportunities,
+  contractAwardStoragePaths,
+  lockExistingContractAwardFiles,
   insertData,
   updateOrDeleteData,
   assertMutationRoute,

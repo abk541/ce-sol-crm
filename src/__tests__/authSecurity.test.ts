@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { mapSafeUserRow } from '../lib/userProfile'
 
 const mocks = vi.hoisted(() => {
   class MockApiRequestError extends Error {
@@ -12,9 +11,13 @@ const mocks = vi.hoisted(() => {
     }
   }
   const apiRequest = vi.fn()
+  const clearApiChallenge = vi.fn()
   const clearApiSession = vi.fn()
+  const storeApiChallenge = vi.fn()
   const storeApiSession = vi.fn()
   const getApiAccessToken = vi.fn(() => 'opaque-token')
+  const getApiChallengeToken = vi.fn((): string | null => null)
+  const getStoredApiChallenge = vi.fn(() => null)
   const getStoredApiSession = vi.fn(() => null)
   const unsubscribe = vi.fn()
   let authCallback: ((event: string, session: unknown) => void) | null = null
@@ -23,24 +26,27 @@ const mocks = vi.hoisted(() => {
     return unsubscribe
   })
   const emitAuth = (event: string, session: unknown) => authCallback?.(event, session)
-  const invokeFirstLoginCompletion = vi.fn()
   return {
     MockApiRequestError,
     apiRequest,
+    clearApiChallenge,
     clearApiSession,
+    storeApiChallenge,
     storeApiSession,
     getApiAccessToken,
+    getApiChallengeToken,
+    getStoredApiChallenge,
     getStoredApiSession,
     subscribeToApiAuthEvents,
     unsubscribe,
     emitAuth,
-    invokeFirstLoginCompletion,
   }
 })
 
 vi.mock('../lib/api', () => ({
   ApiRequestError: mocks.MockApiRequestError,
   apiRequest: mocks.apiRequest,
+  clearApiChallenge: mocks.clearApiChallenge,
   clearApiSession: mocks.clearApiSession,
   envelopeData: (payload: unknown) => (
     payload && typeof payload === 'object' && 'data' in payload
@@ -48,14 +54,13 @@ vi.mock('../lib/api', () => ({
       : payload
   ),
   getApiAccessToken: mocks.getApiAccessToken,
+  getApiChallengeToken: mocks.getApiChallengeToken,
+  getStoredApiChallenge: mocks.getStoredApiChallenge,
   getStoredApiSession: mocks.getStoredApiSession,
   isApiConnected: true,
+  storeApiChallenge: mocks.storeApiChallenge,
   storeApiSession: mocks.storeApiSession,
   subscribeToApiAuthEvents: mocks.subscribeToApiAuthEvents,
-}))
-
-vi.mock('../lib/userManagement', () => ({
-  invokeFirstLoginCompletion: mocks.invokeFirstLoginCompletion,
 }))
 
 import {
@@ -93,11 +98,7 @@ describe('private API authentication boundary', () => {
     vi.useRealTimers()
     vi.clearAllMocks()
     mocks.getApiAccessToken.mockReturnValue('opaque-token')
-    mocks.invokeFirstLoginCompletion.mockResolvedValue({
-      ok: true,
-      profile: mapSafeUserRow({ ...safeRow, first_login: false }),
-      alreadyComplete: false,
-    })
+    mocks.getApiChallengeToken.mockReturnValue(null)
   })
 
   it('authenticates through the private API and persists only its opaque session', async () => {
@@ -108,7 +109,7 @@ describe('private API authentication boundary', () => {
     expect(result.ok).toBe(true)
     expect(mocks.apiRequest).toHaveBeenCalledWith('/auth/login', {
       method: 'POST',
-      body: JSON.stringify({ email: 'user@example.com', password: 'not-logged' }),
+      body: JSON.stringify({ email: 'user@example.com', password: 'not-logged', mfaSupported: true }),
     }, { auth: false })
     expect(mocks.storeApiSession).toHaveBeenCalledWith(apiSession)
     expect(result.ok && result.profile).not.toHaveProperty('password')
@@ -145,7 +146,10 @@ describe('private API authentication boundary', () => {
 
     const result = await restoreAuthenticatedProfile()
 
-    expect(mocks.apiRequest).toHaveBeenCalledWith('/auth/session')
+    expect(mocks.apiRequest).toHaveBeenCalledWith('/auth/session', {}, {
+      auth: 'session',
+      authToken: 'opaque-token',
+    })
     expect(result.profile?.authUserId).toBe('auth-1')
   })
 
@@ -196,25 +200,37 @@ describe('private API authentication boundary', () => {
     expect(mocks.unsubscribe).toHaveBeenCalledOnce()
   })
 
-  it('delegates first-login completion to the protected API action', async () => {
+  it('continues first-login through the provisional challenge without issuing a workspace session', async () => {
+    mocks.getApiChallengeToken.mockReturnValue('challenge-token')
+    mocks.apiRequest.mockResolvedValue({
+      data: {
+        user: { ...safeRow, first_login: false },
+        stage: 'mfa_enroll',
+        challenge: {
+          access_token: 'rotated-challenge',
+          user: { id: 'auth-1' },
+        },
+      },
+    })
     const result = await completeFirstLoginPassword('NewPassword1!')
 
-    expect(result.ok).toBe(true)
-    expect(mocks.invokeFirstLoginCompletion).toHaveBeenCalledWith('NewPassword1!')
+    expect(result).toMatchObject({ ok: true, stage: 'mfa_enroll' })
+    expect(mocks.apiRequest).toHaveBeenCalledWith('/auth/first-login', {
+      method: 'POST',
+      body: JSON.stringify({ password: 'NewPassword1!' }),
+    }, { auth: 'challenge', authToken: 'challenge-token' })
+    expect(mocks.storeApiChallenge).toHaveBeenCalled()
   })
 
-  it('preserves an explicit retryable partial-completion contract', async () => {
-    mocks.invokeFirstLoginCompletion.mockResolvedValue({
-      ok: false,
-      code: 'setup_incomplete',
-      error: 'Retry with the same new password.',
-      retryable: true,
-    })
+  it('preserves a retryable service failure during first-login continuation', async () => {
+    mocks.getApiChallengeToken.mockReturnValue('challenge-token')
+    mocks.apiRequest.mockRejectedValue(
+      new mocks.MockApiRequestError('Unavailable', 'service_unavailable', 503),
+    )
 
-    await expect(completeFirstLoginPassword('NewPassword1!')).resolves.toEqual({
+    await expect(completeFirstLoginPassword('NewPassword1!')).resolves.toMatchObject({
       ok: false,
-      code: 'setup_incomplete',
-      error: 'Retry with the same new password.',
+      code: 'auth_temporarily_unavailable',
       retryable: true,
     })
   })

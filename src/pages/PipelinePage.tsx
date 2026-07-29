@@ -31,6 +31,7 @@ import {
   matchesPipelineSetAside,
   readPipelineQueryFilters,
 } from '../lib/pipelineQuery'
+import { compareOpportunityDeadlines } from '../lib/pipelineSort'
 import { NAICS_CODES } from '../data/naics'
 import toast from 'react-hot-toast'
 import DetailDrawer, { DrawerSection, DrawerField } from '../components/shared/DetailDrawer'
@@ -4158,6 +4159,7 @@ export default function PipelinePage() {
     })
 
     list.sort((a, b) => {
+      if (sort.key === 'dueDate') return compareOpportunityDeadlines(a, b, sort.dir)
       const av = a[sort.key] ?? ''; const bv = b[sort.key] ?? ''
       const r = String(av).localeCompare(String(bv))
       return sort.dir === 'asc' ? r : -r

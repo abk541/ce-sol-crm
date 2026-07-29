@@ -19,6 +19,7 @@ export default function MfaVerifyPage() {
   const [recovery, setRecovery] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [canceling, setCanceling] = useState(false)
   const inputRef = useRef<HTMLInputElement | null>(null)
 
   const wrongGate = !pendingMfaUserId || pendingMfaMode !== 'verify'
@@ -44,7 +45,7 @@ export default function MfaVerifyPage() {
     const cleaned = code.replace(/[\s-]/g, '')
     if (!/^\d{6}$/.test(cleaned)) { setError('Enter the 6-digit code from your authenticator.'); return }
     setLoading(true)
-    const result = verifyMfaCode(cleaned)
+    const result = await verifyMfaCode(cleaned)
     setLoading(false)
     if (!result.ok) { setError(result.error ?? 'Verification failed.'); return }
     navigate('/access-notice')
@@ -60,9 +61,14 @@ export default function MfaVerifyPage() {
     navigate('/access-notice')
   }
 
-  const handleCancel = () => {
-    cancelPendingMfa()
-    navigate('/login')
+  const handleCancel = async () => {
+    if (canceling) return
+    setCanceling(true)
+    try {
+      await cancelPendingMfa()
+    } finally {
+      navigate('/login')
+    }
   }
 
   return (
@@ -123,9 +129,10 @@ export default function MfaVerifyPage() {
               type="text"
               autoFocus
               value={recovery}
-              onChange={e => setRecovery(e.target.value.toUpperCase().slice(0, 20))}
+              onChange={e => setRecovery(e.target.value.toUpperCase().slice(0, 19))}
               className="input-field text-center tracking-[0.35em] text-base"
-              placeholder="XXXX-XXXX"
+              placeholder="XXXX-XXXX-XXXX-XXXX"
+              maxLength={19}
               required
             />
             <p className="text-[11px] text-slate-500 mt-1.5">
@@ -152,9 +159,9 @@ export default function MfaVerifyPage() {
         </form>
       )}
 
-      <button type="button" onClick={handleCancel}
+      <button type="button" onClick={() => { void handleCancel() }} disabled={canceling || loading}
         className="w-full text-center text-[11px] text-slate-500 hover:text-slate-300 transition-colors mt-6">
-        Sign in with a different account
+        {canceling ? 'Signing out…' : 'Sign in with a different account'}
       </button>
     </BareShell>
   )

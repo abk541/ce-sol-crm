@@ -81,10 +81,22 @@ TRUST_PROXY=true
 ALLOWED_ORIGINS=https://crm.cesolutionplus.com,https://www.crm.cesolutionplus.com,https://abk541.github.io
 ATTACHMENTS_DIR=/var/lib/ce-crm/attachments
 SAM_GOV_API_KEY=server-only-value
+MFA_ENCRYPTION_KEY=canonical-base64-encoded-32-byte-key
+MFA_ENFORCEMENT_ENABLED=false
+MFA_CHALLENGE_TTL_SECONDS=600
+MFA_MAX_ATTEMPTS=5
 ```
 
 The browser receives only `VITE_API_URL`. No database password, session token,
-or SAM.gov key belongs in a Vite environment variable.
+SAM.gov key, authenticator secret, or recovery code belongs in a Vite
+environment variable. `configure-native-runtime.sh` generates the MFA key only
+when it is absent. On later runs it preserves a valid installed key and
+enforcement flag, and fails on duplicate or malformed values.
+
+After applying `server/migrations/009_native_mfa.sql`, first run the API with
+enforcement false, deploy the compatible browser bundle, then switch the flag
+to true and restart. Enabling enforcement revokes legacy-assurance sessions and
+requires every active user to complete fresh authenticator enrollment.
 
 ## Encrypted backups
 

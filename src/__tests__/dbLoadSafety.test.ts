@@ -38,6 +38,8 @@ describe('database snapshot safety', () => {
     const usersClient = fromMock.mock.results[usersCall].value as { select: ReturnType<typeof vi.fn> }
     expect(usersClient.select).toHaveBeenCalledWith(SAFE_USER_COLUMNS)
     expect(SAFE_USER_COLUMNS).not.toContain('password')
-    expect(SAFE_USER_COLUMNS).not.toContain('mfa_')
+    expect(SAFE_USER_COLUMNS).toContain('mfa_enabled')
+    expect(SAFE_USER_COLUMNS).not.toContain('mfa_secret')
+    expect(SAFE_USER_COLUMNS).not.toContain('recovery')
   })
 })

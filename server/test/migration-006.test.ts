@@ -13,5 +13,6 @@ describe('pipeline activation setting migration', () => {
     expect(migration).toContain("values ('require_associate_for_active_pipeline', 'true')")
     expect(migration).toContain('on conflict (key) do nothing')
     expect(migration).not.toContain('do update')
+    expect(migration).toContain(')) not valid;')
   })
 })

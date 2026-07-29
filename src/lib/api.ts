@@ -8,6 +8,15 @@ export interface ApiSessionUser {
 export interface ApiSession {
   access_token?: string
   expires_at?: string
+  assurance_level?: 'legacy' | 'mfa'
+  user: ApiSessionUser
+}
+
+export type ApiAuthStage = 'authenticated' | 'first_login' | 'mfa_enroll' | 'mfa_verify' | 'mfa_recovery'
+
+export interface ApiChallenge {
+  access_token?: string
+  expires_at?: string
   user: ApiSessionUser
 }
 
@@ -20,18 +29,25 @@ export interface ApiErrorPayload {
 }
 
 type RequestOptions = {
-  auth?: boolean
+  auth?: boolean | 'session' | 'challenge' | 'any'
+  authToken?: string
   responseType?: 'json' | 'blob'
 }
 
 const TOKEN_STORAGE_KEY = 'ces-crm-api-token'
 const SESSION_STORAGE_KEY = 'ces-crm-api-session'
 const SESSION_FALLBACK_STORAGE_KEY = 'ces-crm-api-session-fallback'
+const CHALLENGE_STORAGE_KEY = 'ces-crm-api-mfa-challenge'
 const AUTH_BROADCAST_CHANNEL = 'ces-crm-auth'
 
 interface StoredSessionFallback {
   token: string
   session: ApiSession
+}
+
+interface StoredChallenge {
+  token: string
+  challenge: ApiChallenge
 }
 
 // Some privacy tools and full browser profiles make localStorage readable but
@@ -40,6 +56,8 @@ interface StoredSessionFallback {
 let memoryToken: string | null = null
 let memorySession: ApiSession | null = null
 let preferMemorySession = false
+let memoryChallenge: StoredChallenge | null = null
+let preferMemoryChallenge = false
 
 function normalizeApiUrl(value: string | undefined): string {
   const trimmed = (value ?? '').trim().replace(/^['"]|['"]$/g, '')
@@ -77,6 +95,17 @@ function safeStoredSession(raw: string | null): ApiSession | null {
   try {
     const session = JSON.parse(raw) as ApiSession
     return session?.user?.id ? session : null
+  } catch {
+    return null
+  }
+}
+
+function safeStoredChallenge(raw: string | null): StoredChallenge | null {
+  if (!raw) return null
+  try {
+    const stored = JSON.parse(raw) as StoredChallenge
+    if (!stored?.token || !stored.challenge?.user?.id) return null
+    return stored
   } catch {
     return null
   }
@@ -130,6 +159,71 @@ export function getStoredApiSession(): ApiSession | null {
   }
 }
 
+export function getApiChallengeToken(): string | null {
+  if (preferMemoryChallenge) return memoryChallenge?.token ?? null
+  try {
+    return safeStoredChallenge(
+      browserStorage('sessionStorage')?.getItem(CHALLENGE_STORAGE_KEY) ?? null,
+    )?.token ?? memoryChallenge?.token ?? null
+  } catch {
+    return memoryChallenge?.token ?? null
+  }
+}
+
+export function getStoredApiChallenge(): ApiChallenge | null {
+  if (preferMemoryChallenge) {
+    return memoryChallenge
+      ? { ...memoryChallenge.challenge, access_token: memoryChallenge.token }
+      : null
+  }
+  let stored: StoredChallenge | null = null
+  try {
+    stored = safeStoredChallenge(
+      browserStorage('sessionStorage')?.getItem(CHALLENGE_STORAGE_KEY) ?? null,
+    )
+  } catch {
+    stored = null
+  }
+  const active = stored ?? memoryChallenge
+  return active
+    ? { ...active.challenge, access_token: active.token }
+    : null
+}
+
+export function clearApiChallenge(): void {
+  memoryChallenge = null
+  try {
+    const storage = browserStorage('sessionStorage')
+    storage?.removeItem(CHALLENGE_STORAGE_KEY)
+    preferMemoryChallenge = storage?.getItem(CHALLENGE_STORAGE_KEY) !== null
+  } catch {
+    // A readable-but-unremovable stale value must never become authoritative.
+    preferMemoryChallenge = true
+  }
+}
+
+export function storeApiChallenge(challenge: ApiChallenge): void {
+  if (!challenge.user?.id || !challenge.access_token) {
+    throw new Error('The API returned an invalid sign-in challenge.')
+  }
+  clearApiSession({ broadcast: false, notify: false })
+  const stored: StoredChallenge = {
+    token: challenge.access_token,
+    challenge: { ...challenge, access_token: undefined },
+  }
+  memoryChallenge = stored
+  try {
+    const storage = browserStorage('sessionStorage')
+    storage?.setItem(CHALLENGE_STORAGE_KEY, JSON.stringify(stored))
+    const written = safeStoredChallenge(storage?.getItem(CHALLENGE_STORAGE_KEY) ?? null)
+    preferMemoryChallenge = written?.token !== stored.token
+  } catch {
+    // A storage-blocked browser can finish in this tab, but must sign in again
+    // after a refresh. Challenge tokens are never downgraded to localStorage.
+    preferMemoryChallenge = true
+  }
+}
+
 type AuthListener = (event: ApiAuthEvent, session: ApiSession | null) => void
 const authListeners = new Set<AuthListener>()
 
@@ -158,6 +252,8 @@ export function storeApiSession(session: ApiSession, event?: Exclude<ApiAuthEven
     ...session,
     access_token: undefined,
   }
+
+  clearApiChallenge()
 
   memoryToken = token
   memorySession = storedSession
@@ -217,7 +313,7 @@ export function storeApiSession(session: ApiSession, event?: Exclude<ApiAuthEven
   }
 }
 
-export function clearApiSession(options: { broadcast?: boolean } = {}): void {
+export function clearApiSession(options: { broadcast?: boolean; notify?: boolean } = {}): void {
   memoryToken = null
   memorySession = null
   let localSessionRemoved = true
@@ -235,7 +331,7 @@ export function clearApiSession(options: { broadcast?: boolean } = {}): void {
   // If an extension blocks removals, this tab must not fall back to a stale
   // value that remains readable in browser storage.
   preferMemorySession = !localSessionRemoved || !fallbackRemoved
-  notifyAuthListeners('SIGNED_OUT', null)
+  if (options.notify !== false) notifyAuthListeners('SIGNED_OUT', null)
   if (options.broadcast !== false) broadcastAuthEvent('SIGNED_OUT', null)
 }
 
@@ -326,9 +422,23 @@ export async function apiRequest<T>(
   options: RequestOptions = {},
 ): Promise<T> {
   const headers = new Headers(init.headers)
-  const auth = options.auth !== false
-  const requestToken = auth ? getApiAccessToken() : null
-  if (auth) {
+  const authMode = options.auth === false
+    ? 'none'
+    : options.auth === 'challenge'
+      ? 'challenge'
+      : options.auth === 'any'
+        ? 'any'
+        : 'session'
+  const requestToken = options.authToken ?? (
+    authMode === 'challenge'
+      ? getApiChallengeToken()
+      : authMode === 'any'
+        ? getApiChallengeToken() ?? getApiAccessToken()
+        : authMode === 'session'
+          ? getApiAccessToken()
+          : null
+  )
+  if (authMode !== 'none') {
     if (requestToken) headers.set('Authorization', `Bearer ${requestToken}`)
   }
   if (init.body && !(init.body instanceof FormData) && !headers.has('Content-Type')) {
@@ -361,15 +471,27 @@ export async function apiRequest<T>(
   }
 
   if (!response.ok) {
+    const requestError = errorPayload(payload, response.status)
     // A request from an older tab/session must never erase a newer token that
     // was stored while that request was in flight.
     if (
       response.status === 401
-      && auth
+      && authMode !== 'none'
       && requestToken
-      && getApiAccessToken() === requestToken
-    ) clearApiSession()
-    throw errorPayload(payload, response.status)
+      // A mistyped MFA/recovery code consumes one server-side attempt but the
+      // challenge remains valid until its budget is actually exhausted.
+      && requestError.code !== 'invalid_mfa_code'
+    ) {
+      if (
+        (authMode === 'challenge' || authMode === 'any')
+        && getApiChallengeToken() === requestToken
+      ) {
+        clearApiChallenge()
+      } else if (getApiAccessToken() === requestToken) {
+        clearApiSession()
+      }
+    }
+    throw requestError
   }
   return payload as T
 }

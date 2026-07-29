@@ -24,8 +24,11 @@ export default function FirstLoginPage() {
     const result = await completeFirstLogin(password)
     setLoading(false)
     if (!result.ok) return
-    toast.success('Password updated. Your account is ready.')
-    navigate('/dashboard')
+    toast.success('Password updated. Continue with two-factor authentication.')
+    const pendingMode = useStore.getState().pendingMfaMode
+    if (pendingMode === 'verify') navigate('/mfa-verify')
+    else if (pendingMode === 'enroll' || pendingMode === 'recovery') navigate('/mfa-enroll')
+    else navigate('/dashboard')
   }
 
   return (

@@ -43,13 +43,9 @@ export interface User {
   // For TEAM_LEAD: points to a BD_MANAGER or OPS_MANAGER user id.
   // For ASSOCIATE: points to a TEAM_LEAD user id.
   managerId?: string | null
-  // TOTP-based two-factor auth. mfaEnabled is the source of truth for
-  // whether verification is required at login; mfaSecret is the base32
-  // shared secret; mfaRecoveryCodes is a list of SHA-256 hashes of the
-  // one-time recovery codes shown to the user at enrollment time.
+  // Safe public enrollment status only. Factor secrets and recovery-code
+  // hashes live exclusively in the API's private database schema.
   mfaEnabled?: boolean
-  mfaSecret?: string | null
-  mfaRecoveryCodes?: string[]
 }
 
 export type Priority = 'VERY_HIGH' | 'HIGH' | 'MEDIUM'
@@ -361,6 +357,7 @@ export interface Contract {
   terminationReason?: string
   assignedTo?: string        // employee id
   proposalAttachments?: FileAttachment[]
+  awardDocuments?: FileAttachment[] // contract-level award files with user-defined names
   samGovContacts?: SamGovContact[]   // copied from originating opportunity at award time
   serviceDate?: string              // YYYY-MM-DD, entered in the Billing Period tab; printed on the invoice
   billingPeriodStart?: string       // YYYY-MM-DD, invoice service period start

@@ -2,9 +2,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   api,
   apiRequest,
+  clearApiChallenge,
   clearApiSession,
   getApiAccessToken,
+  getApiChallengeToken,
+  getStoredApiChallenge,
   getStoredApiSession,
+  storeApiChallenge,
   storeApiSession,
   subscribeToApiAuthEvents,
   subscribeToApiEvents,
@@ -14,6 +18,7 @@ describe('private data API compatibility client', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
     clearApiSession({ broadcast: false })
+    clearApiChallenge()
     window.localStorage.clear()
     window.sessionStorage.clear()
   })
@@ -154,6 +159,31 @@ describe('private data API compatibility client', () => {
     sessionSetItem.mockRestore()
   })
 
+  it('keeps a new MFA challenge authoritative when sessionStorage rejects writes', () => {
+    const setItem = vi.spyOn(window.sessionStorage, 'setItem').mockImplementation(() => {
+      throw new DOMException('Storage blocked', 'SecurityError')
+    })
+    storeApiChallenge({
+      access_token: 'memory-challenge',
+      user: { id: 'challenge-user' },
+    })
+    expect(getApiChallengeToken()).toBe('memory-challenge')
+    expect(getStoredApiChallenge()?.user.id).toBe('challenge-user')
+    setItem.mockRestore()
+  })
+
+  it('does not revive a stale challenge when sessionStorage refuses removal', () => {
+    storeApiChallenge({
+      access_token: 'stale-challenge',
+      user: { id: 'challenge-user' },
+    })
+    const removeItem = vi.spyOn(window.sessionStorage, 'removeItem').mockImplementation(() => undefined)
+    clearApiChallenge()
+    expect(getApiChallengeToken()).toBeNull()
+    expect(getStoredApiChallenge()).toBeNull()
+    removeItem.mockRestore()
+  })
+
   it('does not let a stale 401 response erase a newer login', async () => {
     storeApiSession({ access_token: 'token-a', user: { id: 'user-a' } })
     let resolveRequest!: (response: Response) => void
@@ -185,6 +215,48 @@ describe('private data API compatibility client', () => {
     await expect(apiRequest('/auth/session')).rejects.toMatchObject({ status: 401 })
     expect(getApiAccessToken()).toBeNull()
     expect(getStoredApiSession()).toBeNull()
+  })
+
+  it('keeps an MFA challenge after a mistyped code so the next attempt can succeed', async () => {
+    storeApiChallenge({
+      access_token: 'mfa-challenge',
+      user: { id: 'challenge-user' },
+    })
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(
+        JSON.stringify({
+          error: {
+            code: 'invalid_mfa_code',
+            message: 'The authentication code is invalid or expired.',
+          },
+        }),
+        { status: 401, headers: { 'content-type': 'application/json' } },
+      ))
+      .mockResolvedValueOnce(new Response(
+        JSON.stringify({ data: { accepted: true }, error: null }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      ))
+
+    await expect(apiRequest('/auth/mfa/verify', {
+      method: 'POST',
+      body: JSON.stringify({ code: '000000' }),
+    }, { auth: 'challenge' })).rejects.toMatchObject({
+      status: 401,
+      code: 'invalid_mfa_code',
+    })
+    expect(getApiChallengeToken()).toBe('mfa-challenge')
+
+    await expect(apiRequest('/auth/mfa/verify', {
+      method: 'POST',
+      body: JSON.stringify({ code: '123456' }),
+    }, { auth: 'challenge' })).resolves.toEqual({
+      data: { accepted: true },
+      error: null,
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(new Headers(fetchMock.mock.calls[1][1]?.headers).get('Authorization')).toBe(
+      'Bearer mfa-challenge',
+    )
   })
 
   it('does not let a stale event-stream 401 erase a newer login', async () => {

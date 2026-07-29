@@ -38,6 +38,11 @@ export interface SamGovOpportunityReference {
   solicitationNumber?: string
 }
 
+export interface SamGovIntegrationStatus {
+  configured: boolean
+  source: 'stored' | 'environment' | null
+}
+
 function invalidSamGovUrl(): never {
   throw new Error('Could not parse the SAM.gov URL. Paste the full URL from the opportunity page.')
 }
@@ -81,7 +86,7 @@ export function parseSamGovOpportunityReference(url: string): SamGovOpportunityR
 }
 
 async function requestSamGov(
-  path: '/integrations/sam/status' | '/integrations/sam/import',
+  path: '/integrations/sam/status' | '/integrations/sam/settings' | '/integrations/sam/import',
   init: RequestInit = {},
 ): Promise<Record<string, unknown>> {
   const response = await apiRequest<unknown>(path, init)
@@ -92,10 +97,40 @@ async function requestSamGov(
   return data as Record<string, unknown>
 }
 
-/** Returns only whether the server secret exists; the secret never reaches the browser. */
-export async function getSamGovImportStatus(): Promise<boolean> {
-  const data = await requestSamGov('/integrations/sam/status')
-  return data.configured === true
+function samGovIntegrationStatus(data: Record<string, unknown>): SamGovIntegrationStatus {
+  const source = data.source
+  if (
+    typeof data.configured !== 'boolean'
+    || (source !== 'stored' && source !== 'environment' && source !== null)
+  ) {
+    throw new Error('The SAM.gov integration returned an invalid status.')
+  }
+  // Deliberately construct a narrow object rather than passing an API response
+  // through to UI code. Credential values have no client-side representation.
+  return { configured: data.configured, source }
+}
+
+/** Returns status metadata only; the server secret never reaches the browser. */
+export async function getSamGovImportStatus(): Promise<SamGovIntegrationStatus> {
+  return samGovIntegrationStatus(await requestSamGov('/integrations/sam/status'))
+}
+
+/** Replaces the private server-side key. The response contains status only. */
+export async function configureSamGovApiKey(apiKey: string): Promise<SamGovIntegrationStatus> {
+  const value = apiKey.trim()
+  if (!value) throw new Error('Enter a SAM.gov API key.')
+  return samGovIntegrationStatus(await requestSamGov('/integrations/sam/settings', {
+    method: 'POST',
+    body: JSON.stringify({ action: 'configure', apiKey: value }),
+  }))
+}
+
+/** Removes only the database override; the server environment fallback remains available. */
+export async function clearStoredSamGovApiKey(): Promise<SamGovIntegrationStatus> {
+  return samGovIntegrationStatus(await requestSamGov('/integrations/sam/settings', {
+    method: 'POST',
+    body: JSON.stringify({ action: 'clear' }),
+  }))
 }
 
 /** Fetches one opportunity through the authenticated server-side proxy. */

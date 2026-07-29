@@ -475,6 +475,7 @@ function contractToDb(c: Contract): Record<string, unknown> {
     termination_reason: c.terminationReason ?? null,
     assigned_to: c.assignedTo ?? null,
     proposal_attachments: normalizeStoredAttachments(c.proposalAttachments),
+    award_documents: normalizeStoredAttachments(c.awardDocuments),
     service_date: c.serviceDate ?? null,
     billing_period_start: c.billingPeriodStart ?? null,
     billing_period_end: c.billingPeriodEnd ?? null,
@@ -518,6 +519,7 @@ function dbToContract(row: Record<string, unknown>): Partial<Contract> {
     terminationReason: row.termination_reason as string | undefined,
     assignedTo: row.assigned_to as string | undefined,
     proposalAttachments: normalizeStoredAttachments(row.proposal_attachments),
+    awardDocuments: normalizeStoredAttachments(row.award_documents),
     serviceDate: row.service_date as string | undefined,
     billingPeriodStart: row.billing_period_start as string | undefined,
     billingPeriodEnd: row.billing_period_end as string | undefined,
@@ -1658,6 +1660,13 @@ export async function upsertContract(c: Contract): Promise<boolean> {
         ? message.match(/["']([a-z0-9_]+)["']/i)?.[1]
         : null
       if (missing && missing in payload) {
+        if (
+          missing === 'award_documents'
+          && normalizeStoredAttachments(c.awardDocuments).length > 0
+        ) {
+          console.error('[db] award_documents migration is required before award documents can be saved')
+          return false
+        }
         const { [missing]: _drop, ...rest } = payload
         void _drop
         payload = rest

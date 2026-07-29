@@ -43,9 +43,11 @@ export function installErrorHandler(
   setHandler((error, request, reply) => {
     const apiError = error instanceof ApiError
       ? error
-      : new ApiError(500, 'internal_error', 'The server could not complete this request.')
+      : (error as Error & { statusCode?: number }).statusCode === 429
+        ? new ApiError(429, 'rate_limited', 'Too many requests. Try again shortly.')
+        : new ApiError(500, 'internal_error', 'The server could not complete this request.')
 
-    if (!(error instanceof ApiError)) {
+    if (!(error instanceof ApiError) && apiError.statusCode >= 500) {
       request.log.error({ err: error }, 'unhandled request error')
     }
     void reply.code(apiError.statusCode).send(errorEnvelope(request, apiError))

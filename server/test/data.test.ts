@@ -744,6 +744,143 @@ describe('generic data request compiler', () => {
       .toBeGreaterThan(statements.findIndex((text) => text.startsWith('insert into public."subcontractors"')))
   })
 
+  it('serializes contract award documents as JSONB instead of a PostgreSQL array', async () => {
+    const row = {
+      id: 'contract-1',
+      award_documents: [{
+        id: 'award-1',
+        name: 'Signed Award.pdf',
+        storagePath: 'contract_awards/award-1.pdf',
+      }],
+    }
+    const statements: string[] = []
+    const client = queryable((text, values) => {
+      statements.push(text)
+      if (text.includes('information_schema.columns')) {
+        return Object.keys(row).map((column_name) => ({ column_name }))
+      }
+      if (text.includes('private.lock_existing_contract_award_files')) {
+        expect(values).toEqual([['contract_awards/award-1.pdf']])
+        return [{ locked_paths: ['contract_awards/award-1.pdf'] }]
+      }
+      if (text.startsWith('insert into public."contracts"')) {
+        expect(text).toMatch(/"award_documents"[\s\S]*\$\d+::jsonb/)
+        expect(values).toContain(JSON.stringify(row.award_documents))
+        expect(values).not.toContain(row.award_documents)
+        return [row]
+      }
+      throw new Error(`Unexpected query: ${text}`)
+    })
+    const request = __test.parseCommon({
+      table: 'contracts',
+      rows: [row],
+      onConflict: 'id',
+    }, ['rows', 'onConflict', 'ignoreDuplicates'])
+
+    await expect(__test.insertData(client, request, true)).resolves.toMatchObject({ data: [row] })
+    expect(statements.findIndex(text =>
+      text.includes('private.lock_existing_contract_award_files'),
+    )).toBeLessThan(statements.findIndex(text =>
+      text.startsWith('insert into public."contracts"'),
+    ))
+  })
+
+  it('rejects a missing contract award file before an upsert can write a dangling path', async () => {
+    const row = {
+      id: 'contract-1',
+      award_documents: [{
+        id: 'missing-award',
+        name: 'Missing Award.pdf',
+        storagePath: 'contract_awards/missing-award.pdf',
+      }],
+    }
+    const statements: string[] = []
+    const client = queryable((text) => {
+      statements.push(text)
+      if (text.includes('information_schema.columns')) {
+        return Object.keys(row).map((column_name) => ({ column_name }))
+      }
+      if (text.includes('private.lock_existing_contract_award_files')) {
+        return [{ locked_paths: [] }]
+      }
+      throw new Error(`Unexpected query: ${text}`)
+    })
+    const request = __test.parseCommon({
+      table: 'contracts',
+      rows: [row],
+      onConflict: 'id',
+    }, ['rows', 'onConflict', 'ignoreDuplicates'])
+
+    await expect(__test.insertData(client, request, true)).rejects.toMatchObject({
+      statusCode: 409,
+      code: 'contract_award_file_missing',
+      details: {
+        missingStoragePaths: ['contract_awards/missing-award.pdf'],
+      },
+    })
+    expect(statements.some(text =>
+      text.startsWith('insert into public."contracts"'),
+    )).toBe(false)
+  })
+
+  it('locks contract award object rows in deterministic order before updating the contract', async () => {
+    const awardDocuments = [
+      {
+        id: 'award-z',
+        storagePath: 'contract_awards/z-award.pdf',
+      },
+      {
+        id: 'award-a',
+        storage_path: 'contract_awards/a-award.pdf',
+      },
+    ]
+    const statements: string[] = []
+    const client = queryable((text, values) => {
+      statements.push(text)
+      if (text.includes('information_schema.columns')) {
+        return [
+          { column_name: 'id' },
+          { column_name: 'award_documents' },
+        ]
+      }
+      if (text.includes('private.lock_existing_contract_award_files')) {
+        expect(values).toEqual([[
+          'contract_awards/a-award.pdf',
+          'contract_awards/z-award.pdf',
+        ]])
+        return [{
+          locked_paths: [
+            'contract_awards/a-award.pdf',
+            'contract_awards/z-award.pdf',
+          ],
+        }]
+      }
+      if (text.startsWith('update public."contracts"')) return [{
+        id: 'contract-1',
+        award_documents: awardDocuments,
+      }]
+      throw new Error(`Unexpected query: ${text}`)
+    })
+    const request = __test.parseCommon({
+      table: 'contracts',
+      values: { award_documents: awardDocuments },
+      filters: [{ column: 'id', operator: 'eq', value: 'contract-1' }],
+    }, ['values'])
+
+    await expect(__test.updateOrDeleteData(client, request, 'update'))
+      .resolves.toMatchObject({
+        data: [{
+          id: 'contract-1',
+          award_documents: awardDocuments,
+        }],
+      })
+    expect(statements.findIndex(text =>
+      text.includes('private.lock_existing_contract_award_files'),
+    )).toBeLessThan(statements.findIndex(text =>
+      text.startsWith('update public."contracts"'),
+    ))
+  })
+
   it('fails the sourcing request if its atomic quoted-flag update cannot find the opportunity', async () => {
     const row = {
       id: 'sub-1',

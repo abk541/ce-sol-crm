@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useCallback, Fragment } from 'react'
 import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Plus, Pencil, Trash2, X, Check, Shield, Search, Save, Network, List, GripVertical, Eye, EyeOff, KeyRound, RotateCcw, Users, GitBranch, AlertTriangle, Bomb, Database, FileText, Award, Bell, Activity, Briefcase, FolderTree, UserCog, Wifi, WifiOff, Download, Upload, ChevronDown, ChevronUp, RefreshCw, HardDrive, Lock, Target } from 'lucide-react'
+import { Plus, Pencil, Trash2, X, Check, Shield, Search, Save, Network, List, GripVertical, Eye, EyeOff, KeyRound, RotateCcw, Users, GitBranch, AlertTriangle, Bomb, Database, FileText, Award, Bell, Activity, Briefcase, FolderTree, UserCog, Wifi, WifiOff, Download, Upload, ChevronDown, ChevronUp, RefreshCw, HardDrive, Lock, Target, Loader } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import type { User, Role, EmployeeTeam, Goal, GoalMetric, GoalScope, Employee, Opportunity, FreshAward } from '../types'
 import { avatarColor, useEscapeKey } from '../lib/utils'
@@ -25,7 +25,12 @@ import {
 } from '../lib/permissions'
 import { fetchRemoteRowCounts, REMOTE_COUNT_TABLES, type RemoteCountTable } from '../lib/db'
 import { isApiConnected, apiHost } from '../lib/api'
-import { getSamGovImportStatus } from '../lib/samGov'
+import {
+  clearStoredSamGovApiKey,
+  configureSamGovApiKey,
+  getSamGovImportStatus,
+  type SamGovIntegrationStatus,
+} from '../lib/samGov'
 import { PASSWORD_POLICY_MESSAGE, passwordMeetsPolicy } from '../lib/passwordPolicy'
 import toast from 'react-hot-toast'
 
@@ -474,6 +479,7 @@ export default function AdminPage() {
     users,
     deleteUser,
     updateUser,
+    adminResetMfa,
     currentUser,
     requireAssociateForActivePipeline,
     setRequireAssociateForActivePipeline,
@@ -541,6 +547,7 @@ export default function AdminPage() {
   const [danger, setDanger] = useState<DangerAction | null>(null)
   const [activationModeSaving, setActivationModeSaving] = useState(false)
   const [dangerBusy, setDangerBusy] = useState(false)
+  const [mfaResettingId, setMfaResettingId] = useState<string | null>(null)
   const [contractClient, setContractClient] = useState<string>('')
 
   // System Health: remote row counts loaded on demand
@@ -561,18 +568,60 @@ export default function AdminPage() {
   // Workspace snapshot
   const [snapshotBusy, setSnapshotBusy] = useState(false)
 
-  // Integrations tab. Only the configured/not-configured bit crosses the Edge
-  // Function boundary; the SAM.gov credential remains server-side.
+  // Integrations tab. Only status metadata comes back from the API. The input
+  // is cleared after each write and is never persisted in browser storage.
   const [samGovStatus, setSamGovStatus] = useState<'idle' | 'loading' | 'configured' | 'missing' | 'error'>('idle')
+  const [samGovSource, setSamGovSource] = useState<SamGovIntegrationStatus['source']>(null)
+  const [samGovApiKey, setSamGovApiKey] = useState('')
+  const [samGovKeyVisible, setSamGovKeyVisible] = useState(false)
+  const [samGovSaving, setSamGovSaving] = useState(false)
+  const applySamGovStatus = useCallback((status: SamGovIntegrationStatus) => {
+    setSamGovStatus(status.configured ? 'configured' : 'missing')
+    setSamGovSource(status.source)
+  }, [])
   const refreshSamGovStatus = useCallback(async () => {
     setSamGovStatus('loading')
     try {
-      const configured = await getSamGovImportStatus()
-      setSamGovStatus(configured ? 'configured' : 'missing')
+      applySamGovStatus(await getSamGovImportStatus())
     } catch {
       setSamGovStatus('error')
+      setSamGovSource(null)
     }
-  }, [])
+  }, [applySamGovStatus])
+
+  const saveSamGovApiKey = useCallback(async (event: React.FormEvent) => {
+    event.preventDefault()
+    if (!samGovApiKey.trim()) {
+      toast.error('Enter a SAM.gov API key.')
+      return
+    }
+    setSamGovSaving(true)
+    try {
+      applySamGovStatus(await configureSamGovApiKey(samGovApiKey))
+      setSamGovApiKey('')
+      setSamGovKeyVisible(false)
+      toast.success('SAM.gov API key saved securely on the server.')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'The SAM.gov API key could not be saved.')
+    } finally {
+      setSamGovSaving(false)
+    }
+  }, [applySamGovStatus, samGovApiKey])
+
+  const removeStoredSamGovApiKey = useCallback(async () => {
+    if (!confirm('Remove the saved SAM.gov API key? The environment fallback, if configured, will remain active.')) return
+    setSamGovSaving(true)
+    try {
+      applySamGovStatus(await clearStoredSamGovApiKey())
+      setSamGovApiKey('')
+      setSamGovKeyVisible(false)
+      toast.success('Saved SAM.gov API key removed.')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'The saved SAM.gov API key could not be removed.')
+    } finally {
+      setSamGovSaving(false)
+    }
+  }, [applySamGovStatus])
 
   const refreshRemoteCounts = useCallback(async () => {
     if (!isApiConnected) {
@@ -642,6 +691,23 @@ export default function AdminPage() {
     if (u.id === currentUser?.id) { toast.error("You can't delete your own account."); return }
     const removed = await deleteUser(u.id)
     if (removed) toast.success(`${u.name} removed.`)
+  }
+
+  const handleMfaReset = async (user: User) => {
+    if (user.id === currentUser?.id) {
+      toast.error('For safety, another administrator must reset your 2FA.')
+      return
+    }
+    if (!user.mfaEnabled || mfaResettingId) return
+    if (!confirm(
+      `Reset two-factor authentication for ${user.name}? This will sign them out everywhere and require a new authenticator setup at their next sign-in.`,
+    )) return
+    setMfaResettingId(user.id)
+    try {
+      await adminResetMfa(user.id)
+    } finally {
+      setMfaResettingId(null)
+    }
   }
 
   const openCreate = (role?: Role, team?: EmployeeTeam | null, managerId?: string | null) => {
@@ -1059,7 +1125,7 @@ export default function AdminPage() {
           <thead>
             <tr>
               <th>User</th><th>Username</th><th>Email</th><th>Role</th><th>Team</th>
-              <th>Status</th><th>First Login</th><th>Last seen</th><th>Created</th><th>Actions</th>
+              <th>Status</th><th>First Login</th><th>2FA</th><th>Last seen</th><th>Created</th><th>Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -1103,6 +1169,11 @@ export default function AdminPage() {
                       {u.firstLogin ? 'Pending' : 'Complete'}
                     </span>
                   </td>
+                  <td>
+                    <span className={`badge text-[10px] ${u.mfaEnabled ? 'badge-active' : 'badge-pending'}`}>
+                      {u.mfaEnabled ? 'Enabled' : 'Setup required'}
+                    </span>
+                  </td>
                   <td className="text-slate-400 text-xs" title={userSessions[u.id]?.lastLoginAt ?? 'Never logged in on this browser'}>
                     {formatRelative(userSessions[u.id]?.lastLoginAt)}
                   </td>
@@ -1111,6 +1182,20 @@ export default function AdminPage() {
                     <div className="flex items-center gap-1">
                       <button onClick={() => setModal(u)} className="btn-ghost p-1.5 rounded-lg text-slate-400 hover:text-indigo-400" title="Edit user">
                         <Pencil size={12} />
+                      </button>
+                      <button
+                        onClick={() => { void handleMfaReset(u) }}
+                        disabled={!u.mfaEnabled || u.id === currentUser?.id || mfaResettingId !== null}
+                        className="btn-ghost p-1.5 rounded-lg text-slate-400 hover:text-amber-300 disabled:opacity-30 disabled:cursor-not-allowed"
+                        title={u.id === currentUser?.id
+                          ? 'Another administrator must reset your 2FA'
+                          : u.mfaEnabled
+                            ? 'Reset 2FA and sign this user out everywhere'
+                            : 'This user has not completed 2FA setup'}
+                      >
+                        {mfaResettingId === u.id
+                          ? <Loader size={12} className="animate-spin" />
+                          : <KeyRound size={12} />}
                       </button>
                       <button onClick={() => { void handleDelete(u) }} className="btn-ghost p-1.5 rounded-lg text-slate-400 hover:text-rose-400" title="Delete user">
                         <Trash2 size={12} />
@@ -1492,8 +1577,8 @@ export default function AdminPage() {
           <div className="flex items-start gap-2">
             <Lock size={14} className="text-sky-300 mt-0.5 flex-shrink-0" />
             <p className="text-[11px] text-sky-100 leading-relaxed">
-              Integration credentials are stored in the server environment and are never sent to this browser.
-              This page reports configuration status only.
+              Integration credentials are kept in the private API server store and are never shown again after saving.
+              They are excluded from workspace data, browser storage, exports, and logs.
             </p>
           </div>
         </div>
@@ -1532,19 +1617,68 @@ export default function AdminPage() {
             </span>
           </div>
 
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-[11px] text-slate-400">
-              Set <code className="rounded bg-black/30 px-1 text-sky-200">SAM_GOV_API_KEY</code> in the native API server environment, then refresh this status.
-            </p>
-            <button
-              type="button"
-              disabled={samGovStatus === 'loading'}
-              onClick={() => { void refreshSamGovStatus() }}
-              className="btn-secondary flex-shrink-0 text-xs disabled:opacity-40"
-            >
-              <RefreshCw size={12} className={samGovStatus === 'loading' ? 'animate-spin' : ''} /> Refresh status
-            </button>
-          </div>
+          <form onSubmit={saveSamGovApiKey} className="space-y-3">
+            <div>
+              <label htmlFor="sam-gov-api-key" className="text-xs text-slate-400 block mb-1.5">
+                {samGovStatus === 'configured' ? 'Replace API key' : 'SAM.gov API key'}
+              </label>
+              <div className="relative">
+                <input
+                  id="sam-gov-api-key"
+                  type={samGovKeyVisible ? 'text' : 'password'}
+                  value={samGovApiKey}
+                  onChange={event => setSamGovApiKey(event.target.value)}
+                  className="input-field pr-10"
+                  placeholder={samGovStatus === 'configured' ? 'Enter a new key to replace the saved key' : 'Paste the SAM.gov API key'}
+                  autoComplete="off"
+                  spellCheck={false}
+                  maxLength={512}
+                  disabled={samGovSaving}
+                />
+                <button
+                  type="button"
+                  onClick={() => setSamGovKeyVisible(visible => !visible)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-500 hover:text-slate-300"
+                  aria-label={samGovKeyVisible ? 'Hide API key' : 'Show API key'}
+                >
+                  {samGovKeyVisible ? <EyeOff size={14} /> : <Eye size={14} />}
+                </button>
+              </div>
+              <p className="text-[10px] text-slate-500 mt-1.5">
+                The value is sent once over the authenticated connection, saved only on the API server, and cleared from this form.
+                {samGovSource === 'environment' && ' The current key comes from the server environment.'}
+                {samGovSource === 'stored' && ' The current key was saved from this admin page.'}
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              {samGovSource === 'stored' && (
+                <button
+                  type="button"
+                  disabled={samGovSaving}
+                  onClick={() => { void removeStoredSamGovApiKey() }}
+                  className="btn-secondary text-xs disabled:opacity-40"
+                >
+                  <Trash2 size={12} /> Remove saved key
+                </button>
+              )}
+              <button
+                type="button"
+                disabled={samGovSaving || samGovStatus === 'loading'}
+                onClick={() => { void refreshSamGovStatus() }}
+                className="btn-secondary text-xs disabled:opacity-40"
+              >
+                <RefreshCw size={12} className={samGovStatus === 'loading' ? 'animate-spin' : ''} /> Refresh status
+              </button>
+              <button
+                type="submit"
+                disabled={samGovSaving || !samGovApiKey.trim()}
+                className="btn-primary text-xs disabled:opacity-40"
+              >
+                <Save size={12} /> {samGovSaving ? 'Saving…' : 'Save API key'}
+              </button>
+            </div>
+          </form>
         </div>
       </div>
       </>)}

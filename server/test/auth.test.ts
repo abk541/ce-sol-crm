@@ -1,6 +1,10 @@
 import bcrypt from 'bcryptjs'
-import { describe, expect, it } from 'vitest'
-import { hashToken, passwordMeetsPolicy } from '../src/auth.js'
+import { describe, expect, it, vi } from 'vitest'
+import type { FastifyRequest } from 'fastify'
+import type { Database, Queryable } from '../src/db.js'
+import { buildApp } from '../src/app.js'
+import { createMfaChallenge, hashToken, passwordMeetsPolicy } from '../src/auth.js'
+import { loadEnvironment } from '../src/env.js'
 
 describe('password migration compatibility', () => {
   it('verifies imported GoTrue $2a$ bcrypt hashes', async () => {
@@ -25,5 +29,216 @@ describe('opaque token hashing', () => {
     expect(digest).toMatch(/^[0-9a-f]{64}$/)
     expect(digest).not.toContain(token)
     expect(hashToken(token)).toBe(digest)
+  })
+})
+
+describe('MFA challenge serialization', () => {
+  it('serializes by account without reversing the challenge/account lock order', async () => {
+    const statements: Array<{ text: string; values?: readonly unknown[] }> = []
+    const accountId = '10000000-0000-4000-8000-000000000001'
+    const client = {
+      async query(text: string, values?: readonly unknown[]) {
+        statements.push({ text, values })
+        const rows = text.includes('from app_auth.accounts account')
+          ? [{ id: accountId, first_login: false, has_mfa_factor: true }]
+          : []
+        return {
+          rows,
+          rowCount: rows.length,
+          command: 'SELECT',
+          oid: 0,
+          fields: [],
+        }
+      },
+    } as Queryable
+    const now = new Date('2026-07-29T12:00:00.000Z')
+
+    const created = await createMfaChallenge(
+      client,
+      accountId,
+      3,
+      now,
+      600,
+      5,
+      {
+        headers: { 'user-agent': 'challenge-test' },
+        ip: '127.0.0.1',
+      } as FastifyRequest,
+    )
+
+    expect(statements).toHaveLength(4)
+    expect(statements[0]).toMatchObject({
+      text: 'select pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1::text, 0))',
+      values: [accountId],
+    })
+    expect(statements[1]).toMatchObject({
+      values: [accountId, 3],
+    })
+    expect(statements[1]?.text).toContain('account.password_version = $2')
+    expect(statements[1]?.text).toContain("profile.status = 'active'")
+    expect(statements[2]?.text).toContain('update app_auth.mfa_challenges')
+    expect(statements[3]?.text).toContain('insert into app_auth.mfa_challenges')
+    expect(created.stage).toBe('mfa_verify')
+  })
+
+  it('does not issue a challenge after the profile or password version changed', async () => {
+    const query = vi.fn(async () => ({
+      rows: [],
+      rowCount: 0,
+      command: 'SELECT',
+      oid: 0,
+      fields: [],
+    }))
+    const now = new Date('2026-07-29T12:00:00.000Z')
+
+    await expect(createMfaChallenge(
+      { query } as unknown as Queryable,
+      '10000000-0000-4000-8000-000000000001',
+      3,
+      now,
+      600,
+      5,
+      { headers: {}, ip: '127.0.0.1' } as FastifyRequest,
+    )).rejects.toMatchObject({ statusCode: 401, code: 'invalid_credentials' })
+
+    expect(query).toHaveBeenCalledTimes(2)
+    expect(query.mock.calls[0]?.[0]).toContain('pg_advisory_xact_lock')
+    expect(query.mock.calls[1]?.[0]).toContain("profile.status = 'active'")
+    expect(query.mock.calls[1]?.[0]).toContain('account.password_version = $2')
+  })
+})
+
+describe('legacy rollout session issuance', () => {
+  it('rechecks account status and password version under the deactivation lock', async () => {
+    const now = new Date('2026-07-29T12:00:00.000Z')
+    const accountId = '10000000-0000-4000-8000-000000000001'
+    const password = 'Valid1!Password'
+    const encryptedPassword = await bcrypt.hash(password, 4)
+    const statements: string[] = []
+    const row = {
+      id: 'profile-1',
+      auth_user_id: accountId,
+      name: 'Legacy User',
+      email: 'legacy@example.test',
+      username: 'legacy',
+      role: 'ASSOCIATE',
+      avatar: null,
+      status: 'active',
+      first_login: false,
+      mfa_enabled: false,
+      created_at: now,
+      team: 'BD',
+      manager_id: null,
+      account_id: accountId,
+      encrypted_password: encryptedPassword,
+      password_version: 4,
+      has_mfa_factor: false,
+    }
+    const client = {
+      query: vi.fn(async (text: string) => {
+        statements.push(text)
+        const rows = text.includes('from app_auth.accounts account')
+          ? [{ id: accountId, first_login: false, has_mfa_factor: false }]
+          : []
+        return {
+          rows,
+          rowCount: rows.length,
+          command: 'SELECT',
+          oid: 0,
+          fields: [],
+        }
+      }),
+      release: vi.fn(),
+    }
+    const db = {
+      query: vi.fn(async (text: string) => {
+        if (text.includes('from app_auth.accounts a')) {
+          return {
+            rows: [row],
+            rowCount: 1,
+            command: 'SELECT',
+            oid: 0,
+            fields: [],
+          }
+        }
+        throw new Error(`Unexpected pool query: ${text}`)
+      }),
+      connect: vi.fn(async () => client),
+      end: vi.fn(async () => undefined),
+    } as unknown as Database
+    const app = await buildApp({
+      env: loadEnvironment({
+        DATABASE_URL: 'postgresql://example.invalid/app',
+        LOG_LEVEL: 'silent',
+      }),
+      db,
+      fetch: globalThis.fetch,
+      now: () => now,
+    })
+
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/v1/auth/login',
+        payload: { email: row.email, password, mfaSupported: false },
+      })
+
+      expect(response.statusCode).toBe(200)
+      expect(response.json().data.session.assurance_level).toBe('legacy')
+      const guardIndex = statements.findIndex(text =>
+        text.includes('from app_auth.accounts account'))
+      const insertIndex = statements.findIndex(text =>
+        text.includes('insert into app_auth.sessions'))
+      expect(statements[guardIndex]).toContain('account.password_version = $2')
+      expect(statements[guardIndex]).toContain("profile.status = 'active'")
+      expect(statements.slice(0, guardIndex)).toContain(
+        'select pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1::text, 0))',
+      )
+      expect(guardIndex).toBeLessThan(insertIndex)
+    } finally {
+      await app.close()
+    }
+  })
+})
+
+describe('first-login authentication boundary', () => {
+  it('authenticates before password validation and rate-limits unauthenticated work', async () => {
+    const query = vi.fn(async () => {
+      throw new Error('The database must not be queried without a bearer token.')
+    })
+    const app = await buildApp({
+      env: loadEnvironment({
+        DATABASE_URL: 'postgresql://example.invalid/app',
+        LOG_LEVEL: 'silent',
+        MFA_MAX_ATTEMPTS: '1',
+      }),
+      db: {
+        query,
+        end: async () => undefined,
+      } as unknown as Database,
+      fetch: globalThis.fetch,
+      now: () => new Date('2026-07-29T12:00:00.000Z'),
+    })
+
+    try {
+      const first = await app.inject({
+        method: 'POST',
+        url: '/api/v1/auth/first-login',
+        payload: { password: 'weak' },
+      })
+      expect(first.statusCode).toBe(401)
+      expect(first.json().error.code).toBe('unauthorized')
+      expect(query).not.toHaveBeenCalled()
+
+      const second = await app.inject({
+        method: 'POST',
+        url: '/api/v1/auth/first-login',
+        payload: { password: 'Valid1!Password' },
+      })
+      expect(second.statusCode).toBe(429)
+      expect(query).not.toHaveBeenCalled()
+    } finally {
+      await app.close()
+    }
   })
 })

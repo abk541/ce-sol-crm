@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   saveAppSetting: vi.fn().mockResolvedValue({ ok: true, missingTable: false }),
   updateOpportunityRecord: vi.fn().mockResolvedValue(true),
   submitOpportunityWorkflow: vi.fn(),
+  clearApiChallenge: vi.fn(),
 }))
 
 vi.mock('../lib/auth', () => ({
@@ -24,13 +25,17 @@ vi.mock('../lib/auth', () => ({
   completeFirstLoginPassword: vi.fn(),
   revalidateAuthenticatedProfile: mocks.revalidateAuthenticatedProfile,
   restoreAuthenticatedProfile: mocks.restoreAuthenticatedProfile,
-  sessionStartedAt: vi.fn((_session, fallback = Date.now()) => fallback),
+  sessionStartedAt: vi.fn((session: { user?: { last_sign_in_at?: string } }, fallback = Date.now()) => {
+    const parsed = Date.parse(session.user?.last_sign_in_at ?? '')
+    return Number.isFinite(parsed) ? parsed : fallback
+  }),
   signOutCurrentSession: mocks.signOutCurrentSession,
 }))
 
 vi.mock('../lib/api', () => ({
   isApiConnected: true,
   api: null,
+  clearApiChallenge: mocks.clearApiChallenge,
 }))
 
 vi.mock('../lib/db', async (importOriginal) => {
@@ -739,6 +744,22 @@ describe('background profile revalidation', () => {
     })
   })
 
+  it('starts a new notice boundary for a newer same-account cross-tab session', async () => {
+    const newStart = '2026-07-20T12:00:00.000Z'
+    mocks.revalidateAuthenticatedProfile.mockResolvedValue({ ok: true, profile: user })
+
+    await useStore.getState().handleAuthSessionEvent('TOKEN_REFRESHED', {
+      user: { id: 'auth-1', last_sign_in_at: newStart },
+    })
+
+    expect(useStore.getState()).toMatchObject({
+      currentUser: user,
+      isAuthenticated: true,
+      loginTimestamp: Date.parse(newStart),
+      accessNoticeAccepted: false,
+    })
+  })
+
   it('switches to a different account opened in another tab without revoking its session', async () => {
     const otherUser: User = {
       ...user,
@@ -750,6 +771,7 @@ describe('background profile revalidation', () => {
     mocks.restoreAuthenticatedProfile.mockResolvedValue({
       initialized: true,
       profile: otherUser,
+      stage: 'authenticated',
       session: { user: { id: 'auth-2' } },
     })
 
@@ -764,6 +786,43 @@ describe('background profile revalidation', () => {
       isAuthenticated: true,
     })
     expect(useStore.getState().opportunities).toEqual([])
+  })
+
+  it('adopts a same-account completed session instead of restoring a tab-local MFA challenge', async () => {
+    useStore.setState({
+      currentUser: user,
+      users: [user],
+      isAuthenticated: false,
+      needsFirstLogin: false,
+      pendingMfaUserId: user.id,
+      pendingMfaMode: 'verify',
+      loginTimestamp: 100,
+      dbReady: false,
+    })
+    mocks.restoreAuthenticatedProfile.mockResolvedValue({
+      initialized: true,
+      profile: user,
+      stage: 'authenticated',
+      session: {
+        user: {
+          id: 'auth-1',
+          last_sign_in_at: '2026-07-20T12:00:00.000Z',
+        },
+      },
+    })
+
+    await useStore.getState().handleAuthSessionEvent('TOKEN_REFRESHED', {
+      user: { id: 'auth-1', last_sign_in_at: '2026-07-20T12:00:00.000Z' },
+    })
+
+    expect(mocks.revalidateAuthenticatedProfile).not.toHaveBeenCalled()
+    expect(mocks.clearApiChallenge).toHaveBeenCalledOnce()
+    expect(useStore.getState()).toMatchObject({
+      currentUser: user,
+      isAuthenticated: true,
+      pendingMfaUserId: null,
+      pendingMfaMode: null,
+    })
   })
 
   it('discards account-scoped initialization results after the active account changes', async () => {

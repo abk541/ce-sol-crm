@@ -23,7 +23,6 @@
     "date-fns": "^3.6.0",
     "framer-motion": "^11.3.0",
     "lucide-react": "^0.414.0",
-    "otpauth": "^9.5.1",
     "pdf-lib": "^1.17.1",
     "qrcode": "^1.5.4",
     "react": "^18.3.1",

@@ -2,7 +2,12 @@ import { randomUUID } from 'node:crypto'
 import bcrypt from 'bcryptjs'
 import type { FastifyInstance } from 'fastify'
 import type { PoolClient } from 'pg'
-import { requireCompleted, passwordMeetsPolicy, PASSWORD_POLICY_MESSAGE } from './auth.js'
+import {
+  requireCompleted,
+  passwordMeetsPolicy,
+  PASSWORD_POLICY_MESSAGE,
+  serializeAuthAccount,
+} from './auth.js'
 import { asServiceUser, type Queryable } from './db.js'
 import { ApiError, asRecord, assertAllowedKeys, requiredString } from './errors.js'
 import type { Dependencies, SafeProfileRow } from './types.js'
@@ -81,6 +86,16 @@ async function targetById(client: PoolClient, userId: string, lock = false): Pro
   const target = result.rows[0]
   if (!target) throw new ApiError(404, 'user_not_found', 'User was not found.')
   return target
+}
+
+async function accountIdByUserId(client: PoolClient, userId: string): Promise<string> {
+  const result = await client.query<{ auth_user_id: string }>(
+    'select auth_user_id from public.users where id = $1',
+    [userId],
+  )
+  const accountId = result.rows[0]?.auth_user_id
+  if (!accountId) throw new ApiError(404, 'user_not_found', 'User was not found.')
+  return accountId
 }
 
 async function targetIsAdmin(client: PoolClient, accountId: string): Promise<boolean> {
@@ -202,11 +217,22 @@ export function registerAdminUserRoutes(app: FastifyInstance, dependencies: Depe
           if (Object.keys(updates).length === 0) {
             throw new ApiError(400, 'invalid_request', 'updates must contain at least one field.')
           }
+          const nextRole = enumValue(updates.role, ROLES, 'role', false)
+          const nextStatus = enumValue(updates.status, STATUSES, 'status', false)
           const result = await asServiceUser(dependencies.db, caller.accountId, async (client) => {
             await requireAdmin(client, caller.accountId)
+            let deactivationAccountId: string | null = null
+            if (nextStatus === 'inactive') {
+              // Challenge creation takes this account-scoped lock before it
+              // re-checks profile status. Acquire it before the profile row
+              // lock so no login can insert a challenge after our revoke sweep.
+              deactivationAccountId = await accountIdByUserId(client, userId)
+              await serializeAuthAccount(client, deactivationAccountId)
+            }
             const target = await targetById(client, userId, true)
-            const nextRole = enumValue(updates.role, ROLES, 'role', false)
-            const nextStatus = enumValue(updates.status, STATUSES, 'status', false)
+            if (deactivationAccountId && deactivationAccountId !== target.auth_user_id) {
+              throw new ApiError(409, 'user_changed', 'The user changed while the update was being prepared.')
+            }
             const removesAdmin = (nextRole !== undefined && nextRole !== target.role)
               || (nextStatus === 'inactive' && target.status !== 'inactive')
             if (removesAdmin) {
@@ -246,9 +272,18 @@ export function registerAdminUserRoutes(app: FastifyInstance, dependencies: Depe
               ])
             }
             if (nextStatus === 'inactive') {
+              const now = dependencies.now()
               await client.query(
-                'update app_auth.sessions set revoked_at = now() where account_id = $1 and revoked_at is null',
-                [target.auth_user_id],
+                `update app_auth.mfa_challenges
+                    set consumed_at = coalesce(consumed_at, $2)
+                  where account_id = $1 and consumed_at is null`,
+                [target.auth_user_id, now],
+              )
+              await client.query(
+                `update app_auth.sessions
+                    set revoked_at = coalesce(revoked_at, $2)
+                  where account_id = $1 and revoked_at is null`,
+                [target.auth_user_id, now],
               )
             }
             return updated.rows[0]
@@ -262,23 +297,98 @@ export function registerAdminUserRoutes(app: FastifyInstance, dependencies: Depe
           const hash = await bcrypt.hash(password(body.password), 12)
           const result = await asServiceUser(dependencies.db, caller.accountId, async (client) => {
             await requireAdmin(client, caller.accountId)
+            const resetAccountId = await accountIdByUserId(client, userId)
+            await serializeAuthAccount(client, resetAccountId)
             const target = await targetById(client, userId, true)
+            if (resetAccountId !== target.auth_user_id) {
+              throw new ApiError(409, 'user_changed', 'The user changed while the reset was being prepared.')
+            }
             await ensureAnotherAdmin(client, target)
+            const now = dependencies.now()
             await client.query(
               `update app_auth.accounts
                   set encrypted_password = $2,
                       password_version = password_version + 1,
-                      updated_at = now()
+                      updated_at = $3
                 where id = $1`,
-              [target.auth_user_id, hash],
+              [target.auth_user_id, hash, now],
             )
             const updated = await client.query<SafeProfileRow>(
               `update public.users set first_login = true where id = $1 returning ${SAFE_COLUMNS}`,
               [target.id],
             )
             await client.query(
-              'update app_auth.sessions set revoked_at = now() where account_id = $1 and revoked_at is null',
+              `update app_auth.mfa_challenges
+                  set consumed_at = coalesce(consumed_at, $2)
+                where account_id = $1 and consumed_at is null`,
+              [target.auth_user_id, now],
+            )
+            await client.query(
+              `update app_auth.sessions
+                  set revoked_at = coalesce(revoked_at, $2)
+                where account_id = $1 and revoked_at is null`,
+              [target.auth_user_id, now],
+            )
+            return updated.rows[0]
+          })
+          return { user: result, error: null }
+        }
+
+        if (action === 'reset-mfa') {
+          assertAllowedKeys(body, ['action', 'userId'])
+          const userId = requiredString(body.userId, 'userId', 128)
+          const result = await asServiceUser(dependencies.db, caller.accountId, async (client) => {
+            await requireAdmin(client, caller.accountId)
+            const resetAccountId = await accountIdByUserId(client, userId)
+            await serializeAuthAccount(client, resetAccountId)
+            const target = await targetById(client, userId, true)
+            if (resetAccountId !== target.auth_user_id) {
+              throw new ApiError(409, 'user_changed', 'The user changed while the reset was being prepared.')
+            }
+            if (target.auth_user_id === caller.accountId) {
+              throw new ApiError(
+                409,
+                'self_mfa_reset',
+                'Ask another administrator to reset two-factor authentication for your account.',
+              )
+            }
+            await ensureAnotherAdmin(client, target)
+            const now = dependencies.now()
+            await client.query(
+              `update app_auth.mfa_challenges
+                  set consumed_at = coalesce(consumed_at, $2)
+                where account_id = $1 and consumed_at is null`,
+              [target.auth_user_id, now],
+            )
+            await client.query(
+              'delete from app_auth.mfa_factors where account_id = $1',
               [target.auth_user_id],
+            )
+            await client.query(
+              `update app_auth.sessions
+                  set revoked_at = coalesce(revoked_at, $2)
+                where account_id = $1 and revoked_at is null`,
+              [target.auth_user_id, now],
+            )
+            const updated = await client.query<SafeProfileRow>(
+              `update public.users
+                  set mfa_enabled = false
+                where id = $1
+              returning ${SAFE_COLUMNS}`,
+              [target.id],
+            )
+            await client.query(
+              `insert into app_auth.mfa_audit_events
+                (id, actor_account_id, target_account_id, action, created_at, remote_address, user_agent)
+               values ($1,$2,$3,'admin_reset',$4,$5,$6)`,
+              [
+                randomUUID(),
+                caller.accountId,
+                target.auth_user_id,
+                now,
+                request.ip || null,
+                request.headers['user-agent']?.slice(0, 512) ?? null,
+              ],
             )
             return updated.rows[0]
           })
@@ -290,7 +400,12 @@ export function registerAdminUserRoutes(app: FastifyInstance, dependencies: Depe
           const userId = requiredString(body.userId, 'userId', 128)
           const result = await asServiceUser(dependencies.db, caller.accountId, async (client) => {
             await requireAdmin(client, caller.accountId)
+            const deleteAccountId = await accountIdByUserId(client, userId)
+            await serializeAuthAccount(client, deleteAccountId)
             const target = await targetById(client, userId, true)
+            if (deleteAccountId !== target.auth_user_id) {
+              throw new ApiError(409, 'user_changed', 'The user changed while deletion was being prepared.')
+            }
             if (target.auth_user_id === caller.accountId) {
               throw new ApiError(409, 'self_delete', 'You cannot delete your own account.')
             }

@@ -8,7 +8,8 @@ import type { FastifyInstance, FastifyRequest } from 'fastify'
 import type { MultipartFile } from '@fastify/multipart'
 import { requireCompleted } from './auth.js'
 import { ApiError } from './errors.js'
-import { transaction } from './db.js'
+import { asServiceUser, transaction } from './db.js'
+import type { Queryable } from './db.js'
 import type { Dependencies } from './types.js'
 
 interface StoredFile {
@@ -21,6 +22,20 @@ interface StoredFile {
   attached_at: Date
   uploader_name: string
   content_available: boolean
+}
+
+interface ContractAwardDeletionJob {
+  object_key: string
+  storage_path: string
+  queued_at: Date
+  attempt_count: number
+  last_attempt_at: Date | null
+  last_error_code: string | null
+}
+
+interface ContractAwardCleanupResult {
+  job: ContractAwardDeletionJob
+  status: 'deleted' | 'queued'
 }
 
 const UNSAFE_CONTENT_TYPES = new Set([
@@ -48,6 +63,9 @@ const FILE_WRITE_PERMISSIONS = [
   'hr:reviewRequests',
   'comment:editAny',
 ] as const
+
+const CONTRACT_AWARD_FOLDER_PREFIX = 'contract_awards/'
+const CONTRACT_AWARD_RETRY_LIMIT = 25
 
 function cleanFolder(value: string | undefined): string {
   const cleaned = (value || 'misc').replace(/[^A-Za-z0-9_-]+/g, '_').slice(0, 64)
@@ -96,6 +114,252 @@ async function requireFileWrite(dependencies: Dependencies, accountId: string): 
   )
   if (result.rows[0]?.allowed !== true) {
     throw new ApiError(403, 'forbidden', 'You do not have permission to upload attachments.')
+  }
+}
+
+function contractAwardStoragePath(value: string): string {
+  const path = value.trim()
+  if (
+    !path.startsWith(CONTRACT_AWARD_FOLDER_PREFIX)
+    || path.length > 1024
+    || /[\u0000\r\n]/.test(path)
+  ) {
+    throw new ApiError(
+      400,
+      'invalid_contract_award_path',
+      'Only private contract award files can be cleaned up through this endpoint.',
+    )
+  }
+  return path
+}
+
+async function requireContractAwardDelete(
+  client: Queryable,
+  accountId: string,
+): Promise<void> {
+  const result = await client.query<{ allowed: boolean }>(
+    `select exists (
+       select 1 from unnest($2::text[]) permission
+        where private.effective_permission_for_auth_user($1, permission)
+     ) as allowed`,
+    [accountId, ['contract:edit', 'admin:manageUsers']],
+  )
+  if (result.rows[0]?.allowed !== true) {
+    throw new ApiError(
+      403,
+      'forbidden',
+      'You do not have permission to remove contract award files.',
+    )
+  }
+}
+
+type RemovePhysicalFile = (path: string) => Promise<void>
+
+async function enqueueUnreferencedContractAwardFile(
+  client: Queryable,
+  requestedPath: string,
+  accountId: string,
+): Promise<ContractAwardDeletionJob> {
+  const storagePath = contractAwardStoragePath(requestedPath)
+
+  const stored = await client.query<StoredFile>(
+    `select object_file.*, ''::text as uploader_name
+       from app_files.objects object_file
+      where object_file.storage_path = $1
+      for update`,
+    [storagePath],
+  )
+  const file = stored.rows[0]
+  if (!file) {
+    const pending = await client.query<ContractAwardDeletionJob>(
+      `select *
+         from app_files.contract_award_deletion_queue
+        where storage_path = $1
+        order by queued_at, object_key
+        limit 1`,
+      [storagePath],
+    )
+    if (pending.rows[0]) return pending.rows[0]
+    throw new ApiError(404, 'file_not_found', 'The contract award file was not found.')
+  }
+
+  // This definer function acquires a SHARE lock and performs an all-contract
+  // reference check without granting the service role broad contract access.
+  // The outer transaction retains its lock through metadata cleanup.
+  const references = await client.query<{ referenced: boolean }>(
+    'select private.contract_award_file_is_referenced($1) as referenced',
+    [storagePath],
+  )
+  if (references.rows[0]?.referenced === true) {
+    throw new ApiError(
+      409,
+      'file_still_referenced',
+      'This award file is still attached to a contract and was not removed.',
+    )
+  }
+  if (!/^[A-Za-z0-9_-]{8,128}$/.test(file.object_key)) {
+    throw new ApiError(500, 'file_cleanup_failed', 'The award file metadata is invalid.')
+  }
+
+  const deleted = await client.query<StoredFile>(
+    `delete from app_files.objects
+      where storage_path = $1
+        and object_key = $2
+      returning *, ''::text as uploader_name`,
+    [storagePath, file.object_key],
+  )
+  if (!deleted.rows[0]) {
+    throw new ApiError(
+      409,
+      'file_cleanup_conflict',
+      'The award file changed during cleanup. Please retry.',
+    )
+  }
+
+  const queued = await client.query<ContractAwardDeletionJob>(
+    `insert into app_files.contract_award_deletion_queue
+       (object_key, storage_path, queued_by)
+     values ($1, $2, $3)
+     on conflict (object_key) do nothing
+     returning *`,
+    [file.object_key, storagePath, accountId],
+  )
+  if (queued.rows[0]) return queued.rows[0]
+
+  const existing = await client.query<ContractAwardDeletionJob>(
+    `select *
+       from app_files.contract_award_deletion_queue
+      where object_key = $1`,
+    [file.object_key],
+  )
+  if (!existing.rows[0] || existing.rows[0].storage_path !== storagePath) {
+    throw new ApiError(
+      409,
+      'file_cleanup_conflict',
+      'The award file cleanup job changed. Please retry.',
+    )
+  }
+  return existing.rows[0]
+}
+
+function physicalObjectPath(attachmentsDir: string, objectKey: string): string {
+  if (!/^[A-Za-z0-9_-]{8,128}$/.test(objectKey)) {
+    throw new ApiError(500, 'file_cleanup_failed', 'The award file cleanup job is invalid.')
+  }
+  return join(attachmentsDir, objectKey.slice(0, 2), objectKey)
+}
+
+function filesystemErrorCode(error: unknown): string {
+  if (!error || typeof error !== 'object' || !('code' in error)) return 'cleanup_failed'
+  const code = typeof error.code === 'string' ? error.code : 'cleanup_failed'
+  return /^[A-Za-z0-9_-]{1,64}$/.test(code) ? code : 'cleanup_failed'
+}
+
+async function markContractAwardCleanupFailure(
+  database: Queryable,
+  job: ContractAwardDeletionJob,
+  errorCode: string,
+): Promise<void> {
+  await database.query(
+    `update app_files.contract_award_deletion_queue
+        set attempt_count = attempt_count + 1,
+            last_attempt_at = now(),
+            last_error_code = $2
+      where object_key = $1`,
+    [job.object_key, errorCode],
+  )
+}
+
+async function processContractAwardDeletionJob(
+  database: Queryable,
+  attachmentsDir: string,
+  job: ContractAwardDeletionJob,
+  removePhysicalFile: RemovePhysicalFile = async path => rm(path),
+): Promise<'deleted' | 'queued'> {
+  const physicalPath = physicalObjectPath(attachmentsDir, job.object_key)
+  try {
+    await removePhysicalFile(physicalPath)
+  } catch (error) {
+    if (filesystemErrorCode(error) !== 'ENOENT') {
+      await markContractAwardCleanupFailure(
+        database,
+        job,
+        filesystemErrorCode(error),
+      ).catch(() => undefined)
+      return 'queued'
+    }
+  }
+
+  try {
+    await database.query(
+      `delete from app_files.contract_award_deletion_queue
+        where object_key = $1`,
+      [job.object_key],
+    )
+    return 'deleted'
+  } catch {
+    // The byte removal is idempotent. Keeping the durable job lets a later
+    // retry observe ENOENT and finish removing the queue record safely.
+    await markContractAwardCleanupFailure(
+      database,
+      job,
+      'queue_finalize_failed',
+    ).catch(() => undefined)
+    return 'queued'
+  }
+}
+
+async function deleteContractAwardAndAttemptCleanup(
+  dependencies: Dependencies,
+  accountId: string,
+  requestedPath: string,
+  removePhysicalFile?: RemovePhysicalFile,
+): Promise<ContractAwardCleanupResult> {
+  const job = await asServiceUser(dependencies.db, accountId, async client => {
+    await requireContractAwardDelete(client, accountId)
+    return enqueueUnreferencedContractAwardFile(client, requestedPath, accountId)
+  })
+
+  const status = await processContractAwardDeletionJob(
+    dependencies.db,
+    dependencies.env.attachmentsDir,
+    job,
+    removePhysicalFile,
+  )
+  return { job, status }
+}
+
+async function retryQueuedContractAwardDeletions(
+  dependencies: Dependencies,
+  accountId: string,
+  removePhysicalFile?: RemovePhysicalFile,
+): Promise<{ attempted: number; deleted: number; pending: number }> {
+  const jobs = await asServiceUser(dependencies.db, accountId, async client => {
+    await requireContractAwardDelete(client, accountId)
+    const pending = await client.query<ContractAwardDeletionJob>(
+      `select *
+         from app_files.contract_award_deletion_queue
+        order by coalesce(last_attempt_at, queued_at), queued_at, object_key
+        limit $1`,
+      [CONTRACT_AWARD_RETRY_LIMIT],
+    )
+    return pending.rows
+  })
+
+  let deleted = 0
+  for (const job of jobs) {
+    const status = await processContractAwardDeletionJob(
+      dependencies.db,
+      dependencies.env.attachmentsDir,
+      job,
+      removePhysicalFile,
+    )
+    if (status === 'deleted') deleted += 1
+  }
+  return {
+    attempted: jobs.length,
+    deleted,
+    pending: jobs.length - deleted,
   }
 }
 
@@ -158,10 +422,17 @@ async function multipartUpload(request: FastifyRequest, dependencies: Dependenci
     }
     if (!uploaded) throw new ApiError(400, 'invalid_request', 'A file field is required.')
     const temporaryUpload = uploaded
+    const folder = cleanFolder(fields.folder)
+    if (folder === 'contract_awards') {
+      await requireContractAwardDelete(
+        dependencies.db,
+        request.auth?.accountId as string,
+      )
+    }
 
     const originalName = cleanName(temporaryUpload.part.filename)
     const id = cleanId(fields.id)
-    const storagePath = `${cleanFolder(fields.folder)}/${id}-${originalName.replace(/[^A-Za-z0-9._-]+/g, '_')}`
+    const storagePath = `${folder}/${id}-${originalName.replace(/[^A-Za-z0-9._-]+/g, '_')}`
     const contentType = UNSAFE_CONTENT_TYPES.has(temporaryUpload.part.mimetype.toLowerCase())
       ? 'application/octet-stream'
       : (temporaryUpload.part.mimetype || 'application/octet-stream').slice(0, 255)
@@ -178,22 +449,32 @@ async function multipartUpload(request: FastifyRequest, dependencies: Dependenci
           'select object_key from app_files.objects where storage_path = $1 for update',
           [storagePath],
         )
+        if (folder === 'contract_awards' && prior.rows[0]) {
+          throw new ApiError(
+            409,
+            'contract_award_file_exists',
+            'An award file with this identifier and name already exists. Upload it with a new name.',
+          )
+        }
+        const conflictClause = folder === 'contract_awards'
+          ? ''
+          : `on conflict (storage_path) do update set
+              object_key = excluded.object_key,
+              attachment_id = excluded.attachment_id,
+              original_name = excluded.original_name,
+              content_type = excluded.content_type,
+              size_bytes = excluded.size_bytes,
+              sha256 = excluded.sha256,
+              attached_at = excluded.attached_at,
+              uploaded_by = excluded.uploaded_by,
+              content_available = true,
+              updated_at = now()`
         const inserted = await client.query<StoredFile>(
           `insert into app_files.objects
              (storage_path, object_key, attachment_id, original_name, content_type, size_bytes, sha256,
-              attached_at, uploaded_by, content_available)
-           values ($1,$2,$3,$4,$5,$6,$7,$8,$9,true)
-           on conflict (storage_path) do update set
-             object_key = excluded.object_key,
-             attachment_id = excluded.attachment_id,
-             original_name = excluded.original_name,
-             content_type = excluded.content_type,
-             size_bytes = excluded.size_bytes,
-             sha256 = excluded.sha256,
-             attached_at = excluded.attached_at,
-             uploaded_by = excluded.uploaded_by,
-             content_available = true,
-             updated_at = now()
+               attached_at, uploaded_by, content_available)
+            values ($1,$2,$3,$4,$5,$6,$7,$8,$9,true)
+           ${conflictClause}
            returning *, $10::text as uploader_name`,
           [
             storagePath,
@@ -225,6 +506,16 @@ async function multipartUpload(request: FastifyRequest, dependencies: Dependenci
       return { data: attachmentResult(result.file), error: null }
     } catch (error) {
       await rm(finalPath, { force: true }).catch(() => undefined)
+      if (
+        folder === 'contract_awards'
+        && (error as { code?: unknown })?.code === '23505'
+      ) {
+        throw new ApiError(
+          409,
+          'contract_award_file_exists',
+          'An award file with this identifier and name already exists. Upload it with a new name.',
+        )
+      }
       throw error
     }
   } finally {
@@ -290,4 +581,54 @@ export function registerFileRoutes(app: FastifyInstance, dependencies: Dependenc
     { preHandler: (request) => requireCompleted(request, dependencies) },
     async (request, reply) => download(request, reply, request.query.path || ''),
   )
+
+  app.delete<{ Params: { encodedPath: string } }>(
+    '/api/v1/files/contract-awards/:encodedPath',
+    { preHandler: (request) => requireCompleted(request, dependencies) },
+    async (request) => {
+      const accountId = request.auth?.accountId as string
+      const cleanup = await deleteContractAwardAndAttemptCleanup(
+        dependencies,
+        accountId,
+        request.params.encodedPath,
+      )
+      return {
+        data: {
+          deleted: true,
+          storagePath: cleanup.job.storage_path,
+          cleanupPending: cleanup.status === 'queued',
+          status: cleanup.status,
+        },
+        error: null,
+      }
+    },
+  )
+
+  app.post(
+    '/api/v1/files/contract-awards/cleanup/retry',
+    { preHandler: (request) => requireCompleted(request, dependencies) },
+    async (request) => {
+      const accountId = request.auth?.accountId as string
+      const result = await retryQueuedContractAwardDeletions(
+        dependencies,
+        accountId,
+      )
+      return {
+        data: {
+          ...result,
+          limit: CONTRACT_AWARD_RETRY_LIMIT,
+        },
+        error: null,
+      }
+    },
+  )
+}
+
+export const __test = {
+  contractAwardStoragePath,
+  requireContractAwardDelete,
+  enqueueUnreferencedContractAwardFile,
+  processContractAwardDeletionJob,
+  deleteContractAwardAndAttemptCleanup,
+  retryQueuedContractAwardDeletions,
 }

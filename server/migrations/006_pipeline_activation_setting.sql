@@ -15,7 +15,12 @@ alter table public.app_settings
     'non_sub_grace_hours',
     'non_sub_grace_minutes',
     'require_associate_for_active_pipeline'
-  ));
+  )) not valid;
+
+-- Migration 008 removes and privately preserves a legacy SAM.gov credential
+-- before validating this allowlist. PostgreSQL still enforces a NOT VALID
+-- constraint for every new or changed row, while permitting that pre-existing
+-- legacy row to survive long enough to be migrated without data loss.
 
 insert into public.app_settings (key, value)
 values ('require_associate_for_active_pipeline', 'true')

@@ -3,7 +3,9 @@ import type { BDSubmission, Contract, Employee, Opportunity, User } from '../typ
 import {
   bdSubmissionPeriodDate,
   calculateBdDashboardSummary,
+  contractAdminPortfolioSummary,
   contractOpportunityRows,
+  dashboardContractBaseYearValue,
   dashboardContractGrossProfit,
   dashboardMonthBuckets,
   isActiveContractAdminRecord,
@@ -356,5 +358,96 @@ describe('operations dashboard calculations', () => {
       baseAmount: 30_000,
       lockedSubcontractors,
     }))).toBe(70_000)
+  })
+
+  it('uses the saved base amount even when invoice CLIN entry is incomplete', () => {
+    expect(dashboardContractBaseYearValue(contract({
+      value: 900_000,
+      baseAmount: 300_000,
+      lineItems: [
+        { id: 'base', contractId: 'contract-1', year: 'base', clin: '0001', description: 'Base', quantity: 2, unit: 'EA', rate: 75_000, amount: 150_000 },
+        { id: 'option', contractId: 'contract-1', year: 'option1', clin: '1001', description: 'Option', quantity: 1, unit: 'EA', rate: 750_000, amount: 750_000 },
+      ],
+    }))).toBe(300_000)
+  })
+
+  it('keeps an explicitly saved zero base-year value from falling back to option-year money', () => {
+    expect(dashboardContractBaseYearValue(contract({
+      value: 900_000,
+      baseAmount: 0,
+      lineItems: [
+        { id: 'option', contractId: 'contract-1', year: 'option1', clin: '1001', description: 'Option', quantity: 1, unit: 'EA', rate: 900_000, amount: 900_000 },
+      ],
+    }))).toBe(0)
+  })
+
+  it('uses base-year CLINs when a legacy contract has no saved base amount', () => {
+    expect(dashboardContractBaseYearValue(contract({
+      value: 900_000,
+      baseAmount: undefined,
+      lineItems: [
+        { id: 'base', contractId: 'contract-1', year: 'base', clin: '0001', description: 'Base', quantity: 2, unit: 'EA', rate: 75_000, amount: 150_000 },
+        { id: 'option', contractId: 'contract-1', year: 'option1', clin: '1001', description: 'Option', quantity: 1, unit: 'EA', rate: 750_000, amount: 750_000 },
+      ],
+    }))).toBe(150_000)
+  })
+
+  it('annualises legacy recurring monthly values when no base-year amount exists', () => {
+    expect(dashboardContractBaseYearValue(contract({
+      type: 'RECURRING',
+      value: 600_000,
+      baseAmount: undefined,
+      monthlyPayment: 10_000,
+    }))).toBe(120_000)
+  })
+
+  it('does not substitute a multi-year total when a legacy base-year value is unknown', () => {
+    expect(dashboardContractBaseYearValue(contract({
+      type: 'OTJ',
+      value: 900_000,
+      baseAmount: undefined,
+      lineItems: [],
+      monthlyPayment: undefined,
+    }))).toBe(0)
+  })
+
+  it('preserves an explicitly saved zero total in the active portfolio', () => {
+    expect(contractAdminPortfolioSummary([
+      contract({
+        value: 0,
+        baseAmount: 100_000,
+        status: 'PERFORMING',
+      }),
+    ])).toMatchObject({
+      portfolioValue: 0,
+      currentYearPortfolioValue: 100_000,
+    })
+  })
+
+  it('builds Contract Admin portfolio cards from active records and base-year value only', () => {
+    const active = contract({
+      id: 'active',
+      value: 500_000,
+      baseAmount: 100_000,
+      status: 'PERFORMING',
+    })
+    const archived = contract({
+      id: 'archived',
+      value: 9_000_000,
+      baseAmount: 2_000_000,
+      status: 'ARCHIVED',
+    })
+    const terminated = contract({
+      id: 'terminated',
+      value: 4_000_000,
+      baseAmount: 1_000_000,
+      status: 'TERMINATED',
+    })
+
+    expect(contractAdminPortfolioSummary([active, archived, terminated])).toMatchObject({
+      activeCount: 1,
+      portfolioValue: 500_000,
+      currentYearPortfolioValue: 100_000,
+    })
   })
 })

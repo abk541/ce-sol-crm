@@ -24,6 +24,8 @@ export default function LoginPage() {
 
     if (!result.ok) { setError(result.error!); return }
     if (result.needsFirst) { navigate('/access-notice'); return }
+    if (result.needsMfaEnroll) { navigate('/mfa-enroll'); return }
+    if (result.needsMfaVerify) { navigate('/mfa-verify'); return }
     navigate('/access-notice')
   }
 

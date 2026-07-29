@@ -213,7 +213,56 @@ function firstNonZeroNumber(...values: Array<number | string | undefined | null>
 }
 
 export function dashboardContractValue(contract: Contract): number {
-  return firstNonZeroNumber(contract.value, contract.baseAmount, contract.monthlyPayment)
+  if (contract.value !== undefined && contract.value !== null) {
+    const totalValue = Number(contract.value)
+    if (Number.isFinite(totalValue)) return totalValue
+  }
+  return firstNonZeroNumber(contract.baseAmount, contract.monthlyPayment)
+}
+
+/**
+ * Value that is actually committed for the contract's base year. The contract's
+ * saved base amount is authoritative because CLINs can be entered gradually for
+ * invoice control. Base-year CLINs are a fallback for older records, followed by
+ * an annualised recurring value. Unknown base-year value remains zero.
+ */
+export function dashboardContractBaseYearValue(contract: Contract): number {
+  // A saved zero is meaningful: it means no base-year value and must not fall
+  // through to option-year CLINs or the full multi-year contract amount.
+  if (contract.baseAmount !== undefined && contract.baseAmount !== null) {
+    const baseAmount = Number(contract.baseAmount)
+    if (Number.isFinite(baseAmount)) return baseAmount
+  }
+
+  const baseYearLines = (contract.lineItems || [])
+    .filter(line => line.year === 'base')
+  if (baseYearLines.length > 0) {
+    return baseYearLines
+      .reduce((sum, line) => sum + firstNonZeroNumber(line.amount, line.quantity * line.rate), 0)
+  }
+
+  const monthlyPayment = firstNonZeroNumber(contract.monthlyPayment)
+  if (contract.type === 'RECURRING' && monthlyPayment) return monthlyPayment * 12
+
+  // A multi-year total must never masquerade as a current/base-year amount.
+  // Legacy records with no base-year evidence contribute zero until corrected.
+  return 0
+}
+
+export function contractAdminPortfolioSummary(contracts: Contract[]) {
+  const activeContracts = contracts.filter(isActiveContractAdminRecord)
+  return {
+    activeContracts,
+    activeCount: activeContracts.length,
+    portfolioValue: activeContracts.reduce(
+      (sum, contract) => sum + dashboardContractValue(contract),
+      0,
+    ),
+    currentYearPortfolioValue: activeContracts.reduce(
+      (sum, contract) => sum + dashboardContractBaseYearValue(contract),
+      0,
+    ),
+  }
 }
 
 export function dashboardContractGrossProfit(contract: Contract): number {

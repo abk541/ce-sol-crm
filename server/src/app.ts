@@ -3,7 +3,7 @@ import cors from '@fastify/cors'
 import helmet from '@fastify/helmet'
 import multipart from '@fastify/multipart'
 import rateLimit from '@fastify/rate-limit'
-import { registerAuthRoutes } from './auth.js'
+import { initializeMfaEnforcement, registerAuthRoutes } from './auth.js'
 import { registerAdminUserRoutes } from './admin-users.js'
 import { registerDataRoutes } from './data.js'
 import { registerEventRoutes } from './events.js'
@@ -13,23 +13,57 @@ import { registerSamRoutes } from './sam.js'
 import { registerOpportunityWorkflowRoutes } from './opportunity-workflows.js'
 import { registerNotificationRoutes } from './notifications.js'
 import { registerDeletionReviewRoutes } from './deletion-reviews.js'
+import { registerMfaRoutes } from './mfa-routes.js'
 import type { Dependencies } from './types.js'
 
+export const SENSITIVE_LOG_PATHS = [
+  'req.headers.authorization',
+  'request.headers.authorization',
+  'headers.authorization',
+  'body.password',
+  'password',
+  '*.password',
+  'body.apiKey',
+  'apiKey',
+  '*.apiKey',
+  'body.api_key',
+  'api_key',
+  '*.api_key',
+  '*.access_token',
+  'access_token',
+  'body.code',
+  'code',
+  '*.code',
+  'body.recoveryCode',
+  'recoveryCode',
+  '*.recoveryCode',
+  'body.mfaSecret',
+  'mfaSecret',
+  '*.mfaSecret',
+  'body.secret',
+  'secret',
+  '*.secret',
+  'body.manualKey',
+  'manualKey',
+  '*.manualKey',
+  'body.otpauthUrl',
+  'otpauthUrl',
+  '*.otpauthUrl',
+  'body.challengeToken',
+  'challengeToken',
+  '*.challengeToken',
+  'body.recoveryCodes',
+  'recoveryCodes',
+  '*.recoveryCodes',
+] as const
+
 export async function buildApp(dependencies: Dependencies): Promise<FastifyInstance> {
+  await initializeMfaEnforcement(dependencies)
   const app = Fastify({
     logger: {
       level: dependencies.env.logLevel,
       redact: {
-        paths: [
-          'req.headers.authorization',
-          'request.headers.authorization',
-          'headers.authorization',
-          'body.password',
-          'password',
-          '*.password',
-          '*.access_token',
-          'access_token',
-        ],
+        paths: [...SENSITIVE_LOG_PATHS],
         censor: '[redacted]',
       },
     },
@@ -62,7 +96,7 @@ export async function buildApp(dependencies: Dependencies): Promise<FastifyInsta
     },
     credentials: false,
     allowedHeaders: ['authorization', 'content-type', 'last-event-id'],
-    methods: ['GET', 'POST', 'OPTIONS'],
+    methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
     maxAge: 600,
   })
   await app.register(rateLimit, { global: false })
@@ -94,6 +128,7 @@ export async function buildApp(dependencies: Dependencies): Promise<FastifyInsta
   })
 
   registerAuthRoutes(app, dependencies)
+  registerMfaRoutes(app, dependencies)
   registerDataRoutes(app, dependencies)
   registerOpportunityWorkflowRoutes(app, dependencies)
   registerNotificationRoutes(app, dependencies)

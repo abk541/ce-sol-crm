@@ -9,7 +9,7 @@ import {
 } from './api'
 import { mapSafeUserRow } from './userProfile'
 
-export type ManagedUserCreate = Omit<User, 'id' | 'createdAt' | 'authUserId' | 'mfaEnabled' | 'mfaSecret' | 'mfaRecoveryCodes' | 'firstLogin'> & {
+export type ManagedUserCreate = Omit<User, 'id' | 'createdAt' | 'authUserId' | 'mfaEnabled' | 'firstLogin'> & {
   password: string
   firstLogin: true
 }
@@ -24,6 +24,7 @@ type ManageUsersRequest =
   | { action: 'update'; userId: string; updates: Partial<ManagedUserUpdate> }
   | { action: 'delete'; userId: string }
   | { action: 'reset-password'; userId: string; password: string }
+  | { action: 'reset-mfa'; userId: string }
 
 type ServiceError = {
   code?: string
@@ -64,6 +65,7 @@ const NON_RETRYABLE_CODES = new Set([
   'origin_denied',
   'self_delete',
   'self_lockout',
+  'self_mfa_reset',
   'setup_required',
   'unauthorized',
   'unsupported_action',

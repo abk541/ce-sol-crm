@@ -125,6 +125,66 @@ describe('native database compatibility', () => {
     expect(contractWrites[1].payload).not.toHaveProperty('gov_billing_status')
   })
 
+  it('round-trips named contract award documents using only private attachment metadata', async () => {
+    const awardDocument = {
+      id: 'award-document-1',
+      name: 'Signed Notice of Award.pdf',
+      attachedAt: '2026-07-29T12:00:00.000Z',
+      uploadedBy: 'Contract Admin',
+      mimeType: 'application/pdf',
+      size: 2048,
+      storagePath: 'contract_awards/award-document-1-signed_notice_of_award.pdf',
+    }
+    const contract = {
+      id: 'contract-1',
+      contractId: 'FA0001',
+      title: 'Example Contract',
+      type: 'OTJ',
+      naicsCode: '541611',
+      status: 'KICK_OFF',
+      location: 'Virginia',
+      popStart: '2026-07-01',
+      popEnd: '2027-06-30',
+      value: 1000,
+      spm: 'Manager',
+      pm: 'Project Manager',
+      awardDocuments: [awardDocument],
+    } as Contract
+
+    await expect(upsertContract(contract)).resolves.toBe(true)
+    const payload = dbState.upsertCalls.find(call => call.table === 'contracts')?.payload
+    expect(payload?.award_documents).toEqual([awardDocument])
+    expect(JSON.stringify(payload?.award_documents)).not.toContain('data:')
+    expect(JSON.stringify(payload?.award_documents)).not.toContain('"url"')
+
+    dbState.selectRows.contracts = [payload as Record<string, unknown>]
+    const loaded = await loadAllData()
+    expect(loaded?.contracts[0].awardDocuments).toEqual([awardDocument])
+  })
+
+  it('does not report success when a non-empty award document cannot be persisted', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    dbState.upsertResponses.contracts = [{
+      error: {
+        code: 'PGRST204',
+        message: "Could not find the 'award_documents' column of 'contracts' in the schema cache.",
+      },
+    }]
+
+    await expect(upsertContract({
+      id: 'contract-1',
+      awardDocuments: [{
+        id: 'award-document-1',
+        name: 'Signed Award.pdf',
+        attachedAt: '2026-07-29T12:00:00.000Z',
+        uploadedBy: 'Contract Admin',
+        storagePath: 'contract_awards/award-document-1.pdf',
+      }],
+    } as Contract)).resolves.toBe(false)
+
+    expect(dbState.upsertCalls.filter(call => call.table === 'contracts')).toHaveLength(1)
+  })
+
   it('treats a native table_not_allowed response as an optional missing table', async () => {
     dbState.selectErrors.app_settings = {
       code: 'table_not_allowed',

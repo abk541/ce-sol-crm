@@ -30,6 +30,8 @@ export interface AuthenticatedSession {
   profile: SafeProfileRow
   createdAt: Date
   expiresAt: Date
+  assuranceLevel: 'legacy' | 'mfa'
+  mfaVerifiedAt: Date | null
   rawToken?: string
 }
 

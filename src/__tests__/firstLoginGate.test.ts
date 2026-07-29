@@ -62,7 +62,7 @@ describe('first-login API action client contract', () => {
 
     await expect(invokeFirstLoginCompletion('NewPassword1!')).resolves.toEqual({
       ok: true,
-      profile: completedProfile,
+      profile: { ...completedProfile, mfaEnabled: false },
       alreadyComplete: true,
     })
     expect(mocks.apiRequest).toHaveBeenCalledWith('/auth/first-login', {

@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { createJSONStorage, persist, type StateStorage } from 'zustand/middleware'
 import toast from 'react-hot-toast'
-import type { ApiSession } from '../lib/api'
+import { clearApiChallenge, isApiConnected, type ApiSession } from '../lib/api'
 import type {
   User, Opportunity, Contract, Notification, Subcontractor,
   NonSubmissionReport, DeletionRequest, FreshAward,
@@ -20,7 +20,6 @@ import {
   MOCK_SUBK_DATABASE, MOCK_ACTIVITY_LOGS,
   MOCK_BD_SUBMISSIONS, MOCK_COMPANY_CERTIFICATIONS, MOCK_EMPLOYEE_REQUESTS,
 } from '../data/mock'
-import { isApiConnected } from '../lib/api'
 import { opportunityDeadlineTimeMs } from '../lib/timezone'
 import {
   loadAllData,
@@ -88,12 +87,18 @@ import {
   normalizeContractForCreation,
 } from '../lib/contractCreation'
 import {
+  acknowledgeMfaRecoveryCodes as acknowledgeMfaRecoveryCodesApi,
   authenticateWithPassword,
+  cancelMfaChallenge as cancelMfaChallengeApi,
   completeFirstLoginPassword,
+  confirmMfaEnrollment as confirmMfaEnrollmentApi,
   revalidateAuthenticatedProfile,
   restoreAuthenticatedProfile,
+  restoreMfaRecoveryCodes as restoreMfaRecoveryCodesApi,
   sessionStartedAt,
   signOutCurrentSession,
+  startMfaEnrollment as startMfaEnrollmentApi,
+  verifyMfaChallenge as verifyMfaChallengeApi,
   type ResilientAuthEvent,
 } from '../lib/auth'
 import { invokeManageUsers } from '../lib/userManagement'
@@ -123,7 +128,11 @@ interface AppState {
   // screen). While set, `isAuthenticated` is still false and route guards
   // redirect to /mfa-verify or /mfa-enroll based on `pendingMfaMode`.
   pendingMfaUserId: string | null
-  pendingMfaMode: 'verify' | 'enroll' | null
+  pendingMfaMode: 'verify' | 'enroll' | 'recovery' | null
+  // Plaintext setup codes exist only while the recovery screen is open. This
+  // field is memory-only (excluded from Zustand persistence) and is purged
+  // with every auth-state reset.
+  pendingMfaRecoveryCodes: string[]
 
   // Data
   users: User[]
@@ -209,16 +218,28 @@ interface AppState {
   // ── MFA actions ────────────────────────────────────────────────────
   // Verify a 6-digit TOTP code against the pending user's stored secret.
   // On success, clears the pending gate and marks the session authenticated.
-  verifyMfaCode: (code: string) => { ok: boolean; error?: string }
+  verifyMfaCode: (code: string) => Promise<{ ok: boolean; error?: string }>
   // Consume a one-time recovery code. On success the code is removed from
   // the user's list, persisted, and the session becomes authenticated.
   useRecoveryCode: (code: string) => Promise<{ ok: boolean; error?: string }>
   // Commit a fresh enrollment. The page has already generated + verified the
   // secret and shown the plaintext recovery codes to the user; the store
   // hashes the codes before persisting and marks the session authenticated.
-  completeMfaEnrollment: (secret: string, plaintextRecoveryCodes: string[]) => Promise<{ ok: boolean; error?: string }>
+  startMfaEnrollment: () => Promise<{
+    ok: boolean
+    error?: string
+    enrollment?: { manualKey: string; otpauthUrl: string }
+  }>
+  completeMfaEnrollment: (code: string) => Promise<{
+    ok: boolean
+    error?: string
+    recoveryCodes?: string[]
+    recoveryCodesNeedRestore?: boolean
+  }>
+  restoreMfaRecoveryCodes: () => Promise<{ ok: boolean; error?: string; recoveryCodes?: string[] }>
+  acknowledgeMfaRecoveryCodes: () => Promise<{ ok: boolean; error?: string }>
   // Abandon the pending gate and return to a clean logged-out state.
-  cancelPendingMfa: () => void
+  cancelPendingMfa: () => Promise<void>
   // Admin action (requires admin:manageUsers): disable MFA on a user so
   // they'll be routed to /mfa-enroll on their next login.
   adminResetMfa: (userId: string) => Promise<boolean>
@@ -963,6 +984,7 @@ function finalizeAuthenticatedSession(
     accessNoticeAccepted,
     pendingMfaUserId: null,
     pendingMfaMode: null,
+    pendingMfaRecoveryCodes: [],
     userSessions: {
       ...s.userSessions,
       [user.id]: { ...(s.userSessions[user.id] ?? {}), lastLoginAt: nowIso },
@@ -982,6 +1004,7 @@ function clearedAuthState(): Partial<AppState> {
     accessNoticeAccepted: false,
     pendingMfaUserId: null,
     pendingMfaMode: null,
+    pendingMfaRecoveryCodes: [],
     users: [],
     employees: [],
     opportunities: [],
@@ -1033,6 +1056,55 @@ function pendingFirstLoginState(
   }
 }
 
+function pendingMfaState(
+  user: User,
+  mode: 'verify' | 'enroll' | 'recovery',
+  startedAt: number,
+  accessNoticeAccepted: boolean,
+  recoveryCodes: string[] = [],
+): Partial<AppState> {
+  const profile = toSafeUser(user)
+  writeAuthSessionMeta(profile.authUserId, startedAt, accessNoticeAccepted)
+  return {
+    ...clearedAuthState(),
+    currentUser: profile,
+    users: [profile],
+    authInitialized: true,
+    isAuthenticated: false,
+    needsFirstLogin: false,
+    loginTimestamp: startedAt,
+    accessNoticeAccepted,
+    pendingMfaUserId: profile.id,
+    pendingMfaMode: mode,
+    pendingMfaRecoveryCodes: [...recoveryCodes],
+  }
+}
+
+function sameAuthGeneration(current: AppState, expected: AppState): boolean {
+  return (
+    current.currentUser?.id === expected.currentUser?.id
+    && current.currentUser?.authUserId === expected.currentUser?.authUserId
+    && current.loginTimestamp === expected.loginTimestamp
+    && current.isAuthenticated === expected.isAuthenticated
+    && current.needsFirstLogin === expected.needsFirstLogin
+    && current.pendingMfaUserId === expected.pendingMfaUserId
+    && current.pendingMfaMode === expected.pendingMfaMode
+  )
+}
+
+function samePendingMfaOperation(
+  current: AppState,
+  expected: AppState,
+  mode: 'verify' | 'enroll' | 'recovery',
+): boolean {
+  return (
+    sameAuthGeneration(current, expected)
+    && !!expected.currentUser
+    && expected.pendingMfaUserId === expected.currentUser.id
+    && expected.pendingMfaMode === mode
+  )
+}
+
 // UI preferences are optional. A privacy policy, browser extension, or full
 // storage quota must never interrupt authentication or a business-data update.
 const resilientPreferenceStorage: StateStorage = {
@@ -1073,6 +1145,7 @@ export const useStore = create<AppState>()(
       accessNoticeAccepted: false,
       pendingMfaUserId: null,
       pendingMfaMode: null,
+      pendingMfaRecoveryCodes: [],
       users: MOCK_USERS,
       opportunities: MOCK_OPPORTUNITIES,
       contracts: MOCK_CONTRACTS,
@@ -1109,8 +1182,16 @@ export const useStore = create<AppState>()(
 
       // ── Auth ────────────────────────────────────────────────────────
       login: async (email, password) => {
+        const initial = get()
         const result = await authenticateWithPassword(email, password)
+        if (!sameAuthGeneration(get(), initial)) {
+          return {
+            ok: false,
+            error: 'A newer sign-in replaced this request. Continue with the current account.',
+          }
+        }
         if (!result.ok) {
+          if (result.code === 'auth_state_changed') return result
           clearAuthSessionMeta()
           set({ ...clearedAuthState(), authInitialized: true })
           return result
@@ -1119,16 +1200,32 @@ export const useStore = create<AppState>()(
         // when the same account previously used this browser tab.
         clearAuthSessionMeta()
         const user = toSafeUser(result.profile)
-        const startedAt = result.session
-          ? sessionStartedAt(result.session, Date.now())
+        const startedAt = result.session || result.challenge
+          ? sessionStartedAt(result.session ?? result.challenge!, Date.now())
           : Date.now()
         // First-login password change still runs first — MFA enrollment
         // happens after the user has set their real password.
-        if (user.firstLogin) {
+        if (result.stage === 'first_login' || user.firstLogin) {
           // A browser reused by another user must not retain any workspace,
           // settings, or permission data while this session is setup-only.
           set(pendingFirstLoginState(user, startedAt, false))
           return { ok: true, needsFirst: true }
+        }
+        if (result.stage === 'mfa_enroll') {
+          set(pendingMfaState(user, 'enroll', startedAt, false))
+          return { ok: true, needsMfaEnroll: true }
+        }
+        if (result.stage === 'mfa_verify') {
+          set(pendingMfaState(user, 'verify', startedAt, false))
+          return { ok: true, needsMfaVerify: true }
+        }
+        if (result.stage === 'mfa_recovery') {
+          set(pendingMfaState(user, 'recovery', startedAt, false))
+          return { ok: true, needsMfaEnroll: true }
+        }
+        if (result.stage !== 'authenticated' || !result.session) {
+          set({ ...clearedAuthState(), authInitialized: true })
+          return { ok: false, error: 'The sign-in response was incomplete.' }
         }
         finalizeAuthenticatedSession(set, user, {
           startedAt,
@@ -1156,8 +1253,8 @@ export const useStore = create<AppState>()(
         const fallbackStartedAt = sameInMemorySession && current.loginTimestamp
           ? current.loginTimestamp
           : stored?.startedAt ?? Date.now()
-        const startedAt = result.session
-          ? sessionStartedAt(result.session, fallbackStartedAt)
+        const startedAt = result.session || result.challenge
+          ? sessionStartedAt(result.session ?? result.challenge!, fallbackStartedAt)
           : fallbackStartedAt
         const storedMatches = stored?.startedAt === startedAt
         const accessNoticeAccepted = (
@@ -1165,8 +1262,25 @@ export const useStore = create<AppState>()(
         ) || (
           storedMatches && stored?.accessNoticeAccepted === true
         )
-        if (user.firstLogin) {
+        if (result.stage === 'first_login' || user.firstLogin) {
           set(pendingFirstLoginState(user, startedAt, accessNoticeAccepted))
+          return
+        }
+        if (result.stage === 'mfa_enroll') {
+          set(pendingMfaState(user, 'enroll', startedAt, accessNoticeAccepted))
+          return
+        }
+        if (result.stage === 'mfa_verify') {
+          set(pendingMfaState(user, 'verify', startedAt, accessNoticeAccepted))
+          return
+        }
+        if (result.stage === 'mfa_recovery') {
+          set(pendingMfaState(user, 'recovery', startedAt, accessNoticeAccepted))
+          return
+        }
+        if (result.stage !== 'authenticated' || !result.session) {
+          clearAuthSessionMeta()
+          set(clearedAuthState())
           return
         }
         finalizeAuthenticatedSession(set, user, {
@@ -1184,7 +1298,24 @@ export const useStore = create<AppState>()(
 
         const state = get()
         if (!state.currentUser) {
+          clearApiChallenge()
           await state.restoreAuthSession()
+          return
+        }
+
+        // A completed session created in another tab supersedes any
+        // provisional first-login/MFA gate in this tab, even for the same
+        // account. Otherwise the tab-local challenge wins `auth:any` and can
+        // erase the newly completed shared session.
+        if (
+          !state.isAuthenticated
+          || state.needsFirstLogin
+          || state.pendingMfaMode !== null
+        ) {
+          clearApiChallenge()
+          clearAuthSessionMeta()
+          set(clearedAuthState())
+          await get().restoreAuthSession()
           return
         }
 
@@ -1195,6 +1326,9 @@ export const useStore = create<AppState>()(
           state.currentUser.authUserId &&
           state.currentUser.authUserId !== session.user.id
         ) {
+          // A provisional challenge is tab-local. It must not mask the newer
+          // completed session that another tab just installed.
+          clearApiChallenge()
           clearAuthSessionMeta()
           set(clearedAuthState())
           await get().restoreAuthSession()
@@ -1204,6 +1338,11 @@ export const useStore = create<AppState>()(
         const result = await revalidateAuthenticatedProfile(
           state.currentUser.authUserId ?? session.user.id,
         )
+        const latest = get()
+        // Revalidation can finish after logout, cancellation, or an account
+        // switch. Neither its success nor its failure may mutate that newer
+        // auth generation.
+        if (!sameAuthGeneration(latest, state)) return
         if (!result.ok) {
           if (result.retryable) return
           if (result.code === 'session_user_changed') {
@@ -1223,27 +1362,29 @@ export const useStore = create<AppState>()(
           return
         }
 
-        const latest = get()
-        if (
-          !latest.currentUser ||
-          latest.currentUser.id !== state.currentUser.id ||
-          latest.loginTimestamp !== state.loginTimestamp
-        ) return
-
         const profile = toSafeUser(result.profile)
-        const startedAt = latest.loginTimestamp
-          ?? sessionStartedAt(session, Date.now())
+        const incomingStartedAt = sessionStartedAt(
+          session,
+          latest.loginTimestamp ?? Date.now(),
+        )
+        const startedAt = event === 'USER_UPDATED'
+          ? latest.loginTimestamp ?? incomingStartedAt
+          : incomingStartedAt
+        const sameSessionBoundary = latest.loginTimestamp === startedAt
+        const accessNoticeAccepted = sameSessionBoundary
+          ? latest.accessNoticeAccepted
+          : false
         if (profile.firstLogin) {
           set(pendingFirstLoginState(
             profile,
             startedAt,
-            latest.accessNoticeAccepted,
+            accessNoticeAccepted,
           ))
           return
         }
         finalizeAuthenticatedSession(set, profile, {
           startedAt,
-          accessNoticeAccepted: latest.accessNoticeAccepted,
+          accessNoticeAccepted,
         })
       },
 
@@ -1268,50 +1409,217 @@ export const useStore = create<AppState>()(
       }),
 
       completeFirstLogin: async (password) => {
-        const u = get().currentUser
-        if (!u) return { ok: false }
+        const initial = get()
+        const u = initial.currentUser
+        if (!u || !initial.needsFirstLogin) return { ok: false }
         const result = await completeFirstLoginPassword(password)
+        const state = get()
+        if (!sameAuthGeneration(state, initial)) return { ok: false }
         if (!result.ok) {
           toast.error(result.error)
           return { ok: false }
         }
-        const state = get()
         if (!state.currentUser || state.currentUser.id !== u.id) return { ok: false }
+        const startedAt = result.session || result.challenge
+          ? sessionStartedAt(
+              result.session ?? result.challenge!,
+              state.loginTimestamp ?? Date.now(),
+            )
+          : state.loginTimestamp ?? Date.now()
+        if (result.stage === 'mfa_enroll') {
+          set(pendingMfaState(result.profile, 'enroll', startedAt, state.accessNoticeAccepted))
+          return { ok: true, needsMfaEnroll: true }
+        }
+        if (result.stage === 'mfa_verify') {
+          set(pendingMfaState(result.profile, 'verify', startedAt, state.accessNoticeAccepted))
+          return { ok: true }
+        }
+        if (result.stage === 'mfa_recovery') {
+          set(pendingMfaState(result.profile, 'recovery', startedAt, state.accessNoticeAccepted))
+          return { ok: true, needsMfaEnroll: true }
+        }
+        if (result.stage !== 'authenticated' || !result.session) {
+          toast.error('Account setup did not return a completed sign-in.')
+          return { ok: false }
+        }
         finalizeAuthenticatedSession(set, result.profile, {
-          startedAt: state.loginTimestamp ?? Date.now(),
+          startedAt,
           accessNoticeAccepted: state.accessNoticeAccepted,
         })
         return { ok: true }
       },
 
       // ── MFA ─────────────────────────────────────────────────────────
-      verifyMfaCode: (_code) => ({ ok: false, error: 'Legacy 2FA is disabled.' }),
+      verifyMfaCode: async (code) => {
+        const initial = get()
+        const pendingUser = initial.currentUser
+        if (!samePendingMfaOperation(initial, initial, 'verify')) {
+          return { ok: false, error: 'This sign-in attempt is no longer active.' }
+        }
+        const result = await verifyMfaChallengeApi({ code })
+        const state = get()
+        if (!samePendingMfaOperation(state, initial, 'verify')) {
+          return { ok: false, error: 'The active sign-in changed before verification completed.' }
+        }
+        if (!result.ok) return { ok: false, error: result.error }
+        if (
+          !pendingUser
+          || result.profile.id !== pendingUser.id
+          || result.stage !== 'authenticated'
+          || !result.session
+        ) return { ok: false, error: 'The completed sign-in could not be verified.' }
+        finalizeAuthenticatedSession(set, result.profile, {
+          startedAt: sessionStartedAt(result.session, Date.now()),
+          accessNoticeAccepted: state.accessNoticeAccepted,
+        })
+        return { ok: true }
+      },
 
-      useRecoveryCode: async (_code) => ({ ok: false, error: 'Legacy 2FA is disabled.' }),
+      useRecoveryCode: async (code) => {
+        const initial = get()
+        const pendingUser = initial.currentUser
+        if (!samePendingMfaOperation(initial, initial, 'verify')) {
+          return { ok: false, error: 'This sign-in attempt is no longer active.' }
+        }
+        const result = await verifyMfaChallengeApi({ recoveryCode: code })
+        const state = get()
+        if (!samePendingMfaOperation(state, initial, 'verify')) {
+          return { ok: false, error: 'The active sign-in changed before verification completed.' }
+        }
+        if (!result.ok) return { ok: false, error: result.error }
+        if (
+          !pendingUser
+          || result.profile.id !== pendingUser.id
+          || result.stage !== 'authenticated'
+          || !result.session
+        ) return { ok: false, error: 'The completed sign-in could not be verified.' }
+        finalizeAuthenticatedSession(set, result.profile, {
+          startedAt: sessionStartedAt(result.session, Date.now()),
+          accessNoticeAccepted: state.accessNoticeAccepted,
+        })
+        return { ok: true }
+      },
 
-      completeMfaEnrollment: async (_secret, _plaintextRecoveryCodes) => ({
-        ok: false,
-        error: 'Legacy 2FA is disabled.',
-      }),
+      startMfaEnrollment: async () => {
+        const initial = get()
+        if (!samePendingMfaOperation(initial, initial, 'enroll')) {
+          return { ok: false, error: 'This enrollment attempt is no longer active.' }
+        }
+        const result = await startMfaEnrollmentApi()
+        if (!samePendingMfaOperation(get(), initial, 'enroll')) {
+          return { ok: false, error: 'The active sign-in changed while enrollment was loading.' }
+        }
+        return result.ok
+          ? { ok: true, enrollment: result.enrollment }
+          : { ok: false, error: result.error }
+      },
 
-      cancelPendingMfa: () => set({
-        currentUser: null,
-        isAuthenticated: false,
-        needsFirstLogin: false,
-        loginTimestamp: null,
-        accessNoticeAccepted: false,
-        pendingMfaUserId: null,
-        pendingMfaMode: null,
-      }),
+      completeMfaEnrollment: async (code) => {
+        const initial = get()
+        if (!samePendingMfaOperation(initial, initial, 'enroll')) {
+          return { ok: false, error: 'This enrollment attempt is no longer active.' }
+        }
+        const result = await confirmMfaEnrollmentApi(code)
+        const state = get()
+        if (!samePendingMfaOperation(state, initial, 'enroll')) {
+          return { ok: false, error: 'The active sign-in changed before enrollment completed.' }
+        }
+        if (!result.ok) return { ok: false, error: result.error }
+        if (!state.currentUser || state.currentUser.id !== result.profile.id) {
+          return { ok: false, error: 'The enrollment account changed unexpectedly.' }
+        }
+        set(pendingMfaState(
+          result.profile,
+          'recovery',
+          state.loginTimestamp ?? Date.now(),
+          state.accessNoticeAccepted,
+          result.recoveryCodes,
+        ))
+        return {
+          ok: true,
+          recoveryCodes: result.recoveryCodes,
+          recoveryCodesNeedRestore: result.recoveryCodesNeedRestore,
+        }
+      },
 
-      adminResetMfa: async (_userId) => {
+      restoreMfaRecoveryCodes: async () => {
+        const initial = get()
+        if (!samePendingMfaOperation(initial, initial, 'recovery')) {
+          return { ok: false, error: 'This recovery setup is no longer active.' }
+        }
+        const result = await restoreMfaRecoveryCodesApi()
+        if (!samePendingMfaOperation(get(), initial, 'recovery')) {
+          return { ok: false, error: 'The active sign-in changed while recovery codes were loading.' }
+        }
+        if (result.ok) {
+          set({ pendingMfaRecoveryCodes: [...result.recoveryCodes] })
+        }
+        return result.ok
+          ? { ok: true, recoveryCodes: result.recoveryCodes }
+          : { ok: false, error: result.error }
+      },
+
+      acknowledgeMfaRecoveryCodes: async () => {
+        const initial = get()
+        const pendingUser = initial.currentUser
+        if (!samePendingMfaOperation(initial, initial, 'recovery')) {
+          return { ok: false, error: 'This recovery setup is no longer active.' }
+        }
+        const result = await acknowledgeMfaRecoveryCodesApi()
+        const state = get()
+        if (!samePendingMfaOperation(state, initial, 'recovery')) {
+          return { ok: false, error: 'The active sign-in changed before enrollment completed.' }
+        }
+        if (!result.ok) return { ok: false, error: result.error }
+        if (
+          !pendingUser
+          || result.profile.id !== pendingUser.id
+          || result.stage !== 'authenticated'
+          || !result.session
+        ) return { ok: false, error: 'The completed enrollment could not be verified.' }
+        finalizeAuthenticatedSession(set, result.profile, {
+          startedAt: sessionStartedAt(result.session, Date.now()),
+          accessNoticeAccepted: state.accessNoticeAccepted,
+        })
+        return { ok: true }
+      },
+
+      cancelPendingMfa: async () => {
+        const initial = get()
+        if (
+          !initial.currentUser
+          || (!initial.pendingMfaMode && !initial.needsFirstLogin)
+        ) return
+        const cancellation = cancelMfaChallengeApi()
+        clearAuthSessionMeta()
+        set(clearedAuthState())
+        try {
+          await cancellation
+        } catch {
+          // Local challenge removal is the security boundary; remote
+          // cancellation remains best effort when the network is unavailable.
+        }
+      },
+
+      adminResetMfa: async (userId) => {
         const actor = get().currentUser
         if (!hasPermission(actor, 'admin:manageUsers')) {
           toast.error('You do not have permission to reset 2FA.')
           return false
         }
-        toast.error('Legacy 2FA is disabled.')
-        return false
+        const target = get().users.find(user => user.id === userId)
+        if (!target) return false
+        const result = await invokeManageUsers({ action: 'reset-mfa', userId })
+        if (!result.ok || !result.user) {
+          toast.error(result.ok ? '2FA reset did not return the user.' : result.error)
+          return false
+        }
+        const updated = toSafeUser(result.user)
+        set(state => ({
+          users: state.users.map(user => user.id === userId ? updated : user),
+        }))
+        toast.success(`2FA reset for ${target.name}. Their active sessions were signed out.`)
+        return true
       },
 
       // ── User management ─────────────────────────────────────────────
@@ -4457,6 +4765,10 @@ export const useStore = create<AppState>()(
           const profileResult = await revalidateAuthenticatedProfile(
             initial.currentUser.authUserId,
           )
+          const latest = get()
+          // A response that belongs to an older auth generation must be
+          // side-effect free, including when it reports a hard failure.
+          if (!sameAuthGeneration(latest, initial)) return
           if (!profileResult.ok) {
             if (profileResult.retryable) return
             if (profileResult.code === 'session_user_changed') {
@@ -4477,12 +4789,9 @@ export const useStore = create<AppState>()(
 
           // Do not let a refresh that started before logout/account switching
           // re-authenticate a newer store state with stale results.
-          const latest = get()
           if (
             !latest.isAuthenticated ||
-            !latest.currentUser ||
-            latest.currentUser.id !== initial.currentUser.id ||
-            latest.loginTimestamp !== initial.loginTimestamp
+            !latest.currentUser
           ) return
 
           const refreshedProfile = toSafeUser(profileResult.profile)

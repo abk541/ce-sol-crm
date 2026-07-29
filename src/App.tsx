@@ -6,6 +6,8 @@ import Layout from './components/layout/Layout'
 import AccessNoticePage from './pages/auth/AccessNoticePage'
 import LoginPage from './pages/auth/LoginPage'
 import FirstLoginPage from './pages/auth/FirstLoginPage'
+import MfaEnrollPage from './pages/auth/MfaEnrollPage'
+import MfaVerifyPage from './pages/auth/MfaVerifyPage'
 import DashboardPage from './pages/DashboardPage'
 import PipelinePage from './pages/PipelinePage'
 import ProposalsPage from './pages/ProposalsPage'
@@ -27,15 +29,25 @@ import { subscribeToDataChanges } from './lib/db'
 import { isApiConnected } from './lib/api'
 import { subscribeToAuthSessionChanges } from './lib/auth'
 
+function mfaRoute(mode: 'verify' | 'enroll' | 'recovery' | null): string | null {
+  if (mode === 'verify') return '/mfa-verify'
+  if (mode === 'enroll' || mode === 'recovery') return '/mfa-enroll'
+  return null
+}
+
 function AuthGuard({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, needsFirstLogin } = useStore()
+  const { isAuthenticated, needsFirstLogin, pendingMfaMode } = useStore()
+  const pendingRoute = mfaRoute(pendingMfaMode)
+  if (pendingRoute) return <Navigate to={pendingRoute} replace />
   if (needsFirstLogin) return <Navigate to="/first-login" replace />
   if (!isAuthenticated) return <Navigate to="/login" replace />
   return <>{children}</>
 }
 
 function AccessNoticeGuard({ children }: { children: React.ReactNode }) {
-  const { accessNoticeAccepted, isAuthenticated, needsFirstLogin, currentUser } = useStore()
+  const { accessNoticeAccepted, isAuthenticated, needsFirstLogin, currentUser, pendingMfaMode } = useStore()
+  const pendingRoute = mfaRoute(pendingMfaMode)
+  if (pendingRoute) return <Navigate to={pendingRoute} replace />
   // A pending 2FA gate takes precedence over the access notice — a user in
   // the middle of enrolling/verifying can't peek at anything else.
   const hasValidatedCredentials = isAuthenticated || needsFirstLogin || !!currentUser
@@ -69,7 +81,9 @@ export default function App() {
     needsFirstLogin,
     currentUser,
     loginTimestamp,
+    pendingMfaMode,
   } = useStore()
+  const pendingRoute = mfaRoute(pendingMfaMode)
   const restoreAuthSession = useStore(s => s.restoreAuthSession)
   const initializeStore = useStore(s => s.initializeStore)
   const refreshFromDb = useStore(s => s.refreshFromDb)
@@ -167,7 +181,9 @@ export default function App() {
         <Route
           path="/access-notice"
           element={
-            !isAuthenticated && !needsFirstLogin && !currentUser
+            pendingRoute
+              ? <Navigate to={pendingRoute} replace />
+              : !isAuthenticated && !needsFirstLogin && !currentUser
                   ? <Navigate to="/login" replace />
                   : accessNoticeAccepted
                     ? <Navigate to={needsFirstLogin ? "/first-login" : isAuthenticated ? "/dashboard" : "/login"} replace />
@@ -177,7 +193,9 @@ export default function App() {
         <Route
           path="/login"
           element={
-            isAuthenticated
+            pendingRoute
+              ? <Navigate to={pendingRoute} replace />
+              : isAuthenticated
                   ? <Navigate to={accessNoticeAccepted ? "/dashboard" : "/access-notice"} replace />
                   : needsFirstLogin && currentUser
                     ? <Navigate to={accessNoticeAccepted ? "/first-login" : "/access-notice"} replace />
@@ -185,6 +203,18 @@ export default function App() {
           }
         />
         <Route path="/first-login" element={<AccessNoticeGuard><FirstLoginPage /></AccessNoticeGuard>} />
+        <Route
+          path="/mfa-enroll"
+          element={pendingMfaMode === 'enroll' || pendingMfaMode === 'recovery'
+            ? <MfaEnrollPage />
+            : <Navigate to={isAuthenticated ? '/dashboard' : '/login'} replace />}
+        />
+        <Route
+          path="/mfa-verify"
+          element={pendingMfaMode === 'verify'
+            ? <MfaVerifyPage />
+            : <Navigate to={isAuthenticated ? '/dashboard' : '/login'} replace />}
+        />
 
         <Route path="/" element={<AccessNoticeGuard><AuthGuard><Layout /></AuthGuard></AccessNoticeGuard>}>
           <Route index element={<Navigate to="/dashboard" replace />} />
@@ -208,7 +238,7 @@ export default function App() {
           <Route path="settings"          element={<PlaceholderPage title="Settings" />} />
         </Route>
 
-        <Route path="*" element={<Navigate to={isAuthenticated ? (accessNoticeAccepted ? "/dashboard" : "/access-notice") : "/login"} replace />} />
+        <Route path="*" element={<Navigate to={pendingRoute ?? (isAuthenticated ? (accessNoticeAccepted ? "/dashboard" : "/access-notice") : "/login")} replace />} />
       </Routes>
     </HashRouter>
   )

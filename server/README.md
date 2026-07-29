@@ -43,13 +43,49 @@ Take and verify a fresh encrypted database backup before applying migrations.
 7. Apply `migrations/006_pipeline_activation_setting.sql` as the database owner.
    It allowlists and seeds the workspace-wide Contract Opportunities activation
    rule without overwriting an administrator's existing choice.
-8. Start the API, verify `/health/ready`, and exercise login, first-login, CRUD,
+8. Apply `migrations/007_contract_award_documents.sql` as the database owner.
+   It adds durable metadata for named award documents uploaded from Contract
+   Admin, the narrow all-contract reference guard, and a private deletion queue.
+   Metadata and its cleanup job commit before file bytes are touched, so disk
+   failures remain safely retryable. Contract writes also lock and validate
+   every award-file path first, preventing stale screens from restoring a file
+   that cleanup has already detached.
+9. Apply `migrations/008_private_integration_secrets.sql` as the database owner.
+   It moves any legacy SAM.gov key out of public settings and grants only the
+   native API service access to the private credential store.
+10. Apply `migrations/009_native_mfa.sql` as the database owner. It adds
+    private encrypted authenticator factors, hashed one-time recovery codes,
+    short-lived sign-in challenges, session assurance, audit events, and the
+    least-privilege runtime grants. Do not add these tables to the earlier
+    native baseline scripts: migration 009 owns their creation and ACL.
+11. Start the API, verify `/health/ready`, and exercise login, first-login, CRUD,
    role denial, user administration, SAM status/import, file upload/download,
    atomic submit/cancel/restore, assignment repair, and SSE before enabling
    production writes.
 
 The SQL is idempotent. Migration 001 never overwrites a password already changed
 through this service.
+
+## Mandatory 2FA rollout
+
+Generate `MFA_ENCRYPTION_KEY` once as documented in `env.example`, keep it
+stable and root-owned, and back it up separately from PostgreSQL. An accidental
+rotation makes existing authenticator factors unreadable.
+
+Use this order so old browser bundles are never locked out:
+
+1. Back up and apply migration 009.
+2. Deploy the API with `MFA_ENFORCEMENT_ENABLED=false`.
+3. Deploy the compatible frontend and verify password, first-login, enrollment,
+   recovery-code, restore, logout, and administrator-reset flows.
+4. Set `MFA_ENFORCEMENT_ENABLED=true`, restart the API, and verify readiness.
+   Startup revokes every legacy-assurance session; all active users must enroll
+   again once.
+
+Only the literal `true` enables enforcement. Invalid flag values stop startup.
+The setup script preserves an existing valid key and enforcement flag; it
+refuses duplicate or malformed installed values rather than silently rotating
+or disabling them.
 
 ## Commands
 
@@ -80,9 +116,14 @@ Routes:
 - `POST /api/v1/notifications/read`
 - `POST /api/v1/admin/users/actions`
 - `GET /api/v1/integrations/sam/status`
+- `POST /api/v1/integrations/sam/settings`
 - `POST /api/v1/integrations/sam/import`
 - `POST /api/v1/files`
 - `GET /api/v1/files/:encodedPath` (also `GET /api/v1/files?path=...`)
+- `DELETE /api/v1/files/contract-awards/:encodedPath` (contract editors/admins
+  only; refuses to remove files still referenced by any contract)
+- `POST /api/v1/files/contract-awards/cleanup/retry` (contract editors/admins
+  only; retries at most 25 safely detached file-cleanup jobs)
 - `GET /api/v1/events`
 - `GET /health/live` and `GET /health/ready`
 

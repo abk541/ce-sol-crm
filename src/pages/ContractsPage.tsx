@@ -41,6 +41,16 @@ import {
 import { formatInvoiceSequence } from '../lib/invoiceNumbers'
 import { normalizeContractDeliverables } from '../lib/contractDeliverables'
 import {
+  appendAwardDocument,
+  cleanupContractAwardDocuments,
+  createAwardDocumentUploadFile,
+  detachedAwardDocuments,
+  removeAwardDocument,
+} from '../lib/contractAwardDocuments'
+import {
+  contractAdminPortfolioSummary,
+} from '../lib/dashboardMetrics'
+import {
   buildLegacyContractFromDraft,
   CONTRACT_FINANCE_TYPE_OPTIONS,
   CONTRACT_SET_ASIDE_OPTIONS,
@@ -304,6 +314,179 @@ function AttachmentPicker({
 // ─────────────────────────────────────────────────────────────────────────
 // Detail Drawer
 // ─────────────────────────────────────────────────────────────────────────
+function awardDocumentKey(attachment: FileAttachment): string {
+  return attachment.storagePath || attachment.id
+}
+
+function uniqueAwardDocuments(attachments: readonly FileAttachment[]): FileAttachment[] {
+  return Array.from(new Map(
+    attachments.map(attachment => [awardDocumentKey(attachment), attachment]),
+  ).values())
+}
+
+function AwardDocumentPicker({
+  attachments,
+  onChange,
+  uploadedBy,
+  onUploadingChange,
+  onUploaded,
+  locked,
+}: {
+  attachments: FileAttachment[]
+  onChange: (update: (attachments: FileAttachment[]) => FileAttachment[]) => void
+  uploadedBy: string
+  onUploadingChange: (uploading: boolean) => void
+  onUploaded: (attachment: FileAttachment) => void
+  locked: boolean
+}) {
+  const [documentName, setDocumentName] = useState('')
+  const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [uploading, setUploading] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const busy = uploading || locked
+
+  const upload = async () => {
+    if (!documentName.trim()) {
+      toast.error('Enter a document name before uploading.')
+      return
+    }
+    if (!selectedFile) {
+      toast.error('Choose the award document file.')
+      return
+    }
+
+    setUploading(true)
+    onUploadingChange(true)
+    try {
+      const namedFile = createAwardDocumentUploadFile(selectedFile, documentName)
+      const attachment = await uploadToStorage(namedFile, {
+        folder: 'contract_awards',
+        uploadedBy,
+      })
+      onChange(current => appendAwardDocument(current, attachment))
+      onUploaded(attachment)
+      setDocumentName('')
+      setSelectedFile(null)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+      toast.success('Award document uploaded. Save changes to attach it to this contract.')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Award document could not be uploaded.')
+    } finally {
+      setUploading(false)
+      onUploadingChange(false)
+    }
+  }
+
+  return (
+    <div className="space-y-5">
+      <div
+        className="rounded-2xl border p-4"
+        style={{ background: 'rgba(8,24,37,0.72)', borderColor: 'rgba(215,190,122,0.32)' }}
+      >
+        <div className="mb-4">
+          <p className="text-[10px] font-black uppercase tracking-widest text-[#F8E8B8]">Add award document</p>
+          <p className="mt-1 text-[11px] text-slate-400">
+            Give the file the name employees should see, then upload it securely.
+          </p>
+        </div>
+        <div className="grid gap-3 md:grid-cols-2">
+          <label className="block">
+            <span className="mb-1.5 block text-xs font-semibold text-slate-400">Document name *</span>
+            <input
+              value={documentName}
+              onChange={event => setDocumentName(event.target.value)}
+              maxLength={180}
+              className="input-field w-full"
+              placeholder="e.g. Signed Notice of Award"
+              disabled={busy}
+            />
+          </label>
+          <label className="block">
+            <span className="mb-1.5 block text-xs font-semibold text-slate-400">File *</span>
+            <input
+              ref={fileInputRef}
+              type="file"
+              onChange={event => setSelectedFile(event.target.files?.[0] ?? null)}
+              className="input-field w-full text-xs file:mr-3 file:rounded-lg file:border-0 file:bg-[#D7BE7A] file:px-3 file:py-1.5 file:text-xs file:font-bold file:text-[#07131F]"
+              disabled={busy}
+            />
+          </label>
+        </div>
+        <div className="mt-4 flex justify-end">
+          <button
+            type="button"
+            onClick={() => void upload()}
+            disabled={busy || !documentName.trim() || !selectedFile}
+            className="btn-secondary flex items-center gap-1.5 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Paperclip size={13} />
+            {uploading ? 'Uploading…' : 'Upload document'}
+          </button>
+        </div>
+      </div>
+
+      <div>
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Award documents</p>
+            <p className="mt-1 text-[11px] text-slate-500">
+              Downloads use the name shown here. Save Changes stores additions and removals.
+            </p>
+          </div>
+          <span className="rounded-full border border-[#D7BE7A]/30 bg-[#D7BE7A]/10 px-2 py-1 text-[10px] font-bold text-[#F8E8B8]">
+            {attachments.length}
+          </span>
+        </div>
+
+        {attachments.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-slate-700 px-4 py-8 text-center">
+            <FileText size={22} className="mx-auto mb-2 text-slate-500" />
+            <p className="text-xs font-semibold text-slate-400">No award documents attached</p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {attachments.map(attachment => (
+              <div
+                key={attachment.id}
+                className="flex flex-wrap items-center justify-between gap-3 rounded-xl border px-3 py-3"
+                style={{ background: 'rgba(255,255,255,0.05)', borderColor: 'rgba(255,255,255,0.11)' }}
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-xs font-bold text-slate-100">{attachment.name}</p>
+                  <p className="mt-0.5 text-[10px] text-slate-400">
+                    {formatDateTime(attachment.attachedAt)}
+                    {formatFileSize(attachment.size) ? ` · ${formatFileSize(attachment.size)}` : ''}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => downloadAttachment(attachment)}
+                    disabled={!hasAttachmentSource(attachment)}
+                    className="btn-secondary flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] disabled:cursor-not-allowed disabled:opacity-45"
+                  >
+                    <Download size={12} /> Download
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onChange(current => removeAwardDocument(current, attachment.id))}
+                    disabled={busy}
+                    className="flex h-8 w-8 items-center justify-center rounded-lg border border-red-300/35 bg-red-500/10 text-red-200 transition-colors hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-45"
+                    aria-label={`Remove ${attachment.name}`}
+                    title={busy ? 'Wait for the current operation to finish' : 'Remove from contract'}
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 const ROLE_LABEL_C: Record<string, string> = {
   BD_MANAGER: 'Manager',
   TEAM_LEAD: 'Team Lead',
@@ -1597,16 +1780,72 @@ function ContractDetailDrawer({
     optionYearDeadline: c.optionYearDeadline || '',
     supportAgent: c.supportAgent || '',
     billingNotes: c.billingNotes || '',
+    awardDocuments: [...(c.awardDocuments ?? [])],
   })
   const [showEditDetails, setShowEditDetails] = useState(false)
   const [editForm, setEditForm] = useState(() => buildEditForm(contract))
+  const [awardDocumentsUploading, setAwardDocumentsUploading] = useState(false)
+  const [editDetailsSaving, setEditDetailsSaving] = useState(false)
+  const [awardDocumentsCleaning, setAwardDocumentsCleaning] = useState(false)
+  const [persistedAwardDocuments, setPersistedAwardDocuments] = useState<FileAttachment[]>(
+    () => [...(contract.awardDocuments ?? [])],
+  )
+  const [newAwardDocuments, setNewAwardDocuments] = useState<FileAttachment[]>([])
+  const [awardCleanupQueue, setAwardCleanupQueue] = useState<FileAttachment[]>([])
 
   // Terminate form
   const [showTerminate, setShowTerminate] = useState(false)
   const [terminateType, setTerminateType] = useState<'T4C' | 'T4D' | 'CANCELED'>('T4C')
   const [terminateReason, setTerminateReason] = useState('')
 
-  useEscapeKey(() => setShowEditDetails(false), showEditDetails)
+  const awardDocumentLifecycleBusy =
+    awardDocumentsUploading || editDetailsSaving || awardDocumentsCleaning
+
+  const closeEditDetails = async () => {
+    if (awardDocumentLifecycleBusy) return
+    const cleanupCandidates = uniqueAwardDocuments([
+      ...newAwardDocuments,
+      ...awardCleanupQueue,
+    ])
+    if (cleanupCandidates.length === 0) {
+      setShowEditDetails(false)
+      return
+    }
+
+    setAwardDocumentsCleaning(true)
+    const cleanup = await cleanupContractAwardDocuments(cleanupCandidates)
+    setAwardDocumentsCleaning(false)
+    const failed = cleanup.failed.map(item => item.attachment)
+    const failedKeys = new Set(failed.map(awardDocumentKey))
+    const resolvedKeys = new Set([
+      ...cleanup.deleted,
+      ...cleanup.queued,
+      ...cleanup.missing,
+      ...cleanup.skipped,
+    ].map(awardDocumentKey))
+    setNewAwardDocuments(current =>
+      current.filter(document => failedKeys.has(awardDocumentKey(document))))
+    setEditForm(form => ({
+      ...form,
+      awardDocuments: form.awardDocuments.filter(
+        document => !resolvedKeys.has(awardDocumentKey(document)),
+      ),
+    }))
+    setAwardCleanupQueue(failed)
+
+    if (failed.length > 0) {
+      toast.error(
+        `${failed.length} award file${failed.length === 1 ? '' : 's'} could not be cleaned up. Retry closing to try again.`,
+      )
+      return
+    }
+    if (cleanup.referenced.length > 0) {
+      toast.success('Files already attached to a contract were kept safely.')
+    }
+    setShowEditDetails(false)
+  }
+
+  useEscapeKey(() => { void closeEditDetails() }, showEditDetails)
   useEscapeKey(() => setShowTerminate(false), showTerminate)
 
   // PoC form
@@ -1660,12 +1899,13 @@ function ContractDetailDrawer({
   }, [showReassign, contract.assignedTo])
 
   // Edit details tab
-  type EditDetailsTab = 'details' | 'finance' | 'notes'
+  type EditDetailsTab = 'details' | 'finance' | 'notes' | 'documents'
   const [editDetailsTab, setEditDetailsTab] = useState<EditDetailsTab>('details')
   const EDIT_DETAILS_TABS: { id: EditDetailsTab; label: string }[] = [
     { id: 'details', label: 'Identity' },
     { id: 'finance', label: 'Finance' },
     { id: 'notes',   label: 'Notes' },
+    { id: 'documents', label: 'Award Documents' },
   ]
   useEffect(() => {
     if (showEditDetails) setEditDetailsTab('details')
@@ -1992,7 +2232,16 @@ function ContractDetailDrawer({
               <div className="flex items-center justify-end lg:col-span-2">
                 <button
                   type="button"
-                  onClick={() => { setEditForm(buildEditForm(contract)); setShowEditDetails(true) }}
+                  onClick={() => {
+                    setAwardDocumentsUploading(false)
+                    setEditDetailsSaving(false)
+                    setAwardDocumentsCleaning(false)
+                    setPersistedAwardDocuments([...(contract.awardDocuments ?? [])])
+                    setNewAwardDocuments([])
+                    setAwardCleanupQueue([])
+                    setEditForm(buildEditForm(contract))
+                    setShowEditDetails(true)
+                  }}
                   className="btn-secondary justify-center gap-1.5 text-xs"
                   title="Edit contract details (fix typos and human errors)"
                 >
@@ -3953,7 +4202,7 @@ function ContractDetailDrawer({
         <AnimatePresence>
           {showEditDetails && (
             <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-              <div className="absolute inset-0" style={{ background: 'var(--bg-overlay)', backdropFilter: 'blur(6px)' }} onClick={() => setShowEditDetails(false)} />
+              <div className="absolute inset-0" style={{ background: 'var(--bg-overlay)', backdropFilter: 'blur(6px)' }} onClick={() => { void closeEditDetails() }} />
             <motion.div
               key="edit-details-panel"
               initial={{ opacity: 0, scale: 0.96, y: 12 }}
@@ -3974,8 +4223,12 @@ function ContractDetailDrawer({
                     <h2 className="text-[15px] font-bold text-slate-100 leading-tight">Edit Contract</h2>
                     <p className="text-xs text-slate-400 mt-0.5 truncate max-w-lg">{contract.title} · {contract.contractId}</p>
                   </div>
-                  <button onClick={() => setShowEditDetails(false)}
-                    className="flex-shrink-0 w-8 h-8 rounded-xl flex items-center justify-center text-slate-400 hover:text-slate-100 hover:bg-white/5 transition-all mt-0.5">
+                  <button
+                    onClick={() => { void closeEditDetails() }}
+                    disabled={awardDocumentLifecycleBusy}
+                    title={awardDocumentLifecycleBusy ? 'Wait for the current operation to finish' : 'Close'}
+                    className="flex-shrink-0 w-8 h-8 rounded-xl flex items-center justify-center text-slate-400 hover:text-slate-100 hover:bg-white/5 transition-all mt-0.5 disabled:cursor-not-allowed disabled:opacity-45"
+                  >
                     <X size={14} />
                   </button>
                 </div>
@@ -4106,6 +4359,25 @@ function ContractDetailDrawer({
                     <p className="text-[10px] text-slate-500">POP dates, PoC, Warnings, Deliverables, Subcontractors, and Termination are managed in their own tabs in the contract window.</p>
                   </div>
                 )}
+
+                {editDetailsTab === 'documents' && (
+                  <AwardDocumentPicker
+                    attachments={editForm.awardDocuments}
+                    uploadedBy={currentUser?.name || currentUser?.username || 'Contract Admin'}
+                    onUploadingChange={setAwardDocumentsUploading}
+                    onUploaded={attachment => setNewAwardDocuments(current =>
+                      appendAwardDocument(current, attachment))}
+                    locked={
+                      editDetailsSaving
+                      || awardDocumentsCleaning
+                      || awardCleanupQueue.length > 0
+                    }
+                    onChange={updateAwardDocuments => setEditForm(form => ({
+                      ...form,
+                      awardDocuments: updateAwardDocuments(form.awardDocuments),
+                    }))}
+                  />
+                )}
               </div>
 
               {/* Footer */}
@@ -4113,8 +4385,24 @@ function ContractDetailDrawer({
                 className="flex-shrink-0 px-7 py-4 border-t flex items-center gap-3"
                 style={{ background: 'var(--bg-app)', borderColor: 'var(--border-default)' }}
               >
+                {awardCleanupQueue.length > 0 && (
+                  <p className="text-[11px] font-semibold text-amber-300">
+                    Contract changes are saved. {awardCleanupQueue.length} detached file
+                    {awardCleanupQueue.length === 1 ? '' : 's'} still need cleanup.
+                  </p>
+                )}
                 <div className="ml-auto flex gap-3">
-                  <button onClick={() => setShowEditDetails(false)} className="btn-secondary">Cancel</button>
+                  <button
+                    onClick={() => { void closeEditDetails() }}
+                    disabled={awardDocumentLifecycleBusy}
+                    className="btn-secondary disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {awardDocumentsCleaning
+                      ? 'Cleaning…'
+                      : awardCleanupQueue.length > 0
+                        ? 'Retry Cleanup & Close'
+                        : 'Cancel'}
+                  </button>
                   <button
                     onClick={async () => {
                       if (!editForm.title.trim() || !editForm.contractId.trim()) {
@@ -4149,16 +4437,88 @@ function ContractDetailDrawer({
                         optionYearDeadline: editForm.optionYearDeadline || undefined,
                         supportAgent: editForm.supportAgent.trim() || undefined,
                         billingNotes: editForm.billingNotes.trim() || undefined,
+                        awardDocuments: editForm.awardDocuments,
                       }
+                      const finalAwardDocuments = [...editForm.awardDocuments]
+                      const pendingUploads = [...newAwardDocuments]
+                      const priorPersistedDocuments = [...persistedAwardDocuments]
+                      setEditDetailsSaving(true)
                       const ok = await updateContract(contract.id, patch)
-                      if (ok) {
-                        toast.success('Contract details updated')
-                        setShowEditDetails(false)
+                      if (!ok) {
+                        if (pendingUploads.length > 0) {
+                          setAwardDocumentsCleaning(true)
+                          const cleanup = await cleanupContractAwardDocuments(pendingUploads)
+                          setAwardDocumentsCleaning(false)
+                          const failed = cleanup.failed.map(item => item.attachment)
+                          const removedKeys = new Set([
+                            ...cleanup.deleted,
+                            ...cleanup.queued,
+                            ...cleanup.missing,
+                            ...cleanup.skipped,
+                          ].map(awardDocumentKey))
+                          setNewAwardDocuments(failed)
+                          setEditForm(form => ({
+                            ...form,
+                            awardDocuments: form.awardDocuments.filter(
+                              document => !removedKeys.has(awardDocumentKey(document)),
+                            ),
+                          }))
+                          if (failed.length > 0) {
+                            toast.error(
+                              `The contract was not saved and ${failed.length} new award file`
+                              + `${failed.length === 1 ? '' : 's'} still need cleanup. Cancel to retry.`,
+                            )
+                          } else if (cleanup.referenced.length > 0) {
+                            toast.success('Award files already attached in the database were kept safely.')
+                          }
+                        }
+                        setEditDetailsSaving(false)
+                        return
                       }
+
+                      setPersistedAwardDocuments(finalAwardDocuments)
+                      setNewAwardDocuments([])
+                      const cleanupCandidates = uniqueAwardDocuments([
+                        ...awardCleanupQueue,
+                        ...detachedAwardDocuments(
+                          [...priorPersistedDocuments, ...pendingUploads],
+                          finalAwardDocuments,
+                        ),
+                      ])
+                      setAwardDocumentsCleaning(cleanupCandidates.length > 0)
+                      const cleanup = await cleanupContractAwardDocuments(cleanupCandidates)
+                      setAwardDocumentsCleaning(false)
+                      const failed = cleanup.failed.map(item => item.attachment)
+                      setAwardCleanupQueue(failed)
+                      setEditDetailsSaving(false)
+                      toast.success('Contract details updated')
+
+                      if (failed.length > 0) {
+                        toast.error(
+                          `${failed.length} detached award file${failed.length === 1 ? '' : 's'} could not be cleaned up. Retry cleanup before closing.`,
+                        )
+                        return
+                      }
+                      if (cleanup.referenced.length > 0) {
+                        toast.success('Award files still used by another contract were kept safely.')
+                      }
+                      setShowEditDetails(false)
                     }}
-                    className="btn-primary flex items-center gap-1.5"
+                    disabled={
+                      awardDocumentLifecycleBusy
+                      || awardCleanupQueue.length > 0
+                    }
+                    className="btn-primary flex items-center gap-1.5 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    <Save size={13} /> Save Changes
+                    <Save size={13} /> {
+                      awardDocumentsUploading
+                        ? 'Uploading…'
+                        : editDetailsSaving
+                          ? 'Saving…'
+                          : awardDocumentsCleaning
+                            ? 'Cleaning…'
+                            : 'Save Changes'
+                    }
                   </button>
                 </div>
               </div>
@@ -4927,9 +5287,11 @@ export default function ContractsPage() {
     return list
   }, [contracts, tabDef, search, period, sortKey, sortDir, columnFilters, employees])
 
-  const totalValue = contracts.reduce((s, c) => s + c.value, 0)
-  // Active = anything that isn't archived or terminated (pending-payment and canceled count too).
-  const activeCount = contracts.filter(c => c.status !== 'ARCHIVED' && c.status !== 'TERMINATED').length
+  const {
+    activeCount,
+    portfolioValue: totalValue,
+    currentYearPortfolioValue: currentYearValue,
+  } = contractAdminPortfolioSummary(contracts)
   const warningCount = contracts.reduce((s, c) => s + (c.governmentWarnings || []).filter(w => !w.resolvedAt).length, 0)
 
   return (
@@ -4955,9 +5317,12 @@ export default function ContractsPage() {
       </div>
 
       {/* KPI cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-5">
         {[
-          ...(hidePricing ? [] : [{ label: 'Portfolio Value', value: formatCurrency(totalValue), sub: `${contracts.length} contracts`, color: '#34D399', bg: 'rgba(16,185,129,0.10)' }]),
+          ...(hidePricing ? [] : [
+            { label: 'Portfolio Value', value: formatCurrency(totalValue), sub: `${activeCount} active contracts`, color: '#34D399', bg: 'rgba(16,185,129,0.10)' },
+            { label: 'Current Year Portfolio', value: formatCurrency(currentYearValue), sub: 'Base-year value only', color: '#38BDF8', bg: 'rgba(14,165,233,0.10)' },
+          ]),
           { label: 'Active/In-Progress', value: activeCount.toString(), sub: 'Currently executing', color: '#818CF8', bg: 'rgba(99,102,241,0.10)' },
           { label: 'Pending Payment', value: contracts.filter(c => c.status === 'PENDING_PAYMENT').length.toString(), sub: 'Awaiting payment', color: '#FDA47A', bg: 'rgba(249,115,22,0.10)' },
           { label: 'Gov. Warnings', value: warningCount.toString(), sub: 'Active unresolved', color: warningCount > 0 ? '#FCA5A5' : '#94A3B8', bg: warningCount > 0 ? 'rgba(239,68,68,0.10)' : 'rgba(100,116,139,0.10)' },

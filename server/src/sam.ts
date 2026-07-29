@@ -1,11 +1,24 @@
 import type { FastifyInstance } from 'fastify'
 import { requireCompleted } from './auth.js'
+import { asServiceUser, type Queryable } from './db.js'
 import { ApiError, asRecord, assertAllowedKeys, requiredString } from './errors.js'
 import type { Dependencies } from './types.js'
+
+const SAM_SECRET_NAME = 'sam_gov_api_key'
 
 interface SamReference {
   noticeId?: string
   solicitationNumber?: string
+}
+
+export interface SamCredential {
+  secret: string
+  source: 'stored' | 'environment' | null
+}
+
+export interface SamIntegrationStatus {
+  configured: boolean
+  source: SamCredential['source']
 }
 
 function invalidUrl(): never {
@@ -90,6 +103,73 @@ async function requireImportPermission(dependencies: Dependencies, accountId: st
   }
 }
 
+async function requireAdmin(client: Queryable, accountId: string): Promise<void> {
+  const result = await client.query<{ allowed: boolean }>(
+    "select private.effective_permission_for_auth_user($1, 'admin:manageUsers') as allowed",
+    [accountId],
+  )
+  if (result.rows[0]?.allowed !== true) {
+    throw new ApiError(403, 'forbidden', 'Only administrators can manage integration credentials.')
+  }
+}
+
+export async function resolveSamGovCredential(
+  client: Queryable,
+  environmentKey: string,
+): Promise<SamCredential> {
+  let stored = ''
+  try {
+    const result = await client.query<{ secret_value: string }>(
+      `select secret_value
+         from private.integration_secrets
+        where name = $1
+        limit 1`,
+      [SAM_SECRET_NAME],
+    )
+    stored = result.rows[0]?.secret_value?.trim() ?? ''
+  } catch (error) {
+    const code = (error as { code?: unknown }).code
+    // Keep an existing environment-based import working during a rolling
+    // deployment where the API starts just before migration 008 is applied.
+    if (code !== '42P01' && code !== '3F000') throw error
+  }
+  if (stored) return { secret: stored, source: 'stored' }
+  const fallback = environmentKey.trim()
+  if (fallback) return { secret: fallback, source: 'environment' }
+  return { secret: '', source: null }
+}
+
+function safeIntegrationStatus(credential: SamCredential): SamIntegrationStatus {
+  return {
+    configured: credential.secret.length > 0,
+    source: credential.source,
+  }
+}
+
+async function saveSamGovCredential(
+  client: Queryable,
+  apiKey: string,
+  accountId: string,
+): Promise<void> {
+  await client.query(
+    `insert into private.integration_secrets
+       (name, secret_value, updated_at, updated_by)
+     values ($1, $2, now(), $3)
+     on conflict (name) do update
+       set secret_value = excluded.secret_value,
+           updated_at = excluded.updated_at,
+           updated_by = excluded.updated_by`,
+    [SAM_SECRET_NAME, apiKey, accountId],
+  )
+}
+
+async function clearSamGovCredential(client: Queryable): Promise<void> {
+  await client.query(
+    'delete from private.integration_secrets where name = $1',
+    [SAM_SECRET_NAME],
+  )
+}
+
 async function responseText(response: Response, maxBytes: number): Promise<string> {
   const declared = Number(response.headers.get('content-length') ?? 0)
   if (Number.isFinite(declared) && declared > maxBytes) {
@@ -123,7 +203,7 @@ async function responseText(response: Response, maxBytes: number): Promise<strin
 }
 
 async function importOpportunity(reference: SamReference, dependencies: Dependencies): Promise<Record<string, unknown>> {
-  const key = dependencies.env.samGovApiKey
+  const { secret: key } = await resolveSamGovCredential(dependencies.db, dependencies.env.samGovApiKey)
   if (!key) throw new ApiError(503, 'integration_not_configured', 'The SAM.gov integration is not configured.')
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), dependencies.env.samGovTimeoutMs)
@@ -167,7 +247,40 @@ export function registerSamRoutes(app: FastifyInstance, dependencies: Dependenci
   app.get(
     '/api/v1/integrations/sam/status',
     { preHandler: (request) => requireCompleted(request, dependencies) },
-    async () => ({ configured: dependencies.env.samGovApiKey.length > 0 }),
+    async (request) => {
+      const accountId = request.auth?.accountId as string
+      await requireAdmin(dependencies.db, accountId)
+      return safeIntegrationStatus(
+        await resolveSamGovCredential(dependencies.db, dependencies.env.samGovApiKey),
+      )
+    },
+  )
+  app.post(
+    '/api/v1/integrations/sam/settings',
+    { preHandler: (request) => requireCompleted(request, dependencies) },
+    async (request) => {
+      const accountId = request.auth?.accountId as string
+      return asServiceUser(dependencies.db, accountId, async (client) => {
+        // Authorize before inspecting the credential-bearing request body, and
+        // repeat the check in the same transaction as the write.
+        await requireAdmin(client, accountId)
+        const body = asRecord(request.body)
+        const action = requiredString(body.action, 'action', 16)
+        if (action === 'configure') {
+          assertAllowedKeys(body, ['action', 'apiKey'])
+          const apiKey = requiredString(body.apiKey, 'apiKey', 512)
+          await saveSamGovCredential(client, apiKey, accountId)
+        } else if (action === 'clear') {
+          assertAllowedKeys(body, ['action'])
+          await clearSamGovCredential(client)
+        } else {
+          throw new ApiError(400, 'invalid_request', 'action must be configure or clear.')
+        }
+        return safeIntegrationStatus(
+          await resolveSamGovCredential(client, dependencies.env.samGovApiKey),
+        )
+      })
+    },
   )
   app.post(
     '/api/v1/integrations/sam/import',

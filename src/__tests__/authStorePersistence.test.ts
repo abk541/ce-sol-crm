@@ -11,6 +11,12 @@ const authMocks = vi.hoisted(() => ({
     return Number.isFinite(parsed) ? parsed : fallback
   }),
   signOutCurrentSession: vi.fn().mockResolvedValue(undefined),
+  startMfaEnrollment: vi.fn(),
+  confirmMfaEnrollment: vi.fn(),
+  restoreMfaRecoveryCodes: vi.fn(),
+  acknowledgeMfaRecoveryCodes: vi.fn(),
+  verifyMfaChallenge: vi.fn(),
+  cancelMfaChallenge: vi.fn().mockResolvedValue(undefined),
 }))
 
 vi.mock('../lib/auth', () => ({
@@ -20,6 +26,12 @@ vi.mock('../lib/auth', () => ({
   restoreAuthenticatedProfile: authMocks.restoreAuthenticatedProfile,
   sessionStartedAt: authMocks.sessionStartedAt,
   signOutCurrentSession: authMocks.signOutCurrentSession,
+  startMfaEnrollment: authMocks.startMfaEnrollment,
+  confirmMfaEnrollment: authMocks.confirmMfaEnrollment,
+  restoreMfaRecoveryCodes: authMocks.restoreMfaRecoveryCodes,
+  acknowledgeMfaRecoveryCodes: authMocks.acknowledgeMfaRecoveryCodes,
+  verifyMfaChallenge: authMocks.verifyMfaChallenge,
+  cancelMfaChallenge: authMocks.cancelMfaChallenge,
 }))
 
 vi.mock('../lib/api', () => ({
@@ -46,6 +58,10 @@ const opportunity = {
   id: 'opp-1',
   solicitation: 'Sensitive opportunity',
 } as Opportunity
+
+const recoveryCodes = [...'23456789AB'].map(
+  character => `ABCD-EFGH-JKLM-${character.repeat(4)}`,
+)
 
 describe('auth memory and persistence boundaries', () => {
   beforeEach(() => {
@@ -149,6 +165,8 @@ describe('auth memory and persistence boundaries', () => {
     authMocks.completeFirstLoginPassword.mockResolvedValue({
       ok: true,
       profile: completedUser,
+      stage: 'authenticated',
+      session: { user: { id: 'auth-1' } },
     })
 
     await expect(useStore.getState().completeFirstLogin('NewPassword1!')).resolves.toEqual({ ok: true })
@@ -190,6 +208,7 @@ describe('auth memory and persistence boundaries', () => {
     authMocks.restoreAuthenticatedProfile.mockResolvedValue({
       initialized: true,
       profile: user,
+      stage: 'authenticated',
       session: { user: { id: 'auth-1', last_sign_in_at: startedAtIso } },
     })
 
@@ -218,6 +237,7 @@ describe('auth memory and persistence boundaries', () => {
     authMocks.authenticateWithPassword.mockResolvedValue({
       ok: true,
       profile: user,
+      stage: 'authenticated',
       session: { user: { id: 'auth-1', last_sign_in_at: newStartIso } },
     })
 
@@ -234,6 +254,7 @@ describe('auth memory and persistence boundaries', () => {
     authMocks.authenticateWithPassword.mockResolvedValue({
       ok: true,
       profile: user,
+      stage: 'authenticated',
       session: {
         access_token: 'opaque-token',
         user: { id: 'auth-1', last_sign_in_at: '2026-07-20T12:00:00.000Z' },
@@ -295,6 +316,238 @@ describe('auth memory and persistence boundaries', () => {
       isAuthenticated: false,
       dbReady: false,
       loginTimestamp: null,
+    })
+  })
+
+  it('keeps the server-issued recovery bundle in memory through the recovery transition', async () => {
+    const startedAt = Date.parse('2026-07-20T08:00:00.000Z')
+    useStore.setState({
+      currentUser: user,
+      users: [user],
+      isAuthenticated: false,
+      needsFirstLogin: false,
+      loginTimestamp: startedAt,
+      accessNoticeAccepted: false,
+      pendingMfaUserId: user.id,
+      pendingMfaMode: 'enroll',
+      pendingMfaRecoveryCodes: [],
+    })
+    authMocks.confirmMfaEnrollment.mockResolvedValue({
+      ok: true,
+      profile: user,
+      recoveryCodes,
+    })
+
+    await expect(useStore.getState().completeMfaEnrollment('123456')).resolves.toEqual({
+      ok: true,
+      recoveryCodes,
+      recoveryCodesNeedRestore: undefined,
+    })
+    expect(useStore.getState()).toMatchObject({
+      currentUser: user,
+      pendingMfaMode: 'recovery',
+      pendingMfaRecoveryCodes: recoveryCodes,
+      isAuthenticated: false,
+      loginTimestamp: startedAt,
+    })
+    const persisted = JSON.parse(localStorage.getItem('ces-crm-store') || '{}')
+    expect(persisted.state).not.toHaveProperty('pendingMfaRecoveryCodes')
+  })
+
+  it('ignores a late MFA success after the pending account changes', async () => {
+    const otherUser = {
+      ...user,
+      id: 'profile-2',
+      authUserId: 'auth-2',
+      email: 'other@example.com',
+    }
+    useStore.setState({
+      currentUser: user,
+      users: [user],
+      isAuthenticated: false,
+      needsFirstLogin: false,
+      loginTimestamp: 100,
+      pendingMfaUserId: user.id,
+      pendingMfaMode: 'verify',
+      pendingMfaRecoveryCodes: [],
+    })
+    let resolveVerification!: (value: unknown) => void
+    authMocks.verifyMfaChallenge.mockReturnValueOnce(new Promise(resolve => {
+      resolveVerification = resolve
+    }))
+
+    const pending = useStore.getState().verifyMfaCode('123456')
+    useStore.setState({
+      currentUser: otherUser,
+      users: [otherUser],
+      loginTimestamp: 200,
+      pendingMfaUserId: otherUser.id,
+      pendingMfaMode: 'verify',
+    })
+    resolveVerification({
+      ok: true,
+      profile: user,
+      stage: 'authenticated',
+      session: { user: { id: 'auth-1', last_sign_in_at: '2026-07-20T09:00:00.000Z' } },
+    })
+
+    await expect(pending).resolves.toMatchObject({ ok: false })
+    expect(useStore.getState()).toMatchObject({
+      currentUser: otherUser,
+      isAuthenticated: false,
+      pendingMfaUserId: otherUser.id,
+      pendingMfaMode: 'verify',
+      loginTimestamp: 200,
+    })
+  })
+
+  it('uses the completed MFA session start when preserving notice acceptance', async () => {
+    const completedAt = '2026-07-20T09:00:00.000Z'
+    useStore.setState({
+      currentUser: user,
+      users: [user],
+      isAuthenticated: false,
+      needsFirstLogin: false,
+      loginTimestamp: Date.parse('2026-07-20T08:00:00.000Z'),
+      accessNoticeAccepted: true,
+      pendingMfaUserId: user.id,
+      pendingMfaMode: 'verify',
+      pendingMfaRecoveryCodes: [],
+    })
+    authMocks.verifyMfaChallenge.mockResolvedValueOnce({
+      ok: true,
+      profile: user,
+      stage: 'authenticated',
+      session: { user: { id: 'auth-1', last_sign_in_at: completedAt } },
+    })
+
+    await expect(useStore.getState().verifyMfaCode('123456')).resolves.toEqual({ ok: true })
+    expect(useStore.getState()).toMatchObject({
+      currentUser: user,
+      isAuthenticated: true,
+      pendingMfaUserId: null,
+      pendingMfaMode: null,
+      pendingMfaRecoveryCodes: [],
+      loginTimestamp: Date.parse(completedAt),
+      accessNoticeAccepted: true,
+    })
+  })
+
+  it('does not let a late password login overwrite a newer cross-tab account', async () => {
+    const otherUser = {
+      ...user,
+      id: 'profile-2',
+      authUserId: 'auth-2',
+      email: 'other@example.com',
+    }
+    useStore.setState({
+      currentUser: null,
+      users: [],
+      isAuthenticated: false,
+      needsFirstLogin: false,
+      loginTimestamp: null,
+      pendingMfaUserId: null,
+      pendingMfaMode: null,
+      pendingMfaRecoveryCodes: [],
+    })
+    let resolveLogin!: (value: unknown) => void
+    authMocks.authenticateWithPassword.mockReturnValueOnce(new Promise(resolve => {
+      resolveLogin = resolve
+    }))
+
+    const pending = useStore.getState().login(user.email, 'ValidPassword1!')
+    useStore.setState({
+      currentUser: otherUser,
+      users: [otherUser],
+      isAuthenticated: true,
+      loginTimestamp: 200,
+    })
+    resolveLogin({
+      ok: true,
+      profile: user,
+      stage: 'authenticated',
+      session: {
+        user: { id: 'auth-1', last_sign_in_at: '2026-07-20T09:00:00.000Z' },
+      },
+    })
+
+    await expect(pending).resolves.toMatchObject({ ok: false })
+    expect(useStore.getState()).toMatchObject({
+      currentUser: otherUser,
+      users: [otherUser],
+      isAuthenticated: true,
+      loginTimestamp: 200,
+    })
+  })
+
+  it('does not let a delayed MFA cancellation wipe a newer cross-tab session', async () => {
+    const otherUser = {
+      ...user,
+      id: 'profile-2',
+      authUserId: 'auth-2',
+      email: 'other@example.com',
+    }
+    useStore.setState({
+      currentUser: user,
+      users: [user],
+      isAuthenticated: false,
+      needsFirstLogin: false,
+      loginTimestamp: 100,
+      pendingMfaUserId: user.id,
+      pendingMfaMode: 'verify',
+      pendingMfaRecoveryCodes: [],
+    })
+    let resolveCancel!: () => void
+    authMocks.cancelMfaChallenge.mockReturnValueOnce(new Promise<void>(resolve => {
+      resolveCancel = resolve
+    }))
+
+    const pending = useStore.getState().cancelPendingMfa()
+    expect(useStore.getState().currentUser).toBeNull()
+    useStore.setState({
+      currentUser: otherUser,
+      users: [otherUser],
+      isAuthenticated: true,
+      loginTimestamp: 200,
+    })
+    resolveCancel()
+    await pending
+
+    expect(useStore.getState()).toMatchObject({
+      currentUser: otherUser,
+      users: [otherUser],
+      isAuthenticated: true,
+      loginTimestamp: 200,
+    })
+  })
+
+  it('purges plaintext recovery codes as soon as enrollment is finalized', async () => {
+    const completedAt = '2026-07-20T09:00:00.000Z'
+    useStore.setState({
+      currentUser: user,
+      users: [user],
+      isAuthenticated: false,
+      needsFirstLogin: false,
+      loginTimestamp: 100,
+      pendingMfaUserId: user.id,
+      pendingMfaMode: 'recovery',
+      pendingMfaRecoveryCodes: recoveryCodes,
+    })
+    authMocks.acknowledgeMfaRecoveryCodes.mockResolvedValueOnce({
+      ok: true,
+      profile: user,
+      stage: 'authenticated',
+      session: { user: { id: 'auth-1', last_sign_in_at: completedAt } },
+    })
+
+    await expect(useStore.getState().acknowledgeMfaRecoveryCodes()).resolves.toEqual({
+      ok: true,
+    })
+    expect(useStore.getState()).toMatchObject({
+      isAuthenticated: true,
+      pendingMfaUserId: null,
+      pendingMfaMode: null,
+      pendingMfaRecoveryCodes: [],
     })
   })
 })

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { ArrowRight, Check, Copy, Download, Loader, ShieldCheck } from 'lucide-react'
@@ -6,47 +6,96 @@ import toast from 'react-hot-toast'
 import { useStore } from '../../store/useStore'
 import CompanyLogo from '../../components/shared/CompanyLogo'
 import {
-  createMfaEnrollment,
-  generateRecoveryCodes,
-  verifyTotpCode,
+  renderMfaEnrollment,
   type MfaEnrollment,
 } from '../../lib/mfa'
 
 type Step = 'scan' | 'verify' | 'recovery'
+const RECOVERY_CODE_PATTERN = /^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{4}(?:-[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{4}){3}$/
+
+function hasCompleteRecoveryBundle(codes: string[]): boolean {
+  return codes.length === 10
+    && codes.every(code => RECOVERY_CODE_PATTERN.test(code))
+    && new Set(codes).size === 10
+}
 
 export default function MfaEnrollPage() {
   const navigate = useNavigate()
   const pendingMfaUserId  = useStore(s => s.pendingMfaUserId)
   const pendingMfaMode    = useStore(s => s.pendingMfaMode)
+  const pendingRecoveryCodes = useStore(s => s.pendingMfaRecoveryCodes)
   const currentUser       = useStore(s => s.currentUser)
+  const startEnrollment   = useStore(s => s.startMfaEnrollment)
   const completeEnrollment = useStore(s => s.completeMfaEnrollment)
+  const restoreRecoveryCodes = useStore(s => s.restoreMfaRecoveryCodes)
+  const acknowledgeRecoveryCodes = useStore(s => s.acknowledgeMfaRecoveryCodes)
   const cancelPendingMfa  = useStore(s => s.cancelPendingMfa)
 
   const [enrollment, setEnrollment] = useState<MfaEnrollment | null>(null)
-  const [step, setStep] = useState<Step>('scan')
+  const [step, setStep] = useState<Step>(pendingMfaMode === 'recovery' ? 'recovery' : 'scan')
   const [code, setCode] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
-  const [recoveryCodes, setRecoveryCodes] = useState<string[]>([])
+  const [recoveryCodes, setRecoveryCodes] = useState<string[]>(pendingRecoveryCodes)
   const [recoveryAck, setRecoveryAck] = useState(false)
-  const generatedFor = useRef<string | null>(null)
+  const [loadNonce, setLoadNonce] = useState(0)
+  const [canceling, setCanceling] = useState(false)
 
-  const wrongGate = !pendingMfaUserId || pendingMfaMode !== 'enroll'
+  const wrongGate = !pendingMfaUserId || !['enroll', 'recovery'].includes(pendingMfaMode ?? '')
   const emailLabel = useMemo(() => currentUser?.email ?? 'user@cesolutionplus.com', [currentUser])
 
-  // Generate a fresh secret + QR the first time this page mounts for a given
-  // user. If the user cancels and comes back later they get a brand new
-  // secret — a partially-completed enrollment must never be usable.
+  // Fetch only server-issued enrollment material. The browser renders the QR
+  // but never generates or verifies a TOTP secret.
   useEffect(() => {
     if (wrongGate) return
-    if (generatedFor.current === pendingMfaUserId && enrollment) return
-    generatedFor.current = pendingMfaUserId ?? null
     let cancelled = false
-    void createMfaEnrollment(emailLabel).then(en => {
-      if (!cancelled) setEnrollment(en)
-    })
+    setError('')
+    if (pendingMfaMode === 'recovery') {
+      setStep('recovery')
+      setRecoveryAck(false)
+      if (hasCompleteRecoveryBundle(pendingRecoveryCodes)) {
+        setRecoveryCodes(pendingRecoveryCodes)
+        setLoading(false)
+        return () => { cancelled = true }
+      }
+      setRecoveryCodes([])
+      setLoading(true)
+      void restoreRecoveryCodes().then(result => {
+        if (cancelled) return
+        if (!result.ok) setError(result.error ?? 'Recovery codes could not be restored.')
+        else setRecoveryCodes(result.recoveryCodes ?? [])
+      }).finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    } else {
+      setLoading(true)
+      setEnrollment(null)
+      void startEnrollment().then(async result => {
+        if (cancelled) return
+        if (!result.ok || !result.enrollment) {
+          setError(result.error ?? 'Authenticator enrollment could not be started.')
+          return
+        }
+        try {
+          const rendered = await renderMfaEnrollment(result.enrollment)
+          if (!cancelled) setEnrollment(rendered)
+        } catch {
+          if (!cancelled) setError('The authenticator QR code could not be prepared. Please retry.')
+        }
+      }).finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    }
     return () => { cancelled = true }
-  }, [wrongGate, pendingMfaUserId, emailLabel, enrollment])
+  }, [
+    loadNonce,
+    pendingMfaMode,
+    pendingMfaUserId,
+    pendingRecoveryCodes,
+    restoreRecoveryCodes,
+    startEnrollment,
+    wrongGate,
+  ])
 
   if (wrongGate) {
     return (
@@ -59,36 +108,59 @@ export default function MfaEnrollPage() {
     )
   }
 
-  const handleVerify = (e: React.FormEvent) => {
+  const handleVerify = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
     if (!enrollment) return
     const cleaned = code.replace(/[\s-]/g, '')
     if (!/^\d{6}$/.test(cleaned)) { setError('Enter the 6-digit code from your authenticator.'); return }
-    if (!verifyTotpCode(enrollment.secret, cleaned)) {
-      setError('That code is invalid or expired. Try again.')
+    setLoading(true)
+    const result = await completeEnrollment(cleaned)
+    setLoading(false)
+    if (!result.ok) {
+      setError(result.error ?? 'That code is invalid or expired. Try again.')
       return
     }
-    // Generate the plaintext recovery codes only once — the user sees them
-    // now and never again. They're hashed in the store on commit.
-    setRecoveryCodes(generateRecoveryCodes())
+    // Recovery codes are created and protected by the server. The browser
+    // only displays the complete short-lived setup response.
+    const returnedCodes = result.recoveryCodes ?? []
+    if (!hasCompleteRecoveryBundle(returnedCodes)) {
+      setError('Enrollment succeeded. Reloading the complete recovery-code set now.')
+      setStep('recovery')
+      return
+    }
+    setRecoveryCodes(returnedCodes)
     setStep('recovery')
   }
 
   const handleCommit = async () => {
-    if (!enrollment) return
+    if (!recoveryAck || !hasCompleteRecoveryBundle(recoveryCodes)) {
+      setError('Load and save all 10 recovery codes before finishing setup.')
+      return
+    }
     setLoading(true)
     setError('')
-    const result = await completeEnrollment(enrollment.secret, recoveryCodes)
+    const result = await acknowledgeRecoveryCodes()
     setLoading(false)
     if (!result.ok) { setError(result.error ?? 'Could not finish enrollment.'); return }
     toast.success('Two-factor authentication enabled.')
     navigate('/access-notice')
   }
 
-  const handleCancel = () => {
-    cancelPendingMfa()
-    navigate('/login')
+  const handleRetry = () => {
+    setError('')
+    setRecoveryAck(false)
+    setLoadNonce(value => value + 1)
+  }
+
+  const handleCancel = async () => {
+    if (canceling) return
+    setCanceling(true)
+    try {
+      await cancelPendingMfa()
+    } finally {
+      navigate('/login')
+    }
   }
 
   return (
@@ -104,7 +176,15 @@ export default function MfaEnrollPage() {
         </p>
       </div>
 
-      {step === 'scan' && <ScanStep enrollment={enrollment} onContinue={() => setStep('verify')} />}
+      {step === 'scan' && (
+        <ScanStep
+          enrollment={enrollment}
+          error={error}
+          loading={loading}
+          onRetry={handleRetry}
+          onContinue={() => setStep('verify')}
+        />
+      )}
 
       {step === 'verify' && enrollment && (
         <form onSubmit={handleVerify} className="space-y-4">
@@ -135,10 +215,11 @@ export default function MfaEnrollPage() {
             </motion.p>
           )}
 
-          <button type="submit" disabled={code.length !== 6} className="btn-primary w-full justify-center mt-2">
-            <ArrowRight size={14} /> Verify code
+          <button type="submit" disabled={loading || code.length !== 6} className="btn-primary w-full justify-center mt-2">
+            {loading ? <Loader size={14} className="animate-spin" /> : <ArrowRight size={14} />}
+            {loading ? 'Verifying…' : 'Verify code'}
           </button>
-          <button type="button" onClick={() => setStep('scan')}
+          <button type="button" onClick={() => setStep('scan')} disabled={loading}
             className="w-full text-center text-xs text-slate-400 hover:text-slate-200 transition-colors">
             ← Back to QR code
           </button>
@@ -153,13 +234,14 @@ export default function MfaEnrollPage() {
           loading={loading}
           error={error}
           onCommit={handleCommit}
+          onRetry={handleRetry}
           accountLabel={emailLabel}
         />
       )}
 
-      <button type="button" onClick={handleCancel}
+      <button type="button" onClick={() => { void handleCancel() }} disabled={canceling || loading}
         className="w-full text-center text-[11px] text-slate-500 hover:text-slate-300 transition-colors mt-6">
-        Cancel and sign out
+        {canceling ? 'Signing out…' : 'Cancel and sign out'}
       </button>
     </BareShell>
   )
@@ -167,13 +249,25 @@ export default function MfaEnrollPage() {
 
 // ── Step: scan ────────────────────────────────────────────────────────────
 
-function ScanStep({ enrollment, onContinue }: { enrollment: MfaEnrollment | null; onContinue: () => void }) {
+function ScanStep({
+  enrollment,
+  error,
+  loading,
+  onRetry,
+  onContinue,
+}: {
+  enrollment: MfaEnrollment | null
+  error: string
+  loading: boolean
+  onRetry: () => void
+  onContinue: () => void
+}) {
   const [secretCopied, setSecretCopied] = useState(false)
 
   const copySecret = async () => {
     if (!enrollment) return
     try {
-      await navigator.clipboard.writeText(enrollment.secret)
+      await navigator.clipboard.writeText(enrollment.manualKey)
       setSecretCopied(true)
       setTimeout(() => setSecretCopied(false), 1400)
     } catch { /* clipboard blocked — user can still type the secret */ }
@@ -182,8 +276,21 @@ function ScanStep({ enrollment, onContinue }: { enrollment: MfaEnrollment | null
   if (!enrollment) {
     return (
       <div className="flex flex-col items-center gap-3 py-8">
-        <Loader size={20} className="animate-spin text-slate-400" />
-        <p className="text-slate-400 text-xs">Generating your secure key…</p>
+        {loading ? (
+          <>
+            <Loader size={20} className="animate-spin text-slate-400" />
+            <p className="text-slate-400 text-xs">Preparing your authenticator setup…</p>
+          </>
+        ) : (
+          <>
+            <p className="text-rose-400 text-xs text-center">
+              {error || 'Authenticator setup could not be loaded.'}
+            </p>
+            <button type="button" onClick={onRetry} className="btn-primary justify-center">
+              Retry
+            </button>
+          </>
+        )}
       </div>
     )
   }
@@ -206,7 +313,7 @@ function ScanStep({ enrollment, onContinue }: { enrollment: MfaEnrollment | null
         <label className="block text-[11px] font-medium text-slate-400 mb-1">Can't scan? Enter this key manually</label>
         <div className="flex items-center gap-2">
           <code className="flex-1 text-slate-200 text-xs font-mono bg-slate-900/40 border border-slate-700/60 rounded-lg px-3 py-2 tracking-wider select-all break-all">
-            {enrollment.secret}
+            {enrollment.manualKey}
           </code>
           <button
             type="button"
@@ -228,7 +335,7 @@ function ScanStep({ enrollment, onContinue }: { enrollment: MfaEnrollment | null
 // ── Step: recovery codes ──────────────────────────────────────────────────
 
 function RecoveryStep({
-  codes, ack, setAck, loading, error, onCommit, accountLabel,
+  codes, ack, setAck, loading, error, onCommit, onRetry, accountLabel,
 }: {
   codes: string[]
   ack: boolean
@@ -236,11 +343,14 @@ function RecoveryStep({
   loading: boolean
   error: string
   onCommit: () => void
+  onRetry: () => void
   accountLabel: string
 }) {
   const [copied, setCopied] = useState(false)
+  const completeBundle = hasCompleteRecoveryBundle(codes)
 
   const copyAll = async () => {
+    if (!completeBundle) return
     try {
       await navigator.clipboard.writeText(codes.join('\n'))
       setCopied(true)
@@ -249,6 +359,7 @@ function RecoveryStep({
   }
 
   const downloadTxt = () => {
+    if (!completeBundle) return
     const body = [
       'CE Solution Plus CRM — Recovery Codes',
       `Account: ${accountLabel}`,
@@ -275,23 +386,27 @@ function RecoveryStep({
     <div className="space-y-4">
       <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5">
         <p className="text-amber-200 text-xs leading-relaxed">
-          Save these 10 codes now — this is the <strong>only time</strong> they will be shown. Each can be used
-          once to sign in if you lose your authenticator device.
+          Save all 10 codes before finishing setup. You can reload them while this setup screen is active,
+          but after you finish each code can only be used once.
         </p>
       </div>
 
       <div className="grid grid-cols-2 gap-2 font-mono text-sm text-slate-100 bg-slate-900/40 border border-slate-700/60 rounded-lg p-3">
-        {codes.map(c => (
+        {completeBundle ? codes.map(c => (
           <div key={c} className="tracking-wider select-all text-center py-1">{c}</div>
-        ))}
+        )) : (
+          <div className="col-span-2 py-5 text-center text-xs font-sans text-slate-400">
+            {loading ? 'Loading recovery codes…' : 'The complete recovery-code set is unavailable.'}
+          </div>
+        )}
       </div>
 
       <div className="flex gap-2">
-        <button type="button" onClick={copyAll}
+        <button type="button" onClick={copyAll} disabled={!completeBundle}
           className="flex-1 inline-flex items-center justify-center gap-1.5 text-xs px-3 py-2 rounded-lg border border-slate-700/60 text-slate-300 hover:text-white hover:bg-slate-800/60 transition-colors">
           {copied ? <><Check size={12} /> Copied</> : <><Copy size={12} /> Copy all</>}
         </button>
-        <button type="button" onClick={downloadTxt}
+        <button type="button" onClick={downloadTxt} disabled={!completeBundle}
           className="flex-1 inline-flex items-center justify-center gap-1.5 text-xs px-3 py-2 rounded-lg border border-slate-700/60 text-slate-300 hover:text-white hover:bg-slate-800/60 transition-colors">
           <Download size={12} /> Download .txt
         </button>
@@ -299,6 +414,7 @@ function RecoveryStep({
 
       <label className="flex items-start gap-2 text-xs text-slate-300 select-none cursor-pointer">
         <input type="checkbox" checked={ack} onChange={e => setAck(e.target.checked)}
+          disabled={!completeBundle}
           className="mt-0.5 accent-emerald-500" />
         <span>I have saved these recovery codes somewhere safe.</span>
       </label>
@@ -310,7 +426,14 @@ function RecoveryStep({
         </motion.p>
       )}
 
-      <button type="button" onClick={onCommit} disabled={!ack || loading}
+      {!completeBundle && !loading && (
+        <button type="button" onClick={onRetry}
+          className="w-full text-center text-xs text-slate-300 hover:text-white transition-colors">
+          Retry loading recovery codes
+        </button>
+      )}
+
+      <button type="button" onClick={onCommit} disabled={!ack || !completeBundle || loading}
         className="btn-primary w-full justify-center mt-2">
         {loading ? <Loader size={14} className="animate-spin" /> : <ArrowRight size={14} />}
         {loading ? 'Finishing setup…' : 'Finish and continue'}
