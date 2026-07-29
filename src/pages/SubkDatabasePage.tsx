@@ -3,16 +3,22 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { createPortal } from 'react-dom'
 import {
   Building2, Plus, Search, Phone, Mail, FileUp, MapPin,
-  Tag, Briefcase, X, Save, Eye, Pencil, Trash2, MoreHorizontal,
+  Tag, Briefcase, X, Save, Eye, Pencil, Trash2, MoreHorizontal, Download,
 } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { hasPermission } from '../lib/permissions'
-import type { SubkDatabaseEntry, SetAside, Subcontractor } from '../types'
+import type { FileAttachment, SubkDatabaseEntry, SetAside, Subcontractor } from '../types'
 import { formatCurrency, useEscapeKey } from '../lib/utils'
 import toast from 'react-hot-toast'
 import FloatingActionMenu from '../components/shared/FloatingActionMenu'
 import { parseSourcingComments, sourcingNotesText } from '../lib/sourcingComments'
 import { matchesUsLocationFilters, US_STATES } from '../lib/usLocation'
+import {
+  attachmentAccessErrorMessage,
+  downloadAttachment,
+  hasAttachmentSource,
+} from '../lib/attachments'
+import { collectSourcingQuoteAttachments, hasSourcingQuote } from '../lib/subcontractorQuotes'
 
 const SETASIDE_OPTIONS: SetAside[] = ['SB', 'SDVOSB', 'WOSB', 'HUBZone', 'VOSB', '8(a)', 'UNRES']
 
@@ -31,6 +37,7 @@ function formatNoteDateTime(value: string) {
 type SubkView = SubkDatabaseEntry & {
   _source: 'manual' | 'quote'
   _opportunityId?: string
+  _quoteAttachments?: FileAttachment[]
 }
 
 const SETASIDE_COLORS: Record<string, { bg: string; color: string }> = {
@@ -43,9 +50,20 @@ const SETASIDE_COLORS: Record<string, { bg: string; color: string }> = {
   UNRES:    { bg: '#F1F5F9', color: '#64748B' },
 }
 
-function EntryDrawer({ entry, onClose, onEdit }: { entry: SubkDatabaseEntry; onClose: () => void; onEdit?: () => void }) {
+function downloadSubkQuote(file: FileAttachment) {
+  if (!hasAttachmentSource(file)) {
+    toast.error('This quote only has saved file details. Re-upload the original file to restore downloads.')
+    return
+  }
+  void downloadAttachment(file).catch(error => {
+    toast.error(attachmentAccessErrorMessage(error, 'Quote file could not be downloaded.'))
+  })
+}
+
+function EntryDrawer({ entry, onClose, onEdit }: { entry: SubkView; onClose: () => void; onEdit?: () => void }) {
   const saStyle = SETASIDE_COLORS[entry.setAside] || SETASIDE_COLORS['UNRES']
   const notes = parseSourcingComments(entry.notes)
+  const quoteAttachments = entry._quoteAttachments ?? []
 
   return createPortal(
     <AnimatePresence>
@@ -160,19 +178,42 @@ function EntryDrawer({ entry, onClose, onEdit }: { entry: SubkDatabaseEntry; onC
           </div>
         )}
 
-        {/* Quote file */}
+        {/* Quote files */}
         <div>
-          <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Quote File</p>
-          {entry.quoteFile ? (
-            <div className="flex items-center gap-2 p-3 rounded-xl bg-indigo-50 border border-indigo-200">
-              <Tag size={13} className="text-indigo-600" />
-              <span className="text-xs text-indigo-700 font-semibold flex-1 truncate">{entry.quoteFile}</span>
-              <button className="text-xs text-indigo-600 hover:underline">Download</button>
+          <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Quote Files</p>
+          {quoteAttachments.length > 0 ? (
+            <div className="space-y-2">
+              {quoteAttachments.map(file => {
+                const downloadable = hasAttachmentSource(file)
+                return (
+                  <div key={file.id} className="flex items-center gap-2 p-3 rounded-xl bg-indigo-50 border border-indigo-200">
+                    <Tag size={13} className="flex-shrink-0 text-indigo-600" />
+                    <span className="min-w-0 flex-1 truncate text-xs font-semibold text-indigo-700" title={file.name}>
+                      {file.name}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => downloadSubkQuote(file)}
+                      disabled={!downloadable}
+                      className="flex flex-shrink-0 items-center gap-1 rounded-md border border-indigo-200 bg-white px-2 py-1 text-[10px] font-black text-indigo-600 transition-colors hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50"
+                      title={downloadable ? `Download ${file.name}` : 'The original file must be re-uploaded.'}
+                    >
+                      <Download size={11} /> {downloadable ? 'Download' : 'Re-upload required'}
+                    </button>
+                  </div>
+                )
+              })}
+            </div>
+          ) : entry.quoteFile ? (
+            <div className="flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3">
+              <Tag size={13} className="flex-shrink-0 text-amber-600" />
+              <span className="min-w-0 flex-1 truncate text-xs font-semibold text-amber-800">{entry.quoteFile}</span>
+              <span className="text-[10px] font-bold text-amber-700">Re-upload required</span>
             </div>
           ) : (
-            <button className="flex items-center gap-2 text-xs text-slate-500 hover:text-indigo-600 transition-colors p-2 rounded-lg border border-dashed border-slate-300 hover:border-indigo-400 w-full justify-center">
-              <FileUp size={12} /> Upload Quote PDF
-            </button>
+            <p className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-slate-300 p-3 text-xs text-slate-500">
+              <FileUp size={12} /> No quote file is stored for this company.
+            </p>
           )}
         </div>
 
@@ -452,17 +493,29 @@ export default function SubkDatabasePage() {
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
 
   const allEntries = useMemo<SubkView[]>(() => {
-    const manual: SubkView[] = subkDatabase.map(e => ({ ...e, _source: 'manual' }))
-    const seen = new Set(manual.map(e => e.companyName.trim().toLowerCase()))
-    const hasQuote = (s: Subcontractor) =>
-      Boolean(s.quoteFile) || (Array.isArray(s.quoteFiles) && s.quoteFiles.length > 0)
+    const sourcingByCompany = new Map<string, Subcontractor[]>()
+    subcontractors.forEach(sub => {
+      if (!hasSourcingQuote(sub)) return
+      const key = sub.companyName.trim().toLowerCase()
+      if (!key) return
+      sourcingByCompany.set(key, [...(sourcingByCompany.get(key) ?? []), sub])
+    })
+    const manual: SubkView[] = subkDatabase.map(entry => {
+      const key = entry.companyName.trim().toLowerCase()
+      return {
+        ...entry,
+        _source: 'manual',
+        _quoteAttachments: collectSourcingQuoteAttachments(sourcingByCompany.get(key) ?? []),
+      }
+    })
+    const seen = new Set(manual.map(entry => entry.companyName.trim().toLowerCase()))
 
     const derived: SubkView[] = []
-    for (const sub of subcontractors) {
-      if (!hasQuote(sub)) continue
-      const key = sub.companyName.trim().toLowerCase()
-      if (!key || seen.has(key)) continue
+    for (const [key, companySourcing] of sourcingByCompany) {
+      if (seen.has(key)) continue
       seen.add(key)
+      const sub = companySourcing[0]
+      const quoteAttachments = collectSourcingQuoteAttachments(companySourcing)
       derived.push({
         id: `derived-${sub.id}`,
         companyName: sub.companyName,
@@ -473,13 +526,14 @@ export default function SubkDatabasePage() {
         setAside: sub.setAside,
         location: sub.location,
         pastProjects: [],
-        quoteFile: sub.quoteFile || sub.quoteFiles?.[0]?.name,
+        quoteFile: sub.quoteFile || quoteAttachments[0]?.name,
         notes: sub.notes,
         totalContractsWorked: 0,
         createdAt: sub.createdAt,
         createdBy: sub.createdBy,
         _source: 'quote',
         _opportunityId: sub.opportunityId,
+        _quoteAttachments: quoteAttachments,
       })
     }
     return [...manual, ...derived]
@@ -719,7 +773,7 @@ export default function SubkDatabasePage() {
 
               <div className="flex items-center justify-between text-[11px] text-slate-400">
                 <span>{entry.totalContractsWorked} contracts worked</span>
-                {entry.quoteFile && (
+                {(entry.quoteFile || entry._quoteAttachments?.length) && (
                   <span className="flex items-center gap-1 text-indigo-500">
                     <Tag size={10} /> Quote on file
                   </span>

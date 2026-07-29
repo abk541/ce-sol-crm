@@ -36,6 +36,7 @@ describe('private attachments and non-secret settings migration', () => {
   const bdTrackerPage = readRepoFile('src/pages/BDTrackerPage.tsx')
   const freshAwardPage = readRepoFile('src/pages/FreshAwardPage.tsx')
   const certificationsPage = readRepoFile('src/pages/CertificationsPage.tsx')
+  const subkDatabasePage = readRepoFile('src/pages/SubkDatabasePage.tsx')
   const attachmentHelpers = readRepoFile('src/lib/attachments.ts')
 
   it('makes the bucket private and removes anonymous object privileges', () => {
@@ -75,6 +76,7 @@ describe('private attachments and non-secret settings migration', () => {
       bdTrackerPage,
       freshAwardPage,
       certificationsPage,
+      subkDatabasePage,
     ]) {
       expect(page).toContain('attachmentAccessErrorMessage(error,')
     }
