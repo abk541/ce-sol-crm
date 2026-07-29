@@ -22,17 +22,27 @@ function pngDimensions(path: string) {
   }
 }
 
-function createServiceWorkerHarness(options: { withPreviousShell?: boolean } = {}) {
+type ServiceWorkerCacheContents = Map<string, Map<string, unknown>>
+
+function createServiceWorkerHarness(options: {
+  cacheContents?: ServiceWorkerCacheContents
+  release?: string
+  withActiveWorker?: boolean
+  withPreviousShell?: boolean
+} = {}) {
   type WorkerEvent = {
     data?: unknown
     waitUntil: (task: Promise<unknown>) => void
   }
   type WorkerHandler = (event: WorkerEvent) => void
 
-  const source = readFileSync(resolve(process.cwd(), 'public/sw.js'), 'utf8')
+  const template = readFileSync(resolve(process.cwd(), 'public/sw.js'), 'utf8')
+  const source = options.release
+    ? template.split('__CE_ERP_RELEASE__').join(options.release)
+    : template
   const handlers = new Map<string, WorkerHandler>()
-  const cacheContents = new Map<string, Map<string, unknown>>()
-  if (options.withPreviousShell !== false) {
+  const cacheContents = options.cacheContents ?? new Map<string, Map<string, unknown>>()
+  if (!options.cacheContents && options.withPreviousShell !== false) {
     cacheContents.set('ce-erp-shell-previous-release', new Map())
   }
   const deletedCaches: string[] = []
@@ -56,7 +66,12 @@ function createServiceWorkerHarness(options: { withPreviousShell?: boolean } = {
         addAll: vi.fn(async () => undefined),
         match: vi.fn(async (key: unknown) => entries.get(normalizeCacheKey(key))),
         put: vi.fn(async (key: unknown, response: unknown) => {
-          if (name === 'ce-erp-rollout-markers') lifecycleEvents.push('marker')
+          if (name === 'ce-erp-refresh-state') {
+            const state = JSON.parse(await (response as Response).clone().text()) as {
+              status?: unknown
+            }
+            lifecycleEvents.push(String(state.status ?? 'unknown'))
+          }
           entries.set(normalizeCacheKey(key), response)
         }),
       }
@@ -69,7 +84,10 @@ function createServiceWorkerHarness(options: { withPreviousShell?: boolean } = {
     match: vi.fn(async () => undefined),
   }
   const workerScope = {
-    registration: { scope: 'https://crm.example.test/' },
+    registration: {
+      scope: 'https://crm.example.test/',
+      active: options.withActiveWorker === false ? null : { scriptURL: 'sw.js' },
+    },
     location: { origin: 'https://crm.example.test' },
     addEventListener: (type: string, handler: WorkerHandler) => {
       handlers.set(type, handler)
@@ -164,24 +182,22 @@ describe('PWA installability', () => {
     expect(serviceWorker).toContain('url.origin !== self.location.origin')
   })
 
-  it('forces the premium-icon rollout once, then preserves safe future updates', () => {
+  it('automatically activates and refreshes every stamped release', () => {
     const serviceWorker = readFileSync(resolve(process.cwd(), 'public/sw.js'), 'utf8')
 
     expect(serviceWorker).toContain("key.startsWith(SHELL_CACHE_PREFIX) && key !== SHELL_CACHE")
-    expect(serviceWorker).toContain("const ROLLOUT_MARKER_CACHE = 'ce-erp-rollout-markers'")
-    expect(serviceWorker).toContain("const FORCED_REFRESH_TOKEN = '2026-07-29-premium-icon-v3'")
-    expect(serviceWorker).toContain('forcedRefreshAlreadyApplied()')
-    expect(serviceWorker).toContain('markForcedRefreshApplied()')
     expect(serviceWorker).toContain('await self.skipWaiting()')
     expect(serviceWorker).toContain('self.clients.claim()')
     expect(serviceWorker).toContain("type: 'window'")
     expect(serviceWorker).toContain('includeUncontrolled: true')
     expect(serviceWorker).toContain('client.navigate(client.url)')
-    expect(serviceWorker).toContain("event.data?.type === 'SKIP_WAITING'")
-    expect(serviceWorker).toContain('event.waitUntil(self.skipWaiting())')
+    expect(serviceWorker).toContain("const REFRESH_STATE_CACHE = 'ce-erp-refresh-state'")
+    expect(serviceWorker).toContain("await writeRefreshState('pending')")
+    expect(serviceWorker).toContain("await writeRefreshState('applied')")
+    expect(serviceWorker).not.toContain("event.data?.type === 'SKIP_WAITING'")
   })
 
-  it('executes the forced rollout once per browser profile without a reload loop', async () => {
+  it('refreshes an existing client once during one release activation', async () => {
     const worker = createServiceWorkerHarness()
 
     await worker.dispatch('install')
@@ -192,27 +208,62 @@ describe('PWA installability', () => {
     expect(worker.navigate).toHaveBeenCalledTimes(1)
     expect(worker.foreignNavigate).not.toHaveBeenCalled()
     expect(worker.deletedCaches).toContain('ce-erp-shell-previous-release')
-    expect(worker.cacheContents.has('ce-erp-rollout-markers')).toBe(true)
-    expect(worker.lifecycleEvents).toEqual(['marker', 'navigate'])
+    expect(worker.lifecycleEvents).toEqual(['pending', 'applied', 'navigate'])
 
-    worker.skipWaiting.mockClear()
     worker.navigate.mockClear()
-    await worker.dispatch('install')
     await worker.dispatch('activate')
 
-    expect(worker.skipWaiting).not.toHaveBeenCalled()
     expect(worker.navigate).not.toHaveBeenCalled()
   })
 
   it('does not force-reload a brand-new profile with no older CE shell', async () => {
+    const worker = createServiceWorkerHarness({
+      withActiveWorker: false,
+      withPreviousShell: false,
+    })
+
+    await worker.dispatch('install')
+    await worker.dispatch('activate')
+
+    expect(worker.skipWaiting).toHaveBeenCalledTimes(1)
+    expect(worker.navigate).not.toHaveBeenCalled()
+    expect(worker.lifecycleEvents).toEqual([])
+  })
+
+  it('still refreshes an active installation whose old shell cache was cleared', async () => {
     const worker = createServiceWorkerHarness({ withPreviousShell: false })
 
     await worker.dispatch('install')
     await worker.dispatch('activate')
 
-    expect(worker.cacheContents.has('ce-erp-rollout-markers')).toBe(true)
-    expect(worker.navigate).not.toHaveBeenCalled()
-    expect(worker.lifecycleEvents).toEqual(['marker'])
+    expect(worker.navigate).toHaveBeenCalledTimes(1)
+    expect(worker.lifecycleEvents).toEqual(['pending', 'applied', 'navigate'])
+  })
+
+  it('refreshes again when a later pushed release replaces the prior shell', async () => {
+    const caches: ServiceWorkerCacheContents = new Map([
+      ['ce-erp-shell-before-policy', new Map()],
+    ])
+    const first = createServiceWorkerHarness({
+      cacheContents: caches,
+      release: '1111111111111111',
+    })
+
+    await first.dispatch('install')
+    await first.dispatch('activate')
+    expect(first.navigate).toHaveBeenCalledTimes(1)
+    expect(caches.has('ce-erp-shell-1111111111111111')).toBe(true)
+
+    const second = createServiceWorkerHarness({
+      cacheContents: caches,
+      release: '2222222222222222',
+    })
+    await second.dispatch('install')
+    await second.dispatch('activate')
+
+    expect(second.navigate).toHaveBeenCalledTimes(1)
+    expect(second.deletedCaches).toContain('ce-erp-shell-1111111111111111')
+    expect(caches.has('ce-erp-shell-2222222222222222')).toBe(true)
   })
 
   it('version-busts browser, Apple, and installed-app icon URLs together', () => {
@@ -248,14 +299,72 @@ describe('PWA installability', () => {
       writeFileSync(resolve(assets, 'index-Fixture123.js'), entry)
       writeFileSync(resolve(fixture, 'sw.js'), serviceWorkerTemplate)
 
-      execFileSync(process.execPath, [script, fixture])
+      execFileSync(process.execPath, [script, fixture], {
+        env: { ...process.env, CE_ERP_RELEASE_ID: '', GITHUB_SHA: '' },
+      })
       const first = readFileSync(resolve(fixture, 'sw.js'), 'utf8')
       expect(first).toContain(`const RELEASE = '${expectedRelease}'`)
       expect(first).not.toContain('__CE_ERP_RELEASE__')
 
       writeFileSync(resolve(fixture, 'sw.js'), serviceWorkerTemplate)
-      execFileSync(process.execPath, [script, fixture])
+      execFileSync(process.execPath, [script, fixture], {
+        env: { ...process.env, CE_ERP_RELEASE_ID: '', GITHUB_SHA: '' },
+      })
       expect(readFileSync(resolve(fixture, 'sw.js'), 'utf8')).toBe(first)
+    } finally {
+      rmSync(fixture, { recursive: true, force: true })
+    }
+  })
+
+  it('uses the pushed Git commit as a unique production release stamp', () => {
+    const fixture = mkdtempSync(resolve(tmpdir(), 'ce-erp-github-release-'))
+    const assets = resolve(fixture, 'assets')
+    const script = resolve(process.cwd(), 'scripts/stamp-release.mjs')
+    const githubSha = 'abcdef0123456789abcdef0123456789abcdef01'
+    const nextGithubSha = '1234567890abcdef1234567890abcdef12345678'
+    const entry = Buffer.from('same compiled application')
+    const expectedFirst = createHash('sha256')
+      .update(githubSha)
+      .update('\0')
+      .update(entry)
+      .digest('hex')
+      .slice(0, 16)
+    const expectedSecond = createHash('sha256')
+      .update(nextGithubSha)
+      .update('\0')
+      .update(entry)
+      .digest('hex')
+      .slice(0, 16)
+
+    try {
+      mkdirSync(assets)
+      writeFileSync(
+        resolve(fixture, 'index.html'),
+        '<script type="module" src="./assets/index-Fixture123.js"></script>',
+      )
+      writeFileSync(resolve(assets, 'index-Fixture123.js'), entry)
+      writeFileSync(
+        resolve(fixture, 'sw.js'),
+        "const RELEASE = '__CE_ERP_RELEASE__'\n",
+      )
+
+      execFileSync(process.execPath, [script, fixture], {
+        env: { ...process.env, CE_ERP_RELEASE_ID: '', GITHUB_SHA: githubSha },
+      })
+
+      const first = readFileSync(resolve(fixture, 'sw.js'), 'utf8')
+      expect(first).toContain(`const RELEASE = '${expectedFirst}'`)
+
+      writeFileSync(
+        resolve(fixture, 'sw.js'),
+        "const RELEASE = '__CE_ERP_RELEASE__'\n",
+      )
+      execFileSync(process.execPath, [script, fixture], {
+        env: { ...process.env, CE_ERP_RELEASE_ID: '', GITHUB_SHA: nextGithubSha },
+      })
+      const second = readFileSync(resolve(fixture, 'sw.js'), 'utf8')
+      expect(second).toContain(`const RELEASE = '${expectedSecond}'`)
+      expect(second).not.toBe(first)
     } finally {
       rmSync(fixture, { recursive: true, force: true })
     }
@@ -268,9 +377,7 @@ describe('PWA installability', () => {
     expect(main).toContain('registration.update()')
     expect(main).toContain("window.addEventListener('focus'")
     expect(main).toContain('5 * 60 * 1000')
-    expect(main).toContain('window.confirm(')
-    expect(main).toContain("worker.postMessage({ type: 'SKIP_WAITING' })")
-    expect(main).toContain("navigator.serviceWorker.addEventListener('controllerchange'")
-    expect(main).toContain('if (!reloadApproved) return')
+    expect(main).not.toContain('window.confirm(')
+    expect(main).not.toContain("worker.postMessage({ type: 'SKIP_WAITING' })")
   })
 })

@@ -5,6 +5,16 @@ import { fileURLToPath } from 'node:url'
 
 const RELEASE_TOKEN = '__CE_ERP_RELEASE__'
 
+function environmentRevision() {
+  const candidate = process.env.CE_ERP_RELEASE_ID || process.env.GITHUB_SHA
+  if (!candidate) return null
+  const normalized = candidate.trim().toLowerCase()
+  if (!/^[0-9a-f]{16,64}$/.test(normalized)) {
+    throw new Error('CE_ERP_RELEASE_ID/GITHUB_SHA must be 16 to 64 hexadecimal characters.')
+  }
+  return normalized
+}
+
 function entryAssetFromHtml(html) {
   const scripts = [...html.matchAll(/<script\b[^>]*\bsrc=["']([^"']+)["'][^>]*>/gi)]
     .map(match => match[1])
@@ -38,7 +48,10 @@ export async function stampRelease(distDirectory = resolve('dist')) {
     throw new Error(`dist/sw.js is missing the ${RELEASE_TOKEN} token.`)
   }
 
-  const release = createHash('sha256').update(entryAsset).digest('hex').slice(0, 16)
+  const revision = environmentRevision()
+  const releaseHash = createHash('sha256')
+  if (revision) releaseHash.update(revision).update('\0')
+  const release = releaseHash.update(entryAsset).digest('hex').slice(0, 16)
   await writeFile(
     serviceWorkerPath,
     serviceWorker.replaceAll(RELEASE_TOKEN, release),

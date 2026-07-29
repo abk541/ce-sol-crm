@@ -104,6 +104,12 @@ jobs:
             echo 'The build produced no hashed application JavaScript file.' >&2
             exit 1
           fi
+          expected_sw_release="$(grep -oE "const RELEASE = '[0-9a-f]{16}'" dist/sw.js \
+            | head -n 1 | cut -d"'" -f2)"
+          if [ -z "$expected_sw_release" ]; then
+            echo 'The build produced no stamped service-worker release.' >&2
+            exit 1
+          fi
 
           public_js=''
           for attempt in {1..6}; do
@@ -113,6 +119,11 @@ jobs:
               curl -fsSL -H 'Cache-Control: no-cache' \
                 "https://crm.cesolutionplus.com/${public_js}?release=${GITHUB_SHA}-${attempt}" \
                 -o /tmp/public-crm.js
+              curl -fsSL -H 'Cache-Control: no-cache' \
+                "https://crm.cesolutionplus.com/sw.js?release=${GITHUB_SHA}-${attempt}" \
+                -o /tmp/public-sw.js
+              public_sw_release="$(grep -oE "const RELEASE = '[0-9a-f]{16}'" /tmp/public-sw.js \
+                | head -n 1 | cut -d"'" -f2)"
               canonical_headers="$(curl -sSI -H 'Cache-Control: no-cache' \
                 "https://www.crm.cesolutionplus.com/?release=${GITHUB_SHA}-${attempt}" || true)"
               canonical_status="$(printf '%s\n' "$canonical_headers" \
@@ -122,21 +133,26 @@ jobs:
               index_cache="$(curl -sSI -H 'Cache-Control: no-cache' \
                 "https://crm.cesolutionplus.com/?release=${GITHUB_SHA}-${attempt}" \
                 | tr -d '\r' | grep -i '^cache-control:' | tail -n 1 || true)"
+              sw_cache="$(curl -sSI -H 'Cache-Control: no-cache' \
+                "https://crm.cesolutionplus.com/sw.js?release=${GITHUB_SHA}-${attempt}" \
+                | tr -d '\r' | grep -i '^cache-control:' | tail -n 1 || true)"
               if grep -Fq "$expected_api_host" /tmp/public-crm.js \
                 && ! grep -Fq 'supabase.co' /tmp/public-crm.js \
                 && ! grep -Fq '/rest/v1' /tmp/public-crm.js \
                 && ! grep -Fq '/auth/v1' /tmp/public-crm.js \
                 && ! grep -Fq 'api.sam.gov' /tmp/public-crm.js \
                 && ! grep -Fq 'VITE_SAM_GOV_API_KEY' /tmp/public-crm.js \
+                && [ "$public_sw_release" = "$expected_sw_release" ] \
                 && [ "$canonical_status" = '301' ] \
                 && [[ "$canonical_location" == https://crm.cesolutionplus.com/* ]] \
-                && [[ "$index_cache" == *no-store*must-revalidate* ]]; then
-                echo "Verified public release asset: $public_js"
+                && [[ "$index_cache" == *no-store*must-revalidate* ]] \
+                && [[ "$sw_cache" == *no-store*must-revalidate* ]]; then
+                echo "Verified public release asset: $public_js (sw $public_sw_release)"
                 exit 0
               fi
             fi
             sleep 10
           done
 
-          echo "Expected public asset assets/$expected_js, received ${public_js:-none}." >&2
+          echo "Expected public asset assets/$expected_js and service worker $expected_sw_release; received ${public_js:-none} and ${public_sw_release:-none}." >&2
           exit 1

@@ -1,15 +1,10 @@
-// The production build replaces this token with a deterministic fingerprint
-// of the compiled entry bundle. That makes sw.js change with every application
-// release, so installed desktop PWAs cannot keep running an incompatible API
-// client after the backend is upgraded.
+// GitHub deployments replace this token with the pushed commit SHA. Local
+// builds fall back to the compiled entry fingerprint. The unique production
+// value makes every push install a new shell and refresh existing app windows.
 const RELEASE = '__CE_ERP_RELEASE__'
 const SHELL_CACHE_PREFIX = 'ce-erp-shell-'
-// Change this token only for a deliberately forced installed-app rollout.
-// Its persistent marker makes this refresh happen once per browser profile,
-// while later ordinary releases return to the user-confirmed update flow.
-const FORCED_REFRESH_TOKEN = '2026-07-29-premium-icon-v3'
-const SHELL_CACHE = `${SHELL_CACHE_PREFIX}${RELEASE}-${FORCED_REFRESH_TOKEN}`
-const ROLLOUT_MARKER_CACHE = 'ce-erp-rollout-markers'
+const SHELL_CACHE = `${SHELL_CACHE_PREFIX}${RELEASE}`
+const REFRESH_STATE_CACHE = 'ce-erp-refresh-state'
 const SHELL_FILES = [
   './',
   './index.html',
@@ -22,24 +17,27 @@ const SHELL_FILES = [
   './logo.avif',
 ]
 
-function forcedRefreshMarkerUrl() {
-  return new URL(
-    `./.ce-erp-rollouts/${FORCED_REFRESH_TOKEN}`,
-    self.registration.scope,
-  ).href
+function refreshStateUrl() {
+  return new URL('./.ce-erp-refresh-state', self.registration.scope).href
 }
 
-async function forcedRefreshAlreadyApplied() {
-  const cache = await caches.open(ROLLOUT_MARKER_CACHE)
-  return Boolean(await cache.match(forcedRefreshMarkerUrl()))
+async function readRefreshState() {
+  const cache = await caches.open(REFRESH_STATE_CACHE)
+  const response = await cache.match(refreshStateUrl())
+  if (!response) return null
+  try {
+    return await response.json()
+  } catch {
+    return null
+  }
 }
 
-async function markForcedRefreshApplied() {
-  const cache = await caches.open(ROLLOUT_MARKER_CACHE)
+async function writeRefreshState(status) {
+  const cache = await caches.open(REFRESH_STATE_CACHE)
   await cache.put(
-    forcedRefreshMarkerUrl(),
-    new Response(RELEASE, {
-      headers: { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' },
+    refreshStateUrl(),
+    new Response(JSON.stringify({ release: RELEASE, status }), {
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
     }),
   )
 }
@@ -67,9 +65,13 @@ self.addEventListener('install', event => {
   event.waitUntil((async () => {
     const cache = await caches.open(SHELL_CACHE)
     await cache.addAll(SHELL_FILES)
-    if (!(await forcedRefreshAlreadyApplied())) {
-      await self.skipWaiting()
+    // The active worker is present only for an upgrade. Persist this before
+    // skipWaiting so activation can distinguish an existing installation from
+    // a first install even if the worker process is restarted between events.
+    if (self.registration.active) {
+      await writeRefreshState('pending')
     }
+    await self.skipWaiting()
   })())
 })
 
@@ -84,14 +86,14 @@ self.addEventListener('activate', event => {
     )
     await self.clients.claim()
 
-    if (await forcedRefreshAlreadyApplied()) return
-    // Persist the at-most-once marker before navigating clients. If a browser
-    // cannot store the marker, activation fails safely without entering a
-    // forced-refresh loop that could repeatedly discard in-progress work.
-    await markForcedRefreshApplied()
-    // A brand-new profile has no older CE shell to replace. Mark the rollout
-    // as consumed, but do not surprise a first-time visitor with a reload.
-    if (staleShellCaches.length === 0) return
+    const refreshState = await readRefreshState()
+    if (
+      refreshState?.release !== RELEASE
+      || refreshState?.status !== 'pending'
+    ) return
+    // Commit the at-most-once state before navigating any window. If state
+    // persistence fails, activation fails without risking a reload loop.
+    await writeRefreshState('applied')
     const clients = await self.clients.matchAll({
       type: 'window',
       includeUncontrolled: true,
@@ -102,15 +104,6 @@ self.addEventListener('activate', event => {
       return client.navigate(client.url).catch(() => undefined)
     }))
   })())
-})
-
-self.addEventListener('message', event => {
-  // A waiting release is activated only after the user accepts the in-app
-  // reload prompt. This keeps long-running desktop installations current
-  // without discarding an opportunity form that is still being edited.
-  if (event.data?.type === 'SKIP_WAITING') {
-    event.waitUntil(self.skipWaiting())
-  }
 })
 
 self.addEventListener('fetch', event => {
