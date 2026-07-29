@@ -23,6 +23,7 @@ import type {
 } from '../types'
 import { formatCurrency, useEscapeKey } from '../lib/utils'
 import {
+  attachmentAccessErrorMessage,
   uploadAttachment as uploadToStorage,
   downloadAttachment as downloadAttachmentFile,
   hasAttachmentSource,
@@ -174,7 +175,9 @@ function downloadAttachment(att: FileAttachment) {
     toast.error('This attachment only has saved metadata. Re-upload it to download the file.')
     return
   }
-  void downloadAttachmentFile(att).catch(() => toast.error('Attachment could not be downloaded.'))
+  void downloadAttachmentFile(att).catch(error => {
+    toast.error(attachmentAccessErrorMessage(error, 'Attachment could not be downloaded.'))
+  })
 }
 
 function viewAttachment(att: FileAttachment) {
@@ -183,7 +186,10 @@ function viewAttachment(att: FileAttachment) {
     return
   }
   void previewAttachmentFile(att).catch(error => {
-    toast.error(error instanceof Error ? error.message : 'Attachment could not be opened.')
+    toast.error(attachmentAccessErrorMessage(
+      error,
+      error instanceof Error ? error.message : 'Attachment could not be opened.',
+    ))
   })
 }
 
@@ -1956,6 +1962,7 @@ function ContractDetailDrawer({
   const sourceOpportunitySourcing = allSourcingEntries.filter(entry =>
     entry.opportunityId === contract.opportunityId && hasSourcingQuote(entry)
   )
+  const contractSourcingQuoteAttachments = collectSourcingQuoteAttachments(sourceOpportunitySourcing)
   const sourcingHistoryByKey = new Map<string, Subcontractor[]>()
   allSourcingEntries.forEach(entry => {
     const key = subkCompanyKey(entry.companyName, entry.email)
@@ -2565,14 +2572,14 @@ function ContractDetailDrawer({
             </div>
 
             <div
-              className="rounded-xl border p-3"
+              className="rounded-xl border p-3 lg:col-span-2"
               style={{ background: 'rgba(255,255,255,0.055)', borderColor: 'rgba(215,190,122,0.24)' }}
             >
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <p className="text-xs font-bold uppercase tracking-wider text-[#F8E8B8]">Sourcing</p>
+                  <p className="text-xs font-bold uppercase tracking-wider text-[#F8E8B8]">Sourcing Quote Files</p>
                   <p className="mt-0.5 text-[11px] text-slate-400">
-                    Add or edit sourcing entries for the source opportunity.
+                    Download supplier quotes here, or open Sourcing to add and edit entries.
                   </p>
                 </div>
                 <button
@@ -2588,6 +2595,37 @@ function ContractDetailDrawer({
                   <Building2 size={12} /> Sourcing
                 </button>
               </div>
+              {contractSourcingQuoteAttachments.length > 0 ? (
+                <div className="mt-3 space-y-1.5">
+                  {contractSourcingQuoteAttachments.map(att => (
+                    <div key={att.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2">
+                      <div className="flex min-w-0 flex-1 items-center gap-2">
+                        <Paperclip size={12} className="flex-shrink-0 text-[#F8E8B8]" />
+                        <div className="min-w-0">
+                          <p className="truncate text-xs font-bold text-slate-100" title={att.name}>{att.name}</p>
+                          <p className="text-[10px] text-slate-400">
+                            {att.attachedAt ? formatDateTime(att.attachedAt) : 'Sourcing quote'}
+                            {formatFileSize(att.size) ? ` - ${formatFileSize(att.size)}` : ''}
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => downloadAttachment(att)}
+                        disabled={!hasAttachmentSource(att)}
+                        title={hasAttachmentSource(att) ? `Download ${att.name}` : 'This quote only has saved metadata and must be re-uploaded.'}
+                        className="flex flex-shrink-0 items-center gap-1.5 rounded-lg border border-[#D7BE7A]/35 bg-[#D7BE7A]/15 px-2.5 py-1.5 text-[11px] font-black text-[#F8E8B8] transition-colors hover:bg-[#D7BE7A]/25 disabled:cursor-not-allowed disabled:opacity-45"
+                      >
+                        <Download size={12} /> Download
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="mt-3 rounded-lg border border-dashed border-white/10 px-3 py-3 text-xs text-slate-400">
+                  No supplier quote file is attached to this contract opportunity yet.
+                </p>
+              )}
             </div>
 
             {/* Details */}

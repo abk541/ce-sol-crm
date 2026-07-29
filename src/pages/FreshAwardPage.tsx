@@ -11,7 +11,11 @@ import { useStore } from '../store/useStore'
 import { hasPermission } from '../lib/permissions'
 import type { FreshAward, ContractType, SetAside, FileAttachment } from '../types'
 import { formatCurrency, formatDate, useEscapeKey } from '../lib/utils'
-import { downloadAttachment, hasAttachmentSource } from '../lib/attachments'
+import {
+  attachmentAccessErrorMessage,
+  downloadAttachment,
+  hasAttachmentSource,
+} from '../lib/attachments'
 import toast from 'react-hot-toast'
 import FloatingActionMenu from '../components/shared/FloatingActionMenu'
 import HierarchyAssignPicker from '../components/shared/HierarchyAssignPicker'
@@ -515,7 +519,9 @@ export default function FreshAwardPage() {
                               toast.error('Proposal file has metadata only — re-upload it from the opportunity.')
                               return
                             }
-                            void downloadAttachment(att).catch(() => toast.error('Proposal file could not be downloaded.'))
+                            void downloadAttachment(att).catch(error => {
+                              toast.error(attachmentAccessErrorMessage(error, 'Proposal file could not be downloaded.'))
+                            })
                           }}
                           title={att.name}
                           className="inline-flex max-w-[180px] items-center gap-1 truncate rounded-md bg-indigo-50 px-2 py-0.5 text-[10px] font-semibold text-indigo-600 transition-colors hover:bg-indigo-100"

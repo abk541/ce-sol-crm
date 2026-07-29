@@ -9,7 +9,12 @@ import toast from 'react-hot-toast'
 import PeriodFilter, { type Period, filterByPeriod } from '../components/shared/PeriodFilter'
 import { findBDSubmissionOpportunity, getAssignmentChain, getBDSubmissionAssignmentChain, isBDSubmissionAssociatedToUser } from '../lib/team'
 import { formatCurrency } from '../lib/utils'
-import { uploadAttachment, downloadAttachment, hasAttachmentSource } from '../lib/attachments'
+import {
+  attachmentAccessErrorMessage,
+  uploadAttachment,
+  downloadAttachment,
+  hasAttachmentSource,
+} from '../lib/attachments'
 import FloatingActionMenu from '../components/shared/FloatingActionMenu'
 import { hasPermission } from '../lib/permissions'
 import { bdSubmissionPeriodDate, isSubmittedLifecycleRow, uniqueBDSubmissionRows } from '../lib/dashboardMetrics'
@@ -81,7 +86,9 @@ function downloadProposalAttachment(att: FileAttachment) {
     toast.error('Proposal file has metadata only — re-upload it from the opportunity to download.')
     return
   }
-  void downloadAttachment(att).catch(() => toast.error('Proposal file could not be downloaded.'))
+  void downloadAttachment(att).catch(error => {
+    toast.error(attachmentAccessErrorMessage(error, 'Proposal file could not be downloaded.'))
+  })
 }
 
 function fileToProposalAttachment(file: File, uploadedBy: string): Promise<FileAttachment> {

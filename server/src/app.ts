@@ -69,6 +69,11 @@ export async function buildApp(dependencies: Dependencies): Promise<FastifyInsta
     },
     trustProxy: dependencies.env.trustProxy,
     bodyLimit: 1024 * 1024,
+    // Cached clients still use /files/:encodedPath. Match the file handler's
+    // decoded 1,024-character limit while retaining the router's length guard.
+    routerOptions: {
+      maxParamLength: 1024,
+    },
     requestIdHeader: false,
   })
 

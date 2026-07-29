@@ -83,6 +83,112 @@ function result(rows: Record<string, unknown>[] = []) {
   }
 }
 
+describe('authenticated file download routing', () => {
+  it('serves long cached-client paths and the query route with exact bytes and CORS headers', async () => {
+    const attachmentsDir = await mkdtemp(join(tmpdir(), 'ce-file-download-'))
+    const bytes = Buffer.from('%PDF-long-private-file')
+    const longFile = {
+      ...storedFile,
+      storage_path: `quotes/${'long_supplier_quote_'.repeat(8)}signed.pdf`,
+      object_key: '55555555-5555-4555-8555-555555555555',
+      original_name: 'Long Supplier Quote.pdf',
+      size_bytes: bytes.length,
+    }
+    const physicalDirectory = join(attachmentsDir, longFile.object_key.slice(0, 2))
+    await mkdir(physicalDirectory, { recursive: true })
+    await writeFile(join(physicalDirectory, longFile.object_key), bytes)
+
+    const query = vi.fn(async (text: string, values?: readonly unknown[]) => {
+      if (text.includes('from app_auth.sessions s')) return result([sessionRow])
+      if (text.includes('from app_files.objects object_file')) {
+        expect(values).toEqual([longFile.storage_path])
+        return result([longFile])
+      }
+      throw new Error(`Unexpected query: ${text}`)
+    })
+    const app = await buildApp({
+      env: loadEnvironment({
+        DATABASE_URL: 'postgresql://example.invalid/app',
+        ALLOWED_ORIGINS: 'https://crm.example.test',
+        LOG_LEVEL: 'silent',
+        ATTACHMENTS_DIR: attachmentsDir,
+      }),
+      db: {
+        query,
+        end: async () => undefined,
+      } as unknown as Database,
+      fetch: globalThis.fetch,
+      now: () => new Date('2026-07-29T12:00:00.000Z'),
+    })
+
+    try {
+      const urls = [
+        `/api/v1/files/${encodeURIComponent(longFile.storage_path)}`,
+        `/api/v1/files?path=${encodeURIComponent(longFile.storage_path)}`,
+      ]
+      for (const url of urls) {
+        const response = await app.inject({
+          method: 'GET',
+          url,
+          headers: {
+            authorization: `Bearer ${TOKEN}`,
+            origin: 'https://crm.example.test',
+          },
+        })
+
+        expect(response.statusCode).toBe(200)
+        expect(response.rawPayload).toEqual(bytes)
+        expect(response.headers['access-control-allow-origin']).toBe('https://crm.example.test')
+        expect(response.headers['content-type']).toBe('application/pdf')
+        expect(response.headers['content-disposition']).toContain('Long Supplier Quote.pdf')
+        expect(response.headers['cache-control']).toBe('private, no-store')
+      }
+      expect(longFile.storage_path.length).toBeGreaterThan(100)
+    } finally {
+      await app.close()
+      await rm(attachmentsDir, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps the decoded 1,024-character storage-path limit authoritative', async () => {
+    const query = vi.fn(async (text: string) => {
+      if (text.includes('from app_auth.sessions s')) return result([sessionRow])
+      throw new Error(`File metadata must not be queried for an invalid path: ${text}`)
+    })
+    const app = await buildApp({
+      env: loadEnvironment({
+        DATABASE_URL: 'postgresql://example.invalid/app',
+        ALLOWED_ORIGINS: 'https://crm.example.test',
+        LOG_LEVEL: 'silent',
+      }),
+      db: {
+        query,
+        end: async () => undefined,
+      } as unknown as Database,
+      fetch: globalThis.fetch,
+      now: () => new Date('2026-07-29T12:00:00.000Z'),
+    })
+
+    try {
+      const response = await app.inject({
+        method: 'GET',
+        url: `/api/v1/files?path=${encodeURIComponent(`quotes/${'a'.repeat(1_025)}`)}`,
+        headers: {
+          authorization: `Bearer ${TOKEN}`,
+          origin: 'https://crm.example.test',
+        },
+      })
+
+      expect(response.statusCode).toBe(400)
+      expect(response.json().error.code).toBe('invalid_request')
+      expect(response.headers['access-control-allow-origin']).toBe('https://crm.example.test')
+      expect(query).toHaveBeenCalledTimes(1)
+    } finally {
+      await app.close()
+    }
+  })
+})
+
 describe('contract award file cleanup', () => {
   it('requires contract edit or admin permission', async () => {
     const denied = queryable((_text, values) => {

@@ -13,6 +13,7 @@ vi.mock('../lib/api', () => ({
 }))
 
 import {
+  attachmentAccessErrorMessage,
   createSafeAttachmentPreviewBlob,
   downloadAttachment,
   getAttachmentPreviewFormat,
@@ -30,6 +31,25 @@ describe('private attachment storage', () => {
 
   it('treats a private storagePath as downloadable content', () => {
     expect(hasAttachmentSource({ storagePath: 'proposals/example.pdf' })).toBe(true)
+  })
+
+  it.each(['file_not_found', 'file_content_unavailable'])(
+    'explains when saved file bytes are unavailable: %s',
+    code => {
+      expect(attachmentAccessErrorMessage(
+        { code },
+        'Attachment could not be downloaded.',
+      )).toBe(
+        'This saved file is no longer available. Re-upload the original file to restore downloads.',
+      )
+    },
+  )
+
+  it('keeps the page-specific fallback for ordinary failures', () => {
+    expect(attachmentAccessErrorMessage(
+      { code: 'network_error' },
+      'Proposal file could not be downloaded.',
+    )).toBe('Proposal file could not be downloaded.')
   })
 
   it('uploads through the authenticated file API and persists only its private path', async () => {
@@ -75,7 +95,7 @@ describe('private attachment storage', () => {
       url: 'https://legacy.example/private.pdf',
     })
 
-    expect(apiRequest).toHaveBeenCalledWith('/files/contracts%2Fprivate.pdf', {}, {
+    expect(apiRequest).toHaveBeenCalledWith('/files?path=contracts%2Fprivate.pdf', {}, {
       responseType: 'blob',
     })
     expect(fetchSpy).not.toHaveBeenCalled()

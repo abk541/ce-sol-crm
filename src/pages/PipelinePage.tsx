@@ -16,7 +16,12 @@ import { useStore } from '../store/useStore'
 import type { Opportunity, Priority, OppStatus, Comment, FileAttachment, SamGovContact, SubcontractorContact } from '../types'
 import { TIMEZONES } from '../data/mock'
 import { formatCurrency, formatDate, useEscapeKey } from '../lib/utils'
-import { uploadAttachment, hasAttachmentSource, downloadAttachment } from '../lib/attachments'
+import {
+  attachmentAccessErrorMessage,
+  uploadAttachment,
+  hasAttachmentSource,
+  downloadAttachment,
+} from '../lib/attachments'
 import {
   assignableEmployeesForUser,
   getAssignmentChain,
@@ -140,8 +145,8 @@ function fileToProposalAttachment(
 async function downloadPipelineAttachment(file: FileAttachment): Promise<void> {
   try {
     await downloadAttachment(file)
-  } catch {
-    toast.error('Attachment could not be downloaded. Please try again.')
+  } catch (error) {
+    toast.error(attachmentAccessErrorMessage(error, 'Attachment could not be downloaded. Please try again.'))
   }
 }
 
@@ -161,8 +166,13 @@ function QuoteFileChip({ file, onRemove }: { file: FileAttachment; onRemove?: ()
       </div>
       <div className="flex items-center gap-1 flex-shrink-0">
         {hasAttachmentSource(file) && (
-          <button type="button" onClick={() => { void downloadPipelineAttachment(file) }} className="w-6 h-6 rounded flex items-center justify-center text-emerald-700 hover:bg-emerald-100" title={`Download ${file.name}`}>
-            <Download size={12} />
+          <button
+            type="button"
+            onClick={() => { void downloadPipelineAttachment(file) }}
+            className="flex h-7 items-center gap-1 rounded-md border border-emerald-200 bg-white px-2 text-[10px] font-black text-emerald-700 hover:bg-emerald-100"
+            title={`Download ${file.name}`}
+          >
+            <Download size={11} /> Download
           </button>
         )}
         {onRemove && (

@@ -33,6 +33,9 @@ describe('private attachments and non-secret settings migration', () => {
   )
   const contractsPage = readRepoFile('src/pages/ContractsPage.tsx')
   const pipelinePage = readRepoFile('src/pages/PipelinePage.tsx')
+  const bdTrackerPage = readRepoFile('src/pages/BDTrackerPage.tsx')
+  const freshAwardPage = readRepoFile('src/pages/FreshAwardPage.tsx')
+  const certificationsPage = readRepoFile('src/pages/CertificationsPage.tsx')
   const attachmentHelpers = readRepoFile('src/lib/attachments.ts')
 
   it('makes the bucket private and removes anonymous object privileges', () => {
@@ -58,9 +61,22 @@ describe('private attachments and non-secret settings migration', () => {
 
   it('routes every Pipeline download through one rejection-handled toast helper', () => {
     expect(pipelinePage).toMatch(
-      /async function downloadPipelineAttachment[\s\S]*?try\s*\{[\s\S]*?await downloadAttachment\(file\)[\s\S]*?catch\s*\{[\s\S]*?toast\.error/,
+      /async function downloadPipelineAttachment[\s\S]*?try\s*\{[\s\S]*?await downloadAttachment\(file\)[\s\S]*?catch\s*\(error\)\s*\{[\s\S]*?attachmentAccessErrorMessage\(error,/,
     )
     expect(pipelinePage.match(/void downloadPipelineAttachment\(/g)).toHaveLength(3)
     expect(pipelinePage).not.toContain('void downloadAttachment(')
+  })
+
+  it('gives unavailable saved files one actionable message across attachment pages', () => {
+    expect(attachmentHelpers).toContain('export function attachmentAccessErrorMessage')
+    for (const page of [
+      contractsPage,
+      pipelinePage,
+      bdTrackerPage,
+      freshAwardPage,
+      certificationsPage,
+    ]) {
+      expect(page).toContain('attachmentAccessErrorMessage(error,')
+    }
   })
 })

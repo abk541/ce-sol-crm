@@ -52,6 +52,21 @@ export function hasAttachmentSource(file: Pick<FileAttachment, 'storagePath' | '
 }
 
 /**
+ * Gives users an actionable explanation when a saved file reference remains
+ * but its original bytes are unavailable. Other failures retain the
+ * page-specific fallback so network and permission details are not leaked.
+ */
+export function attachmentAccessErrorMessage(error: unknown, fallback: string): string {
+  const code = error && typeof error === 'object' && 'code' in error
+    ? (error as { code?: unknown }).code
+    : null
+  if (code === 'file_not_found' || code === 'file_content_unavailable') {
+    return 'This saved file is no longer available. Re-upload the original file to restore downloads.'
+  }
+  return fallback
+}
+
+/**
  * Loads attachment bytes, preferring the authenticated private file API.
  * Legacy public URLs and inline data URLs remain read-only fallbacks for old
  * records created before the private-bucket migration.
@@ -60,7 +75,10 @@ export async function loadAttachmentBlob(
   file: Pick<FileAttachment, 'storagePath' | 'url' | 'dataUrl'>,
 ): Promise<Blob> {
   if (file.storagePath) {
-    return apiRequest<Blob>(`/files/${encodeURIComponent(file.storagePath)}`, {}, {
+    // Use the query route so long original filenames never become one router
+    // parameter. The path route remains supported by the API for cached
+    // clients, but routers commonly cap a single parameter near 100 bytes.
+    return apiRequest<Blob>(`/files?path=${encodeURIComponent(file.storagePath)}`, {}, {
       responseType: 'blob',
     })
   }

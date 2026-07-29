@@ -6,7 +6,12 @@ import toast from 'react-hot-toast'
 import { useStore } from '../store/useStore'
 import { hasPermission } from '../lib/permissions'
 import { useEscapeKey } from '../lib/utils'
-import { uploadAttachment, downloadAttachment, hasAttachmentSource } from '../lib/attachments'
+import {
+  attachmentAccessErrorMessage,
+  uploadAttachment,
+  downloadAttachment,
+  hasAttachmentSource,
+} from '../lib/attachments'
 import type { CompanyCertification, CompanyCertificationStatus, FileAttachment } from '../types'
 
 const CERT_STATUS_STYLE: Record<CompanyCertificationStatus, string> = {
@@ -59,7 +64,9 @@ function downloadCertificationAttachment(cert: CompanyCertification, attachment 
     toast.error('This certification only has file metadata. Re-upload the attachment to download it.')
     return
   }
-  void downloadAttachment(attachment).catch(() => toast.error('Attachment could not be downloaded.'))
+  void downloadAttachment(attachment).catch(error => {
+    toast.error(attachmentAccessErrorMessage(error, 'Attachment could not be downloaded.'))
+  })
 }
 
 function StatCard({
