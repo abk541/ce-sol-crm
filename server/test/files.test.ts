@@ -239,7 +239,7 @@ describe('contract award file cleanup', () => {
 
     expect(events.indexOf('rm')).toBeGreaterThan(events.indexOf('commit'))
     expect(removePhysical).toHaveBeenCalledWith(
-      join('C:\\private-attachments', '44', storedFile.object_key),
+      join(dependencies.env.attachmentsDir, '44', storedFile.object_key),
     )
   })
 
