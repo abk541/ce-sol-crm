@@ -100,7 +100,9 @@ function typeLabel(val: string) {
 }
 
 function formatDateTime(value: string) {
-  return new Date(value).toLocaleString('en-US', {
+  const date = new Date(value)
+  if (!value || Number.isNaN(date.getTime())) return ''
+  return date.toLocaleString('en-US', {
     month: 'short',
     day: 'numeric',
     year: 'numeric',
@@ -2557,20 +2559,29 @@ export function SourcingModal({ opp, onClose }: { opp: Opportunity; onClose: () 
                     {detailComments.length === 0 && (
                       <p className="text-xs text-slate-400 px-1">No notes yet — drop a quick update so the team has context.</p>
                     )}
-                    {detailComments.map(c => (
-                      <div key={c.id} className="flex items-start gap-2">
-                        <span className={`flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-black text-white ${avatarColor(c.author || 'anon')}`}>
-                          {avatarInitials(c.author || '?')}
-                        </span>
-                        <div className="flex-1 min-w-0 rounded-xl bg-slate-50 border border-slate-100 px-3 py-2">
-                          <div className="flex items-center justify-between gap-3">
-                            <span className="text-[11px] font-bold text-slate-700">{c.author || 'unknown'}</span>
-                            <span className="text-[10px] text-slate-400">{formatDateTime(c.createdAt)}</span>
+                    {detailComments.map(c => {
+                      const dateLabel = formatDateTime(c.createdAt)
+                      const hasAuthor = Boolean(c.author && c.author !== 'Legacy note')
+                      const hasMetadata = hasAuthor || Boolean(dateLabel)
+                      return (
+                        <div key={c.id} className="flex items-start gap-2">
+                          {hasAuthor && (
+                            <span className={`flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-black text-white ${avatarColor(c.author)}`}>
+                              {avatarInitials(c.author)}
+                            </span>
+                          )}
+                          <div className="flex-1 min-w-0 rounded-xl bg-slate-50 border border-slate-100 px-3 py-2">
+                            {hasMetadata && (
+                              <div className="flex items-center justify-between gap-3">
+                                <span className="text-[11px] font-bold text-slate-700">{hasAuthor ? c.author : ''}</span>
+                                <span className="text-[10px] text-slate-400">{dateLabel}</span>
+                              </div>
+                            )}
+                            <p className={`${hasMetadata ? 'mt-0.5' : ''} text-xs text-slate-600 whitespace-pre-wrap`}>{c.text}</p>
                           </div>
-                          <p className="mt-0.5 text-xs text-slate-600 whitespace-pre-wrap">{c.text}</p>
                         </div>
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
                   <div className="mt-3">
                     <textarea

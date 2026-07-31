@@ -37,6 +37,7 @@ import {
   normalizeContractDeliverables,
   serializeContractDeliverables,
 } from './contractDeliverables'
+import { mergeNotificationFeeds } from './notifications'
 
 // ── Opportunity mappers ──────────────────────────────────────────────────────
 
@@ -2386,20 +2387,33 @@ export interface NotificationsResult {
   payload?: Notification[]
 }
 
-export async function fetchNotifications(): Promise<NotificationsResult> {
+export async function fetchNotifications(targetUserId?: string): Promise<NotificationsResult> {
   if (!isApiConnected || !api) return { ok: false, missingTable: false }
   try {
-    const { data, error } = await api
+    const workspaceRequest = api
       .from('notifications')
       .select('*')
       .order('created_at', { ascending: false })
       .limit(500)
+    const personalRequest = targetUserId
+      ? api
+          .from('notifications')
+          .select('*')
+          .eq('target_user_id', targetUserId)
+          .order('created_at', { ascending: false })
+          .limit(500)
+      : Promise.resolve({ data: [], error: null })
+    const [workspace, personal] = await Promise.all([workspaceRequest, personalRequest])
+    const error = workspace.error ?? personal.error
     if (error) {
       if (isMissingTableError(error)) return { ok: false, missingTable: true }
       console.error('[db] fetchNotifications error', error)
       return { ok: false, missingTable: false }
     }
-    const payload = (data ?? []).map(r => dbToNotification(r as Record<string, unknown>))
+    const payload = mergeNotificationFeeds(
+      (workspace.data ?? []).map(r => dbToNotification(r as Record<string, unknown>)),
+      (personal.data ?? []).map(r => dbToNotification(r as Record<string, unknown>)),
+    )
     return { ok: true, missingTable: false, payload }
   } catch (err) {
     if (isMissingTableError(err)) return { ok: false, missingTable: true }
@@ -2426,6 +2440,49 @@ export async function upsertNotification(n: Notification): Promise<boolean> {
 export interface NotificationReadIdsResult {
   ok: boolean
   payload?: string[]
+}
+
+export interface NotificationPopupClaimsResult {
+  ok: boolean
+  payload?: Notification[]
+}
+
+/**
+ * Atomically claims personal popup rows for the authenticated account. The
+ * server returns full rows so an older personal alert remains deliverable even
+ * when it is outside the workspace feed's newest-500 window.
+ */
+export async function claimNotificationPopups(): Promise<NotificationPopupClaimsResult> {
+  if (!isApiConnected) return { ok: false }
+  try {
+    const response = await apiRequest<unknown>('/notifications/popup-claims', {
+      method: 'POST',
+      body: '{}',
+    })
+    const data = envelopeData<{ notifications?: unknown }>(response)
+    const rows = Array.isArray(data.notifications)
+      ? data.notifications.filter((row): row is Record<string, unknown> => Boolean(row && typeof row === 'object'))
+      : []
+    return { ok: true, payload: rows.map(dbToNotification) }
+  } catch (err) {
+    console.error('[db] claimNotificationPopups failed', err)
+    return { ok: false }
+  }
+}
+
+/** Confirms that the current browser rendered its leased personal popups. */
+export async function acknowledgeNotificationPopups(notificationIds: string[]): Promise<boolean> {
+  if (notificationIds.length === 0 || !isApiConnected) return true
+  try {
+    await apiRequest('/notifications/popup-ack', {
+      method: 'POST',
+      body: JSON.stringify({ notificationIds: [...new Set(notificationIds)] }),
+    })
+    return true
+  } catch (err) {
+    console.error('[db] acknowledgeNotificationPopups failed', err)
+    return false
+  }
 }
 
 /** Loads read receipts for the authenticated account; the server owns identity. */

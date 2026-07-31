@@ -38,6 +38,7 @@ import { buildGlobalSearchResults, type GlobalSearchResult } from '../../lib/glo
 import { isNotificationVisibleTo, notificationRecordRoute, reconcileNotificationArrivals } from '../../lib/notifications'
 import { ROLE_LABELS } from '../../lib/permissions'
 import { playNotificationDing } from '../../lib/sound'
+import { acknowledgeNotificationPopups } from '../../lib/db'
 import AppearanceMenu from './AppearanceMenu'
 import PreferencesMenu from './PreferencesMenu'
 
@@ -115,6 +116,7 @@ export default function TopBar() {
     currentUser,
     loginTimestamp,
     notifications,
+    notificationPopupIds,
     notificationsReady,
     markNotificationRead,
     markAllRead,
@@ -203,10 +205,16 @@ export default function TopBar() {
       visibleNotifications,
       notificationsReady,
       seenNotificationIds.current,
+      notificationPopupIds,
     )
     seenNotificationIds.current = arrivals.seen
     const fresh = arrivals.fresh
-    if (fresh.length === 0) return
+    const visibleIds = new Set(visibleNotifications.map(notification => notification.id))
+    const claimedIds = notificationPopupIds.filter(id => visibleIds.has(id))
+    if (fresh.length === 0) {
+      if (claimedIds.length) void acknowledgeNotificationPopups(claimedIds)
+      return
+    }
     fresh.forEach(n => {
       const cfg = TYPE_CONFIG[n.type]
       const Icon = cfg?.icon ?? Bell
@@ -237,11 +245,15 @@ export default function TopBar() {
         </div>
       ), { duration: 6000, position: 'bottom-right' })
     })
+    // The claim remains retryable until this effect has actually created the
+    // popup. A tab closed before this point leaves the lease unacknowledged and
+    // the server offers it again after the short lease expires.
+    if (claimedIds.length) void acknowledgeNotificationPopups(claimedIds)
     if (soundEnabled) playNotificationDing()
     setBellPulse(true)
     const timer = window.setTimeout(() => setBellPulse(false), 1400)
     return () => window.clearTimeout(timer)
-  }, [visibleNotifications, notificationsReady, currentUser?.id, loginTimestamp, soundEnabled, navigate, contracts, opportunities, bdSubmissions])
+  }, [visibleNotifications, notificationPopupIds, notificationsReady, currentUser?.id, loginTimestamp, soundEnabled, navigate, contracts, opportunities, bdSubmissions])
 
   const openGlobalSearchResult = (result: GlobalSearchResult) => {
     navigate(result.route)

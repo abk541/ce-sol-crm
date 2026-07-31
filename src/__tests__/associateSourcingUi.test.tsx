@@ -4,7 +4,7 @@ import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import PipelinePage from '../pages/PipelinePage'
 import { useStore } from '../store/useStore'
-import type { Employee, Opportunity, User } from '../types'
+import type { Employee, Opportunity, Subcontractor, User } from '../types'
 
 const associateUser: User = {
   id: 'associate-user',
@@ -144,5 +144,60 @@ describe('associate sourcing and quoted controls', () => {
 
     expect(buttonWithText('Sourcing')).toBeUndefined()
     expect(buttonWithText('Mark Quoted')).toBeUndefined()
+  })
+
+  it('shows an imported initial sourcing note without invented legacy metadata', async () => {
+    const record = opportunity({ assignedTo: 'associate' })
+    const subcontractor: Subcontractor = {
+      id: 'legacy-sourcing-row',
+      opportunityId: record.id,
+      companyName: 'Legacy Supplier',
+      contactName: '',
+      email: '',
+      phone: '',
+      naicsCode: '',
+      setAside: 'SB',
+      notes: 'Initial supplier comment',
+      createdAt: '2026-07-01T12:00:00.000Z',
+      createdBy: 'Imported record',
+    }
+    useStore.setState({ subcontractors: [subcontractor] })
+
+    await renderAndOpenActions(record)
+    await act(async () => buttonWithText('Sourcing')?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+
+    expect(document.body.textContent).toContain('Initial supplier comment')
+    expect(document.body.textContent).not.toContain('Invalid Date')
+    expect(document.body.textContent).not.toContain('Legacy note')
+  })
+
+  it('keeps author and timestamp metadata on modern sourcing comments', async () => {
+    const record = opportunity({ assignedTo: 'associate' })
+    const subcontractor: Subcontractor = {
+      id: 'modern-sourcing-row',
+      opportunityId: record.id,
+      companyName: 'Modern Supplier',
+      contactName: '',
+      email: '',
+      phone: '',
+      naicsCode: '',
+      setAside: 'SB',
+      notes: JSON.stringify([{
+        id: 'comment-modern',
+        text: 'Quote requested',
+        author: 'Alex Associate',
+        createdAt: '2026-07-31T12:30:00.000Z',
+      }]),
+      createdAt: '2026-07-31T12:00:00.000Z',
+      createdBy: 'Alex Associate',
+    }
+    useStore.setState({ subcontractors: [subcontractor] })
+
+    await renderAndOpenActions(record)
+    await act(async () => buttonWithText('Sourcing')?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+
+    expect(document.body.textContent).toContain('Quote requested')
+    expect(document.body.textContent).toContain('Alex Associate')
+    expect(document.body.textContent).not.toContain('Invalid Date')
   })
 })

@@ -58,6 +58,10 @@ Take and verify a fresh encrypted database backup before applying migrations.
     short-lived sign-in challenges, session assurance, audit events, and the
     least-privilege runtime grants. Do not add these tables to the earlier
     native baseline scripts: migration 009 owns their creation and ACL.
+11. Apply `migrations/010_notification_popup_deliveries.sql` as the database
+    owner. It adds private, account-scoped popup leases so personal workflow
+    alerts created while a user is signed out are displayed once after login
+    and safely retried if the browser closes before acknowledging them.
 11. Start the API, verify `/health/ready`, and exercise login, first-login, CRUD,
    role denial, user administration, SAM status/import, file upload/download,
    atomic submit/cancel/restore, assignment repair, and SSE before enabling
@@ -120,6 +124,8 @@ Routes:
 - `POST /api/v1/deletion-reviews`
 - `GET /api/v1/notifications/read-state`
 - `POST /api/v1/notifications/read`
+- `POST /api/v1/notifications/popup-claims`
+- `POST /api/v1/notifications/popup-ack`
 - `POST /api/v1/admin/users/actions`
 - `GET /api/v1/integrations/sam/status`
 - `POST /api/v1/integrations/sam/settings`

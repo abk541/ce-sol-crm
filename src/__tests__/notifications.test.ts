@@ -6,6 +6,7 @@ import {
   canViewCompanyActivity,
   filterActivityHistoryByUser,
   isNotificationVisibleTo,
+  mergeNotificationFeeds,
   mergeNotificationSnapshot,
   notificationRecordRoute,
   reconcileNotificationArrivals,
@@ -246,6 +247,56 @@ describe('notification visibility', () => {
 })
 
 describe('notification refresh state', () => {
+  it('keeps a personal decision even when more than 500 workspace alerts are newer', () => {
+    const personal = notification({
+      id: 'personal-decision',
+      type: 'DELETION_REQUEST',
+      targetUserId: assignedAssociate.id,
+      createdAt: '2026-01-01T00:00:00.000Z',
+    })
+    const workspace = Array.from({ length: 500 }, (_, index) => notification({
+      id: `workspace-${index}`,
+      createdAt: `2026-07-31T12:${String(index % 60).padStart(2, '0')}:00.000Z`,
+    }))
+
+    const merged = mergeNotificationFeeds(workspace, [personal])
+
+    expect(merged).toHaveLength(501)
+    expect(merged.some(item => item.id === personal.id)).toBe(true)
+  })
+
+  it('emits a server-claimed offline decision on the initial snapshot exactly once', () => {
+    const decision = notification({
+      id: 'offline-decision',
+      type: 'DELETION_REQUEST',
+      targetUserId: assignedAssociate.id,
+    })
+
+    const initial = reconcileNotificationArrivals([decision], true, null, [decision.id])
+    expect(initial.fresh).toEqual([decision])
+
+    const repeated = reconcileNotificationArrivals([decision], true, initial.seen, [decision.id])
+    expect(repeated.fresh).toEqual([])
+  })
+
+  it('does not popup a claimed notification that this account already read', () => {
+    const decision = notification({ id: 'read-offline-decision', read: true })
+    const initial = reconcileNotificationArrivals([decision], true, null, [decision.id])
+
+    expect(initial.fresh).toEqual([])
+  })
+
+  it('does not repeat a live popup when the server claim arrives on the next poll', () => {
+    const decision = notification({ id: 'live-then-claimed' })
+    const history = reconcileNotificationArrivals([], true, null)
+    const live = reconcileNotificationArrivals([decision], true, history.seen)
+    expect(live.fresh).toEqual([decision])
+
+    const claimed = reconcileNotificationArrivals([decision], true, live.seen, [decision.id])
+    expect(claimed.fresh).toEqual([])
+    expect(claimed.seen?.has(`popup-claim:${decision.id}`)).toBe(true)
+  })
+
   it('delivers a deletion decision to its associate as one live popup arrival', () => {
     const context = { employees, contracts: [], opportunities: [opportunity] }
     const decision = notification({

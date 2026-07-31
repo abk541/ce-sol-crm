@@ -31,6 +31,7 @@ vi.mock('../lib/db', () => ({
   upsertEmployeeRequest: vi.fn().mockResolvedValue(undefined),
   upsertNotification: vi.fn().mockResolvedValue(undefined),
   upsertActivityLog: vi.fn().mockResolvedValue(undefined),
+  claimNotificationPopups: vi.fn().mockResolvedValue({ ok: false }),
 }))
 
 vi.mock('../lib/api', () => ({

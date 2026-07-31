@@ -61,6 +61,7 @@ import {
   fetchAppSettings,
   saveAppSetting,
   fetchNotifications,
+  claimNotificationPopups,
   fetchNotificationReadIds,
   persistNotificationsRead,
   upsertNotification,
@@ -74,13 +75,14 @@ import {
   findBDSubmissionOpportunity,
   getAssignmentChain,
   isAssignedToAssociate,
+  findEmployeeForUser,
   findUserForEmployee,
   findUserByExactIdentity,
 } from '../lib/team'
 import { hasPermission, applyPermissionOverrides, type Permission } from '../lib/permissions'
 import { nextInvoiceSequenceFromContracts } from '../lib/invoiceNumbers'
 import { hasSourcingQuote } from '../lib/subcontractorQuotes'
-import { mergeNotificationSnapshot } from '../lib/notifications'
+import { canViewCompanyActivity, mergeNotificationFeeds, mergeNotificationSnapshot } from '../lib/notifications'
 import {
   contractCreationValidationError,
   hasDuplicateHumanContractId,
@@ -139,6 +141,7 @@ interface AppState {
   opportunities: Opportunity[]
   contracts: Contract[]
   notifications: Notification[]
+  notificationPopupIds: string[]
   subcontractors: Subcontractor[]
   nonSubReports: NonSubmissionReport[]
   deletionRequests: DeletionRequest[]
@@ -351,7 +354,9 @@ interface AppState {
   // ── Notifications ──────────────────────────────────────────────────
   markNotificationRead: (id: string) => void
   markAllRead: (ids: string[]) => void
-  addNotification: (n: Omit<Notification, 'id' | 'createdAt'>) => void
+  addNotification: (
+    n: Omit<Notification, 'id' | 'createdAt'> & Partial<Pick<Notification, 'id' | 'createdAt'>>,
+  ) => void
 
   // ── Employee assignment ────────────────────────────────────────────
   assignOpportunityToEmployee: (opportunityId: string, employeeId: string) => void
@@ -1010,6 +1015,7 @@ function clearedAuthState(): Partial<AppState> {
     opportunities: [],
     contracts: [],
     notifications: [],
+    notificationPopupIds: [],
     subcontractors: [],
     nonSubReports: [],
     deletionRequests: [],
@@ -1150,6 +1156,7 @@ export const useStore = create<AppState>()(
       opportunities: MOCK_OPPORTUNITIES,
       contracts: MOCK_CONTRACTS,
       notifications: MOCK_NOTIFICATIONS,
+      notificationPopupIds: [],
       subcontractors: MOCK_SUBCONTRACTORS,
       nonSubReports: MOCK_NON_SUB_REPORTS,
       deletionRequests: MOCK_DELETION_REQUESTS,
@@ -2685,18 +2692,22 @@ export const useStore = create<AppState>()(
           updates.set(opp.id, { due24h: fire24h, due4h: fire4h })
           if (fire4h) {
             get().addNotification({
+              id: `deadline-reminder-4h-${opp.id}-${deadline}`,
               type: 'DEADLINE',
               title: 'Opportunity due in 4 hours',
-              message: `${opp.solicitation} is due at ${new Date(deadline).toLocaleString()}.`,
+              message: `${opp.solicitation} is due at ${opportunityDeadlineLabel(opp)}.`,
               read: false,
+              createdAt: new Date(deadline - FOUR_H).toISOString(),
               relatedId: opp.id,
             })
           } else if (fire24h) {
             get().addNotification({
+              id: `deadline-reminder-24h-${opp.id}-${deadline}`,
               type: 'DEADLINE',
               title: 'Opportunity due in 24 hours',
-              message: `${opp.solicitation} is due at ${new Date(deadline).toLocaleString()}.`,
+              message: `${opp.solicitation} is due at ${opportunityDeadlineLabel(opp)}.`,
               read: false,
+              createdAt: new Date(deadline - TWENTY_FOUR_H).toISOString(),
               relatedId: opp.id,
             })
           }
@@ -2740,10 +2751,12 @@ export const useStore = create<AppState>()(
             }))
             const opp = get().opportunities.find(o => o.id === report.opportunityId)
             get().addNotification({
+              id: `non-sub-reminder-${report.id}-${stampIso.slice(0, 10)}`,
               type: 'REPORT_REMINDER',
               title: 'Non-submission report still pending',
               message: `${opp?.solicitation ?? 'A non-submission report'} is still awaiting review.`,
               read: false,
+              createdAt: stampIso,
               relatedId: report.opportunityId,
               targetRole: 'CAPTURE_MANAGER',
             })
@@ -2768,45 +2781,62 @@ export const useStore = create<AppState>()(
       scanGoalProgress: () => {
         const state = get()
         const user = state.currentUser
-        if (!user) return
+        if (!user || !state.dbReady) return
         const todayKey = todayLabel()
         if (state.goalProgressLastNotifiedAt === todayKey) return
-        const emp = state.employees.find(e => e.email === user.email)
         const BD_GOALS: Record<string, number> = { BD_MANAGER: 20, TEAM_LEAD: 15, ASSOCIATE: 10 }
-        const goal = emp ? (BD_GOALS[emp.role] ?? 0) : 0
-        if (goal <= 0) {
-          set({ goalProgressLastNotifiedAt: todayKey })
-          return
-        }
+        const oversight = canViewCompanyActivity(user)
+        const candidateUsers = oversight
+          ? state.users.filter(candidate => candidate.status === 'active')
+          : [user]
+        const seenEmployeeIds = new Set<string>()
+        const targets = candidateUsers.flatMap(candidate => {
+          const employee = findEmployeeForUser(state.employees, candidate)
+          if (!employee || seenEmployeeIds.has(employee.id) || !(employee.role in BD_GOALS)) return []
+          seenEmployeeIds.add(employee.id)
+          return [{ user: candidate, employee, goal: BD_GOALS[employee.role] }]
+        })
+
+        // A partial/failed workspace load must not suppress the whole day's
+        // retry. Managers generate the deterministic alerts for every active
+        // BD account, so admins receive complete coverage even while an
+        // associate is signed out; associates generate only their own row.
+        if (targets.length === 0) return
         const monthStart = new Date()
         monthStart.setDate(1)
         monthStart.setHours(0, 0, 0, 0)
         const monthEnd = new Date(monthStart)
         monthEnd.setMonth(monthEnd.getMonth() + 1)
-        const submitted = state.opportunities.filter(o =>
-          o.assignedTo === emp?.id
-          && o.submittedAt
-          && new Date(o.submittedAt) >= monthStart
-          && new Date(o.submittedAt) < monthEnd
-        ).length
-        const pct = Math.min(100, Math.round((submitted / goal) * 100))
         const now = new Date()
         const remainingDays = Math.max(0, Math.ceil((monthEnd.getTime() - now.getTime()) / (24 * 60 * 60 * 1000)))
-        if (submitted >= goal) {
-          get().addNotification({
-            type: 'SYSTEM',
-            title: 'Monthly goal achieved',
-            message: `You hit ${submitted}/${goal} submissions this month. Nice work.`,
-            read: false,
-          })
-        } else if (remainingDays <= 5 && pct < 80) {
-          get().addNotification({
-            type: 'SYSTEM',
-            title: 'Monthly goal at risk',
-            message: `You are at ${submitted}/${goal} submissions with ${remainingDays} day${remainingDays === 1 ? '' : 's'} remaining (${pct}%).`,
-            read: false,
-          })
-        }
+        targets.forEach(target => {
+          const submitted = state.opportunities.filter(o =>
+            o.assignedTo === target.employee.id
+            && o.submittedAt
+            && new Date(o.submittedAt) >= monthStart
+            && new Date(o.submittedAt) < monthEnd
+          ).length
+          const pct = Math.min(100, Math.round((submitted / target.goal) * 100))
+          if (submitted >= target.goal) {
+            get().addNotification({
+              id: `goal-progress-${target.user.id}-${todayKey}-achieved`,
+              type: 'SYSTEM',
+              title: `${target.employee.name}: monthly goal achieved`,
+              message: `${target.employee.name} reached ${submitted}/${target.goal} submissions this month.`,
+              read: false,
+              targetUserId: target.user.id,
+            })
+          } else if (remainingDays <= 5 && pct < 80) {
+            get().addNotification({
+              id: `goal-progress-${target.user.id}-${todayKey}-at-risk`,
+              type: 'SYSTEM',
+              title: `${target.employee.name}: monthly goal at risk`,
+              message: `${target.employee.name} is at ${submitted}/${target.goal} submissions with ${remainingDays} day${remainingDays === 1 ? '' : 's'} remaining (${pct}%).`,
+              read: false,
+              targetUserId: target.user.id,
+            })
+          }
+        })
         set({ goalProgressLastNotifiedAt: todayKey })
       },
 
@@ -4423,12 +4453,15 @@ export const useStore = create<AppState>()(
       },
 
       addNotification: (data) => {
+        const { id, createdAt, ...payload } = data
         const notification: Notification = {
-          ...data,
-          id: `n${Date.now()}${Math.random().toString(36).slice(2, 7)}`,
-          createdAt: new Date().toISOString(),
+          ...payload,
+          id: id ?? `n${Date.now()}${Math.random().toString(36).slice(2, 7)}`,
+          createdAt: createdAt ?? new Date().toISOString(),
         }
-        set(s => ({ notifications: [notification, ...s.notifications] }))
+        set(s => ({
+          notifications: [notification, ...s.notifications.filter(item => item.id !== notification.id)],
+        }))
         // Promote to the shared table so the concerned user receives it in
         // their own session (poll / realtime picks it up). No-op + silent when
         // API server or the notifications table is unavailable.
@@ -4703,21 +4736,31 @@ export const useStore = create<AppState>()(
           // source of truth for the set; preserve any locally-read flag so a
           // refresh doesn't resurrect already-read alerts as unread.
           try {
-            const [nRes, readRes, rRes, aRes] = await Promise.all([
-              fetchNotifications(),
+            const [nRes, readRes, popupRes, rRes, aRes] = await Promise.all([
+              fetchNotifications(get().currentUser?.id),
               fetchNotificationReadIds(),
+              claimNotificationPopups(),
               fetchEmployeeRequests(),
               fetchActivityLogs(),
             ])
             if (!sessionIsCurrent()) return
-            const collabPatch: { notifications?: Notification[]; notificationsReady?: boolean; employeeRequests?: EmployeeRequest[]; activityLogs?: ActivityLog[] } = {}
-            if (nRes.ok && nRes.payload) {
+            const collabPatch: { notifications?: Notification[]; notificationPopupIds?: string[]; notificationsReady?: boolean; employeeRequests?: EmployeeRequest[]; activityLogs?: ActivityLog[] } = {}
+            if ((nRes.ok && nRes.payload) || (popupRes.ok && popupRes.payload)) {
+              const remoteNotifications = mergeNotificationFeeds(
+                nRes.ok ? nRes.payload ?? [] : [],
+                popupRes.ok ? popupRes.payload ?? [] : [],
+              )
               collabPatch.notifications = mergeNotificationSnapshot(
-                nRes.payload,
+                remoteNotifications,
                 get().notifications,
                 readRes.ok ? readRes.payload : [],
               )
               collabPatch.notificationsReady = true
+            }
+            if (popupRes.ok) {
+              collabPatch.notificationPopupIds = [
+                ...new Set((popupRes.payload ?? []).map(notification => notification.id)),
+              ]
             }
             if (rRes.ok && rRes.payload) {
               collabPatch.employeeRequests = rRes.payload
@@ -4727,7 +4770,12 @@ export const useStore = create<AppState>()(
               const localOnly = get().activityLogs.filter(l => !dbIds.has(l.id))
               collabPatch.activityLogs = [...aRes.payload, ...localOnly].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
             }
-            if (collabPatch.notifications || collabPatch.employeeRequests || collabPatch.activityLogs) set(collabPatch)
+            if (
+              collabPatch.notifications
+              || collabPatch.notificationPopupIds !== undefined
+              || collabPatch.employeeRequests
+              || collabPatch.activityLogs
+            ) set(collabPatch)
           } catch (err) {
             console.error('[Store] collaboration sync failed', err)
           }
@@ -4854,9 +4902,10 @@ export const useStore = create<AppState>()(
           }
 
           const activationSnapshot = activationSettingsFetchSnapshot()
-          const [nRes, readRes, rRes, aRes, settingsRes] = await Promise.all([
-            fetchNotifications(),
+          const [nRes, readRes, popupRes, rRes, aRes, settingsRes] = await Promise.all([
+            fetchNotifications(refreshedProfile.id),
             fetchNotificationReadIds(),
+            claimNotificationPopups(),
             fetchEmployeeRequests(),
             fetchActivityLogs(),
             fetchAppSettings(),
@@ -4876,14 +4925,23 @@ export const useStore = create<AppState>()(
           } else if (settingsRes.missingTable) {
             set({ appSettingsSyncStatus: 'local' })
           }
-          const collabPatch: { notifications?: Notification[]; notificationsReady?: boolean; employeeRequests?: EmployeeRequest[]; activityLogs?: ActivityLog[] } = {}
-          if (nRes.ok && nRes.payload) {
+          const collabPatch: { notifications?: Notification[]; notificationPopupIds?: string[]; notificationsReady?: boolean; employeeRequests?: EmployeeRequest[]; activityLogs?: ActivityLog[] } = {}
+          if ((nRes.ok && nRes.payload) || (popupRes.ok && popupRes.payload)) {
+            const remoteNotifications = mergeNotificationFeeds(
+              nRes.ok ? nRes.payload ?? [] : [],
+              popupRes.ok ? popupRes.payload ?? [] : [],
+            )
             collabPatch.notifications = mergeNotificationSnapshot(
-              nRes.payload,
+              remoteNotifications,
               get().notifications,
               readRes.ok ? readRes.payload : [],
             )
             collabPatch.notificationsReady = true
+          }
+          if (popupRes.ok) {
+            collabPatch.notificationPopupIds = [
+              ...new Set((popupRes.payload ?? []).map(notification => notification.id)),
+            ]
           }
           if (rRes.ok && rRes.payload) {
             collabPatch.employeeRequests = rRes.payload
@@ -4893,7 +4951,12 @@ export const useStore = create<AppState>()(
             const localOnly = get().activityLogs.filter(l => !dbIds.has(l.id))
             collabPatch.activityLogs = [...aRes.payload, ...localOnly].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
           }
-          if (collabPatch.notifications || collabPatch.employeeRequests || collabPatch.activityLogs) set(collabPatch)
+          if (
+            collabPatch.notifications
+            || collabPatch.notificationPopupIds !== undefined
+            || collabPatch.employeeRequests
+            || collabPatch.activityLogs
+          ) set(collabPatch)
         } catch (err) {
           console.error('[Store] refreshFromDb failed', err)
         } finally {

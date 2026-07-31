@@ -46,6 +46,7 @@ vi.mock('../lib/db', () => ({
   upsertNotification: vi.fn().mockResolvedValue(true),
   upsertBDSubmission: vi.fn().mockResolvedValue(true),
   deleteBDSubmissionRecord: vi.fn().mockResolvedValue(null),
+  claimNotificationPopups: vi.fn().mockResolvedValue({ ok: false }),
   fetchNotificationReadIds: vi.fn().mockResolvedValue({ ok: true, payload: [] }),
   persistNotificationsRead: vi.fn().mockResolvedValue(true),
 }))
@@ -246,6 +247,7 @@ beforeEach(() => {
     currentUser: CAPTURE_MANAGER_USER,
     users: [CAPTURE_MANAGER_USER, ASSOCIATE_USER],
     isAuthenticated: true,
+    dbReady: true,
     loginTimestamp: Date.now(),
     employees: TEST_EMPLOYEES,
     nonSubGraceHours: 0,
@@ -692,6 +694,112 @@ describe('associate comments and quoted workflow', () => {
         ['notifiedDue24h', 'notifiedDue4h'],
       )
       expect(upsertOpportunity).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('uses one deterministic deadline reminder across concurrent stale scans', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2099-01-01T12:00:00.000Z'))
+      const opp = makeOpp({
+        id: 'opp-concurrent-reminder',
+        dueDate: '2099-01-01',
+        localTime: '15:00',
+        timezone: 'UTC',
+        notifiedDue24h: false,
+        notifiedDue4h: false,
+      })
+      useStore.setState({ opportunities: [opp], currentUser: CAPTURE_MANAGER_USER })
+
+      useStore.getState().scanDeadlineReminders()
+      // Simulate another tab that loaded the same stale watermark before the
+      // first tab's opportunity patch became visible.
+      useStore.setState({ opportunities: [opp] })
+      useStore.getState().scanDeadlineReminders()
+
+      const reminders = useStore.getState().notifications.filter(item =>
+        item.title === 'Opportunity due in 4 hours')
+      expect(reminders).toHaveLength(1)
+      expect(reminders[0]?.id).toBe(
+        `deadline-reminder-4h-${opp.id}-${new Date('2099-01-01T15:00:00.000Z').getTime()}`,
+      )
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('routes monthly goal alerts to the associate and names them for manager oversight', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-07-29T12:00:00.000Z'))
+      useStore.setState({
+        currentUser: ASSOCIATE_USER,
+        users: [CAPTURE_MANAGER_USER, ASSOCIATE_USER],
+        employees: TEST_EMPLOYEES,
+        opportunities: [],
+        goalProgressLastNotifiedAt: undefined,
+      })
+
+      useStore.getState().scanGoalProgress()
+
+      expect(useStore.getState().notifications).toContainEqual(expect.objectContaining({
+        id: 'goal-progress-user-associate-2026-07-29-at-risk',
+        title: 'Test Associate: monthly goal at risk',
+        message: expect.stringContaining('Test Associate is at 0/10 submissions'),
+        targetUserId: ASSOCIATE_USER.id,
+      }))
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('lets a manager generate deterministic goal alerts for signed-out associates', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-07-29T12:00:00.000Z'))
+      useStore.setState({
+        currentUser: CAPTURE_MANAGER_USER,
+        users: [CAPTURE_MANAGER_USER, ASSOCIATE_USER],
+        employees: TEST_EMPLOYEES,
+        opportunities: [],
+        goalProgressLastNotifiedAt: undefined,
+      })
+
+      useStore.getState().scanGoalProgress()
+
+      expect(useStore.getState().notifications).toContainEqual(expect.objectContaining({
+        id: 'goal-progress-user-associate-2026-07-29-at-risk',
+        title: 'Test Associate: monthly goal at risk',
+        targetUserId: ASSOCIATE_USER.id,
+      }))
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('retries goal scanning after an incomplete employee roster loads', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-07-29T12:00:00.000Z'))
+      useStore.setState({
+        currentUser: ASSOCIATE_USER,
+        users: [ASSOCIATE_USER],
+        employees: [],
+        opportunities: [],
+        notifications: [],
+        goalProgressLastNotifiedAt: undefined,
+      })
+
+      useStore.getState().scanGoalProgress()
+      expect(useStore.getState().goalProgressLastNotifiedAt).toBeUndefined()
+
+      useStore.setState({ employees: TEST_EMPLOYEES })
+      useStore.getState().scanGoalProgress()
+      expect(useStore.getState().notifications).toContainEqual(expect.objectContaining({
+        id: 'goal-progress-user-associate-2026-07-29-at-risk',
+      }))
     } finally {
       vi.useRealTimers()
     }

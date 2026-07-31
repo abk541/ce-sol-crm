@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   signOutCurrentSession: vi.fn().mockResolvedValue(undefined),
   loadAllData: vi.fn(),
   fetchNotifications: vi.fn(),
+  claimNotificationPopups: vi.fn(),
   fetchNotificationReadIds: vi.fn(),
   fetchEmployeeRequests: vi.fn(),
   fetchActivityLogs: vi.fn(),
@@ -44,6 +45,7 @@ vi.mock('../lib/db', async (importOriginal) => {
     ...actual,
     loadAllData: mocks.loadAllData,
     fetchNotifications: mocks.fetchNotifications,
+    claimNotificationPopups: mocks.claimNotificationPopups,
     fetchNotificationReadIds: mocks.fetchNotificationReadIds,
     fetchEmployeeRequests: mocks.fetchEmployeeRequests,
     fetchActivityLogs: mocks.fetchActivityLogs,
@@ -126,6 +128,7 @@ function setAuthenticatedWorkspace(): void {
     accessNoticeAccepted: true,
     loginTimestamp: Date.parse('2026-07-20T08:00:00.000Z'),
     dbReady: true,
+    notificationPopupIds: [],
     appSettings: { privateIntegrationKey: 'in-memory-only' },
   })
 }
@@ -137,6 +140,7 @@ describe('background profile revalidation', () => {
     mocks.loadAllData.mockResolvedValue(null)
     mocks.restoreAuthenticatedProfile.mockResolvedValue({ initialized: true, profile: null })
     mocks.fetchNotifications.mockResolvedValue({ ok: false })
+    mocks.claimNotificationPopups.mockResolvedValue({ ok: false })
     mocks.fetchNotificationReadIds.mockResolvedValue({ ok: false })
     mocks.fetchEmployeeRequests.mockResolvedValue({ ok: false })
     mocks.fetchActivityLogs.mockResolvedValue({ ok: false })
@@ -842,6 +846,7 @@ describe('background profile revalidation', () => {
 
     const initialization = useStore.getState().initializeStore()
     await vi.waitFor(() => expect(mocks.fetchNotifications).toHaveBeenCalledOnce())
+    expect(mocks.fetchNotifications).toHaveBeenCalledWith(user.id)
     useStore.setState({
       currentUser: otherUser,
       users: [otherUser],

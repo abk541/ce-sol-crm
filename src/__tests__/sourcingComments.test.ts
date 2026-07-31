@@ -18,6 +18,24 @@ describe('sourcing comments', () => {
     ])
   })
 
+  it('unwraps legacy notes that were stored as a JSON string', () => {
+    expect(parseSourcingComments(JSON.stringify('Call back tomorrow'))).toMatchObject([
+      { text: 'Call back tomorrow', author: 'Legacy note', createdAt: '' },
+    ])
+  })
+
+  it('keeps recognized empty structured histories empty', () => {
+    expect(parseSourcingComments('[]')).toEqual([])
+    expect(parseSourcingComments('{"comments":[]}')).toEqual([])
+    expect(parseSourcingComments('[{"text":"   "}]')).toEqual([])
+  })
+
+  it('sanitizes malformed imported metadata instead of passing it to the UI', () => {
+    expect(parseSourcingComments('[{"text":"Useful note","author":42,"createdAt":{},"id":null}]')).toEqual([
+      { id: 'sourcing-comment-0', text: 'Useful note', author: '', createdAt: '' },
+    ])
+  })
+
   it('drops blank entries when saving structured history', () => {
     const stored = serializeSourcingComments([
       { id: 'one', text: 'Useful note', author: 'User', createdAt: '2026-07-20' },

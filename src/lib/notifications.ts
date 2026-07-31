@@ -143,6 +143,22 @@ export function isNotificationVisibleTo(
 }
 
 /**
+ * Combines the workspace feed with the current user's personal feed and any
+ * server-claimed popup rows. Personal rows must never age out behind a noisy
+ * workspace-wide limit.
+ */
+export function mergeNotificationFeeds(
+  ...feeds: ReadonlyArray<readonly Notification[]>
+): Notification[] {
+  const byId = new Map<string, Notification>()
+  feeds.forEach(feed => feed.forEach(notification => byId.set(notification.id, notification)))
+  return [...byId.values()].sort((a, b) => {
+    if (a.createdAt !== b.createdAt) return a.createdAt < b.createdAt ? 1 : -1
+    return a.id.localeCompare(b.id)
+  })
+}
+
+/**
  * Merges shared rows with private read receipts and optimistic local state.
  * Locally-created alerts remain until their database upsert becomes visible.
  */
@@ -175,25 +191,45 @@ export interface NotificationArrivalSnapshot {
 }
 
 /**
- * Treats the first successful DB snapshot as history, then returns each later
- * unread id once. An early empty render can no longer replay all old rows.
+ * Treats the first successful DB snapshot as history, except for personal
+ * popup rows atomically claimed for this account by the server. Claim markers
+ * share the seen set so a delayed claim still emits once and never repeats.
  */
 export function reconcileNotificationArrivals(
   notifications: Notification[],
   ready: boolean,
   seen: Set<string> | null,
+  claimedPopupIds: Iterable<string> = [],
 ): NotificationArrivalSnapshot {
   if (!ready) return { seen, fresh: [] }
+  const claimedIds = new Set(claimedPopupIds)
   if (seen === null) {
-    return { seen: new Set(notifications.map(notification => notification.id)), fresh: [] }
+    const nextSeen = new Set(notifications.map(notification => notification.id))
+    const fresh: Notification[] = []
+    notifications.forEach(notification => {
+      if (!claimedIds.has(notification.id)) return
+      nextSeen.add(`popup-claim:${notification.id}`)
+      if (!notification.read) fresh.push(notification)
+    })
+    return { seen: nextSeen, fresh }
   }
 
   const nextSeen = new Set(seen)
   const fresh: Notification[] = []
   notifications.forEach(notification => {
-    if (nextSeen.has(notification.id)) return
+    const claimMarker = `popup-claim:${notification.id}`
+    const alreadySeen = nextSeen.has(notification.id)
+    const newlyClaimed = claimedIds.has(notification.id) && !nextSeen.has(claimMarker)
+    if (newlyClaimed) {
+      nextSeen.add(claimMarker)
+      // A notification may first arrive live and only be claimed by the next
+      // polling cycle. In that case its normal id already proves the popup was
+      // shown, so the later claim must only record delivery—not show it twice.
+      if (!notification.read && !alreadySeen) fresh.push(notification)
+    }
+    if (alreadySeen) return
     nextSeen.add(notification.id)
-    if (!notification.read) fresh.push(notification)
+    if (!notification.read && !newlyClaimed) fresh.push(notification)
   })
   return { seen: nextSeen, fresh }
 }

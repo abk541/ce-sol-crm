@@ -1,35 +1,45 @@
 import type { Comment } from '../types'
 
-function isSourcingComment(value: unknown): value is Comment {
-  if (!value || typeof value !== 'object') return false
-  const comment = value as Partial<Comment>
-  return typeof comment.text === 'string' && comment.text.trim().length > 0
+function normalizeSourcingComment(value: unknown, index: number): Comment | null {
+  if (!value || typeof value !== 'object') return null
+  const comment = value as Partial<Record<keyof Comment, unknown>>
+  const text = typeof comment.text === 'string' ? comment.text.trim() : ''
+  if (!text) return null
+  return {
+    id: typeof comment.id === 'string' && comment.id.trim()
+      ? comment.id.trim()
+      : `sourcing-comment-${index}`,
+    text,
+    author: typeof comment.author === 'string' ? comment.author.trim() : '',
+    createdAt: typeof comment.createdAt === 'string' ? comment.createdAt.trim() : '',
+  }
 }
 
 export function parseSourcingComments(notes: string | undefined): Comment[] {
   const value = notes?.trim()
   if (!value) return []
+  let legacyText = value
   try {
     const parsed = JSON.parse(value) as unknown
-    const comments = Array.isArray(parsed)
-      ? parsed
-      : parsed && typeof parsed === 'object' && Array.isArray((parsed as { comments?: unknown }).comments)
-        ? (parsed as { comments: unknown[] }).comments
-        : []
-    if (comments.length) {
-      return comments.filter(isSourcingComment).map((comment, index) => ({
-        ...comment,
-        id: comment.id || `sourcing-comment-${index}`,
-        author: comment.author || 'Team member',
-        createdAt: comment.createdAt || '',
-      }))
+    // Some early imports JSON-encoded a plain note as a string rather than an
+    // array. Unwrap it so the user sees the original note instead of quotes.
+    if (typeof parsed === 'string' && parsed.trim()) legacyText = parsed.trim()
+    const isStructuredHistory = Array.isArray(parsed)
+      || Boolean(parsed && typeof parsed === 'object' && Array.isArray((parsed as { comments?: unknown }).comments))
+    if (isStructuredHistory) {
+      const comments = Array.isArray(parsed)
+        ? parsed
+        : (parsed as { comments: unknown[] }).comments
+      return comments
+        .map(normalizeSourcingComment)
+        .filter((comment): comment is Comment => comment !== null)
     }
   } catch {
     // Plain-text notes from older records are still valid notes.
   }
   return [{
     id: 'legacy-note',
-    text: value,
+    text: legacyText,
     author: 'Legacy note',
     createdAt: '',
   }]
