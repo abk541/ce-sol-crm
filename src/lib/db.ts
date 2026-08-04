@@ -150,8 +150,6 @@ function notesWithSourcingContacts(notes: string | undefined, contacts?: Subcont
 
 function oppToDb(o: Opportunity, opts: { includeSamGovContacts?: boolean } = {}): Record<string, unknown> {
   const includeSamGovContacts = opts.includeSamGovContacts !== false
-  const proposalNames = o.proposals?.length ? o.proposals : attachmentNames(o.proposalAttachments) ?? []
-  const assignedOpportunityNames = o.assignedOpportunities?.length ? o.assignedOpportunities : proposalNames
   const samGovContacts = normalizeSamGovContacts(o.samGovContacts)
 
   const row: Record<string, unknown> = {
@@ -192,9 +190,6 @@ function oppToDb(o: Opportunity, opts: { includeSamGovContacts?: boolean } = {})
     notified_due_24h: o.notifiedDue24h ?? null,
     notified_due_4h: o.notifiedDue4h ?? null,
     assigned_to: o.assignedTo ?? null,
-    proposals: proposalNames,
-    assigned_opportunities: assignedOpportunityNames,
-    proposal_attachments: normalizeStoredAttachments(o.proposalAttachments),
   }
   // Only reference the column when actually exempting, so opportunity saves keep
   // working even before the migration adding non_submission_exempt has been run.
@@ -239,9 +234,6 @@ const OPPORTUNITY_PATCH_COLUMNS: Partial<Record<keyof Opportunity, readonly stri
   notifiedDue24h: ['notified_due_24h'],
   notifiedDue4h: ['notified_due_4h'],
   assignedTo: ['assigned_to'],
-  proposals: ['proposals'],
-  assignedOpportunities: ['assigned_opportunities'],
-  proposalAttachments: ['proposal_attachments'],
   samGovContacts: ['sam_gov_contacts', 'poc'],
 }
 
@@ -365,6 +357,7 @@ function commentToDb(opportunityId: string, comment: Comment): Record<string, un
     author_id: comment.authorId ?? null,
     created_at: comment.createdAt,
     edited_at: comment.editedAt ?? null,
+    attachments: normalizeStoredAttachments(comment.attachments),
   }
 }
 
@@ -376,6 +369,7 @@ function dbToComment(row: Record<string, unknown>): Comment {
     authorId: (row.author_id as string | null) ?? undefined,
     createdAt: row.created_at as string,
     editedAt: (row.edited_at as string | null) ?? undefined,
+    attachments: normalizeStoredAttachments(row.attachments),
   }
 }
 
@@ -475,7 +469,6 @@ function contractToDb(c: Contract): Record<string, unknown> {
     termination_date: c.terminationDate ?? null,
     termination_reason: c.terminationReason ?? null,
     assigned_to: c.assignedTo ?? null,
-    proposal_attachments: normalizeStoredAttachments(c.proposalAttachments),
     award_documents: normalizeStoredAttachments(c.awardDocuments),
     service_date: c.serviceDate ?? null,
     billing_period_start: c.billingPeriodStart ?? null,
@@ -924,7 +917,6 @@ function freshAwardToDb(fa: FreshAward): Record<string, unknown> {
     contract_id: fa.contractId ?? null,
     moved_at: fa.movedAt ?? null,
     notes: fa.notes ?? null,
-    proposal_attachments: normalizeStoredAttachments(fa.proposalAttachments),
   }
 }
 
@@ -1546,6 +1538,14 @@ export async function updateOpportunityRecord(
 ): Promise<boolean> {
   if (!isApiConnected || !api) {
     console.error('[db] updateOpportunityRecord skipped: API is not configured')
+    return false
+  }
+  if (fields.some(field => (
+    field === 'proposals'
+    || field === 'assignedOpportunities'
+    || field === 'proposalAttachments'
+  ))) {
+    console.error('[db] proposal fields must be persisted through the atomic opportunity workflow')
     return false
   }
   let patch = opportunityPatchToDb(opportunity, fields)
@@ -2673,13 +2673,18 @@ export async function fetchEmployeeRequests(): Promise<EmployeeRequestsResult> {
   }
 }
 
-export async function upsertEmployeeRequest(r: EmployeeRequest): Promise<void> {
-  if (!isApiConnected || !api) return
+export async function upsertEmployeeRequest(r: EmployeeRequest): Promise<boolean> {
+  if (!isApiConnected || !api) return false
   try {
     const { error } = await api.from('employee_requests').upsert(employeeRequestToDb(r))
-    if (error && !isMissingTableError(error)) console.error('[db] upsertEmployeeRequest error', error)
+    if (error) {
+      if (!isMissingTableError(error)) console.error('[db] upsertEmployeeRequest error', error)
+      return false
+    }
+    return true
   } catch (err) {
     if (!isMissingTableError(err)) console.error('[db] upsertEmployeeRequest failed', err)
+    return false
   }
 }
 

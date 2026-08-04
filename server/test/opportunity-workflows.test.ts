@@ -1,3 +1,6 @@
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { QueryResult, QueryResultRow } from 'pg'
 import { asAuthenticatedUser, type Database, type Queryable } from '../src/db.js'
@@ -130,13 +133,33 @@ describe('opportunity workflow snapshot', () => {
 describe('atomic opportunity workflows', () => {
   it('submits by locking/updating the opportunity before reconciling and creating a tracker row', async () => {
     const statements: string[] = []
+    const attachmentsDir = await mkdtemp(join(tmpdir(), 'ce-proposal-workflow-'))
+    const objectKey = '88888888-8888-4888-8888-888888888888'
     const proposalAttachment = {
       id: 'proposal-1',
       name: 'proposal.pdf',
       attachedAt: '2026-07-21T11:00:00.000Z',
       uploadedBy: 'associate',
+      size: 8,
       storagePath: 'attachments/proposal-1',
     }
+    await mkdir(join(attachmentsDir, objectKey.slice(0, 2)), { recursive: true })
+    await writeFile(join(attachmentsDir, objectKey.slice(0, 2), objectKey), 'proposal')
+    const fileStore = queryable((text, values) => {
+      expect(text).toContain('from private.proposal_attachment_file_metadata')
+      expect(values).toEqual([[proposalAttachment.storagePath]])
+      return [{
+        storage_path: proposalAttachment.storagePath,
+        object_key: objectKey,
+        content_available: true,
+        size_bytes: proposalAttachment.size,
+        attachment_id: proposalAttachment.id,
+        original_name: proposalAttachment.name,
+        content_type: null,
+        attached_at: new Date(proposalAttachment.attachedAt),
+        uploader_name: proposalAttachment.uploadedBy,
+      }]
+    })
     const client = queryable((text, values) => {
       if (text.includes('private.has_permission')) return permissionRows('opportunity:submitProposal')
       if (text.includes('from public.opportunities') && text.includes('for update')) return [opportunity]
@@ -146,6 +169,19 @@ describe('atomic opportunity workflows', () => {
         expect(values).toContain(JSON.stringify([proposalAttachment]))
         expect(values).toContainEqual(['proposal.pdf'])
         return [{ ...opportunity, status: 'SUBMITTED', submitted_at: '2026-07-21T12:00:00.000Z' }]
+      }
+      if (text.startsWith('with unique_opportunity as')) {
+        expect(text).toMatch(/unique_opportunity[\s\S]+?having count\(\*\) = 1/)
+        expect(text).toMatch(/unique_legacy_contract[\s\S]+?having count\(\*\) = 1/)
+        expect(text).toContain('candidate.id = $1')
+        expect(text).toContain('contract.id = legacy.id')
+        expect(text).toContain('contract.opportunity_id is null')
+        expect(values).toEqual([opportunity.id, opportunity.solicitation_id])
+        return [{ id: 'legacy-contract-1' }]
+      }
+      if (text.startsWith('select private.sync_opportunity_proposal_attachments')) {
+        expect(values).toEqual([opportunity.id, JSON.stringify([proposalAttachment])])
+        return []
       }
       if (text.includes('where opportunity_id = $1 for update')) return []
       if (text.includes('opportunity_id is null')) {
@@ -159,24 +195,203 @@ describe('atomic opportunity workflows', () => {
       throw new Error(`Unexpected query: ${text}`)
     }, statements)
 
+    try {
+      await expect(executeOpportunityWorkflow(client, {
+        action: 'submit',
+        opportunityId: 'opp-1',
+        expectedOpportunityStatus: 'ACTIVE',
+        values: {
+          contractAmount: 250,
+          proposals: ['proposal.pdf'],
+          proposalAttachments: [proposalAttachment],
+        },
+      }, new Date('2026-07-21T12:00:00.000Z'), {
+        fileStore,
+        attachmentsDir,
+      })).resolves.toMatchObject({
+        opportunity: { id: 'opp-1', status: 'SUBMITTED' },
+        submission: { opportunity_id: 'opp-1', status: 'SUBMITTED' },
+      })
+
+      const opportunityLock = statements.findIndex((text) => text.includes('from public.opportunities') && text.includes('for update'))
+      const opportunityUpdate = statements.findIndex((text) => text.startsWith('update public.opportunities'))
+      const attachmentSync = statements.findIndex(
+        (text) => text.startsWith('select private.sync_opportunity_proposal_attachments'),
+      )
+      const legacyContractLink = statements.findIndex(
+        (text) => text.startsWith('with unique_opportunity as'),
+      )
+      const trackerLock = statements.findIndex((text) => text.includes('from public.bd_submissions') && text.includes('for update'))
+      expect(opportunityLock).toBeGreaterThan(-1)
+      expect(trackerLock).toBeGreaterThan(opportunityLock)
+      expect(legacyContractLink).toBeGreaterThan(opportunityUpdate)
+      expect(attachmentSync).toBeGreaterThan(legacyContractLink)
+    } finally {
+      await rm(attachmentsDir, { recursive: true, force: true })
+    }
+  })
+
+  it('does not link a legacy contract when duplicate opportunity solicitations make it ambiguous', async () => {
+    const statements: string[] = []
+    const client = queryable((text, values) => {
+      expect(text).toMatch(/from public\.opportunities candidate[\s\S]+having count\(\*\) = 1/)
+      expect(text).toContain('where candidate.id = $1')
+      expect(text).toContain('contract.opportunity_id is null')
+      expect(values).toEqual(['opp-1', 'SOL-1'])
+      // PostgreSQL returns no updated row when the uniqueness CTE observes two
+      // opportunities with the same normalized solicitation.
+      return []
+    }, statements)
+
+    await expect(__test.reconcileLegacyContractLink(client, {
+      id: 'opp-1',
+      solicitation_id: ' SOL-1 ',
+    })).resolves.toBeUndefined()
+    expect(statements).toHaveLength(1)
+  })
+
+  it('does not link a legacy contract when duplicate contract numbers make it ambiguous', async () => {
+    const statements: string[] = []
+    const client = queryable((text, values) => {
+      expect(text).toMatch(/unique_opportunity[\s\S]+?having count\(\*\) = 1/)
+      expect(text).toMatch(
+        /unique_legacy_contract[\s\S]+?from public\.contracts legacy[\s\S]+?legacy\.opportunity_id is null[\s\S]+?having count\(\*\) = 1/,
+      )
+      expect(text).toContain('contract.id = legacy.id')
+      expect(values).toEqual(['opp-1', 'SOL-1'])
+      // PostgreSQL returns no updated row when more than one unlinked legacy
+      // contract has this normalized contract number.
+      return []
+    }, statements)
+
+    await expect(__test.reconcileLegacyContractLink(client, {
+      id: 'opp-1',
+      solicitation_id: 'SOL-1',
+    })).resolves.toBeUndefined()
+    expect(statements).toHaveLength(1)
+  })
+
+  it('rejects proposal metadata whose physical bytes are missing before changing workflow records', async () => {
+    const statements: string[] = []
+    const proposalAttachment = {
+      id: 'missing-proposal',
+      name: 'missing.pdf',
+      storagePath: 'client_proposals/missing-proposal.pdf',
+    }
+    const client = queryable((text) => {
+      if (text.includes('private.has_permission')) return permissionRows('opportunity:submitProposal')
+      throw new Error(`Workflow records must not be read or written: ${text}`)
+    }, statements)
+    const fileStore = queryable((text, values) => {
+      expect(text).toContain('from private.proposal_attachment_file_metadata')
+      expect(values).toEqual([[proposalAttachment.storagePath]])
+      return [{
+        storage_path: proposalAttachment.storagePath,
+        object_key: '99999999-9999-4999-8999-999999999999',
+        content_available: true,
+        size_bytes: 1,
+        attachment_id: proposalAttachment.id,
+        original_name: proposalAttachment.name,
+        content_type: null,
+        attached_at: new Date('2026-07-21T11:00:00.000Z'),
+        uploader_name: 'associate',
+      }]
+    })
+
     await expect(executeOpportunityWorkflow(client, {
       action: 'submit',
       opportunityId: 'opp-1',
       expectedOpportunityStatus: 'ACTIVE',
-      values: {
-        contractAmount: 250,
-        proposals: ['proposal.pdf'],
-        proposalAttachments: [proposalAttachment],
-      },
-    }, new Date('2026-07-21T12:00:00.000Z'))).resolves.toMatchObject({
-      opportunity: { id: 'opp-1', status: 'SUBMITTED' },
-      submission: { opportunity_id: 'opp-1', status: 'SUBMITTED' },
+      values: { proposalAttachments: [proposalAttachment] },
+    }, new Date(), {
+      fileStore,
+      attachmentsDir: tmpdir(),
+    })).rejects.toMatchObject({
+      statusCode: 409,
+      code: 'proposal_attachment_unavailable',
+    })
+    expect(statements.some(text => text.includes('public.opportunities'))).toBe(false)
+    expect(statements.some(text => /^\s*(insert|update|delete)\s/i.test(text))).toBe(false)
+  })
+
+  it('rejects proposal attachment records without a private storage path', async () => {
+    const statements: string[] = []
+    const client = queryable((text) => {
+      if (text.includes('private.has_permission')) return permissionRows('opportunity:submitProposal')
+      throw new Error(`Workflow records must not be read or written: ${text}`)
+    }, statements)
+    const fileStore = queryable((text) => {
+      throw new Error(`File metadata must not be queried for an invalid attachment: ${text}`)
     })
 
-    const opportunityLock = statements.findIndex((text) => text.includes('from public.opportunities') && text.includes('for update'))
-    const trackerLock = statements.findIndex((text) => text.includes('from public.bd_submissions') && text.includes('for update'))
-    expect(opportunityLock).toBeGreaterThan(-1)
-    expect(trackerLock).toBeGreaterThan(opportunityLock)
+    await expect(executeOpportunityWorkflow(client, {
+      action: 'submit',
+      opportunityId: 'opp-1',
+      expectedOpportunityStatus: 'ACTIVE',
+      values: { proposalAttachments: [{ id: 'legacy-only', url: 'https://example.test/file.pdf' }] },
+    }, new Date(), {
+      fileStore,
+      attachmentsDir: tmpdir(),
+    })).rejects.toMatchObject({ statusCode: 400, code: 'invalid_request' })
+    expect(statements.some(text => text.includes('public.opportunities'))).toBe(false)
+  })
+
+  it('rejects submit proposal names without the matching validated attachment records', async () => {
+    const statements: string[] = []
+    const client = queryable((text) => {
+      if (text.includes('private.has_permission')) return permissionRows('opportunity:submitProposal')
+      throw new Error(`Workflow records must not be read or written: ${text}`)
+    }, statements)
+
+    await expect(executeOpportunityWorkflow(client, {
+      action: 'submit',
+      opportunityId: 'opp-1',
+      expectedOpportunityStatus: 'ACTIVE',
+      values: { proposals: ['unverified-proposal.pdf'] },
+    }, new Date())).rejects.toMatchObject({ statusCode: 400, code: 'invalid_request' })
+    expect(statements.some(text => text.includes('public.opportunities'))).toBe(false)
+  })
+
+  it('canonicalizes proposal metadata from private storage instead of trusting client labels', async () => {
+    const attachmentsDir = await mkdtemp(join(tmpdir(), 'ce-proposal-canonical-'))
+    const storagePath = 'proposals/canonical.pdf'
+    const objectKey = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee'
+    const bytes = 'canonical'
+    await mkdir(join(attachmentsDir, objectKey.slice(0, 2)), { recursive: true })
+    await writeFile(join(attachmentsDir, objectKey.slice(0, 2), objectKey), bytes)
+    const fileStore = queryable((text, values) => {
+      expect(text).toContain('from private.proposal_attachment_file_metadata')
+      expect(values).toEqual([[storagePath]])
+      return [{
+        storage_path: storagePath,
+        object_key: objectKey,
+        content_available: true,
+        size_bytes: Buffer.byteLength(bytes),
+        attachment_id: 'canonical-id',
+        original_name: 'Canonical Proposal.pdf',
+        content_type: 'application/pdf',
+        attached_at: new Date('2026-07-21T11:00:00.000Z'),
+        uploader_name: 'associate',
+      }]
+    })
+
+    try {
+      await expect(__test.requireAvailableProposalAttachments(
+        [{ id: 'spoofed-id', name: '', storagePath }],
+        'proposalAttachments',
+        { fileStore, attachmentsDir },
+      )).resolves.toEqual([{
+        id: 'canonical-id',
+        name: 'Canonical Proposal.pdf',
+        attachedAt: '2026-07-21T11:00:00.000Z',
+        uploadedBy: 'associate',
+        mimeType: 'application/pdf',
+        size: Buffer.byteLength(bytes),
+        storagePath,
+      }])
+    } finally {
+      await rm(attachmentsDir, { recursive: true, force: true })
+    }
   })
 
   it.each([
@@ -737,6 +952,93 @@ describe('atomic opportunity workflows', () => {
     })
   })
 
+  it('atomically propagates validated replacement proposal files during tracker edits', async () => {
+    const statements: string[] = []
+    const attachmentsDir = await mkdtemp(join(tmpdir(), 'ce-proposal-edit-'))
+    const objectKey = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+    const replacement = {
+      id: 'replacement-proposal',
+      name: 'replacement.pdf',
+      attachedAt: '2026-07-21T11:30:00.000Z',
+      uploadedBy: 'associate',
+      size: 11,
+      storagePath: 'client_proposals/replacement-proposal.pdf',
+    }
+    await mkdir(join(attachmentsDir, objectKey.slice(0, 2)), { recursive: true })
+    await writeFile(join(attachmentsDir, objectKey.slice(0, 2), objectKey), 'replacement')
+    const fileStore = queryable((text, values) => {
+      expect(text).toContain('from private.proposal_attachment_file_metadata')
+      expect(values).toEqual([[replacement.storagePath]])
+      return [{
+        storage_path: replacement.storagePath,
+        object_key: objectKey,
+        content_available: true,
+        size_bytes: replacement.size,
+        attachment_id: replacement.id,
+        original_name: replacement.name,
+        content_type: null,
+        attached_at: new Date(replacement.attachedAt),
+        uploader_name: replacement.uploadedBy,
+      }]
+    })
+    const client = queryable((text, values) => {
+      if (text.includes('private.has_permission')) return permissionRows('opportunity:edit')
+      if (text.startsWith('select id, opportunity_id')) return [{ id: 41, opportunity_id: 'opp-1' }]
+      if (text.includes('from public.opportunities') && text.includes('for update')) return [opportunity]
+      if (text.includes('from public.bd_submissions') && text.includes('for update')) return [submission]
+      if (text.startsWith('update public.opportunities')) {
+        expect(text).toMatch(/"proposal_attachments" = \$\d+::jsonb/)
+        expect(values).toContain(JSON.stringify([replacement]))
+        return [{ ...opportunity, proposal_attachments: [replacement] }]
+      }
+      if (text.startsWith('select private.sync_opportunity_proposal_attachments')) {
+        expect(values).toEqual([opportunity.id, JSON.stringify([replacement])])
+        return []
+      }
+      if (text.startsWith('update public.bd_submissions')) return [submission]
+      throw new Error(`Unexpected query: ${text}`)
+    }, statements)
+
+    try {
+      await expect(executeOpportunityWorkflow(client, {
+        action: 'edit',
+        submissionId: 41,
+        expectedOpportunityStatus: 'ACTIVE',
+        expectedSubmissionStatus: 'SUBMITTED',
+        opportunityValues: {
+          proposalAttachments: [replacement],
+          proposals: [replacement.name],
+        },
+      }, new Date(), {
+        fileStore,
+        attachmentsDir,
+      })).resolves.toMatchObject({
+        opportunity: { proposal_attachments: [replacement] },
+      })
+      expect(statements.filter(
+        text => text.startsWith('select private.sync_opportunity_proposal_attachments'),
+      )).toHaveLength(1)
+    } finally {
+      await rm(attachmentsDir, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects edited proposal names without the matching validated attachment records', async () => {
+    const statements: string[] = []
+    const client = queryable((text) => {
+      if (text.includes('private.has_permission')) return permissionRows('opportunity:edit')
+      throw new Error(`Workflow records must not be read or written: ${text}`)
+    }, statements)
+
+    await expect(executeOpportunityWorkflow(client, {
+      action: 'edit',
+      submissionId: 41,
+      expectedSubmissionStatus: 'SUBMITTED',
+      opportunityValues: { proposals: ['unverified-proposal.pdf'] },
+    }, new Date())).rejects.toMatchObject({ statusCode: 400, code: 'invalid_request' })
+    expect(statements.some(text => text.includes('public.opportunities'))).toBe(false)
+  })
+
   it.each([
     ['dueDate', 'due_date', '2026-08-02'],
     ['localTime', 'local_time', '11:30'],
@@ -764,6 +1066,9 @@ describe('atomic opportunity workflows', () => {
           notified_due_24h: false,
           notified_due_4h: false,
         }]
+      }
+      if (text.includes('profile.auth_user_id = app_auth.request_account_id()')) {
+        return [{ id: 'capture-user', name: 'Capture Manager', role: 'CAPTURE_MANAGER' }]
       }
       if (text.startsWith('update public.bd_submissions')) return [submission]
       throw new Error(`Unexpected query: ${text}`)
@@ -816,6 +1121,9 @@ describe('atomic opportunity workflows', () => {
       opportunity: { notified_due_24h: true, notified_due_4h: true },
     })
     expect(statements.filter((text) => text.startsWith('update public.opportunities'))).toHaveLength(1)
+    expect(statements.some(
+      (text) => text.startsWith('select private.sync_opportunity_proposal_attachments'),
+    )).toBe(false)
   })
 
   it('treats null and blank schedule values as equivalent without resetting reminders', async () => {
@@ -1085,7 +1393,9 @@ describe('atomic opportunity workflows', () => {
       if (text.startsWith('select id, opportunity_id')) return [{ id: 41, opportunity_id: 'opp-1' }]
       if (text.includes('from public.opportunities') && text.includes('for update')) return [opportunity]
       if (text.includes('from public.bd_submissions') && text.includes('for update')) return [submission]
-      if (text.startsWith('select id from public.non_submission_reports')) return [{ id: 'report-1' }]
+      if (text.startsWith('select id::text as id, status::text as status, agent_username::text as agent_username')) {
+        return [{ id: 'report-1', status: 'PENDING', agent_username: 'associate' }]
+      }
       if (text.startsWith('update public.opportunities')) {
         return [{ ...opportunity, status: 'NOT_SUBMITTED' }]
       }
@@ -1097,6 +1407,34 @@ describe('atomic opportunity workflows', () => {
           'APPROVED', reviewedAt.toISOString(), 'Verified by manager', 'report-1', 'opp-1',
         ])
         return [{ id: 'report-1' }]
+      }
+      if (text.includes('profile.auth_user_id = app_auth.request_account_id()')) {
+        return [{ id: 'capture-user', name: 'Capture Manager', role: 'CAPTURE_MANAGER' }]
+      }
+      if (text.includes('left join public.employees assigned')) {
+        expect(values).toEqual([''])
+        return [{
+          id: 'associate-user',
+          username: 'associate',
+          name: 'Associate User',
+          email: 'associate@example.test',
+          assigned_id: '',
+          assigned_name: '',
+          assigned_email: '',
+          assigned_role: '',
+        }]
+      }
+      if (text.startsWith('insert into public.notifications')) {
+        expect(values).toEqual([
+          'non-sub-review-report-1',
+          'NON_SUB_REVIEW',
+          'Non-submission report approved',
+          'Your non-submission report for Example solicitation was approved by Capture Manager.',
+          reviewedAt.toISOString(),
+          'opp-1',
+          ['associate-user'],
+        ])
+        return [{ id: 'non-sub-review-notification' }]
       }
       throw new Error(`Unexpected query: ${text}`)
     }, statements)
@@ -1116,8 +1454,10 @@ describe('atomic opportunity workflows', () => {
     const opportunityUpdate = statements.findIndex((text) => text.startsWith('update public.opportunities'))
     const trackerUpdate = statements.findIndex((text) => text.startsWith('update public.bd_submissions'))
     const reportUpdate = statements.findIndex((text) => text.startsWith('update public.non_submission_reports'))
+    const notificationInsert = statements.findIndex((text) => text.startsWith('insert into public.notifications'))
     expect(trackerUpdate).toBeGreaterThan(opportunityUpdate)
     expect(reportUpdate).toBeGreaterThan(trackerUpdate)
+    expect(notificationInsert).toBeGreaterThan(reportUpdate)
   })
 
   it('returns a reviewed non-submission by clearing the parent link before deleting its report', async () => {
@@ -1594,8 +1934,11 @@ describe('atomic opportunity workflows', () => {
         if (text.includes('from public.bd_submissions') && text.includes('for update')) {
           return { rows: [submission], rowCount: 1 }
         }
-        if (text.startsWith('select id from public.non_submission_reports')) {
-          return { rows: [{ id: 'report-1' }], rowCount: 1 }
+        if (text.startsWith('select id::text as id, status::text as status, agent_username::text as agent_username')) {
+          return {
+            rows: [{ id: 'report-1', status: 'PENDING', agent_username: 'associate' }],
+            rowCount: 1,
+          }
         }
         if (text.startsWith('update public.opportunities')) {
           return { rows: [{ ...opportunity, status: 'NOT_SUBMITTED' }], rowCount: 1 }
@@ -1626,6 +1969,90 @@ describe('atomic opportunity workflows', () => {
     expect(statements).not.toContain('commit')
     expect(statements.some((text) => text.startsWith('update public.opportunities'))).toBe(true)
     expect(statements.some((text) => text.startsWith('update public.bd_submissions'))).toBe(true)
+    expect(released).toBe(true)
+  })
+
+  it('rolls back the complete review when its Associate notification cannot be saved', async () => {
+    const statements: string[] = []
+    let released = false
+    const client = {
+      async query(text: string) {
+        statements.push(text)
+        if (text === 'begin' || text === 'commit' || text === 'rollback'
+          || text.includes("set_config('app.account_id'") || text === 'set local role authenticated') {
+          return { rows: [], rowCount: 0 }
+        }
+        if (text.includes('private.has_permission')) {
+          return { rows: permissionRows('nonSubmission:review'), rowCount: 1 }
+        }
+        if (text.startsWith('select id, opportunity_id')) {
+          return { rows: [{ id: 41, opportunity_id: 'opp-1' }], rowCount: 1 }
+        }
+        if (text.includes('from public.opportunities') && text.includes('for update')) {
+          return { rows: [{ ...opportunity, assigned_to: 'employee-associate' }], rowCount: 1 }
+        }
+        if (text.includes('from public.bd_submissions') && text.includes('for update')) {
+          return { rows: [submission], rowCount: 1 }
+        }
+        if (text.startsWith('select id::text as id, status::text as status, agent_username::text as agent_username')) {
+          return {
+            rows: [{ id: 'report-1', status: 'PENDING', agent_username: 'associate' }],
+            rowCount: 1,
+          }
+        }
+        if (text.startsWith('update public.opportunities')) {
+          return {
+            rows: [{ ...opportunity, assigned_to: 'employee-associate', status: 'NOT_SUBMITTED' }],
+            rowCount: 1,
+          }
+        }
+        if (text.startsWith('update public.bd_submissions')) {
+          return { rows: [{ ...submission, status: 'NOT_SUBMITTED' }], rowCount: 1 }
+        }
+        if (text.startsWith('update public.non_submission_reports')) {
+          return { rows: [{ id: 'report-1' }], rowCount: 1 }
+        }
+        if (text.includes('profile.auth_user_id = app_auth.request_account_id()')) {
+          return { rows: [{ id: 'capture-user', name: 'Capture Manager', role: 'CAPTURE_MANAGER' }], rowCount: 1 }
+        }
+        if (text.includes('left join public.employees assigned')) {
+          return {
+            rows: [{
+              id: 'associate-user',
+              username: 'associate',
+              name: 'Associate User',
+              email: 'associate@example.test',
+              assigned_id: 'employee-associate',
+              assigned_name: 'Associate User',
+              assigned_email: 'associate@example.test',
+              assigned_role: 'ASSOCIATE',
+            }],
+            rowCount: 1,
+          }
+        }
+        if (text.startsWith('insert into public.notifications')) throw new Error('notification write failed')
+        throw new Error(`Unexpected query: ${text}`)
+      },
+      release() { released = true },
+    }
+    const pool = { async connect() { return client } } as unknown as Database
+
+    await expect(asAuthenticatedUser(pool, 'account-1', (transactionClient) => executeOpportunityWorkflow(
+      transactionClient,
+      {
+        action: 'transition',
+        submissionId: 41,
+        status: 'NOT_SUBMITTED',
+        expectedOpportunityStatus: 'ACTIVE',
+        expectedSubmissionStatus: 'SUBMITTED',
+        nonSubmissionReportId: 'report-1',
+      },
+      new Date(),
+    ))).rejects.toThrow('notification write failed')
+    expect(statements).toContain('rollback')
+    expect(statements).not.toContain('commit')
+    expect(statements.some((text) => text.startsWith('update public.non_submission_reports'))).toBe(true)
+    expect(statements.some((text) => text.startsWith('insert into public.notifications'))).toBe(true)
     expect(released).toBe(true)
   })
 

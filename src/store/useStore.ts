@@ -255,7 +255,7 @@ interface AppState {
   addCompanyCertification: (data: Omit<CompanyCertification, 'id' | 'createdAt' | 'updatedAt' | 'createdBy' | 'status'> & { status?: CompanyCertificationStatus }) => void
   updateCompanyCertification: (id: string, data: Partial<CompanyCertification>) => void
   deleteCompanyCertification: (id: string) => void
-  submitEmployeeRequest: (data: Omit<EmployeeRequest, 'id' | 'requesterId' | 'requesterName' | 'requesterEmail' | 'status' | 'submittedAt'>) => void
+  submitEmployeeRequest: (data: Omit<EmployeeRequest, 'id' | 'requesterId' | 'requesterName' | 'requesterEmail' | 'status' | 'submittedAt'>) => Promise<boolean>
   reviewEmployeeRequest: (id: string, status: EmployeeRequestStatus, reviewNote?: string) => void
   updateEmployeeRequest: (id: string, data: Partial<EmployeeRequest>) => void
   deleteEmployeeRequest: (id: string) => void
@@ -628,7 +628,10 @@ function recordOpportunityDeadlineChange(
   const assignedAssociate = getAssignmentChain(get().employees, after.assignedTo).associate
   const assignedUser = findUserForEmployee(get().users, assignedAssociate)
 
-  if (assignedUser) {
+  // Production persists recipient notifications inside the same database
+  // transaction as the deadline edit. Keep the local-only fallback for the
+  // offline test/demo mode without emitting a second production row.
+  if (!isApiConnected && assignedUser) {
     get().addNotification({
       type: 'DEADLINE',
       title: removed
@@ -1913,11 +1916,11 @@ export const useStore = create<AppState>()(
         }
       },
 
-      submitEmployeeRequest: (data) => {
+      submitEmployeeRequest: async (data) => {
         const user = get().currentUser
         if (!user) {
           toast.error('Please log in before submitting an HR request.')
-          return
+          return false
         }
         const request: EmployeeRequest = {
           ...data,
@@ -1929,10 +1932,10 @@ export const useStore = create<AppState>()(
           status: 'PENDING',
           submittedAt: new Date().toISOString(),
         }
-        set(s => ({ employeeRequests: [request, ...s.employeeRequests] }))
         // Promote to the shared table so the Capture Manager receives it in
         // their own session instead of it living only in this browser.
-        if (isApiConnected) void upsertEmployeeRequest(request)
+        if (isApiConnected && !(await upsertEmployeeRequest(request))) return false
+        set(s => ({ employeeRequests: [request, ...s.employeeRequests] }))
         get().addNotification({
           type: 'SYSTEM',
           title: 'HR request submitted',
@@ -1942,6 +1945,7 @@ export const useStore = create<AppState>()(
           targetRole: 'CAPTURE_MANAGER',
         })
         recordStoreActivity(get, `Submitted HR request: ${request.title}`, 'hr', request.id, request.title)
+        return true
       },
 
       reviewEmployeeRequest: (id, status, reviewNote = '') => {
@@ -2298,7 +2302,8 @@ export const useStore = create<AppState>()(
           // If a contract already exists for this opportunity (e.g. proposal
           // is being re-uploaded after award), propagate the latest proposal
           // files onto the contract so it stays in sync.
-          if (values?.proposalAttachments?.length) {
+          if (Object.prototype.hasOwnProperty.call(values ?? {}, 'proposalAttachments')) {
+            const committedAttachments = committedOpportunity.proposalAttachments ?? []
             const normalizedSolicitation = normalizedSolicitationId(committedOpportunity.solicitationId)
             const solicitationMatches = get().opportunities.filter(candidate =>
               normalizedSolicitationId(candidate.solicitationId) === normalizedSolicitation)
@@ -2313,14 +2318,10 @@ export const useStore = create<AppState>()(
               set(s => ({
                 contracts: s.contracts.map(c =>
                   linkedContracts.some(lc => lc.id === c.id)
-                    ? { ...c, proposalAttachments: values.proposalAttachments }
+                    ? { ...c, proposalAttachments: committedAttachments }
                     : c
                 ),
               }))
-              linkedContracts.forEach(lc => {
-                const updated = get().contracts.find(c => c.id === lc.id)
-                if (updated) upsertContract(updated)
-              })
             }
             // Also propagate to any in-flight FreshAward so the file follows
             // the opportunity through the award handoff.
@@ -2329,14 +2330,10 @@ export const useStore = create<AppState>()(
               set(s => ({
                 freshAwards: s.freshAwards.map(fa =>
                   linkedAwards.some(la => la.id === fa.id)
-                    ? { ...fa, proposalAttachments: values.proposalAttachments }
+                    ? { ...fa, proposalAttachments: committedAttachments }
                     : fa
                 ),
               }))
-              linkedAwards.forEach(la => {
-                const updated = get().freshAwards.find(fa => fa.id === la.id)
-                if (updated) upsertFreshAward(updated)
-              })
             }
           }
           get().addNotification({

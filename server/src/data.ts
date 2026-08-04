@@ -3,6 +3,7 @@ import type { QueryResultRow } from 'pg'
 import { asAuthenticatedUser, type Queryable } from './db.js'
 import { ApiError, asRecord, assertAllowedKeys, requiredString } from './errors.js'
 import { requireCompleted } from './auth.js'
+import { persistOpportunityDeadlineNotifications } from './opportunity-notifications.js'
 import type { Dependencies } from './types.js'
 
 export const ALLOWED_TABLES = new Set([
@@ -375,6 +376,7 @@ const COMMON_KEYS = [
 // columns must instead receive serialized JSON, otherwise attachment arrays
 // fail at runtime with 22P02 (invalid input syntax for type json).
 const JSON_COLUMNS = new Map<string, ReadonlySet<string>>([
+  ['comments', new Set(['attachments'])],
   ['contract_invoices', new Set(['line_item_ids'])],
   ['contract_vehicle_orders', new Set(['document'])],
   ['contracts', new Set(['proposal_attachments', 'award_documents', 'comms_log'])],
@@ -386,6 +388,170 @@ const JSON_COLUMNS = new Map<string, ReadonlySet<string>>([
   ['subcontractors', new Set(['quote_files', 'contacts'])],
   ['user_permission_overrides', new Set(['grants', 'revokes'])],
 ])
+
+const WORKFLOW_PROPOSAL_COLUMNS = new Map<string, ReadonlySet<string>>([
+  ['opportunities', new Set(['proposal_attachments', 'proposals', 'assigned_opportunities'])],
+  ['contracts', new Set(['proposal_attachments'])],
+  ['fresh_awards', new Set(['proposal_attachments'])],
+])
+
+function withoutWorkflowProposalColumns(
+  table: string,
+  row: Readonly<Record<string, unknown>>,
+): Record<string, unknown> {
+  const reserved = WORKFLOW_PROPOSAL_COLUMNS.get(table)
+  if (!reserved) return { ...row }
+  return Object.fromEntries(Object.entries(row).filter(([column]) => !reserved.has(column)))
+}
+
+/**
+ * Proposal files are owned by the atomic opportunity workflow. Generic saves
+ * may carry stale full-row snapshots from another browser tab, so client
+ * values are always discarded. Fully linked contract/Fresh Award rows receive
+ * the current opportunity snapshot while the opportunity is locked first,
+ * preserving the same lock order as the workflow (opportunity -> downstream).
+ */
+async function canonicalizeWorkflowProposalRows(
+  client: Queryable,
+  table: string,
+  rows: readonly Record<string, unknown>[],
+): Promise<Record<string, unknown>[]> {
+  const sanitized = rows.map(row => withoutWorkflowProposalColumns(table, row))
+  if (table !== 'contracts' && table !== 'fresh_awards') return sanitized
+
+  const opportunityIds = sanitized.map(row => (
+    typeof row.opportunity_id === 'string' ? row.opportunity_id.trim() : ''
+  ))
+  const uniqueIds = [...new Set(opportunityIds.filter(Boolean))].sort()
+  // Partial or legacy unlinked saves preserve the existing downstream value;
+  // new unlinked rows use the database default. Never trust their client copy.
+  if (uniqueIds.length === 0) return sanitized
+
+  const canonical = await client.query<{ id: string; proposal_attachments: unknown }>(
+    `select id::text as id, proposal_attachments
+       from public.opportunities
+      where id = any($1::text[])
+      order by id
+      for share`,
+    [uniqueIds],
+  )
+  const byOpportunity = new Map(
+    canonical.rows.map(row => [row.id, row.proposal_attachments ?? []]),
+  )
+  const missing = uniqueIds.filter(id => !byOpportunity.has(id))
+  if (missing.length > 0) {
+    throw new ApiError(
+      409,
+      'linked_opportunity_not_found',
+      'A linked opportunity changed or is no longer available. Reload and try again.',
+      { opportunityIds: missing },
+    )
+  }
+
+  // A mixed batch can contain both linked and legacy/unlinked rows. Because a
+  // multi-row INSERT must use one column list, give each unlinked row its
+  // already-persisted snapshot (or [] for a genuinely new row) while holding
+  // that row lock. This keeps the linked rows canonical without clearing the
+  // unlinked rows as a side effect of sharing the batch.
+  const unlinkedRowIds = [...new Set(sanitized
+    .filter((_row, index) => !opportunityIds[index])
+    .map(row => typeof row.id === 'string' ? row.id.trim() : '')
+    .filter(Boolean))].sort()
+  const existingUnlinked = unlinkedRowIds.length === 0
+    ? []
+    : (await client.query<{ id: string; proposal_attachments: unknown }>(
+        `select id::text as id, proposal_attachments
+           from public.${quoted(table)}
+          where id = any($1::text[])
+          order by id
+          for update`,
+        [unlinkedRowIds],
+      )).rows
+  const byUnlinkedRow = new Map(
+    existingUnlinked.map(row => [row.id, row.proposal_attachments ?? []]),
+  )
+
+  return sanitized.map((row, index) => ({
+    ...row,
+    proposal_attachments: opportunityIds[index]
+      ? byOpportunity.get(opportunityIds[index]!) ?? []
+      : byUnlinkedRow.get(typeof row.id === 'string' ? row.id.trim() : '') ?? [],
+  }))
+}
+
+function attachmentIdentityKeys(value: unknown): string[] {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const attachment = value as Record<string, unknown>
+    const id = typeof attachment.id === 'string' ? attachment.id.trim() : ''
+    const storagePath = typeof attachment.storagePath === 'string'
+      ? attachment.storagePath.trim()
+      : typeof attachment.storage_path === 'string'
+        ? attachment.storage_path.trim()
+        : ''
+    const keys = [
+      ...(id ? [`id:${id}`] : []),
+      ...(storagePath ? [`path:${storagePath}`] : []),
+    ]
+    if (keys.length > 0) return keys
+  }
+  return [`json:${JSON.stringify(value)}`]
+}
+
+function unionCommentAttachments(existing: unknown, incoming: unknown, label: string): unknown[] {
+  if (existing !== null && existing !== undefined && !Array.isArray(existing)) {
+    throw new ApiError(409, 'stale_comment', 'The comment attachments could not be safely updated.')
+  }
+  if (!Array.isArray(incoming)) {
+    throw new ApiError(400, 'invalid_request', `${label} must be an array.`)
+  }
+
+  const merged = [...(existing ?? []) as unknown[]]
+  const identities = new Set(merged.flatMap(attachmentIdentityKeys))
+  for (const attachment of incoming) {
+    const keys = attachmentIdentityKeys(attachment)
+    if (keys.some(key => identities.has(key))) continue
+    merged.push(attachment)
+    keys.forEach(key => identities.add(key))
+  }
+  return merged
+}
+
+/**
+ * Comment saves are full-row snapshots in the browser. Lock every existing
+ * comment first and append new attachment references so a stale tab cannot
+ * erase files persisted by another request. The enclosing data transaction
+ * keeps the lock through the following INSERT/UPSERT.
+ */
+async function mergeLockedCommentAttachments(
+  client: Queryable,
+  table: string,
+  rows: readonly Record<string, unknown>[],
+): Promise<Record<string, unknown>[]> {
+  if (table !== 'comments' || !rows.some(row => Object.hasOwn(row, 'attachments'))) {
+    return rows.map(row => ({ ...row }))
+  }
+
+  const ids = [...new Set(rows.map((row, index) => (
+    requiredString(row.id, `rows[${index}].id`, 200)
+  )))].sort()
+  const locked = await client.query<{ id: string; attachments: unknown }>(
+    `select id::text as id, attachments
+       from public.comments
+      where id = any($1::text[])
+      order by id
+      for update`,
+    [ids],
+  )
+  const existingById = new Map(locked.rows.map(row => [row.id, row.attachments]))
+  return rows.map((row, index) => ({
+    ...row,
+    attachments: unionCommentAttachments(
+      existingById.get(String(row.id)),
+      row.attachments,
+      `rows[${index}].attachments`,
+    ),
+  }))
+}
 
 function quoted(identifier: string): string {
   return `"${identifier.replaceAll('"', '""')}"`
@@ -1157,6 +1323,7 @@ async function upsertOpportunityData(
         'The opportunity changed or is no longer writable. Reload it and try again.',
       )
     }
+    await persistOpportunityDeadlineNotifications(client, existing, row)
     returnedRows.push(...result.rows)
     affected += result.rowCount ?? 0
   }
@@ -1246,10 +1413,19 @@ async function insertData(
       'patchExisting is available only for opportunity upserts.',
     )
   }
-  const rows = parseRows(common.rows)
+  let rows = parseRows(common.rows)
   const available = await tableColumns(client, common.table)
   validateCommonColumns(common, available)
+  rows = await canonicalizeWorkflowProposalRows(client, common.table, rows)
+  rows = await mergeLockedCommentAttachments(client, common.table, rows)
   const keys = Object.keys(rows[0] as Record<string, unknown>).sort()
+  if (keys.length === 0) {
+    throw new ApiError(
+      403,
+      'workflow_required',
+      'Proposal files must be changed through the atomic opportunity workflow.',
+    )
+  }
   assertColumnsExist(keys, available, common.table)
   assertAppSettingsRows(common.table, rows)
   if (common.table === 'contracts' && keys.includes('award_documents')) {
@@ -1350,9 +1526,29 @@ async function updateOrDeleteData(
   const values: unknown[] = []
   let prefix: string
   if (operation === 'update') {
-    const patch = asRecord(common.values, 'values')
+    const requestedPatch = asRecord(common.values, 'values')
+    if (
+      (common.table === 'contracts' || common.table === 'fresh_awards')
+      && Object.hasOwn(requestedPatch, 'opportunity_id')
+    ) {
+      throw new ApiError(
+        403,
+        'workflow_required',
+        'A contract or Fresh Award opportunity link cannot be changed through a generic update.',
+      )
+    }
+    const patch = withoutWorkflowProposalColumns(common.table, requestedPatch)
     const keys = Object.keys(patch).sort()
-    if (keys.length === 0) throw new ApiError(400, 'invalid_request', 'values cannot be empty.')
+    if (keys.length === 0) {
+      if (Object.keys(requestedPatch).length > 0) {
+        throw new ApiError(
+          403,
+          'workflow_required',
+          'Proposal files must be changed through the atomic opportunity workflow.',
+        )
+      }
+      throw new ApiError(400, 'invalid_request', 'values cannot be empty.')
+    }
     assertColumnsExist(keys, available, common.table)
     if (common.table === 'contracts' && Object.hasOwn(patch, 'award_documents')) {
       await lockExistingContractAwardFiles(client, [patch.award_documents])
@@ -1496,6 +1692,10 @@ export const __test = {
   markQuotedOpportunities,
   contractAwardStoragePaths,
   lockExistingContractAwardFiles,
+  withoutWorkflowProposalColumns,
+  canonicalizeWorkflowProposalRows,
+  unionCommentAttachments,
+  mergeLockedCommentAttachments,
   insertData,
   updateOrDeleteData,
   assertMutationRoute,

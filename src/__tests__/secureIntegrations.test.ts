@@ -38,6 +38,7 @@ describe('private attachments and non-secret settings migration', () => {
   const certificationsPage = readRepoFile('src/pages/CertificationsPage.tsx')
   const subkDatabasePage = readRepoFile('src/pages/SubkDatabasePage.tsx')
   const attachmentHelpers = readRepoFile('src/lib/attachments.ts')
+  const attachmentDownloadAction = readRepoFile('src/components/shared/AttachmentDownloadAction.tsx')
 
   it('makes the bucket private and removes anonymous object privileges', () => {
     expect(migration).toContain("values ('attachments', 'attachments', false)")
@@ -70,15 +71,16 @@ describe('private attachments and non-secret settings migration', () => {
 
   it('gives unavailable saved files one actionable message across attachment pages', () => {
     expect(attachmentHelpers).toContain('export function attachmentAccessErrorMessage')
+    expect(attachmentDownloadAction).toContain('attachmentAccessErrorMessage(error, fallbackMessage)')
     for (const page of [
       contractsPage,
       pipelinePage,
-      bdTrackerPage,
-      freshAwardPage,
-      certificationsPage,
       subkDatabasePage,
     ]) {
       expect(page).toContain('attachmentAccessErrorMessage(error,')
+    }
+    for (const page of [bdTrackerPage, freshAwardPage, certificationsPage]) {
+      expect(page).toContain("from '../components/shared/AttachmentDownloadAction'")
     }
   })
 })

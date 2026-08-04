@@ -9,13 +9,9 @@ import toast from 'react-hot-toast'
 import PeriodFilter, { type Period, filterByPeriod } from '../components/shared/PeriodFilter'
 import { findBDSubmissionOpportunity, getAssignmentChain, getBDSubmissionAssignmentChain, isBDSubmissionAssociatedToUser } from '../lib/team'
 import { formatCurrency } from '../lib/utils'
-import {
-  attachmentAccessErrorMessage,
-  uploadAttachment,
-  downloadAttachment,
-  hasAttachmentSource,
-} from '../lib/attachments'
+import { sameAttachmentList, uploadAttachmentsSequentially } from '../lib/attachments'
 import FloatingActionMenu from '../components/shared/FloatingActionMenu'
+import { AttachmentDownloadAction, AttachmentDownloadRow } from '../components/shared/AttachmentDownloadAction'
 import { hasPermission } from '../lib/permissions'
 import { bdSubmissionPeriodDate, isSubmittedLifecycleRow, uniqueBDSubmissionRows } from '../lib/dashboardMetrics'
 import {
@@ -81,34 +77,17 @@ function rowOpportunity(row: BDSubmission, opportunities: ReturnType<typeof useS
   return findBDSubmissionOpportunity(row, opportunities)
 }
 
-function downloadProposalAttachment(att: FileAttachment) {
-  if (!hasAttachmentSource(att)) {
-    toast.error('Proposal file has metadata only — re-upload it from the opportunity to download.')
-    return
-  }
-  void downloadAttachment(att).catch(error => {
-    toast.error(attachmentAccessErrorMessage(error, 'Proposal file could not be downloaded.'))
-  })
-}
-
-function fileToProposalAttachment(file: File, uploadedBy: string): Promise<FileAttachment> {
-  return uploadAttachment(file, { folder: 'proposals', uploadedBy })
-}
-
 function ProposalCell({ attachments }: { attachments: FileAttachment[] }) {
   const [open, setOpen] = useState(false)
   if (!attachments.length) return <span className="text-xs text-slate-300">—</span>
   if (attachments.length === 1) {
     const att = attachments[0]
     return (
-      <button
-        type="button"
-        onClick={() => downloadProposalAttachment(att)}
-        title={att.name}
-        className="inline-flex items-center gap-1 rounded-md bg-indigo-50 px-2 py-0.5 text-[10px] font-semibold text-indigo-600 transition-colors hover:bg-indigo-100"
-      >
-        <Paperclip size={11} /> Proposal
-      </button>
+      <AttachmentDownloadAction
+        attachment={att}
+        className="rounded-md bg-indigo-50 px-2 py-1 text-[10px] font-semibold text-indigo-600 transition-colors hover:bg-indigo-100"
+        fallbackMessage="Proposal file could not be downloaded."
+      />
     )
   }
   return (
@@ -122,15 +101,16 @@ function ProposalCell({ attachments }: { attachments: FileAttachment[] }) {
       }
     >
       {attachments.map(att => (
-        <button
+        <AttachmentDownloadRow
           key={att.id}
-          onClick={() => { downloadProposalAttachment(att); setOpen(false) }}
-          className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50 hover:text-slate-900"
-          title={att.name}
-        >
-          <Paperclip size={11} className="text-slate-400" />
-          <span className="max-w-[200px] truncate">{att.name}</span>
-        </button>
+          attachment={att}
+          leading={<Paperclip size={11} className="text-slate-400" />}
+          className="w-full px-3 py-2 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50 hover:text-slate-900"
+          nameClassName="max-w-[180px] text-left"
+          actionClassName="rounded-md border border-indigo-100 bg-indigo-50 px-2 py-1 text-[10px] font-bold text-indigo-600"
+          fallbackMessage="Proposal file could not be downloaded."
+          onAttempt={() => setOpen(false)}
+        />
       ))}
     </FloatingActionMenu>
   )
@@ -198,6 +178,8 @@ function BDTrackerEditModal({
 }) {
   const [form, setForm] = useState(() => trackerEditInitial(row, opportunity, employees))
   const [saving, setSaving] = useState(false)
+  const [uploadingProposalFiles, setUploadingProposalFiles] = useState(false)
+  const busy = saving || uploadingProposalFiles
   const update = (key: TrackerStringField, value: string) => setForm(prev => ({ ...prev, [key]: value }))
   const updateContractType = (value: ContractType) => {
     setForm(prev => ({
@@ -215,14 +197,29 @@ function BDTrackerEditModal({
     .sort((a, b) => a.role.localeCompare(b.role) || a.name.localeCompare(b.name))
 
   const addProposalFiles = async (files: FileList | null) => {
-    if (!files?.length) return
+    if (!files?.length || busy) return
+    const selectedFiles = Array.from(files)
+    setUploadingProposalFiles(true)
     try {
-      const attachments = await Promise.all(Array.from(files).map(file => fileToProposalAttachment(file, uploadedBy)))
-      setForm(prev => ({ ...prev, proposalAttachments: [...prev.proposalAttachments, ...attachments] }))
-      toast.success(files.length === 1 ? 'Proposal file added.' : `${files.length} proposal files added.`)
-    } catch (err) {
-      console.error(err)
-      toast.error(err instanceof Error ? err.message : 'Proposal file could not be uploaded.')
+      const result = await uploadAttachmentsSequentially(
+        selectedFiles,
+        { folder: 'proposals', uploadedBy },
+        attachment => setForm(prev => ({
+          ...prev,
+          proposalAttachments: [...prev.proposalAttachments, attachment],
+        })),
+      )
+      if (result.error) {
+        console.error(result.error)
+        const prefix = result.uploadedCount > 0
+          ? `${result.uploadedCount} proposal file${result.uploadedCount === 1 ? '' : 's'} uploaded; another file failed. `
+          : ''
+        toast.error(`${prefix}${result.error instanceof Error ? result.error.message : 'Proposal file could not be uploaded.'}`)
+      } else if (result.uploadedCount > 0) {
+        toast.success(result.uploadedCount === 1 ? 'Proposal file added.' : `${result.uploadedCount} proposal files added.`)
+      }
+    } finally {
+      setUploadingProposalFiles(false)
     }
   }
 
@@ -234,20 +231,37 @@ function BDTrackerEditModal({
   }
 
   const save = async () => {
+    if (uploadingProposalFiles) {
+      toast.error('Wait for the proposal upload to finish.')
+      return
+    }
+    if (saving) return
     if (!form.solicitation.trim()) {
       toast.error('Solicitation title is required.')
       return
     }
     setSaving(true)
-    const saved = await onSave(form)
-    setSaving(false)
+    let saved = false
+    try {
+      saved = await onSave(form)
+    } finally {
+      setSaving(false)
+    }
     if (saved) onClose()
+  }
+
+  const closeWhenIdle = () => {
+    if (busy) {
+      toast.error('Please wait for the proposal upload or save to finish.')
+      return
+    }
+    onClose()
   }
 
   return (
     <DetailDrawer
       isOpen
-      onClose={onClose}
+      onClose={closeWhenIdle}
       title="Edit Tracker Details"
       subtitle={`${row.solicitationId} - ${row.solicitation}`}
       width={840}
@@ -409,13 +423,14 @@ function BDTrackerEditModal({
                 <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[#D7BE7A]">Proposal Files</p>
                 <p className="mt-1 text-xs text-slate-400">Upload replacements or remove files before saving.</p>
               </div>
-              <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-[#D7BE7A]/25 bg-[#D7BE7A]/10 px-3 py-2 text-xs font-black text-[#F8FBF7] transition-colors hover:bg-[#D7BE7A]/20">
+              <label className={`inline-flex items-center gap-2 rounded-xl border border-[#D7BE7A]/25 bg-[#D7BE7A]/10 px-3 py-2 text-xs font-black text-[#F8FBF7] transition-colors ${uploadingProposalFiles ? 'cursor-wait opacity-50' : 'cursor-pointer hover:bg-[#D7BE7A]/20'}`}>
                 <UploadCloud size={14} />
-                Add file
+                {uploadingProposalFiles ? 'Uploading...' : 'Add file'}
                 <input
                   type="file"
                   multiple
                   className="hidden"
+                  disabled={busy}
                   onChange={event => {
                     void addProposalFiles(event.target.files)
                     event.target.value = ''
@@ -428,19 +443,20 @@ function BDTrackerEditModal({
               <div className="space-y-2">
                 {form.proposalAttachments.map(att => (
                   <div key={att.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#D7BE7A]/15 bg-white/5 px-3 py-2">
-                    <button
-                      type="button"
-                      onClick={() => downloadProposalAttachment(att)}
-                      className="min-w-0 flex-1 text-left text-xs font-semibold text-slate-200 hover:text-[#F8FBF7]"
-                      title={att.name}
-                    >
+                    <div className="min-w-0 flex-1 text-left text-xs font-semibold text-slate-200" title={att.name}>
                       <Paperclip size={12} className="mr-2 inline text-[#D7BE7A]" />
                       <span className="align-middle">{att.name}</span>
-                    </button>
+                    </div>
+                    <AttachmentDownloadAction
+                      attachment={att}
+                      className="rounded-lg border border-[#D7BE7A]/25 bg-[#D7BE7A]/10 px-2 py-1 text-[10px] font-black text-[#F8E8B8] hover:bg-[#D7BE7A]/20"
+                      fallbackMessage="Proposal file could not be downloaded."
+                    />
                     <button
                       type="button"
                       onClick={() => removeProposalFile(att.id)}
-                      className="inline-flex items-center gap-1 rounded-lg border border-rose-400/30 bg-rose-500/10 px-2 py-1 text-[10px] font-black text-rose-200 transition-colors hover:bg-rose-500/20"
+                      disabled={busy}
+                      className="inline-flex items-center gap-1 rounded-lg border border-rose-400/30 bg-rose-500/10 px-2 py-1 text-[10px] font-black text-rose-200 transition-colors hover:bg-rose-500/20 disabled:cursor-wait disabled:opacity-40"
                     >
                       <Trash2 size={11} /> Remove
                     </button>
@@ -456,8 +472,8 @@ function BDTrackerEditModal({
         )}
 
         <div className="sticky bottom-0 -mx-6 -mb-5 flex justify-end gap-3 border-t border-[#D7BE7A]/15 bg-[#07131F]/95 px-6 py-4 backdrop-blur">
-          <button className="btn-secondary" onClick={onClose}>Cancel</button>
-          <button className="btn-primary" onClick={save} disabled={saving}>{saving ? 'Saving...' : 'Save Details'}</button>
+          <button className="btn-secondary disabled:cursor-wait disabled:opacity-50" onClick={closeWhenIdle} disabled={busy}>Cancel</button>
+          <button className="btn-primary disabled:cursor-wait disabled:opacity-50" onClick={save} disabled={busy}>{uploadingProposalFiles ? 'Uploading...' : saving ? 'Saving...' : 'Save Details'}</button>
         </div>
       </div>
     </DetailDrawer>
@@ -684,6 +700,9 @@ export default function BDTrackerPage() {
       bds: assignment.teamLead?.name ?? '',
       supportAgent: assignment.associate?.name ?? '',
     } : {}
+    const proposalAttachmentsChanged = opportunity
+      ? !sameAttachmentList(form.proposalAttachments, opportunity.proposalAttachments ?? [])
+      : false
     const opportunityValues = opportunity
       ? {
         solicitation: form.solicitation.trim(),
@@ -697,8 +716,10 @@ export default function BDTrackerPage() {
         location: form.location,
         mandatoryEvents: form.mandatoryEvents,
         mandatoryEventsList: form.mandatoryEventsList,
-        proposalAttachments: form.proposalAttachments,
-        proposals: form.proposalAttachments.map(att => att.name).filter(Boolean),
+        ...(proposalAttachmentsChanged ? {
+          proposalAttachments: form.proposalAttachments,
+          proposals: form.proposalAttachments.map(att => att.name).filter(Boolean),
+        } : {}),
         ...(canEditContractValues ? {
           contractAmount: contractAmount ?? 0,
           value: contractAmount ?? 0,
@@ -1188,15 +1209,14 @@ export default function BDTrackerPage() {
                     <DrawerSection title={`Proposal Files (${proposalAttachments.length})`} variant="premium">
                       <div className="space-y-2 py-3">
                         {proposalAttachments.map(att => (
-                          <button
+                          <AttachmentDownloadRow
                             key={att.id}
-                            type="button"
-                            onClick={() => downloadProposalAttachment(att)}
-                            className="flex w-full items-center justify-between gap-3 rounded-xl border border-[#D7BE7A]/15 bg-white/5 px-3 py-2 text-left text-xs font-semibold text-slate-200 transition-colors hover:border-[#D7BE7A]/35 hover:bg-[#D7BE7A]/10"
-                          >
-                            <span className="min-w-0 truncate"><Paperclip size={12} className="mr-2 inline text-[#D7BE7A]" />{att.name}</span>
-                            <span className="text-[10px] uppercase tracking-wide text-[#D7BE7A]">Open</span>
-                          </button>
+                            attachment={att}
+                            leading={<Paperclip size={12} className="text-[#D7BE7A]" />}
+                            className="w-full rounded-xl border border-[#D7BE7A]/15 bg-white/5 px-3 py-2 text-left text-xs font-semibold text-slate-200 transition-colors hover:border-[#D7BE7A]/35 hover:bg-[#D7BE7A]/10"
+                            actionClassName="rounded-lg border border-[#D7BE7A]/25 bg-[#D7BE7A]/10 px-2 py-1 text-[10px] font-black text-[#F8E8B8]"
+                            fallbackMessage="Proposal file could not be downloaded."
+                          />
                         ))}
                       </div>
                     </DrawerSection>
@@ -1225,6 +1245,20 @@ export default function BDTrackerPage() {
                             <span className="text-[10px] font-medium text-slate-400">{formatSubmittedOn(comment.createdAt)}</span>
                           </div>
                           <p className="text-xs leading-5 text-slate-300 whitespace-pre-wrap">{comment.text}</p>
+                          {(comment.attachments ?? []).length > 0 && (
+                            <div className="mt-2 space-y-1.5">
+                              {(comment.attachments ?? []).map(attachment => (
+                                <AttachmentDownloadRow
+                                  key={attachment.id}
+                                  attachment={attachment}
+                                  leading={<Paperclip size={11} className="text-[#D7BE7A]" />}
+                                  className="rounded-lg border border-[#D7BE7A]/15 bg-white/5 px-2.5 py-2"
+                                  nameClassName="text-[11px] font-semibold text-slate-200"
+                                  actionClassName="rounded-md border border-[#D7BE7A]/25 bg-[#D7BE7A]/10 px-2 py-1 text-[10px] font-black text-[#F8E8B8]"
+                                />
+                              ))}
+                            </div>
+                          )}
                         </div>
                       ))}
                     </DrawerSection>

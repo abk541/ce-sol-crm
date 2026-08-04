@@ -102,6 +102,10 @@ async function claimNotificationPopups(
               'Opportunity deadline extended',
               'Opportunity deadline updated'
             ))
+            or (notification.type = 'NON_SUB_REVIEW' and notification.title in (
+              'Non-submission report approved',
+              'Non-submission report declined'
+            ))
             or (notification.type = 'SYSTEM' and (
               notification.title like '%: monthly goal achieved'
               or notification.title like '%: monthly goal at risk'

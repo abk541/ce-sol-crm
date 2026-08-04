@@ -11,13 +11,9 @@ import { useStore } from '../store/useStore'
 import { hasPermission } from '../lib/permissions'
 import type { FreshAward, ContractType, SetAside, FileAttachment } from '../types'
 import { formatCurrency, formatDate, useEscapeKey } from '../lib/utils'
-import {
-  attachmentAccessErrorMessage,
-  downloadAttachment,
-  hasAttachmentSource,
-} from '../lib/attachments'
 import toast from 'react-hot-toast'
 import FloatingActionMenu from '../components/shared/FloatingActionMenu'
+import { AttachmentDownloadRow } from '../components/shared/AttachmentDownloadAction'
 import HierarchyAssignPicker from '../components/shared/HierarchyAssignPicker'
 import { getAssignmentChain } from '../lib/team'
 import SamGovListingButton from '../components/shared/SamGovListingButton'
@@ -393,9 +389,9 @@ export default function FreshAwardPage() {
         {visible.map((fa, i) => {
           const meta = STATUS_META[fa.status]
           const sourceOpp = fa.opportunityId ? opportunities.find(o => o.id === fa.opportunityId) : undefined
-          const proposalAttachments: FileAttachment[] = fa.proposalAttachments?.length
-            ? fa.proposalAttachments
-            : sourceOpp?.proposalAttachments ?? []
+          const proposalAttachments: FileAttachment[] = sourceOpp
+            ? sourceOpp.proposalAttachments ?? []
+            : fa.proposalAttachments ?? []
           return (
             <motion.div
               key={fa.id}
@@ -506,28 +502,20 @@ export default function FreshAwardPage() {
                     </div>
                   )}
                   {proposalAttachments.length > 0 && (
-                    <div className="col-span-2 flex flex-wrap items-center gap-1.5">
+                    <div className="col-span-2 space-y-1.5">
                       <span className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
                         <Paperclip size={11} /> Proposal
                       </span>
                       {proposalAttachments.map(att => (
-                        <button
+                        <AttachmentDownloadRow
                           key={att.id}
-                          type="button"
-                          onClick={() => {
-                            if (!hasAttachmentSource(att)) {
-                              toast.error('Proposal file has metadata only — re-upload it from the opportunity.')
-                              return
-                            }
-                            void downloadAttachment(att).catch(error => {
-                              toast.error(attachmentAccessErrorMessage(error, 'Proposal file could not be downloaded.'))
-                            })
-                          }}
-                          title={att.name}
-                          className="inline-flex max-w-[180px] items-center gap-1 truncate rounded-md bg-indigo-50 px-2 py-0.5 text-[10px] font-semibold text-indigo-600 transition-colors hover:bg-indigo-100"
-                        >
-                          <span className="truncate">{att.name}</span>
-                        </button>
+                          attachment={att}
+                          leading={<Paperclip size={11} className="text-indigo-500" />}
+                          className="rounded-lg border border-indigo-100 bg-indigo-50 px-2.5 py-1.5"
+                          nameClassName="text-[10px] font-semibold text-indigo-700"
+                          actionClassName="rounded-md border border-indigo-200 bg-white px-2 py-1 text-[10px] font-bold text-indigo-600 hover:bg-indigo-100"
+                          fallbackMessage="Proposal file could not be downloaded."
+                        />
                       ))}
                     </div>
                   )}

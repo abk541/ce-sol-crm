@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const dbMocks = vi.hoisted(() => ({
   bulkDeleteFromTable: vi.fn().mockResolvedValue(true),
+  upsertEmployeeRequest: vi.fn().mockResolvedValue(true),
 }))
 
 vi.mock('../lib/db', () => ({
@@ -28,7 +29,7 @@ vi.mock('../lib/db', () => ({
   upsertBDSubmission: vi.fn().mockResolvedValue(null),
   deleteBDSubmissionRecord: vi.fn().mockResolvedValue(null),
   bulkDeleteFromTable: dbMocks.bulkDeleteFromTable,
-  upsertEmployeeRequest: vi.fn().mockResolvedValue(undefined),
+  upsertEmployeeRequest: dbMocks.upsertEmployeeRequest,
   upsertNotification: vi.fn().mockResolvedValue(undefined),
   upsertActivityLog: vi.fn().mockResolvedValue(undefined),
   claimNotificationPopups: vi.fn().mockResolvedValue({ ok: false }),
@@ -68,6 +69,7 @@ const ASSOCIATE: User = {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  dbMocks.upsertEmployeeRequest.mockResolvedValue(true)
   useStore.setState({
     currentUser: CAPTURE_MANAGER,
     isAuthenticated: true,
@@ -116,10 +118,10 @@ describe('HR store actions', () => {
     expect(useStore.getState().companyCertifications).toHaveLength(0)
   })
 
-  it('records employee requests under the signed-in user', () => {
+  it('records employee requests under the signed-in user', async () => {
     useStore.setState({ currentUser: ASSOCIATE })
 
-    useStore.getState().submitEmployeeRequest({
+    await useStore.getState().submitEmployeeRequest({
       type: 'DOCUMENT',
       priority: 'MEDIUM',
       title: 'Employment letter',
@@ -134,10 +136,10 @@ describe('HR store actions', () => {
     expect(request.status).toBe('PENDING')
   })
 
-  it('stores sick leave, deadlines, and requested leave dates', () => {
+  it('stores sick leave, deadlines, and requested leave dates', async () => {
     useStore.setState({ currentUser: ASSOCIATE })
 
-    useStore.getState().submitEmployeeRequest({
+    await useStore.getState().submitEmployeeRequest({
       type: 'SICK_LEAVE',
       priority: 'HIGH',
       title: 'Medical leave',
@@ -156,9 +158,24 @@ describe('HR store actions', () => {
     })
   })
 
-  it('only lets Capture Manager review employee requests', () => {
+  it('does not report a request locally when the shared database rejects it', async () => {
     useStore.setState({ currentUser: ASSOCIATE })
-    useStore.getState().submitEmployeeRequest({
+    dbMocks.upsertEmployeeRequest.mockResolvedValueOnce(false)
+
+    await expect(useStore.getState().submitEmployeeRequest({
+      type: 'DOCUMENT',
+      priority: 'MEDIUM',
+      title: 'Employment letter',
+      details: 'Need a signed employment verification letter.',
+      attachments: [],
+    })).resolves.toBe(false)
+
+    expect(useStore.getState().employeeRequests).toHaveLength(0)
+  })
+
+  it('only lets Capture Manager review employee requests', async () => {
+    useStore.setState({ currentUser: ASSOCIATE })
+    await useStore.getState().submitEmployeeRequest({
       type: 'ACCESS',
       priority: 'HIGH',
       title: 'Access badge',
@@ -178,7 +195,7 @@ describe('HR store actions', () => {
 
   it('only lets Capture Manager delete a submitted request', async () => {
     useStore.setState({ currentUser: ASSOCIATE })
-    useStore.getState().submitEmployeeRequest({
+    await useStore.getState().submitEmployeeRequest({
       type: 'TIME_OFF',
       priority: 'MEDIUM',
       title: 'Annual leave',

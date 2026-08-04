@@ -785,6 +785,164 @@ describe('generic data request compiler', () => {
     ))
   })
 
+  it('serializes opportunity comment attachments as JSONB', async () => {
+    const row = {
+      id: 'comment-1',
+      opportunity_id: 'opp-1',
+      text: 'Supporting file attached',
+      author: 'Associate',
+      attachments: [{
+        id: 'comment-file-1',
+        name: 'support.pdf',
+        storagePath: 'comments/comment-file-1-support.pdf',
+      }],
+    }
+    const client = queryable((text, values) => {
+      if (text.includes('information_schema.columns')) {
+        return Object.keys(row).map((column_name) => ({ column_name }))
+      }
+      if (text.includes('from public.comments') && text.includes('for update')) {
+        expect(values).toEqual([['comment-1']])
+        return []
+      }
+      if (text.startsWith('insert into public."comments"')) {
+        expect(text).toMatch(/"attachments"[\s\S]*\$\d+::jsonb/)
+        expect(values).toContain(JSON.stringify(row.attachments))
+        expect(values).not.toContain(row.attachments)
+        return [row]
+      }
+      throw new Error(`Unexpected query: ${text}`)
+    })
+    const request = __test.parseCommon({
+      table: 'comments',
+      rows: [row],
+      onConflict: 'id',
+    }, ['rows', 'onConflict', 'ignoreDuplicates'])
+
+    await expect(__test.insertData(client, request, true)).resolves.toMatchObject({ data: [row] })
+  })
+
+  it.each([
+    {
+      label: 'appends a newly uploaded file',
+      incoming: [{ id: 'attachment-b', name: 'new.pdf', storagePath: 'comments/b-new.pdf' }],
+      expectedIds: ['attachment-a', 'attachment-b'],
+    },
+    {
+      label: 'preserves the stored file when a stale snapshot sends an empty array',
+      incoming: [],
+      expectedIds: ['attachment-a'],
+    },
+  ])('locks a comment and $label', async ({ incoming, expectedIds }) => {
+    const stored = { id: 'attachment-a', name: 'stored.pdf', storagePath: 'comments/a-stored.pdf' }
+    const row = {
+      id: 'comment-1',
+      opportunity_id: 'opp-1',
+      text: 'Concurrent attachment edit',
+      author: 'Associate',
+      attachments: incoming,
+    }
+    const statements: string[] = []
+    const client = queryable((text, values) => {
+      statements.push(text)
+      if (text.includes('information_schema.columns')) {
+        return Object.keys(row).map((column_name) => ({ column_name }))
+      }
+      if (text.includes('from public.comments') && text.includes('for update')) {
+        expect(values).toEqual([['comment-1']])
+        return [{ id: 'comment-1', attachments: [stored] }]
+      }
+      if (text.startsWith('insert into public."comments"')) {
+        const serialized = values?.find(value => (
+          typeof value === 'string' && value.includes('a-stored.pdf')
+        )) as string | undefined
+        const attachments = JSON.parse(serialized ?? '[]') as Array<{ id: string }>
+        expect(attachments.map(attachment => attachment.id)).toEqual(expectedIds)
+        return [{ ...row, attachments }]
+      }
+      throw new Error(`Unexpected query: ${text}`)
+    })
+    const request = __test.parseCommon({
+      table: 'comments',
+      rows: [row],
+      onConflict: 'id',
+    }, ['rows', 'onConflict', 'ignoreDuplicates'])
+
+    await expect(__test.insertData(client, request, true)).resolves.toMatchObject({
+      data: [{ attachments: expectedIds.map(id => expect.objectContaining({ id })) }],
+    })
+    expect(statements.findIndex(text => text.includes('from public.comments') && text.includes('for update')))
+      .toBeLessThan(statements.findIndex(text => text.startsWith('insert into public."comments"')))
+  })
+
+  it.each(['contracts', 'fresh_awards'])('canonicalizes each linked %s row in a mixed batch', async (table) => {
+    const stale = [{ id: 'stale', storagePath: 'proposals/stale.pdf' }]
+    const canonical = [{ id: 'canonical', storagePath: 'proposals/canonical.pdf' }]
+    const legacy = [{ id: 'legacy', storagePath: 'proposals/legacy.pdf' }]
+    const rows = [
+      { id: 'linked-row', opportunity_id: 'opp-1', proposal_attachments: stale },
+      { id: 'unlinked-row', opportunity_id: null, proposal_attachments: stale },
+    ]
+    const expected = [
+      { id: 'linked-row', opportunity_id: 'opp-1', proposal_attachments: canonical },
+      { id: 'unlinked-row', opportunity_id: null, proposal_attachments: legacy },
+    ]
+    const statements: string[] = []
+    const client = queryable((text, values) => {
+      statements.push(text)
+      if (text.includes('information_schema.columns')) {
+        return Object.keys(rows[0]!).map((column_name) => ({ column_name }))
+      }
+      if (text.includes('from public.opportunities')) {
+        expect(values).toEqual([['opp-1']])
+        return [{ id: 'opp-1', proposal_attachments: canonical }]
+      }
+      if (text.includes(`from public."${table}"`) && text.includes('for update')) {
+        expect(values).toEqual([['unlinked-row']])
+        return [{ id: 'unlinked-row', proposal_attachments: legacy }]
+      }
+      if (text.startsWith(`insert into public."${table}"`)) {
+        expect(values).toContain(JSON.stringify(canonical))
+        expect(values).toContain(JSON.stringify(legacy))
+        expect(values).not.toContain(JSON.stringify(stale))
+        return expected
+      }
+      throw new Error(`Unexpected query: ${text}`)
+    })
+    const request = __test.parseCommon({
+      table,
+      rows,
+      onConflict: 'id',
+    }, ['rows', 'onConflict', 'ignoreDuplicates'])
+
+    await expect(__test.insertData(client, request, true)).resolves.toMatchObject({ data: expected })
+    expect(statements.findIndex(text => text.includes('from public.opportunities')))
+      .toBeLessThan(statements.findIndex(text => text.includes(`from public."${table}"`)))
+  })
+
+  it.each(['contracts', 'fresh_awards'])(
+    'rejects generic %s opportunity-link updates before writing',
+    async (table) => {
+      const statements: string[] = []
+      const client = queryable((text) => {
+        statements.push(text)
+        if (text.includes('information_schema.columns')) {
+          return [{ column_name: 'id' }, { column_name: 'opportunity_id' }]
+        }
+        throw new Error(`Unexpected query: ${text}`)
+      })
+      const request = __test.parseCommon({
+        table,
+        values: { opportunity_id: 'different-opportunity' },
+        filters: [{ column: 'id', operator: 'eq', value: 'downstream-row' }],
+      }, ['values'])
+
+      await expect(__test.updateOrDeleteData(client, request, 'update'))
+        .rejects.toMatchObject({ statusCode: 403, code: 'workflow_required' })
+      expect(statements.some(text => text.startsWith(`update public."${table}"`))).toBe(false)
+    },
+  )
+
   it('rejects a missing contract award file before an upsert can write a dangling path', async () => {
     const row = {
       id: 'contract-1',
@@ -1204,7 +1362,7 @@ describe('generic data request compiler', () => {
   it.each([
     ['schedule', 'opportunity:editSchedule', { due_date: '2026-07-21' }],
     ['quote', 'sourcing:write', { quoted: true }],
-  ])('uses UPDATE for an associate %s upsert of an existing opportunity', async (_label, permission, patch) => {
+  ])('uses UPDATE for an associate %s upsert of an existing opportunity', async (label, permission, patch) => {
     const statements: string[] = []
     const row = { id: 'o1', ...patch }
     const client = queryable((text) => {
@@ -1219,6 +1377,11 @@ describe('generic data request compiler', () => {
         return [{ id: 'o1', snapshot: { id: 'o1' } }]
       }
       if (text.startsWith('update public.opportunities')) return [row]
+      if (text.includes('profile.auth_user_id = app_auth.request_account_id()')) {
+        return [{ id: 'associate-user', name: 'Associate User', role: 'ASSOCIATE' }]
+      }
+      if (text.includes("profile.role = 'CAPTURE_MANAGER'")) return [{ id: 'capture-user' }]
+      if (text.startsWith('insert into public.notifications')) return [{ id: 'deadline-notification' }]
       throw new Error(`Unexpected query: ${text}`)
     })
     const request = __test.parseCommon({
@@ -1231,6 +1394,8 @@ describe('generic data request compiler', () => {
     await expect(__test.insertData(client, request, true)).resolves.toMatchObject({ data: [row] })
     expect(statements.some((text) => text.startsWith('update public.opportunities'))).toBe(true)
     expect(statements.some((text) => text.startsWith('insert into public.opportunities'))).toBe(false)
+    expect(statements.some((text) => text.startsWith('insert into public.notifications')))
+      .toBe(label === 'schedule')
   })
 
   it('updates multiple ordinary detail and schedule fields in one marked admin patch', async () => {
@@ -1267,6 +1432,9 @@ describe('generic data request compiler', () => {
         return [{ id: row.id, snapshot: existing }]
       }
       if (text.startsWith('update public.opportunities')) return [row]
+      if (text.includes('profile.auth_user_id = app_auth.request_account_id()')) {
+        return [{ id: 'capture-user', name: 'Capture Manager', role: 'CAPTURE_MANAGER' }]
+      }
       throw new Error(`Unexpected query: ${text}`)
     })
     const request = __test.parseCommon({

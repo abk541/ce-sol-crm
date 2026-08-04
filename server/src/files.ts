@@ -66,6 +66,117 @@ const FILE_WRITE_PERMISSIONS = [
 
 const CONTRACT_AWARD_FOLDER_PREFIX = 'contract_awards/'
 const CONTRACT_AWARD_RETRY_LIMIT = 25
+const FILE_AVAILABILITY_BATCH_LIMIT = 100
+
+export type FileAvailabilityReason = 'available' | 'not_found' | 'content_unavailable'
+
+export interface FileAvailabilityResult {
+  storagePath: string
+  available: boolean
+  reason: FileAvailabilityReason
+}
+
+export interface FileAvailabilityRow {
+  storage_path: string
+  object_key: string
+  content_available: boolean
+  size_bytes: string | number
+}
+
+function validatedStoragePath(value: unknown, label = 'path'): string {
+  if (
+    typeof value !== 'string'
+    || value.length === 0
+    || value.length > 1024
+    || /[\u0000\r\n]/.test(value)
+  ) {
+    throw new ApiError(400, 'invalid_request', `${label} is invalid.`)
+  }
+  return value
+}
+
+function storedObjectPath(attachmentsDir: string, objectKey: string): string {
+  if (!/^[A-Za-z0-9_-]{8,128}$/.test(objectKey)) {
+    throw new ApiError(500, 'file_metadata_invalid', 'The attachment metadata is invalid.')
+  }
+  return join(attachmentsDir, objectKey.slice(0, 2), objectKey)
+}
+
+function availabilityPaths(value: unknown): string[] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new ApiError(400, 'invalid_request', 'request must be an object.')
+  }
+  const body = value as Record<string, unknown>
+  const unexpected = Object.keys(body).filter(key => key !== 'paths')
+  if (unexpected.length > 0 || !Array.isArray(body.paths)) {
+    throw new ApiError(400, 'invalid_request', 'Only a paths array is supported.')
+  }
+  if (body.paths.length > FILE_AVAILABILITY_BATCH_LIMIT) {
+    throw new ApiError(
+      400,
+      'invalid_request',
+      `No more than ${FILE_AVAILABILITY_BATCH_LIMIT} attachment paths can be checked at once.`,
+    )
+  }
+  const paths = body.paths.map((path, index) => validatedStoragePath(path, `paths[${index}]`))
+  if (new Set(paths).size !== paths.length) {
+    throw new ApiError(400, 'invalid_request', 'paths must not contain duplicates.')
+  }
+  return paths
+}
+
+function matchesStoredFileSize(
+  metadata: { isFile(): boolean; size: number } | null,
+  sizeBytes: string | number,
+): boolean {
+  const expectedSize = Number(sizeBytes)
+  return metadata?.isFile() === true
+    && Number.isSafeInteger(expectedSize)
+    && expectedSize >= 0
+    && metadata.size === expectedSize
+}
+
+export async function inspectFileAvailabilityRows(
+  attachmentsDir: string,
+  paths: readonly string[],
+  rows: readonly FileAvailabilityRow[],
+): Promise<FileAvailabilityResult[]> {
+  if (paths.length === 0) return []
+  const byPath = new Map(rows.map(row => [row.storage_path, row]))
+
+  return Promise.all(paths.map(async (storagePath): Promise<FileAvailabilityResult> => {
+    const row = byPath.get(storagePath)
+    if (!row) return { storagePath, available: false, reason: 'not_found' }
+    if (!row.content_available) {
+      return { storagePath, available: false, reason: 'content_unavailable' }
+    }
+    let physicalPath: string
+    try {
+      physicalPath = storedObjectPath(attachmentsDir, row.object_key)
+    } catch {
+      return { storagePath, available: false, reason: 'content_unavailable' }
+    }
+    const metadata = await stat(physicalPath).catch(() => null)
+    return matchesStoredFileSize(metadata, row.size_bytes)
+      ? { storagePath, available: true, reason: 'available' }
+      : { storagePath, available: false, reason: 'content_unavailable' }
+  }))
+}
+
+export async function inspectFileAvailability(
+  database: Queryable,
+  attachmentsDir: string,
+  paths: readonly string[],
+): Promise<FileAvailabilityResult[]> {
+  if (paths.length === 0) return []
+  const result = await database.query<FileAvailabilityRow>(
+    `select storage_path, object_key::text as object_key, content_available, size_bytes
+       from app_files.objects
+      where storage_path = any($1::text[])`,
+    [paths],
+  )
+  return inspectFileAvailabilityRows(attachmentsDir, paths, result.rows)
+}
 
 function cleanFolder(value: string | undefined): string {
   const cleaned = (value || 'misc').replace(/[^A-Za-z0-9_-]+/g, '_').slice(0, 64)
@@ -104,7 +215,14 @@ function attachmentResult(row: StoredFile): Record<string, unknown> {
   }
 }
 
-async function requireFileWrite(dependencies: Dependencies, accountId: string): Promise<void> {
+async function requireFileWrite(
+  dependencies: Dependencies,
+  accountId: string,
+  folder: string,
+): Promise<void> {
+  // Every completed active account may submit an HR request. Do not make HR
+  // attachments depend on an unrelated opportunity/contract write override.
+  if (folder === 'hr_requests') return
   const result = await dependencies.db.query<{ allowed: boolean }>(
     `select exists (
        select 1 from unnest($2::text[]) permission
@@ -401,7 +519,6 @@ async function writeTemporaryFile(
 }
 
 async function multipartUpload(request: FastifyRequest, dependencies: Dependencies): Promise<Record<string, unknown>> {
-  await requireFileWrite(dependencies, request.auth?.accountId as string)
   const temporaryDirectory = join(dependencies.env.attachmentsDir, '.tmp')
   const fields: Record<string, string> = {}
   let uploaded: UploadedTemp | null = null
@@ -423,6 +540,7 @@ async function multipartUpload(request: FastifyRequest, dependencies: Dependenci
     if (!uploaded) throw new ApiError(400, 'invalid_request', 'A file field is required.')
     const temporaryUpload = uploaded
     const folder = cleanFolder(fields.folder)
+    await requireFileWrite(dependencies, request.auth?.accountId as string, folder)
     if (folder === 'contract_awards') {
       await requireContractAwardDelete(
         dependencies.db,
@@ -449,32 +567,20 @@ async function multipartUpload(request: FastifyRequest, dependencies: Dependenci
           'select object_key from app_files.objects where storage_path = $1 for update',
           [storagePath],
         )
-        if (folder === 'contract_awards' && prior.rows[0]) {
+        if (prior.rows[0]) {
           throw new ApiError(
             409,
-            'contract_award_file_exists',
-            'An award file with this identifier and name already exists. Upload it with a new name.',
+            folder === 'contract_awards' ? 'contract_award_file_exists' : 'attachment_file_exists',
+            folder === 'contract_awards'
+              ? 'An award file with this identifier and name already exists. Upload it with a new name.'
+              : 'An attachment with this identifier and name already exists. Upload it again to create a new file.',
           )
         }
-        const conflictClause = folder === 'contract_awards'
-          ? ''
-          : `on conflict (storage_path) do update set
-              object_key = excluded.object_key,
-              attachment_id = excluded.attachment_id,
-              original_name = excluded.original_name,
-              content_type = excluded.content_type,
-              size_bytes = excluded.size_bytes,
-              sha256 = excluded.sha256,
-              attached_at = excluded.attached_at,
-              uploaded_by = excluded.uploaded_by,
-              content_available = true,
-              updated_at = now()`
         const inserted = await client.query<StoredFile>(
           `insert into app_files.objects
              (storage_path, object_key, attachment_id, original_name, content_type, size_bytes, sha256,
                attached_at, uploaded_by, content_available)
             values ($1,$2,$3,$4,$5,$6,$7,$8,$9,true)
-           ${conflictClause}
            returning *, $10::text as uploader_name`,
           [
             storagePath,
@@ -489,31 +595,19 @@ async function multipartUpload(request: FastifyRequest, dependencies: Dependenci
             request.auth?.profile.username || request.auth?.profile.name || '',
           ],
         )
-        return {
-          file: inserted.rows[0],
-          previousObjectKey: prior.rows[0]?.object_key ?? null,
-        }
+        return inserted.rows[0]
       })
-      if (!result.file) throw new ApiError(500, 'upload_failed', 'The uploaded attachment could not be recorded.')
-      if (result.previousObjectKey && result.previousObjectKey !== objectKey) {
-        const oldPath = join(
-          dependencies.env.attachmentsDir,
-          result.previousObjectKey.slice(0, 2),
-          result.previousObjectKey,
-        )
-        await rm(oldPath, { force: true }).catch(() => undefined)
-      }
-      return { data: attachmentResult(result.file), error: null }
+      if (!result) throw new ApiError(500, 'upload_failed', 'The uploaded attachment could not be recorded.')
+      return { data: attachmentResult(result), error: null }
     } catch (error) {
       await rm(finalPath, { force: true }).catch(() => undefined)
-      if (
-        folder === 'contract_awards'
-        && (error as { code?: unknown })?.code === '23505'
-      ) {
+      if ((error as { code?: unknown })?.code === '23505') {
         throw new ApiError(
           409,
-          'contract_award_file_exists',
-          'An award file with this identifier and name already exists. Upload it with a new name.',
+          folder === 'contract_awards' ? 'contract_award_file_exists' : 'attachment_file_exists',
+          folder === 'contract_awards'
+            ? 'An award file with this identifier and name already exists. Upload it with a new name.'
+            : 'An attachment with this identifier and name already exists. Upload it again to create a new file.',
         )
       }
       throw error
@@ -528,9 +622,7 @@ async function sendFile(
   storagePath: string,
   dependencies: Dependencies,
 ): Promise<unknown> {
-  if (!storagePath || storagePath.length > 1024 || /[\u0000\r\n]/.test(storagePath)) {
-    throw new ApiError(400, 'invalid_request', 'The attachment path is invalid.')
-  }
+  validatedStoragePath(storagePath, 'The attachment path')
   const result = await dependencies.db.query<StoredFile>(
     `select object_file.*, coalesce(profile.username, profile.name, '') as uploader_name
        from app_files.objects object_file
@@ -543,9 +635,9 @@ async function sendFile(
   if (!file.content_available) {
     throw new ApiError(410, 'file_content_unavailable', 'This historical attachment has metadata, but its content was unavailable during migration.')
   }
-  const physicalPath = join(dependencies.env.attachmentsDir, file.object_key.slice(0, 2), file.object_key)
+  const physicalPath = storedObjectPath(dependencies.env.attachmentsDir, file.object_key)
   const metadata = await stat(physicalPath).catch(() => null)
-  if (!metadata?.isFile()) {
+  if (!matchesStoredFileSize(metadata, file.size_bytes)) {
     throw new ApiError(410, 'file_content_unavailable', 'The attachment content is currently unavailable.')
   }
 
@@ -557,6 +649,19 @@ export function registerFileRoutes(app: FastifyInstance, dependencies: Dependenc
     '/api/v1/files',
     { preHandler: (request) => requireCompleted(request, dependencies) },
     async (request) => multipartUpload(request, dependencies),
+  )
+
+  app.post(
+    '/api/v1/files/availability',
+    { preHandler: (request) => requireCompleted(request, dependencies) },
+    async (request) => ({
+      data: await inspectFileAvailability(
+        dependencies.db,
+        dependencies.env.attachmentsDir,
+        availabilityPaths(request.body),
+      ),
+      error: null,
+    }),
   )
 
   const download = async (request: FastifyRequest, reply: import('fastify').FastifyReply, path: string) => {
@@ -625,6 +730,9 @@ export function registerFileRoutes(app: FastifyInstance, dependencies: Dependenc
 }
 
 export const __test = {
+  availabilityPaths,
+  inspectFileAvailability,
+  inspectFileAvailabilityRows,
   contractAwardStoragePath,
   requireContractAwardDelete,
   enqueueUnreferencedContractAwardFile,

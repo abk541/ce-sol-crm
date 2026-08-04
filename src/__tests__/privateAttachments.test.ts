@@ -14,13 +14,17 @@ vi.mock('../lib/api', () => ({
 
 import {
   attachmentAccessErrorMessage,
+  checkAttachmentAvailability,
   createSafeAttachmentPreviewBlob,
   downloadAttachment,
   getAttachmentPreviewFormat,
   hasAttachmentSource,
   loadAttachmentBlob,
+  mergeCanonicalProposalAttachments,
   previewAttachment,
+  sameAttachmentList,
   uploadAttachment,
+  uploadAttachmentsSequentially,
 } from '../lib/attachments'
 
 describe('private attachment storage', () => {
@@ -31,6 +35,89 @@ describe('private attachment storage', () => {
 
   it('treats a private storagePath as downloadable content', () => {
     expect(hasAttachmentSource({ storagePath: 'proposals/example.pdf' })).toBe(true)
+  })
+
+  it('checks multiple private paths through one authenticated API request', async () => {
+    apiRequest.mockResolvedValue({
+      data: [
+        { storagePath: 'proposals/available.pdf', available: true, reason: 'available' },
+        { storagePath: 'proposals/missing.pdf', available: false, reason: 'not_found' },
+      ],
+    })
+
+    await expect(checkAttachmentAvailability([
+      'proposals/available.pdf',
+      'proposals/missing.pdf',
+    ])).resolves.toEqual([
+      { storagePath: 'proposals/available.pdf', available: true, reason: 'available' },
+      { storagePath: 'proposals/missing.pdf', available: false, reason: 'not_found' },
+    ])
+    expect(apiRequest).toHaveBeenCalledWith('/files/availability', {
+      method: 'POST',
+      body: JSON.stringify({ paths: ['proposals/available.pdf', 'proposals/missing.pdf'] }),
+    })
+  })
+
+  it('distinguishes an unchanged attachment list from an explicit replacement', () => {
+    const original = [{
+      id: 'file-1',
+      name: 'proposal.pdf',
+      attachedAt: '2026-07-20T12:00:00.000Z',
+      uploadedBy: 'associate',
+      size: 8,
+      storagePath: 'proposals/file-1.pdf',
+    }]
+    expect(sameAttachmentList(original, [{ ...original[0] }])).toBe(true)
+    expect(sameAttachmentList(original, [{ ...original[0], storagePath: 'proposals/file-2.pdf' }])).toBe(false)
+    expect(sameAttachmentList(original, [])).toBe(false)
+  })
+
+  it('keeps distinct canonical versions with the same name while suppressing a stale snapshot', () => {
+    const base = {
+      name: 'Proposal Final.pdf',
+      attachedAt: '2026-07-20T12:00:00.000Z',
+      uploadedBy: 'associate',
+    }
+    const canonical = [
+      { ...base, id: 'live-1', storagePath: 'proposals/live-1.pdf' },
+      { ...base, id: 'live-2', storagePath: 'proposals/live-2.pdf' },
+    ]
+    const uniqueFallback = {
+      ...base,
+      id: 'legacy-unique',
+      name: 'Supporting Note.pdf',
+      storagePath: 'proposals/legacy-unique.pdf',
+    }
+
+    expect(mergeCanonicalProposalAttachments(canonical, [
+      { ...base, id: 'stale', name: '  proposal   final.PDF ', storagePath: 'proposals/stale.pdf' },
+      uniqueFallback,
+    ])).toEqual([...canonical, uniqueFallback])
+  })
+
+  it('keeps successful files visible when a later batch upload fails', async () => {
+    const saved = {
+      id: 'saved-1',
+      name: 'first.pdf',
+      attachedAt: '2026-07-20T12:00:00.000Z',
+      uploadedBy: 'employee',
+      storagePath: 'hr_requests/saved-1-first.pdf',
+    }
+    const failure = new Error('second upload failed')
+    const uploader = vi.fn()
+      .mockResolvedValueOnce(saved)
+      .mockRejectedValueOnce(failure)
+    const visible: typeof saved[] = []
+
+    const result = await uploadAttachmentsSequentially(
+      [new File(['first'], 'first.pdf'), new File(['second'], 'second.pdf')],
+      { folder: 'hr_requests', uploadedBy: 'employee' },
+      attachment => visible.push(attachment as typeof saved),
+      uploader,
+    )
+
+    expect(result).toEqual({ uploadedCount: 1, error: failure })
+    expect(visible).toEqual([saved])
   })
 
   it.each(['file_not_found', 'file_content_unavailable'])(

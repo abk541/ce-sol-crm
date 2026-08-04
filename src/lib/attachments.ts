@@ -42,6 +42,35 @@ export async function uploadAttachment(
   return attachment
 }
 
+export interface AttachmentBatchUploadResult {
+  uploadedCount: number
+  error?: unknown
+}
+
+/**
+ * Uploads in sequence and exposes each successful result immediately. If a
+ * later file fails, earlier uploads remain visible to the form and can still
+ * be attached on a retry instead of silently becoming orphaned objects.
+ */
+export async function uploadAttachmentsSequentially(
+  files: readonly File[],
+  opts: UploadAttachmentOptions,
+  onUploaded: (attachment: FileAttachment) => void,
+  uploader: typeof uploadAttachment = uploadAttachment,
+): Promise<AttachmentBatchUploadResult> {
+  let uploadedCount = 0
+  try {
+    for (const file of files) {
+      const attachment = await uploader(file, opts)
+      onUploaded(attachment)
+      uploadedCount += 1
+    }
+    return { uploadedCount }
+  } catch (error) {
+    return { uploadedCount, error }
+  }
+}
+
 function resolveLegacyAttachmentSource(file: Pick<FileAttachment, 'url' | 'dataUrl'>): string {
   return file.dataUrl ?? file.url ?? ''
 }
@@ -49,6 +78,109 @@ function resolveLegacyAttachmentSource(file: Pick<FileAttachment, 'url' | 'dataU
 /** True when the attachment has any retrievable content. */
 export function hasAttachmentSource(file: Pick<FileAttachment, 'storagePath' | 'url' | 'dataUrl'>): boolean {
   return !!(file.storagePath || file.dataUrl || file.url)
+}
+
+export type AttachmentAvailabilityReason = 'available' | 'not_found' | 'content_unavailable'
+
+export interface AttachmentAvailability {
+  storagePath: string
+  available: boolean
+  reason: AttachmentAvailabilityReason
+}
+
+const attachmentFields = [
+  'id',
+  'name',
+  'attachedAt',
+  'uploadedBy',
+  'mimeType',
+  'size',
+  'storagePath',
+  'url',
+  'dataUrl',
+] as const satisfies readonly (keyof FileAttachment)[]
+
+/**
+ * Compares the persisted attachment list, including order and metadata. This
+ * lets edit forms omit an unchanged legacy list so an unrelated field edit is
+ * never blocked merely because an old file predates private storage.
+ */
+export function sameAttachmentList(
+  left: readonly FileAttachment[],
+  right: readonly FileAttachment[],
+): boolean {
+  return left.length === right.length && left.every((attachment, index) => {
+    const other = right[index]
+    return !!other && attachmentFields.every(field => attachment[field] === other[field])
+  })
+}
+
+export function normalizeAttachmentName(name: string): string {
+  return name.trim().replace(/\s+/g, ' ').toLocaleLowerCase()
+}
+
+function normalizedAttachmentName(attachment: FileAttachment): string {
+  return normalizeAttachmentName(attachment.name)
+}
+
+function strongAttachmentIdentity(attachment: FileAttachment): string {
+  const storagePath = attachment.storagePath?.trim()
+  if (storagePath) return `path:${storagePath}`
+  const id = attachment.id?.trim()
+  return id ? `id:${id}` : ''
+}
+
+/**
+ * Keeps every distinct canonical opportunity file. Contract snapshots are
+ * fallback-only: a same-name snapshot is suppressed when the opportunity has
+ * a live replacement, but two genuine canonical versions with the same name
+ * remain visible and downloadable.
+ */
+export function mergeCanonicalProposalAttachments(
+  canonical: readonly FileAttachment[],
+  fallbacks: readonly FileAttachment[],
+): FileAttachment[] {
+  const merged: FileAttachment[] = []
+  const seenStrongIdentities = new Set<string>()
+  const canonicalNames = new Set<string>()
+  const seenNameOnlyFallbacks = new Set<string>()
+
+  for (const attachment of canonical) {
+    const identity = strongAttachmentIdentity(attachment)
+    if (identity && seenStrongIdentities.has(identity)) continue
+    if (identity) seenStrongIdentities.add(identity)
+    const name = normalizedAttachmentName(attachment)
+    if (name) canonicalNames.add(name)
+    merged.push(attachment)
+  }
+
+  for (const attachment of fallbacks) {
+    const identity = strongAttachmentIdentity(attachment)
+    if (identity && seenStrongIdentities.has(identity)) continue
+    const name = normalizedAttachmentName(attachment)
+    if (name && canonicalNames.has(name)) continue
+    if (!identity && name && seenNameOnlyFallbacks.has(name)) continue
+    if (identity) seenStrongIdentities.add(identity)
+    else if (name) seenNameOnlyFallbacks.add(name)
+    merged.push(attachment)
+  }
+
+  return merged
+}
+
+/**
+ * Checks private file references in one authenticated request. Availability is
+ * authoritative only for the returned moment; workflow writes repeat the same
+ * check on the server before proposal references are committed.
+ */
+export async function checkAttachmentAvailability(
+  storagePaths: readonly string[],
+): Promise<AttachmentAvailability[]> {
+  const response = await apiRequest<unknown>('/files/availability', {
+    method: 'POST',
+    body: JSON.stringify({ paths: storagePaths }),
+  })
+  return envelopeData<AttachmentAvailability[]>(response)
 }
 
 /**

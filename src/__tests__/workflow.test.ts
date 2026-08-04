@@ -79,6 +79,7 @@ import {
   upsertBDSubmission,
   upsertContract,
   upsertContractVehicleOrder,
+  upsertFreshAward,
   upsertOpportunity,
   updateOpportunityRecord,
   persistNotificationsRead,
@@ -96,7 +97,7 @@ import {
   transitionOpportunityWorkflow,
 } from '../lib/opportunityWorkflow'
 import { reviewDeletionRequestWorkflow } from '../lib/deletionReview'
-import type { Opportunity, Contract, OppStatus, ContractStatus, Employee, FileAttachment, BDSubmission, Subcontractor, Notification as AppNotification } from '../types'
+import type { Opportunity, Contract, FreshAward, OppStatus, ContractStatus, Employee, FileAttachment, BDSubmission, Subcontractor, Notification as AppNotification } from '../types'
 
 // ── Pipeline view filter (mirrors PipelinePage) ───────────────────────
 const OPP_VIEW_STATUSES: OppStatus[] = ['ACTIVE', 'NEW_ASSIGNMENT', 'DISCUSSION']
@@ -1092,6 +1093,39 @@ describe('1 · submitOpportunity', () => {
     expect(updated?.proposals).toEqual(['technical-proposal.pdf'])
     expect(updated?.assignedOpportunities).toEqual(['technical-proposal.pdf'])
     expect(updated?.proposalAttachments).toEqual([attachment])
+  })
+
+  it('uses the atomic workflow sync without stale whole-record contract or award writes', async () => {
+    const opp = makeOpp({ id: 'opp1' })
+    const contract = makeContract({ id: 'contract-1', opportunityId: opp.id, proposalAttachments: [] })
+    const award: FreshAward = {
+      id: 'award-1',
+      opportunityId: opp.id,
+      solicitation: opp.solicitation,
+      solicitationId: opp.solicitationId,
+      client: opp.client,
+      type: opp.type,
+      setAside: opp.setAside,
+      naicsCode: opp.naicsCode,
+      awardedDate: '2026-07-21',
+      status: 'PENDING_ASSIGNMENT',
+      proposalAttachments: [],
+    }
+    const attachment: FileAttachment = {
+      id: 'proposal-live',
+      name: 'proposal.pdf',
+      attachedAt: '2026-07-21T12:00:00.000Z',
+      uploadedBy: 'associate',
+      storagePath: 'proposals/proposal-live.pdf',
+    }
+    useStore.setState({ opportunities: [opp], contracts: [contract], freshAwards: [award] })
+
+    await useStore.getState().submitOpportunity(opp.id, { proposalAttachments: [attachment] })
+
+    expect(useStore.getState().contracts[0].proposalAttachments).toEqual([attachment])
+    expect(useStore.getState().freshAwards[0].proposalAttachments).toEqual([attachment])
+    expect(upsertContract).not.toHaveBeenCalled()
+    expect(upsertFreshAward).not.toHaveBeenCalled()
   })
 
   it('removes opp from pipeline view (SUBMITTED ∉ OPP_VIEW_STATUSES)', async () => {

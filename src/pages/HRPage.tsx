@@ -11,6 +11,7 @@ import {
   Pencil,
   Search,
   Trash2,
+  UploadCloud,
   UsersRound,
   UserRound,
   X,
@@ -26,12 +27,15 @@ import {
   type HRRoleGroup,
 } from '../lib/hr'
 import PeriodFilter, { type Period } from '../components/shared/PeriodFilter'
+import { AttachmentDownloadRow } from '../components/shared/AttachmentDownloadAction'
+import { uploadAttachmentsSequentially } from '../lib/attachments'
 import type {
   CompanyCertification,
   CompanyCertificationStatus,
   EmployeeRequest,
   EmployeeRequestStatus,
   EmployeeRequestType,
+  FileAttachment,
 } from '../types'
 
 const CERT_STATUS_STYLE: Record<CompanyCertificationStatus, string> = {
@@ -138,8 +142,31 @@ function StatCard({
   )
 }
 
+function RequestAttachmentList({ attachments }: { attachments?: FileAttachment[] }) {
+  if (!attachments?.length) return null
+  return (
+    <section className="space-y-2" aria-label="Request attachments">
+      <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">
+        Attachments ({attachments.length})
+      </p>
+      {attachments.map(attachment => (
+        <AttachmentDownloadRow
+          key={attachment.id}
+          attachment={attachment}
+          leading={<FileText size={13} className="text-cyan-200" />}
+          className="rounded-xl border border-[var(--border-default)] bg-white/[0.03] px-3 py-2"
+          nameClassName="text-xs font-semibold text-slate-200"
+          actionClassName="rounded-lg border border-cyan-300/20 bg-cyan-300/10 px-2.5 py-1 text-[10px] font-bold text-cyan-100 hover:bg-cyan-300/15"
+          fallbackMessage="HR attachment could not be downloaded."
+        />
+      ))}
+    </section>
+  )
+}
+
 function RequestModal({ onClose }: { onClose: () => void }) {
   const submitEmployeeRequest = useStore(s => s.submitEmployeeRequest)
+  const currentUser = useStore(s => s.currentUser)
   const [form, setForm] = useState({
     type: 'DOCUMENT' as EmployeeRequestType,
     priority: 'MEDIUM' as EmployeeRequest['priority'],
@@ -148,10 +175,51 @@ function RequestModal({ onClose }: { onClose: () => void }) {
     deadline: '',
   })
   const [leavePeriod, setLeavePeriod] = useState<Period | null>(null)
+  const [attachments, setAttachments] = useState<FileAttachment[]>([])
+  const [uploading, setUploading] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
   const needsLeavePeriod = form.type === 'TIME_OFF' || form.type === 'SICK_LEAVE'
+  const busy = uploading || submitting
+  const closeWhenIdle = () => {
+    if (busy) {
+      toast.error('Please wait for the upload or request save to finish.')
+      return
+    }
+    onClose()
+  }
 
-  const handleSubmit = (event: React.FormEvent) => {
+  const addAttachments = async (files: FileList | null) => {
+    if (!files?.length || busy) return
+    setUploading(true)
+    try {
+      const result = await uploadAttachmentsSequentially(
+        Array.from(files),
+        {
+          folder: 'hr_requests',
+          uploadedBy: currentUser?.username || currentUser?.name || 'employee',
+        },
+        attachment => setAttachments(existing => [...existing, attachment]),
+      )
+      if (result.error) {
+        console.error(result.error)
+        const prefix = result.uploadedCount > 0
+          ? `${result.uploadedCount} file${result.uploadedCount === 1 ? '' : 's'} uploaded; another file failed. `
+          : ''
+        toast.error(`${prefix}${result.error instanceof Error ? result.error.message : 'HR attachment could not be uploaded.'}`)
+      } else {
+        toast.success(`${result.uploadedCount} attachment${result.uploadedCount === 1 ? '' : 's'} uploaded`)
+      }
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault()
+    if (uploading || submitting) {
+      toast.error('Wait for the attachment upload to finish.')
+      return
+    }
     if (!form.title.trim() || !form.details.trim()) {
       toast.error('Add a title and request details.')
       return
@@ -160,28 +228,38 @@ function RequestModal({ onClose }: { onClose: () => void }) {
       toast.error('Select the requested leave dates.')
       return
     }
-    submitEmployeeRequest({
-      type: form.type,
-      priority: form.priority,
-      title: form.title.trim(),
-      details: form.details.trim(),
-      deadline: form.deadline || undefined,
-      leaveStart: needsLeavePeriod ? leavePeriod?.from : undefined,
-      leaveEnd: needsLeavePeriod ? leavePeriod?.to : undefined,
-      attachments: [],
-    })
-    toast.success('Request submitted')
-    onClose()
+    setSubmitting(true)
+    try {
+      const saved = await submitEmployeeRequest({
+        type: form.type,
+        priority: form.priority,
+        title: form.title.trim(),
+        details: form.details.trim(),
+        deadline: form.deadline || undefined,
+        leaveStart: needsLeavePeriod ? leavePeriod?.from : undefined,
+        leaveEnd: needsLeavePeriod ? leavePeriod?.to : undefined,
+        attachments,
+      })
+      if (!saved) {
+        toast.error('The HR request was not saved. Your uploaded files remain here so you can retry.')
+        return
+      }
+      toast.success('Request submitted')
+      onClose()
+    } finally {
+      setSubmitting(false)
+    }
   }
 
-  useEscapeKey(onClose)
+  useEscapeKey(closeWhenIdle)
 
   return createPortal(
     <AnimatePresence>
       <motion.div key="hr-request-modal" className="fixed inset-0 z-[60] flex items-center justify-center p-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-      <button className="absolute inset-0 cursor-default bg-black/65 backdrop-blur-sm" onClick={onClose} aria-label="Close request form" />
+      <button className="absolute inset-0 cursor-default bg-black/65 backdrop-blur-sm disabled:cursor-wait" onClick={closeWhenIdle} disabled={busy} aria-label="Close request form" />
       <motion.form
         onSubmit={handleSubmit}
+        aria-busy={busy}
         initial={{ opacity: 0, y: 18, scale: 0.97 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         exit={{ opacity: 0, y: 12, scale: 0.97 }}
@@ -192,11 +270,12 @@ function RequestModal({ onClose }: { onClose: () => void }) {
             <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-cyan-200">Employee request</p>
             <h2 className="mt-1 text-xl font-black text-white">Submit HR Request</h2>
           </div>
-          <button type="button" onClick={onClose} className="btn-ghost p-2">
+          <button type="button" onClick={closeWhenIdle} disabled={busy} className="btn-ghost p-2 disabled:cursor-wait disabled:opacity-40">
             <X size={15} />
           </button>
         </div>
 
+        <fieldset disabled={busy} className="contents">
         <div className="grid gap-4 overflow-y-auto p-5 md:grid-cols-2">
           <div>
             <label className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-400">Type</label>
@@ -244,11 +323,58 @@ function RequestModal({ onClose }: { onClose: () => void }) {
             <label className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-400">Details *</label>
             <textarea className="input-field min-h-36 resize-y" value={form.details} onChange={e => setForm(p => ({ ...p, details: e.target.value }))} placeholder="Give HR the context needed to process this request" required />
           </div>
+          <div className="md:col-span-2">
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <label className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Attachments</label>
+              <label className={`btn-secondary justify-center px-3 py-1.5 text-xs ${busy ? 'cursor-wait opacity-50' : 'cursor-pointer'}`}>
+                <UploadCloud size={13} /> {uploading ? 'Uploading...' : 'Upload files'}
+                <input
+                  type="file"
+                  multiple
+                  className="hidden"
+                  disabled={busy}
+                  onChange={event => {
+                    void addAttachments(event.target.files)
+                    event.target.value = ''
+                  }}
+                />
+              </label>
+            </div>
+            {attachments.length > 0 ? (
+              <div className="space-y-2">
+                {attachments.map(attachment => (
+                  <div key={attachment.id} className="flex items-center gap-2 rounded-xl border border-[var(--border-default)] bg-white/[0.03] px-3 py-2">
+                    <AttachmentDownloadRow
+                      attachment={attachment}
+                      className="min-w-0 flex-1"
+                      nameClassName="text-xs font-semibold text-slate-200"
+                      actionClassName="rounded-lg border border-cyan-300/20 bg-cyan-300/10 px-2 py-1 text-[10px] font-bold text-cyan-100"
+                      fallbackMessage="HR attachment could not be downloaded."
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setAttachments(current => current.filter(item => item.id !== attachment.id))}
+                      disabled={busy}
+                      className="btn-ghost p-1.5 text-rose-200 disabled:cursor-wait disabled:opacity-40"
+                      aria-label={`Remove ${attachment.name}`}
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="rounded-xl border border-dashed border-[var(--border-default)] px-3 py-4 text-center text-xs text-slate-500">No files attached.</p>
+            )}
+          </div>
         </div>
+        </fieldset>
 
         <div className="flex justify-end gap-3 border-t border-[var(--border-default)] p-5">
-          <button type="button" onClick={onClose} className="btn-secondary justify-center">Cancel</button>
-          <button type="submit" className="btn-primary justify-center">Submit Request</button>
+          <button type="button" onClick={closeWhenIdle} disabled={busy} className="btn-secondary justify-center disabled:opacity-50">Cancel</button>
+          <button type="submit" disabled={busy} className="btn-primary justify-center disabled:opacity-50">
+            {submitting ? 'Submitting...' : 'Submit Request'}
+          </button>
         </div>
       </motion.form>
     </motion.div>
@@ -310,6 +436,7 @@ function ReviewModal({
               </div>
             )}
           </div>
+          <RequestAttachmentList attachments={request.attachments} />
           <div>
             <label className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-400">Decision</label>
             <select className="select-field" value={status} onChange={e => setStatus(e.target.value as EmployeeRequestStatus)}>
@@ -441,6 +568,7 @@ function EditRequestModal({
               <PeriodFilter value={leavePeriod} onChange={setLeavePeriod} placeholder="Select leave dates" />
             </div>
           )}
+          <RequestAttachmentList attachments={request.attachments} />
         </div>
 
         <div className="flex justify-end gap-3 border-t border-[var(--border-default)] p-5">
@@ -780,6 +908,9 @@ export default function HRPage() {
                       </p>
                     </section>
                   )}
+                  <div className="mt-4">
+                    <RequestAttachmentList attachments={request.attachments} />
+                  </div>
                   {request.reviewNote && (
                     <div className="mt-3 rounded-lg border border-[var(--border-default)] bg-white/[0.03] p-3">
                       <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Review note</p>

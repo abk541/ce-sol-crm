@@ -1,18 +1,14 @@
 import { useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { createPortal } from 'react-dom'
-import { Award, Clock3, Download, Paperclip, Pencil, Plus, Search, ShieldCheck, Trash2, UploadCloud, X } from 'lucide-react'
+import { Award, Clock3, Paperclip, Pencil, Plus, Search, ShieldCheck, Trash2, UploadCloud, X } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useStore } from '../store/useStore'
 import { hasPermission } from '../lib/permissions'
 import { useEscapeKey } from '../lib/utils'
-import {
-  attachmentAccessErrorMessage,
-  uploadAttachment,
-  downloadAttachment,
-  hasAttachmentSource,
-} from '../lib/attachments'
+import { uploadAttachment } from '../lib/attachments'
 import type { CompanyCertification, CompanyCertificationStatus, FileAttachment } from '../types'
+import { AttachmentDownloadAction, AttachmentDownloadRow } from '../components/shared/AttachmentDownloadAction'
 
 const CERT_STATUS_STYLE: Record<CompanyCertificationStatus, string> = {
   ACTIVE: 'bg-emerald-400/15 text-emerald-200 border-emerald-400/25',
@@ -53,20 +49,6 @@ function badgeClass(base: string) {
 
 function fileToCertificationAttachment(file: File, uploadedBy: string): Promise<FileAttachment> {
   return uploadAttachment(file, { folder: 'certifications', uploadedBy, id: `cert-att-${crypto.randomUUID()}` })
-}
-
-function downloadCertificationAttachment(cert: CompanyCertification, attachment = cert.attachments?.[0]) {
-  if (!attachment) {
-    toast.error('No certification attachment was uploaded.')
-    return
-  }
-  if (!hasAttachmentSource(attachment)) {
-    toast.error('This certification only has file metadata. Re-upload the attachment to download it.')
-    return
-  }
-  void downloadAttachment(attachment).catch(error => {
-    toast.error(attachmentAccessErrorMessage(error, 'Attachment could not be downloaded.'))
-  })
 }
 
 function StatCard({
@@ -230,6 +212,10 @@ function CertificationModal({
                       <p className="truncate text-xs font-bold text-white">{att.name}</p>
                       <p className="text-[10px] text-slate-400">{formatDate(att.attachedAt)} | {att.uploadedBy}</p>
                     </div>
+                    <AttachmentDownloadAction
+                      attachment={att}
+                      className="rounded-lg border border-[#D7BE7A]/30 bg-[#D7BE7A]/10 px-2 py-1 text-[10px] font-bold text-[#F8E8B8] hover:bg-[#D7BE7A]/20"
+                    />
                     <button
                       type="button"
                       onClick={() => setAttachments(prev => prev.filter(item => item.id !== att.id))}
@@ -338,7 +324,7 @@ export default function CertificationsPage() {
         </div>
 
         <div className="overflow-hidden rounded-xl border border-[var(--border-default)]">
-          <div className="grid grid-cols-[1.2fr_1fr_0.8fr_0.8fr_0.7fr_0.8fr_auto] gap-3 border-b border-[var(--border-default)] bg-[#07131F]/90 px-4 py-3 text-[10px] font-black uppercase tracking-wide text-amber-200">
+          <div className="grid grid-cols-[1.2fr_1fr_0.8fr_0.8fr_1.4fr_0.8fr_auto] gap-3 border-b border-[var(--border-default)] bg-[#07131F]/90 px-4 py-3 text-[10px] font-black uppercase tracking-wide text-amber-200">
             <span>Name</span>
             <span>Issuer</span>
             <span>Number</span>
@@ -356,16 +342,9 @@ export default function CertificationsPage() {
               const status = displayCertStatus(cert)
               const remaining = daysUntil(cert.expirationDate)
               return (
-                <div key={cert.id} className="grid grid-cols-[1.2fr_1fr_0.8fr_0.8fr_0.7fr_0.8fr_auto] items-center gap-3 border-b border-[var(--border-default)] px-4 py-4 last:border-b-0">
+                <div key={cert.id} className="grid grid-cols-[1.2fr_1fr_0.8fr_0.8fr_1.4fr_0.8fr_auto] items-center gap-3 border-b border-[var(--border-default)] px-4 py-4 last:border-b-0">
                   <div className="min-w-0">
-                    <button
-                      type="button"
-                      onClick={() => downloadCertificationAttachment(cert)}
-                      className="block max-w-full truncate text-left text-sm font-bold text-white transition-colors hover:text-[#D7BE7A]"
-                      title={cert.attachments?.length ? `Download ${cert.attachments[0].name}` : 'No attachment uploaded'}
-                    >
-                      {cert.name}
-                    </button>
+                    <p className="block max-w-full truncate text-left text-sm font-bold text-white">{cert.name}</p>
                     {cert.notes && <p className="mt-1 line-clamp-1 text-xs text-slate-400">{cert.notes}</p>}
                   </div>
                   <p className="truncate text-sm text-slate-300">{cert.issuer}</p>
@@ -374,18 +353,22 @@ export default function CertificationsPage() {
                     <p className="text-sm font-semibold text-white">{formatDate(cert.expirationDate)}</p>
                     {remaining !== null && remaining >= 0 && <p className="text-[10px] text-slate-400">{remaining} days left</p>}
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => downloadCertificationAttachment(cert)}
-                    className={`inline-flex w-fit items-center gap-1.5 rounded-full border px-2 py-1 text-[10px] font-bold ${
-                      cert.attachments?.length
-                        ? 'border-[#D7BE7A]/35 bg-[#D7BE7A]/10 text-[#F8E8B8] hover:bg-[#D7BE7A]/18'
-                        : 'border-slate-700 bg-slate-900/30 text-slate-500'
-                    }`}
-                  >
-                    {cert.attachments?.length ? <Download size={11} /> : <Paperclip size={11} />}
-                    {cert.attachments?.length ? `${cert.attachments.length} file${cert.attachments.length === 1 ? '' : 's'}` : 'None'}
-                  </button>
+                  <div className="space-y-1.5">
+                    {(cert.attachments ?? []).length > 0 ? (cert.attachments ?? []).map(attachment => (
+                      <AttachmentDownloadRow
+                        key={attachment.id}
+                        attachment={attachment}
+                        leading={<Paperclip size={10} className="text-[#D7BE7A]" />}
+                        className="rounded-lg border border-[#D7BE7A]/20 bg-[#D7BE7A]/[0.06] px-2 py-1.5"
+                        nameClassName="text-[10px] font-semibold text-slate-300"
+                        actionClassName="rounded-md border border-[#D7BE7A]/30 bg-[#D7BE7A]/10 px-2 py-1 text-[10px] font-bold text-[#F8E8B8] hover:bg-[#D7BE7A]/20"
+                      />
+                    )) : (
+                      <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-700 bg-slate-900/30 px-2 py-1 text-[10px] font-bold text-slate-500">
+                        <Paperclip size={11} /> None
+                      </span>
+                    )}
+                  </div>
                   <span className={badgeClass(CERT_STATUS_STYLE[status])}>{status}</span>
                   <div className="flex justify-end gap-2">
                     {canManageCertifications ? (

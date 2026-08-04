@@ -18,7 +18,9 @@ import { TIMEZONES } from '../data/mock'
 import { formatCurrency, formatDate, useEscapeKey } from '../lib/utils'
 import {
   attachmentAccessErrorMessage,
+  checkAttachmentAvailability,
   uploadAttachment,
+  uploadAttachmentsSequentially,
   hasAttachmentSource,
   downloadAttachment,
 } from '../lib/attachments'
@@ -44,6 +46,7 @@ import PeriodFilter, { type Period, filterByPeriod } from '../components/shared/
 import HierarchyAssignPicker from '../components/shared/HierarchyAssignPicker'
 import { MandatoryEventsEditor, MandatoryEventsList } from '../components/shared/MandatoryEvents'
 import FloatingActionMenu from '../components/shared/FloatingActionMenu'
+import { AttachmentDownloadAction, AttachmentDownloadRow } from '../components/shared/AttachmentDownloadAction'
 import SamGovListingButton from '../components/shared/SamGovListingButton'
 import {
   formatTime12h,
@@ -191,43 +194,77 @@ function CommentAttachmentPicker({
   attachments,
   onChange,
   uploadedBy,
+  onUploadingChange,
+  locked = false,
 }: {
   attachments: FileAttachment[]
-  onChange: (attachments: FileAttachment[]) => void
+  onChange: React.Dispatch<React.SetStateAction<FileAttachment[]>>
   uploadedBy: string
+  onUploadingChange?: (uploading: boolean) => void
+  locked?: boolean
 }) {
-  const [fileName, setFileName] = useState('')
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [attachedAt, setAttachedAt] = useState(() => toDatetimeLocal(new Date().toISOString()))
+  const [uploading, setUploading] = useState(false)
 
-  const add = () => {
-    if (!fileName.trim() || !attachedAt) return
-    onChange([
-      ...attachments,
-      {
-        id: crypto.randomUUID(),
-        name: fileName.trim(),
-        attachedAt: new Date(attachedAt).toISOString(),
+  const busy = uploading || locked
+
+  const add = async () => {
+    if (!selectedFile || !attachedAt || busy) return
+    setUploading(true)
+    onUploadingChange?.(true)
+    try {
+      const attachment = await uploadAttachment(selectedFile, {
+        folder: 'comments',
         uploadedBy,
-      },
-    ])
-    setFileName('')
-    setAttachedAt(toDatetimeLocal(new Date().toISOString()))
+        attachedAt: new Date(attachedAt).toISOString(),
+      })
+      onChange(current => [...current, attachment])
+      setSelectedFile(null)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+      setAttachedAt(toDatetimeLocal(new Date().toISOString()))
+      toast.success('Comment attachment uploaded')
+    } catch (error) {
+      console.error(error)
+      toast.error(error instanceof Error ? error.message : 'Comment attachment could not be uploaded.')
+    } finally {
+      setUploading(false)
+      onUploadingChange?.(false)
+    }
   }
 
   return (
     <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
       <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-slate-500">Comment attachments</p>
       <div className="grid gap-2 md:grid-cols-[1fr_180px_auto]">
-        <input type="file" onChange={e => setFileName(e.target.files?.[0]?.name ?? '')} className="input-field text-xs" />
-        <input type="datetime-local" value={attachedAt} onChange={e => setAttachedAt(e.target.value)} className="input-field text-xs" required />
-        <button type="button" onClick={add} disabled={!fileName.trim() || !attachedAt} className="btn-secondary justify-center text-xs disabled:opacity-40">Add</button>
+        <input ref={fileInputRef} type="file" disabled={busy} onChange={e => setSelectedFile(e.target.files?.[0] ?? null)} className="input-field text-xs disabled:cursor-wait disabled:opacity-50" />
+        <input type="datetime-local" value={attachedAt} disabled={busy} onChange={e => setAttachedAt(e.target.value)} className="input-field text-xs disabled:cursor-wait disabled:opacity-50" required />
+        <button type="button" onClick={() => { void add() }} disabled={!selectedFile || !attachedAt || busy} className="btn-secondary justify-center text-xs disabled:opacity-40">
+          {uploading ? 'Uploading...' : 'Upload'}
+        </button>
       </div>
       {attachments.length > 0 && (
         <div className="mt-2 space-y-1">
           {attachments.map(att => (
             <div key={att.id} className="flex items-center justify-between gap-2 rounded-lg bg-white px-2.5 py-1.5 text-[11px]">
-              <span className="min-w-0 truncate font-semibold text-slate-700">{att.name}</span>
-              <span className="whitespace-nowrap text-slate-400">{formatDateTime(att.attachedAt)}</span>
+              <AttachmentDownloadRow
+                attachment={att}
+                className="min-w-0 flex-1"
+                nameClassName="font-semibold text-slate-700"
+                details={<span className="whitespace-nowrap text-[10px] text-slate-400">{formatDateTime(att.attachedAt)}</span>}
+                actionClassName="rounded-md border border-indigo-100 bg-indigo-50 px-2 py-1 text-[10px] font-bold text-indigo-600"
+                fallbackMessage="Comment attachment could not be downloaded."
+              />
+              <button
+                type="button"
+                onClick={() => onChange(current => current.filter(item => item.id !== att.id))}
+                disabled={busy}
+                className="rounded-md p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600 disabled:cursor-wait disabled:opacity-40"
+                aria-label={`Remove ${att.name}`}
+              >
+                <X size={12} />
+              </button>
             </div>
           ))}
         </div>
@@ -241,9 +278,16 @@ function CommentAttachments({ attachments }: { attachments?: FileAttachment[] })
   return (
     <div className="mt-2 space-y-1">
       {attachments.map(att => (
-        <p key={att.id} className="flex items-center gap-1 text-[10px] font-semibold text-indigo-600">
-          <FileText size={9} /> {att.name} - {formatDateTime(att.attachedAt)}
-        </p>
+        <AttachmentDownloadRow
+          key={att.id}
+          attachment={att}
+          leading={<FileText size={10} className="text-indigo-500" />}
+          className="rounded-lg border border-indigo-100 bg-indigo-50/60 px-2 py-1.5"
+          nameClassName="text-[10px] font-semibold text-indigo-700"
+          details={<p className="text-[9px] text-slate-400">{formatDateTime(att.attachedAt)}</p>}
+          actionClassName="rounded-md border border-indigo-100 bg-white px-2 py-1 text-[9px] font-bold text-indigo-600"
+          fallbackMessage="Comment attachment could not be downloaded."
+        />
       ))}
     </div>
   )
@@ -1169,21 +1213,29 @@ export function SamGovContactsPanel({
   )
 }
 
-function OppModalShell({ title, subtitle, tab, setTab, onClose, extraHeader, footer, children, tabs }: {
+function OppModalShell({ title, subtitle, tab, setTab, onClose, closeDisabled = false, extraHeader, footer, children, tabs }: {
   title: string; subtitle?: string
   tab: OppFormTab; setTab: (t: OppFormTab) => void
   onClose: () => void
+  closeDisabled?: boolean
   extraHeader?: React.ReactNode
   footer: React.ReactNode
   children: React.ReactNode
   tabs?: typeof OPP_FORM_TABS
 }) {
-  useEscapeKey(onClose)
+  const requestClose = () => {
+    if (closeDisabled) {
+      toast.error('Please wait for the current save or upload to finish.')
+      return
+    }
+    onClose()
+  }
+  useEscapeKey(requestClose)
   const visibleTabs = tabs ?? OPP_FORM_TABS
   return createPortal((
     <motion.div className="fixed inset-0 z-50 flex items-center justify-center p-4"
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-      <div className="absolute inset-0" style={{ background: 'var(--bg-overlay)', backdropFilter: 'blur(6px)' }} onClick={onClose} />
+      <div className="absolute inset-0" style={{ background: 'var(--bg-overlay)', backdropFilter: 'blur(6px)' }} onClick={requestClose} />
       <motion.div
         className="modal-panel relative z-10 w-full max-w-4xl rounded-2xl shadow-2xl border flex flex-col overflow-hidden"
         style={{
@@ -1205,8 +1257,8 @@ function OppModalShell({ title, subtitle, tab, setTab, onClose, extraHeader, foo
                 <p className="text-xs text-slate-400 mt-0.5 truncate max-w-lg">{subtitle}</p>
               )}
             </div>
-            <button onClick={onClose}
-              className="flex-shrink-0 w-8 h-8 rounded-xl flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-all mt-0.5">
+            <button onClick={requestClose} disabled={closeDisabled}
+              className="flex-shrink-0 w-8 h-8 rounded-xl flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-all mt-0.5 disabled:cursor-wait disabled:opacity-40">
               <X size={14} />
             </button>
           </div>
@@ -1280,6 +1332,7 @@ export function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => v
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null)
   const [editingCommentText, setEditingCommentText] = useState('')
   const [saving, setSaving] = useState(false)
+  const [commentUploading, setCommentUploading] = useState(false)
 
   const canEditDetails = hasPermission(currentUser, 'opportunity:edit')
   const canEditSchedule = !canEditDetails
@@ -1310,6 +1363,15 @@ export function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => v
   }, [canComment, canEditDetails, canEditSchedule])
 
   const handleSave = async () => {
+    if (commentUploading) {
+      toast.error('Wait for the comment attachment upload to finish.')
+      return
+    }
+    if (newCommentAttachments.length > 0 && !newComment.trim()) {
+      toast.error('Add comment text before saving its attachments.')
+      setTab('comments')
+      return
+    }
     if (!canEditDetails) {
       if (canEditSchedule) {
         if (!form.dueDate) {
@@ -1429,6 +1491,7 @@ export function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => v
       tab={tab} setTab={setTab}
       tabs={visibleTabs}
       onClose={onClose}
+      closeDisabled={saving || commentUploading}
       footer={
         <div className="flex items-center gap-3">
           {canRequestDelete && !hasPendingDelete && (
@@ -1438,8 +1501,8 @@ export function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => v
             </button>
           )}
           <div className="ml-auto flex gap-3">
-            <button type="button" onClick={onClose} className="btn-secondary">Cancel</button>
-            <button type="button" onClick={handleSave} disabled={saving} className="btn-primary disabled:opacity-50">
+            <button type="button" onClick={onClose} disabled={saving || commentUploading} className="btn-secondary disabled:opacity-50">Cancel</button>
+            <button type="button" onClick={handleSave} disabled={saving || commentUploading} className="btn-primary disabled:opacity-50">
               {saving && <Loader size={13} className="animate-spin" />}
               {saving ? 'Saving...' : canEditDetails ? 'Save Changes' : 'Save Comment'}
             </button>
@@ -1713,6 +1776,8 @@ export function EditModal({ opp, onClose }: { opp: Opportunity; onClose: () => v
                 attachments={newCommentAttachments}
                 onChange={setNewCommentAttachments}
                 uploadedBy={currentUser?.username ?? currentUser?.name ?? 'unknown'}
+                onUploadingChange={setCommentUploading}
+                locked={saving}
               />
             </div>
             <p className="text-[10px] text-slate-400 mt-1">Comment will be saved when you click "{canEditDetails ? 'Save Changes' : 'Save Comment'}".</p>
@@ -2828,6 +2893,40 @@ function SubmitModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }
   const [monthlyValue, setMonthlyValue]     = useState<string>(opp.monthlyPayment ? String(opp.monthlyPayment) : '')
   const [monthlyOverridden, setMonthlyOverridden] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  const [validatingFiles, setValidatingFiles] = useState(false)
+  const [uploadingProposals, setUploadingProposals] = useState(false)
+  const [unavailableProposalPaths, setUnavailableProposalPaths] = useState<Set<string>>(new Set())
+  const proposalBusy = uploadingProposals || validatingFiles || submitting
+
+  const closeWhenIdle = () => {
+    if (proposalBusy) {
+      toast.error('Please wait for the proposal upload or submission to finish.')
+      return
+    }
+    onClose()
+  }
+
+  useEffect(() => {
+    const paths = Array.from(new Set(
+      proposalAttachments.map(attachment => attachment.storagePath).filter((path): path is string => !!path),
+    ))
+    if (paths.length === 0) {
+      setUnavailableProposalPaths(new Set())
+      return
+    }
+    let active = true
+    void checkAttachmentAvailability(paths).then(statuses => {
+      if (!active) return
+      setUnavailableProposalPaths(new Set(
+        statuses.filter(status => !status.available).map(status => status.storagePath),
+      ))
+    }).catch(error => {
+      // Submission repeats the authoritative check. A temporary status-check
+      // failure must not rewrite or mislabel a saved attachment.
+      console.error('[proposal] file availability check failed', error)
+    })
+    return () => { active = false }
+  }, [proposalAttachments])
 
   const handleYearlyChange = (val: string) => {
     setYearlyValue(val)
@@ -2837,35 +2936,59 @@ function SubmitModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }
     }
   }
 
-  const addFile = async (file: File): Promise<FileAttachment | null> => {
-    if (!file) return null
+  const addProposalFiles = async (files: readonly File[]) => {
+    if (files.length === 0 || proposalBusy) return
+    setUploadingProposals(true)
     try {
-      const attachment = await fileToProposalAttachment(file, new Date().toISOString(), uploadedBy)
-      setProposalAttachments(prev => [...prev, attachment])
+      const result = await uploadAttachmentsSequentially(
+        files,
+        {
+          folder: 'proposals',
+          uploadedBy,
+          attachedAt: new Date().toISOString(),
+        },
+        attachment => setProposalAttachments(current => [...current, attachment]),
+      )
+      if (result.error) {
+        console.error(result.error)
+        const prefix = result.uploadedCount > 0
+          ? `${result.uploadedCount} proposal file${result.uploadedCount === 1 ? '' : 's'} uploaded; another file failed. `
+          : ''
+        toast.error(`${prefix}${result.error instanceof Error ? result.error.message : 'Proposal file could not be uploaded.'}`)
+      } else if (result.uploadedCount > 0) {
+        toast.success(`${result.uploadedCount} proposal file${result.uploadedCount === 1 ? '' : 's'} uploaded`)
+      }
+    } finally {
       if (proposalFileInputRef.current) proposalFileInputRef.current.value = ''
-      toast.success('Proposal file uploaded')
-      return attachment
-    } catch (err) {
-      console.error(err)
-      toast.error(err instanceof Error ? err.message : 'Proposal file could not be uploaded.')
-      return null
+      setUploadingProposals(false)
     }
   }
 
   const onDropFiles = async (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault()
     setDragOver(false)
+    if (proposalBusy) return
     const list = Array.from(e.dataTransfer.files || [])
-    for (const f of list) await addFile(f)
+    await addProposalFiles(list)
   }
 
   const confirm = async () => {
+    if (uploadingProposals) {
+      toast.error('Wait for the proposal upload to finish.')
+      return
+    }
+    if (validatingFiles || submitting) return
     const total = parseFloat(contractAmount)
     const yearly = parseFloat(yearlyValue)
     const monthly = parseFloat(monthlyValue)
 
     if (proposalAttachments.length === 0) {
       toast.error('Attach at least one proposal file before submitting.')
+      return
+    }
+    const nonPrivateAttachments = proposalAttachments.filter(att => !att.storagePath)
+    if (nonPrivateAttachments.length > 0) {
+      toast.error('Replace or remove every saved file reference marked "Re-upload required" before submitting.')
       return
     }
     if (!Number.isFinite(total) || total <= 0) {
@@ -2886,7 +3009,26 @@ function SubmitModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }
     if (showYearlyMonthly) vals.baseAmount = yearly
     if (showYearlyMonthly) vals.monthlyPayment = monthly
     const proposalNames = proposalAttachments.map(att => att.name).filter(Boolean)
-    if (submitting) return
+    setValidatingFiles(true)
+    try {
+      const statuses = await checkAttachmentAvailability(
+        Array.from(new Set(proposalAttachments.map(attachment => attachment.storagePath as string))),
+      )
+      const unavailablePaths = new Set(
+        statuses.filter(status => !status.available).map(status => status.storagePath),
+      )
+      setUnavailableProposalPaths(unavailablePaths)
+      if (unavailablePaths.size > 0) {
+        toast.error('One or more saved proposal files are unavailable. Remove them and upload the original files again.')
+        return
+      }
+    } catch (error) {
+      console.error(error)
+      toast.error('Proposal files could not be verified. Check the API connection and try again.')
+      return
+    } finally {
+      setValidatingFiles(false)
+    }
     setSubmitting(true)
     let saved = false
     try {
@@ -2915,7 +3057,7 @@ function SubmitModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }
   const dueTimeLabel = opp.localTime ? formatLocalDueTimeShared(opp.localTime, opp.timezone) : ''
 
   return (
-    <ModalWrap onClose={onClose} title="Submit Proposal" subtitle={opp.solicitation} maxW="max-w-2xl">
+    <ModalWrap onClose={closeWhenIdle} title="Submit Proposal" subtitle={opp.solicitation} maxW="max-w-2xl">
       <div className="flex flex-col bg-white" style={{ maxHeight: 'min(86vh, 780px)' }}>
         {/* Hero card */}
         <div className="flex-shrink-0 px-6 pt-5">
@@ -2992,9 +3134,11 @@ function SubmitModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }
               ref={proposalFileInputRef}
               type="file"
               className="hidden"
+              multiple
+              disabled={proposalBusy}
               onChange={e => {
-                const file = e.target.files?.[0] ?? null
-                if (file) addFile(file)
+                const files = Array.from(e.target.files ?? [])
+                void addProposalFiles(files)
               }}
             />
             <div
@@ -3002,16 +3146,19 @@ function SubmitModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }
               onDragEnter={e => { e.preventDefault(); setDragOver(true) }}
               onDragLeave={() => setDragOver(false)}
               onDrop={onDropFiles}
-              onClick={() => proposalFileInputRef.current?.click()}
+              onClick={() => { if (!proposalBusy) proposalFileInputRef.current?.click() }}
+              aria-disabled={proposalBusy}
               className={`flex flex-col items-center justify-center gap-1 cursor-pointer rounded-2xl border-2 border-dashed px-4 py-6 text-center transition-all ${
-                dragOver
+                proposalBusy
+                  ? 'cursor-wait border-slate-200 bg-slate-100 opacity-60'
+                  : dragOver
                   ? 'border-indigo-400 bg-indigo-50'
                   : 'border-slate-200 bg-slate-50 hover:border-indigo-300 hover:bg-indigo-50/40'
               }`}
             >
               <Upload size={18} className={dragOver ? 'text-indigo-600' : 'text-slate-400'} />
               <p className={`text-xs font-bold ${dragOver ? 'text-indigo-700' : 'text-slate-700'}`}>
-                {dragOver ? 'Drop to upload' : (proposalAttachments.length > 0 ? 'Add another file' : 'Drop files here or click to upload')}
+                {uploadingProposals ? 'Uploading proposal files...' : dragOver ? 'Drop to upload' : (proposalAttachments.length > 0 ? 'Add another file' : 'Drop files here or click to upload')}
               </p>
               <p className="text-[10px] text-slate-500">PDF, DOCX, XLSX up to a few MB. Files attach instantly.</p>
             </div>
@@ -3030,10 +3177,22 @@ function SubmitModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }
                         {formatFileSize(att.size) ? ` · ${formatFileSize(att.size)}` : ''}
                       </p>
                     </div>
+                    {!att.storagePath || unavailableProposalPaths.has(att.storagePath) ? (
+                      <span className="inline-flex flex-shrink-0 items-center gap-1 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[10px] font-bold text-amber-700" title="Remove this reference and upload the original file again.">
+                        <Upload size={11} /> Re-upload required
+                      </span>
+                    ) : (
+                      <AttachmentDownloadAction
+                        attachment={att}
+                        className="rounded-md border border-indigo-100 bg-indigo-50 px-2 py-1 text-[10px] font-bold text-indigo-600 hover:bg-indigo-100"
+                        fallbackMessage="Proposal file could not be downloaded."
+                      />
+                    )}
                     <button
                       type="button"
                       onClick={() => setProposalAttachments(p => p.filter((_, j) => j !== i))}
-                      className="flex-shrink-0 rounded-md p-1 text-slate-400 transition-colors hover:bg-rose-50 hover:text-rose-500"
+                      disabled={proposalBusy}
+                      className="flex-shrink-0 rounded-md p-1 text-slate-400 transition-colors hover:bg-rose-50 hover:text-rose-500 disabled:cursor-wait disabled:opacity-40"
                       aria-label={`Remove ${att.name}`}
                     >
                       <X size={12} />
@@ -3053,18 +3212,19 @@ function SubmitModal({ opp, onClose }: { opp: Opportunity; onClose: () => void }
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={onClose}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-slate-600 hover:bg-slate-100"
+              onClick={closeWhenIdle}
+              disabled={proposalBusy}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-slate-600 hover:bg-slate-100 disabled:cursor-wait disabled:opacity-50"
             >
               Cancel
             </button>
             <button
               type="button"
               onClick={confirm}
-              disabled={submitting}
-              className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm"
+              disabled={proposalBusy}
+              className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm disabled:cursor-wait disabled:opacity-50"
             >
-              <Send size={12} /> {submitting ? 'Submitting...' : 'Submit proposal'}
+              <Send size={12} /> {uploadingProposals ? 'Uploading...' : validatingFiles ? 'Checking files...' : submitting ? 'Submitting...' : 'Submit proposal'}
             </button>
           </div>
         </footer>
@@ -3128,6 +3288,7 @@ function CreateModal({ onClose }: { onClose: () => void }) {
   const [initialComment, setInitialComment] = useState('')
   const [initialCommentAttachments, setInitialCommentAttachments] = useState<FileAttachment[]>([])
   const [saving, setSaving] = useState(false)
+  const [commentUploading, setCommentUploading] = useState(false)
   const [form, setForm] = useState<Partial<Opportunity>>({
     priority: 'MEDIUM', status: 'ACTIVE', type: undefined, setAside: 'SB',
     period: new Date().toLocaleString('en-US', { month: 'short' }).toUpperCase() + ' ' + new Date().getFullYear(),
@@ -3187,6 +3348,15 @@ function CreateModal({ onClose }: { onClose: () => void }) {
   }
 
   const handleCreate = async () => {
+    if (commentUploading) {
+      toast.error('Wait for the comment attachment upload to finish.')
+      return
+    }
+    if (initialCommentAttachments.length > 0 && !initialComment.trim()) {
+      toast.error('Add comment text before saving its attachments.')
+      setTab('comments')
+      return
+    }
     if (!form.solicitation?.trim()) { toast.error('Solicitation title is required'); setTab('details'); return }
     if (!form.type) { toast.error('Contract type is required'); setTab('details'); return }
     if (!form.dueDate) { toast.error('Due date is required'); setTab('schedule'); return }
@@ -3221,6 +3391,7 @@ function CreateModal({ onClose }: { onClose: () => void }) {
       title="Create New Opportunity"
       tab={tab} setTab={setTab}
       onClose={onClose}
+      closeDisabled={saving || importing || commentUploading}
       extraHeader={
         <div className="flex gap-2">
           <input
@@ -3245,8 +3416,8 @@ function CreateModal({ onClose }: { onClose: () => void }) {
             ))}
           </div>
           <div className="flex gap-3">
-            <button type="button" onClick={onClose} className="btn-secondary">Cancel</button>
-            <button type="button" onClick={handleCreate} disabled={saving} className="btn-primary disabled:opacity-50">
+            <button type="button" onClick={onClose} disabled={saving || importing || commentUploading} className="btn-secondary disabled:opacity-50">Cancel</button>
+            <button type="button" onClick={handleCreate} disabled={saving || importing || commentUploading} className="btn-primary disabled:opacity-50">
               {saving ? <Loader size={14} className="animate-spin" /> : <Plus size={14} />}
               {saving ? 'Saving...' : 'Create Opportunity'}
             </button>
@@ -3428,6 +3599,8 @@ function CreateModal({ onClose }: { onClose: () => void }) {
             attachments={initialCommentAttachments}
             onChange={setInitialCommentAttachments}
             uploadedBy={currentUser?.username ?? currentUser?.name ?? 'unknown'}
+            onUploadingChange={setCommentUploading}
+            locked={saving || importing}
           />
         </div>
       )}

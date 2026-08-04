@@ -8,7 +8,7 @@ import {
   ArrowRight, CheckCircle2, Info, MapPin, Calendar,
   Phone, Mail, Clock, Shield, FileText, Trash2, AlertCircle,
   ChevronUp, ChevronDown, ChevronsUpDown, Pencil, Receipt, Eye, Paperclip, Download,
-  UserCog, Layers, Minus, MessageSquare,
+  UserCog, Layers, Minus, MessageSquare, Award,
 } from 'lucide-react'
 import PeriodFilter, { type Period, filterByPeriod } from '../components/shared/PeriodFilter'
 import toast from 'react-hot-toast'
@@ -27,6 +27,8 @@ import {
   uploadAttachment as uploadToStorage,
   downloadAttachment as downloadAttachmentFile,
   hasAttachmentSource,
+  mergeCanonicalProposalAttachments,
+  normalizeAttachmentName,
   previewAttachment as previewAttachmentFile,
 } from '../lib/attachments'
 import { collectSourcingQuoteAttachments, getSourcingQuoteAttachments, hasSourcingQuote } from '../lib/subcontractorQuotes'
@@ -65,6 +67,7 @@ import {
 import { SourcingModal, SamGovContactsPanel } from './PipelinePage'
 import HierarchyAssignPicker from '../components/shared/HierarchyAssignPicker'
 import SamGovListingButton from '../components/shared/SamGovListingButton'
+import { AttachmentDownloadRow } from '../components/shared/AttachmentDownloadAction'
 
 // ── Status config ───────────────────────────────────────────────────────
 const STATUS_META: Record<ContractStatus, { label: string; color: string; bg: string; border: string }> = {
@@ -1928,23 +1931,27 @@ function ContractDetailDrawer({
   ].map(name => name.trim()).filter(Boolean)))
   const contractProposalAttachments = contract.proposalAttachments ?? []
   const oppProposalAttachments = sourceOpportunity?.proposalAttachments ?? []
-  const seenProposalNames = new Set<string>()
-  const uploadedProposalAttachments: FileAttachment[] = []
-  ;[...contractProposalAttachments, ...oppProposalAttachments].forEach(att => {
-    const key = (att.id || att.name || '').trim()
-    if (!key || seenProposalNames.has(key)) return
-    seenProposalNames.add(key)
-    uploadedProposalAttachments.push(att)
-  })
-  const uploadedProposalNames = new Set(uploadedProposalAttachments.map(att => att.name.trim()).filter(Boolean))
+  // The opportunity owns the live proposal set. Contracts may contain an
+  // older snapshot copied before a replacement upload, so prefer the linked
+  // opportunity and suppress same-name stale snapshots from the contract.
+  // Distinct canonical versions keep their own download actions even when the
+  // user uploaded them under the same filename.
+  const uploadedProposalAttachments = mergeCanonicalProposalAttachments(
+    oppProposalAttachments,
+    contractProposalAttachments,
+  )
+  const uploadedProposalNames = new Set(
+    uploadedProposalAttachments.map(att => normalizeAttachmentName(att.name)).filter(Boolean),
+  )
   const proposalAttachments = [
     ...uploadedProposalAttachments,
     ...legacyAttachments(
-      proposalFiles.filter(name => !uploadedProposalNames.has(name)),
+      proposalFiles.filter(name => !uploadedProposalNames.has(normalizeAttachmentName(name))),
       sourceOpportunity?.bdm || 'Submitted Proposal',
     ),
   ]
   const proposalCount = proposalAttachments.length
+  const awardDocuments = uniqueAwardDocuments(contract.awardDocuments ?? [])
 
   // One-time backfill: if the contract has no persisted proposals but we found
   // them on the source opportunity, snapshot them onto the contract so the
@@ -2625,6 +2632,39 @@ function ContractDetailDrawer({
                 <p className="mt-3 rounded-lg border border-dashed border-white/10 px-3 py-3 text-xs text-slate-400">
                   No supplier quote file is attached to this contract opportunity yet.
                 </p>
+              )}
+            </div>
+
+            <div
+              className="rounded-xl border p-3 lg:col-span-2"
+              style={{ background: 'rgba(8,24,37,0.72)', borderColor: 'rgba(125,211,252,0.24)' }}
+            >
+              <div className="mb-2 flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-wider text-[#BAE6FD]">Award Documents</p>
+                  <p className="mt-0.5 text-[11px] text-slate-400">Contract award files available to view and download.</p>
+                </div>
+                <span className="rounded-full border border-sky-300/25 bg-sky-300/10 px-2.5 py-1 text-[10px] font-bold text-sky-100">
+                  {awardDocuments.length} file{awardDocuments.length === 1 ? '' : 's'}
+                </span>
+              </div>
+              {awardDocuments.length > 0 ? (
+                <div className="space-y-1.5">
+                  {awardDocuments.map(attachment => (
+                    <AttachmentDownloadRow
+                      key={attachment.id}
+                      attachment={attachment}
+                      leading={<Award size={13} className="text-sky-200" />}
+                      className="rounded-lg border border-white/10 bg-white/5 px-3 py-2"
+                      nameClassName="text-xs font-bold text-slate-100"
+                      details={<p className="text-[10px] text-slate-400">{attachment.attachedAt ? formatDateTime(attachment.attachedAt) : 'Award document'}</p>}
+                      actionClassName="rounded-lg border border-sky-300/25 bg-sky-300/10 px-2.5 py-1.5 text-[11px] font-black text-sky-100 hover:bg-sky-300/20"
+                      fallbackMessage="Award document could not be downloaded."
+                    />
+                  ))}
+                </div>
+              ) : (
+                <p className="rounded-lg border border-dashed border-white/10 px-3 py-3 text-xs text-slate-400">No award document has been uploaded yet.</p>
               )}
             </div>
 
@@ -3621,10 +3661,14 @@ function ContractDetailDrawer({
                     <div className="mt-3 space-y-1.5 rounded-lg border border-white/10 bg-white/5 p-2">
                       <p className="text-[10px] font-bold uppercase tracking-wide text-slate-300">Attachments</p>
                       {(w.attachments || []).map(att => (
-                        <div key={att.id} className="flex items-center justify-between gap-2 text-[11px] text-slate-300">
-                          <span className="flex min-w-0 items-center gap-1 truncate font-semibold"><FileText size={10} /> {att.name}</span>
-                          <span className="whitespace-nowrap text-slate-400">{formatDateTime(att.attachedAt)}</span>
-                        </div>
+                        <AttachmentDownloadRow
+                          key={att.id}
+                          attachment={att}
+                          leading={<FileText size={10} className="text-[#F8E8B8]" />}
+                          details={<p className="text-[10px] text-slate-400">{formatDateTime(att.attachedAt)}</p>}
+                          nameClassName="text-[11px] font-semibold text-slate-300"
+                          actionClassName="rounded-md border border-[#D7BE7A]/30 bg-[#D7BE7A]/10 px-2 py-1 text-[10px] font-bold text-[#F8E8B8] hover:bg-[#D7BE7A]/20"
+                        />
                       ))}
                     </div>
                   )}
@@ -3639,9 +3683,15 @@ function ContractDetailDrawer({
                           </div>
                           <p className="text-xs text-slate-200">{comment.text}</p>
                           {(comment.attachments || []).map(att => (
-                            <p key={att.id} className="mt-1 flex items-center gap-1 text-[10px] font-semibold text-indigo-600">
-                              <FileText size={9} /> {att.name} - {formatDateTime(att.attachedAt)}
-                            </p>
+                            <AttachmentDownloadRow
+                              key={att.id}
+                              attachment={att}
+                              leading={<FileText size={9} className="text-[#F8E8B8]" />}
+                              details={<p className="text-[10px] text-slate-400">{formatDateTime(att.attachedAt)}</p>}
+                              className="mt-1 rounded-md border border-white/10 bg-white/5 px-2 py-1.5"
+                              nameClassName="text-[10px] font-semibold text-slate-200"
+                              actionClassName="rounded-md border border-[#D7BE7A]/30 bg-[#D7BE7A]/10 px-2 py-1 text-[10px] font-bold text-[#F8E8B8] hover:bg-[#D7BE7A]/20"
+                            />
                           ))}
                         </div>
                       ))}
@@ -4095,11 +4145,20 @@ function ContractDetailDrawer({
                         )}
                       </div>
                       <p className="whitespace-pre-wrap text-xs text-slate-700">{entry.text}</p>
-                      {(entry.attachments ?? []).map(att => (
-                        <p key={att.id} className="mt-1 flex items-center gap-1 text-[10px] font-semibold text-indigo-600">
-                          <FileText size={9} /> {att.name}
-                        </p>
-                      ))}
+                      {(entry.attachments ?? []).length > 0 && (
+                        <div className="mt-2 space-y-1.5">
+                          {(entry.attachments ?? []).map(att => (
+                            <AttachmentDownloadRow
+                              key={att.id}
+                              attachment={att}
+                              leading={<FileText size={9} className="text-indigo-500" />}
+                              className="rounded-md border border-indigo-100 bg-indigo-50/60 px-2 py-1.5"
+                              nameClassName="text-[10px] font-semibold text-indigo-700"
+                              actionClassName="rounded-md border border-indigo-200 bg-white px-2 py-1 text-[10px] font-bold text-indigo-600 hover:bg-indigo-100"
+                            />
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )
                 })}

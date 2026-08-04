@@ -77,6 +77,7 @@ describe('per-account notification popup claims', () => {
       expect(text).toContain("delivery.claimed_at <= $2::timestamptz - interval '5 minutes'")
       expect(text).toContain("notification.type = 'DELETION_REQUEST'")
       expect(text).toContain("notification.type = 'DEADLINE'")
+      expect(text).toContain("notification.type = 'NON_SUB_REVIEW'")
       expect(text).toContain("notification.type = 'SYSTEM'")
       expect(text).toContain('for update of notification skip locked')
       expect(text).toContain('on conflict (notification_id, account_id) do update')

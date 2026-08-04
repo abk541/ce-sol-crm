@@ -4,6 +4,11 @@ import { requireCompleted } from './auth.js'
 import { asAuthenticatedUser, type Queryable } from './db.js'
 import { opportunityDeadlineTimeMs } from './deadline.js'
 import { ApiError, asRecord, assertAllowedKeys, requiredString } from './errors.js'
+import { inspectFileAvailabilityRows, type FileAvailabilityRow } from './files.js'
+import {
+  persistNonSubmissionReviewNotification,
+  persistOpportunityDeadlineNotifications,
+} from './opportunity-notifications.js'
 import type { Dependencies } from './types.js'
 
 const TRACKER_STATUSES = new Set([
@@ -57,6 +62,7 @@ const OPPORTUNITY_EDIT_COLUMNS = {
   mandatoryEventsList: 'mandatory_events_list',
   proposalAttachments: 'proposal_attachments',
   proposals: 'proposals',
+  assignedOpportunities: 'assigned_opportunities',
   assignedTo: 'assigned_to',
   bdm: 'bdm',
   bds: 'bds',
@@ -122,6 +128,167 @@ interface WorkflowResult {
   opportunity: QueryResultRow | null
   submission: QueryResultRow | null
   report?: QueryResultRow | null
+}
+
+export interface WorkflowFileValidation {
+  fileStore: Queryable
+  attachmentsDir: string
+}
+
+interface ProposalFileMetadataRow extends FileAvailabilityRow {
+  attachment_id: string
+  original_name: string
+  content_type: string | null
+  attached_at: Date | string
+  uploader_name: string
+}
+
+interface CanonicalProposalAttachment {
+  id: string
+  name: string
+  attachedAt: string
+  uploadedBy: string
+  mimeType?: string
+  size: number
+  storagePath: string
+}
+
+const PROPOSAL_ATTACHMENT_LIMIT = 100
+
+function proposalAttachmentPaths(value: unknown, label: string): string[] {
+  if (!Array.isArray(value)) {
+    throw new ApiError(400, 'invalid_request', `${label} must be an array.`)
+  }
+  if (value.length > PROPOSAL_ATTACHMENT_LIMIT) {
+    throw new ApiError(
+      400,
+      'invalid_request',
+      `${label} cannot contain more than ${PROPOSAL_ATTACHMENT_LIMIT} files.`,
+    )
+  }
+  const paths = value.map((attachment, index) => {
+    const record = asRecord(attachment, `${label}[${index}]`)
+    const storagePath = requiredString(record.storagePath, `${label}[${index}].storagePath`, 1024)
+    if (record.storagePath !== storagePath || /[\u0000\r\n]/.test(storagePath)) {
+      throw new ApiError(400, 'invalid_request', `${label}[${index}].storagePath is invalid.`)
+    }
+    return storagePath
+  })
+  if (new Set(paths).size !== paths.length) {
+    throw new ApiError(400, 'invalid_request', `${label} cannot contain the same stored file twice.`)
+  }
+  return paths
+}
+
+async function requireAvailableProposalAttachments(
+  value: unknown,
+  label: string,
+  validation: WorkflowFileValidation | undefined,
+): Promise<CanonicalProposalAttachment[]> {
+  const paths = proposalAttachmentPaths(value, label)
+  if (!validation) {
+    throw new ApiError(500, 'file_validation_unavailable', 'Proposal file validation is not configured.')
+  }
+  const metadata = await validation.fileStore.query<ProposalFileMetadataRow>(
+    `select storage_path, object_key, content_available, size_bytes,
+            attachment_id, original_name, content_type, attached_at, uploader_name
+       from private.proposal_attachment_file_metadata($1::text[])`,
+    [paths],
+  )
+  const availability = await inspectFileAvailabilityRows(
+    validation.attachmentsDir,
+    paths,
+    metadata.rows,
+  )
+  const unavailable = availability.filter(file => !file.available)
+  if (unavailable.length > 0) {
+    throw new ApiError(
+      409,
+      'proposal_attachment_unavailable',
+      'One or more proposal files are no longer available. Re-upload the original file before saving.',
+      unavailable,
+    )
+  }
+  const byPath = new Map(metadata.rows.map(row => [row.storage_path, row]))
+  return paths.map((storagePath) => {
+    const row = byPath.get(storagePath)
+    const size = Number(row?.size_bytes)
+    const attachedAt = row?.attached_at instanceof Date
+      ? row.attached_at
+      : new Date(String(row?.attached_at ?? ''))
+    if (
+      !row
+      || !row.attachment_id?.trim()
+      || !row.original_name?.trim()
+      || !Number.isSafeInteger(size)
+      || size < 0
+      || !Number.isFinite(attachedAt.getTime())
+    ) {
+      throw new ApiError(500, 'file_metadata_invalid', 'Proposal file metadata is invalid.')
+    }
+    return {
+      id: row.attachment_id,
+      name: row.original_name,
+      attachedAt: attachedAt.toISOString(),
+      uploadedBy: row.uploader_name || '',
+      ...(row.content_type ? { mimeType: row.content_type } : {}),
+      size,
+      storagePath,
+    }
+  })
+}
+
+async function propagateProposalAttachments(
+  client: Queryable,
+  opportunityId: unknown,
+  attachments: unknown,
+): Promise<void> {
+  const serialized = JSON.stringify(attachments)
+  await client.query(
+    'select private.sync_opportunity_proposal_attachments($1::text, $2::jsonb)',
+    [opportunityId, serialized],
+  )
+}
+
+async function reconcileLegacyContractLink(
+  client: Queryable,
+  opportunity: QueryResultRow,
+): Promise<void> {
+  const opportunityId = typeof opportunity.id === 'string' ? opportunity.id.trim() : ''
+  const solicitationId = typeof opportunity.solicitation_id === 'string'
+    ? opportunity.solicitation_id.trim()
+    : ''
+  if (!opportunityId || !solicitationId) return
+
+  // Some contracts created before opportunity_id was populated can only be
+  // identified by contract_id. Resolve that legacy relationship in the same
+  // statement as the write so a duplicate solicitation can never be selected
+  // between a separate check and update. Ambiguous matches deliberately leave
+  // the legacy contract untouched.
+  await client.query(
+    `with unique_opportunity as (
+       select min(candidate.id)::text as id
+         from public.opportunities candidate
+        where lower(btrim(candidate.solicitation_id)) = lower(btrim($2))
+       having count(*) = 1
+     ),
+     unique_legacy_contract as (
+       select min(legacy.id)::text as id
+         from public.contracts legacy
+        where legacy.opportunity_id is null
+          and lower(btrim(legacy.contract_id)) = lower(btrim($2))
+       having count(*) = 1
+     )
+     update public.contracts contract
+        set opportunity_id = $1
+       from unique_opportunity candidate,
+            unique_legacy_contract legacy
+      where candidate.id = $1
+        and contract.id = legacy.id
+        and contract.opportunity_id is null
+      returning contract.id`,
+    [opportunityId, solicitationId],
+  )
 }
 
 function optionalString(value: unknown, label: string, maxLength: number): string | undefined {
@@ -626,8 +793,28 @@ async function submit(
   request: WorkflowRequest,
   permissions: ReadonlySet<string>,
   now: Date,
+  fileValidation: WorkflowFileValidation | undefined,
 ): Promise<WorkflowResult> {
   requirePermission(permissions, 'opportunity:submitProposal')
+  if ((Object.hasOwn(request.values, 'proposals')
+    || Object.hasOwn(request.values, 'assignedOpportunities'))
+    && !Object.hasOwn(request.values, 'proposalAttachments')) {
+    throw new ApiError(
+      400,
+      'invalid_request',
+      'values.proposals requires matching values.proposalAttachments.',
+    )
+  }
+  if (Object.hasOwn(request.values, 'proposalAttachments')) {
+    const canonicalAttachments = await requireAvailableProposalAttachments(
+      request.values.proposalAttachments,
+      'values.proposalAttachments',
+      fileValidation,
+    )
+    request.values.proposalAttachments = canonicalAttachments
+    request.values.proposals = canonicalAttachments.map(attachment => attachment.name)
+    request.values.assignedOpportunities = canonicalAttachments.map(attachment => attachment.name)
+  }
   const original = await lockOpportunity(client, request.opportunityId as string)
   assertExpectedStatus(original, request.expectedOpportunityStatus, 'Opportunity')
   const current = await linkedSubmission(client, original)
@@ -675,6 +862,14 @@ async function submit(
   )
   if (updated.rows.length !== 1) stale('Opportunity')
   const opportunity = updated.rows[0]!
+  if (Object.hasOwn(request.values, 'proposalAttachments')) {
+    await reconcileLegacyContractLink(client, opportunity)
+    await propagateProposalAttachments(
+      client,
+      opportunity.id,
+      request.values.proposalAttachments,
+    )
+  }
   const submission = current
     ? await updateSubmission(client, current.id, {
         ...await trackerSnapshot(client, opportunity, current),
@@ -748,17 +943,21 @@ async function transition(
     requireAnyPermission(permissions, ['opportunity:submitProposal', 'opportunity:edit'])
   }
   let pendingReportToDelete: string | undefined
+  let reportToReview: { id: string; status: string; agent_username: string | null } | undefined
   if (request.nonSubmissionReportId) {
     if (!located.opportunity) {
       throw new ApiError(409, 'orphan_submission', 'The report is not linked to an opportunity.')
     }
-    const report = await client.query(
-      `select id from public.non_submission_reports
+    const report = await client.query<{ id: string; status: string; agent_username: string | null }>(
+      `select id::text as id, status::text as status, agent_username::text as agent_username
+         from public.non_submission_reports
         where id = $1 and opportunity_id = $2
         for update`,
       [request.nonSubmissionReportId, located.opportunity.id],
     )
     if (report.rows.length !== 1) stale('Non-submission report')
+    if (report.rows[0]?.status !== 'PENDING') stale('Non-submission report')
+    reportToReview = report.rows[0]
   } else if (located.opportunity?.non_submission_report_id) {
     const report = await client.query<{ id: string; status: string }>(
       `select id, status from public.non_submission_reports
@@ -805,7 +1004,8 @@ async function transition(
     )
     if (deletedReport.rows.length !== 1) stale('Non-submission report')
   }
-  if (request.nonSubmissionReportId && opportunity) {
+  if (request.nonSubmissionReportId && opportunity && reportToReview) {
+    const decision = status === 'NOT_SUBMITTED' ? 'APPROVED' : 'DECLINED'
     const reviewed = await client.query(
       `update public.non_submission_reports
           set status = $1,
@@ -818,7 +1018,7 @@ async function transition(
         where id = $4 and opportunity_id = $5
         returning id`,
       [
-        status === 'NOT_SUBMITTED' ? 'APPROVED' : 'DECLINED',
+        decision,
         now.toISOString(),
         request.reviewNote ?? null,
         request.nonSubmissionReportId,
@@ -826,6 +1026,13 @@ async function transition(
       ],
     )
     if (reviewed.rows.length !== 1) stale('Non-submission report')
+    await persistNonSubmissionReviewNotification(client, {
+      reportId: reportToReview.id,
+      opportunity,
+      agentUsername: reportToReview.agent_username,
+      decision,
+      reviewedAt: now,
+    })
   }
   return { opportunity, submission }
 }
@@ -834,8 +1041,28 @@ async function edit(
   client: Queryable,
   request: WorkflowRequest,
   permissions: ReadonlySet<string>,
+  fileValidation: WorkflowFileValidation | undefined,
 ): Promise<WorkflowResult> {
   requirePermission(permissions, 'opportunity:edit')
+  if ((Object.hasOwn(request.opportunityValues, 'proposals')
+    || Object.hasOwn(request.opportunityValues, 'assignedOpportunities'))
+    && !Object.hasOwn(request.opportunityValues, 'proposalAttachments')) {
+    throw new ApiError(
+      400,
+      'invalid_request',
+      'opportunityValues.proposals requires matching opportunityValues.proposalAttachments.',
+    )
+  }
+  if (Object.hasOwn(request.opportunityValues, 'proposalAttachments')) {
+    const canonicalAttachments = await requireAvailableProposalAttachments(
+      request.opportunityValues.proposalAttachments,
+      'opportunityValues.proposalAttachments',
+      fileValidation,
+    )
+    request.opportunityValues.proposalAttachments = canonicalAttachments
+    request.opportunityValues.proposals = canonicalAttachments.map(attachment => attachment.name)
+    request.opportunityValues.assignedOpportunities = canonicalAttachments.map(attachment => attachment.name)
+  }
   if ([...Object.keys(request.values)].some((key) => TRACKER_ASSIGNMENT_KEYS.has(key))
     || [...Object.keys(request.opportunityValues)].some((key) => ASSIGNMENT_KEYS.has(key))) {
     requirePermission(permissions, 'opportunity:assign')
@@ -857,9 +1084,11 @@ async function edit(
 
   let opportunity = located.opportunity
   if (opportunity && Object.keys(request.opportunityValues).length > 0) {
+    const previousOpportunity = opportunity
     const params: unknown[] = []
     const set = assignments(OPPORTUNITY_EDIT_COLUMNS, request.opportunityValues, params)
-    if (opportunityScheduleChanged(opportunity, request.opportunityValues)) {
+    const scheduleChanged = opportunityScheduleChanged(opportunity, request.opportunityValues)
+    if (scheduleChanged) {
       set.push('notified_due_24h = false', 'notified_due_4h = false')
     }
     params.push(opportunity.id)
@@ -869,6 +1098,20 @@ async function edit(
     )
     if (updated.rows.length !== 1) stale('Opportunity')
     opportunity = updated.rows[0]!
+    if (scheduleChanged) {
+      await persistOpportunityDeadlineNotifications(
+        client,
+        previousOpportunity,
+        request.opportunityValues,
+      )
+    }
+    if (Object.hasOwn(request.opportunityValues, 'proposalAttachments')) {
+      await propagateProposalAttachments(
+        client,
+        opportunity.id,
+        request.opportunityValues.proposalAttachments,
+      )
+    }
   }
 
   const trackerPatch = Object.fromEntries(
@@ -1209,12 +1452,13 @@ export async function executeOpportunityWorkflow(
   client: Queryable,
   body: unknown,
   now: Date,
+  fileValidation?: WorkflowFileValidation,
 ): Promise<WorkflowResult> {
   const request = parseRequest(body)
   const permissions = await effectivePermissions(client)
-  if (request.action === 'submit') return submit(client, request, permissions, now)
+  if (request.action === 'submit') return submit(client, request, permissions, now, fileValidation)
   if (request.action === 'transition') return transition(client, request, permissions, now)
-  if (request.action === 'edit') return edit(client, request, permissions)
+  if (request.action === 'edit') return edit(client, request, permissions, fileValidation)
   if (request.action === 'delete') return hardDelete(client, request, permissions)
   if (request.action === 'create_pending_report' || request.action === 'create_manual_report') {
     return createPendingReport(client, request, permissions, now)
@@ -1305,7 +1549,18 @@ export function registerOpportunityWorkflowRoutes(app: FastifyInstance, dependen
         const result = await asAuthenticatedUser(
           dependencies.db,
           request.auth?.accountId as string,
-          (client) => executeOpportunityWorkflow(client, request.body, dependencies.now()),
+          (client) => executeOpportunityWorkflow(
+            client,
+            request.body,
+            dependencies.now(),
+            {
+              // Reuse the transaction connection already held by this request.
+              // Opening another pool checkout here can deadlock a saturated
+              // pool when several proposal submissions arrive together.
+              fileStore: client,
+              attachmentsDir: dependencies.env.attachmentsDir,
+            },
+          ),
         )
         return { data: result, error: null }
       } catch (error) {
@@ -1317,6 +1572,10 @@ export function registerOpportunityWorkflowRoutes(app: FastifyInstance, dependen
 
 export const __test = {
   parseRequest,
+  proposalAttachmentPaths,
+  requireAvailableProposalAttachments,
+  reconcileLegacyContractLink,
+  propagateProposalAttachments,
   generatedCancellationComment,
   loadWorkflowSnapshot,
   assertAutomaticReportEligibility,

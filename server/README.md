@@ -62,7 +62,18 @@ Take and verify a fresh encrypted database backup before applying migrations.
     owner. It adds private, account-scoped popup leases so personal workflow
     alerts created while a user is signed out are displayed once after login
     and safely retried if the browser closes before acknowledging them.
-11. Start the API, verify `/health/ready`, and exercise login, first-login, CRUD,
+12. Apply `migrations/011_comment_attachments.sql` as the database owner. It
+    persists native private-file references on opportunity comments.
+13. Apply `migrations/012_repair_contract_proposal_reference.sql` only after
+    verifying the named native proposal file exists on disk with the audited
+    byte size. The SQL independently requires its private-file id, name, size,
+    MIME type, uploader, timestamp, path, and availability to match the healthy
+    opportunity metadata. The repair is deliberately limited to the one known
+    stale contract snapshot.
+14. Apply `migrations/013_sync_proposal_snapshots.sql` as the database owner. It
+    adds narrow permission-gated helpers that validate immutable proposal files
+    and keep linked contract/Fresh Award snapshots aligned atomically.
+15. Start the API, verify `/health/ready`, and exercise login, first-login, CRUD,
    role denial, user administration, SAM status/import, file upload/download,
    atomic submit/cancel/restore, assignment repair, and SSE before enabling
    production writes.
@@ -131,6 +142,7 @@ Routes:
 - `POST /api/v1/integrations/sam/settings`
 - `POST /api/v1/integrations/sam/import`
 - `POST /api/v1/files`
+- `POST /api/v1/files/availability`
 - `GET /api/v1/files/:encodedPath` (also `GET /api/v1/files?path=...`)
 - `DELETE /api/v1/files/contract-awards/:encodedPath` (contract editors/admins
   only; refuses to remove files still referenced by any contract)

@@ -187,6 +187,314 @@ describe('authenticated file download routing', () => {
       await app.close()
     }
   })
+
+  it('returns a clear unavailable response instead of streaming size-mismatched bytes', async () => {
+    const attachmentsDir = await mkdtemp(join(tmpdir(), 'ce-file-size-mismatch-'))
+    const mismatched = {
+      ...storedFile,
+      storage_path: 'proposals/truncated.pdf',
+      object_key: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+      size_bytes: 100,
+    }
+    const directory = join(attachmentsDir, mismatched.object_key.slice(0, 2))
+    await mkdir(directory, { recursive: true })
+    await writeFile(join(directory, mismatched.object_key), 'short')
+    const query = vi.fn(async (text: string) => {
+      if (text.includes('from app_auth.sessions s')) return result([sessionRow])
+      if (text.includes('from app_files.objects object_file')) return result([mismatched])
+      throw new Error(`Unexpected query: ${text}`)
+    })
+    const app = await buildApp({
+      env: loadEnvironment({
+        DATABASE_URL: 'postgresql://example.invalid/app',
+        ALLOWED_ORIGINS: 'https://crm.example.test',
+        LOG_LEVEL: 'silent',
+        ATTACHMENTS_DIR: attachmentsDir,
+      }),
+      db: { query, end: async () => undefined } as unknown as Database,
+      fetch: globalThis.fetch,
+      now: () => new Date('2026-07-29T12:00:00.000Z'),
+    })
+
+    try {
+      const response = await app.inject({
+        method: 'GET',
+        url: `/api/v1/files?path=${encodeURIComponent(mismatched.storage_path)}`,
+        headers: { authorization: `Bearer ${TOKEN}` },
+      })
+      expect(response.statusCode).toBe(410)
+      expect(response.json().error.code).toBe('file_content_unavailable')
+      expect(response.headers['content-length']).not.toBe(String(mismatched.size_bytes))
+    } finally {
+      await app.close()
+      await rm(attachmentsDir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('authenticated file availability routing', () => {
+  it('checks metadata and physical bytes in one bounded request', async () => {
+    const attachmentsDir = await mkdtemp(join(tmpdir(), 'ce-file-availability-'))
+    const available = {
+      ...storedFile,
+      storage_path: 'client_proposals/available.pdf',
+      object_key: '66666666-6666-4666-8666-666666666666',
+      size_bytes: Buffer.byteLength('proposal'),
+    }
+    const unavailable = {
+      ...storedFile,
+      storage_path: 'client_proposals/unavailable.pdf',
+      object_key: '77777777-7777-4777-8777-777777777777',
+      content_available: false,
+    }
+    const missingBytes = {
+      ...storedFile,
+      storage_path: 'client_proposals/missing-bytes.pdf',
+      object_key: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      content_available: true,
+    }
+    const sizeMismatch = {
+      ...storedFile,
+      storage_path: 'client_proposals/size-mismatch.pdf',
+      object_key: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+      content_available: true,
+      size_bytes: 50,
+    }
+    await mkdir(join(attachmentsDir, available.object_key.slice(0, 2)), { recursive: true })
+    await writeFile(join(attachmentsDir, available.object_key.slice(0, 2), available.object_key), 'proposal')
+    await mkdir(join(attachmentsDir, sizeMismatch.object_key.slice(0, 2)), { recursive: true })
+    await writeFile(join(attachmentsDir, sizeMismatch.object_key.slice(0, 2), sizeMismatch.object_key), 'short')
+
+    const query = vi.fn(async (text: string, values?: readonly unknown[]) => {
+      if (text.includes('from app_auth.sessions s')) return result([sessionRow])
+      if (text.includes('where storage_path = any')) {
+        expect(values).toEqual([[
+          available.storage_path,
+          unavailable.storage_path,
+          missingBytes.storage_path,
+          sizeMismatch.storage_path,
+          'client_proposals/missing.pdf',
+        ]])
+        return result([available, unavailable, missingBytes, sizeMismatch])
+      }
+      throw new Error(`Unexpected query: ${text}`)
+    })
+    const app = await buildApp({
+      env: loadEnvironment({
+        DATABASE_URL: 'postgresql://example.invalid/app',
+        ALLOWED_ORIGINS: 'https://crm.example.test',
+        LOG_LEVEL: 'silent',
+        ATTACHMENTS_DIR: attachmentsDir,
+      }),
+      db: {
+        query,
+        end: async () => undefined,
+      } as unknown as Database,
+      fetch: globalThis.fetch,
+      now: () => new Date('2026-07-29T12:00:00.000Z'),
+    })
+
+    try {
+      const unauthorized = await app.inject({
+        method: 'POST',
+        url: '/api/v1/files/availability',
+        payload: { paths: [available.storage_path] },
+      })
+      expect(unauthorized.statusCode).toBe(401)
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/v1/files/availability',
+        headers: {
+          authorization: `Bearer ${TOKEN}`,
+          origin: 'https://crm.example.test',
+        },
+        payload: {
+          paths: [
+            available.storage_path,
+            unavailable.storage_path,
+            missingBytes.storage_path,
+            sizeMismatch.storage_path,
+            'client_proposals/missing.pdf',
+          ],
+        },
+      })
+
+      expect(response.statusCode).toBe(200)
+      expect(response.json().data).toEqual([
+        { storagePath: available.storage_path, available: true, reason: 'available' },
+        { storagePath: unavailable.storage_path, available: false, reason: 'content_unavailable' },
+        { storagePath: missingBytes.storage_path, available: false, reason: 'content_unavailable' },
+        { storagePath: sizeMismatch.storage_path, available: false, reason: 'content_unavailable' },
+        { storagePath: 'client_proposals/missing.pdf', available: false, reason: 'not_found' },
+      ])
+      expect(response.headers['access-control-allow-origin']).toBe('https://crm.example.test')
+    } finally {
+      await app.close()
+      await rm(attachmentsDir, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects malformed, duplicated, and oversized batches before querying files', () => {
+    expect(() => __test.availabilityPaths({ paths: ['a', 'a'] }))
+      .toThrow(/duplicates/)
+    expect(() => __test.availabilityPaths({ paths: [123] }))
+      .toThrow(/invalid/)
+    expect(() => __test.availabilityPaths({
+      paths: Array.from({ length: 101 }, (_, index) => `path-${index}`),
+    })).toThrow(/No more than 100/)
+  })
+})
+
+describe('HR request attachment uploads', () => {
+  it('allows a completed active employee without unrelated write permissions to upload an HR file', async () => {
+    const attachmentsDir = await mkdtemp(join(tmpdir(), 'ce-hr-files-'))
+    const queries: string[] = []
+    const handleQuery = async (text: string, values?: readonly unknown[]) => {
+      queries.push(text)
+      if (text === 'begin' || text === 'commit' || text === 'rollback') return result()
+      if (text.includes('from app_auth.sessions s')) return result([sessionRow])
+      if (text.includes('private.effective_permission_for_auth_user')) {
+        throw new Error('HR uploads must not require an unrelated write permission')
+      }
+      if (text.includes('select object_key from app_files.objects')) return result()
+      if (text.startsWith('insert into app_files.objects')) {
+        return result([{
+          storage_path: values?.[0],
+          object_key: values?.[1],
+          attachment_id: values?.[2],
+          original_name: values?.[3],
+          content_type: values?.[4],
+          size_bytes: values?.[5],
+          attached_at: values?.[7],
+          content_available: true,
+          uploader_name: values?.[9],
+        }])
+      }
+      throw new Error(`Unexpected query: ${text}`)
+    }
+    const client = { query: handleQuery, release: () => undefined }
+    const db = {
+      query: handleQuery,
+      connect: async () => client,
+      end: async () => undefined,
+    } as unknown as Database
+    const app = await buildApp({
+      env: loadEnvironment({
+        DATABASE_URL: 'postgresql://example.invalid/app',
+        ALLOWED_ORIGINS: 'https://crm.example.test',
+        LOG_LEVEL: 'silent',
+        ATTACHMENTS_DIR: attachmentsDir,
+      }),
+      db,
+      fetch: globalThis.fetch,
+      now: () => new Date('2026-07-29T12:00:00.000Z'),
+    })
+    const boundary = '----hr-request-file-test'
+    const payload = Buffer.from([
+      `--${boundary}\r\n`,
+      'Content-Disposition: form-data; name="folder"\r\n\r\n',
+      'hr_requests\r\n',
+      `--${boundary}\r\n`,
+      'Content-Disposition: form-data; name="id"\r\n\r\n',
+      'hr-file-123\r\n',
+      `--${boundary}\r\n`,
+      'Content-Disposition: form-data; name="file"; filename="medical-note.pdf"\r\n',
+      'Content-Type: application/pdf\r\n\r\n',
+      '%PDF-hr-note\r\n',
+      `--${boundary}--\r\n`,
+    ].join(''))
+
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/v1/files',
+        headers: {
+          authorization: `Bearer ${TOKEN}`,
+          'content-type': `multipart/form-data; boundary=${boundary}`,
+        },
+        payload,
+      })
+      expect(response.statusCode).toBe(200)
+      expect(response.json().data.storagePath).toMatch(/^hr_requests\//)
+      expect(queries.some(text => text.includes('private.effective_permission_for_auth_user'))).toBe(false)
+    } finally {
+      await app.close()
+      await rm(attachmentsDir, { recursive: true, force: true })
+    }
+  })
+
+  it('never lets one employee overwrite an existing HR attachment path', async () => {
+    const attachmentsDir = await mkdtemp(join(tmpdir(), 'ce-hr-files-'))
+    const existingObjectKey = 'existing_hr_object_12345678'
+    const existingPath = join(attachmentsDir, existingObjectKey.slice(0, 2), existingObjectKey)
+    await mkdir(join(attachmentsDir, existingObjectKey.slice(0, 2)), { recursive: true })
+    await writeFile(existingPath, 'original-medical-note')
+    const queries: string[] = []
+    const handleQuery = async (text: string) => {
+      queries.push(text)
+      if (text === 'begin' || text === 'commit' || text === 'rollback') return result()
+      if (text.includes('from app_auth.sessions s')) return result([sessionRow])
+      if (text.includes('private.effective_permission_for_auth_user')) {
+        throw new Error('HR uploads must not require an unrelated write permission')
+      }
+      if (text.includes('select object_key from app_files.objects')) {
+        return result([{ object_key: existingObjectKey }])
+      }
+      throw new Error(`Unexpected query: ${text}`)
+    }
+    const client = { query: handleQuery, release: () => undefined }
+    const db = {
+      query: handleQuery,
+      connect: async () => client,
+      end: async () => undefined,
+    } as unknown as Database
+    const app = await buildApp({
+      env: loadEnvironment({
+        DATABASE_URL: 'postgresql://example.invalid/app',
+        ALLOWED_ORIGINS: 'https://crm.example.test',
+        LOG_LEVEL: 'silent',
+        ATTACHMENTS_DIR: attachmentsDir,
+      }),
+      db,
+      fetch: globalThis.fetch,
+      now: () => new Date('2026-07-29T12:00:00.000Z'),
+    })
+    const boundary = '----hr-request-existing-file-test'
+    const payload = Buffer.from([
+      `--${boundary}\r\n`,
+      'Content-Disposition: form-data; name="folder"\r\n\r\n',
+      'hr_requests\r\n',
+      `--${boundary}\r\n`,
+      'Content-Disposition: form-data; name="id"\r\n\r\n',
+      'hr-file-123\r\n',
+      `--${boundary}\r\n`,
+      'Content-Disposition: form-data; name="file"; filename="medical-note.pdf"\r\n',
+      'Content-Type: application/pdf\r\n\r\n',
+      '%PDF-replacement\r\n',
+      `--${boundary}--\r\n`,
+    ].join(''))
+
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/v1/files',
+        headers: {
+          authorization: `Bearer ${TOKEN}`,
+          'content-type': `multipart/form-data; boundary=${boundary}`,
+        },
+        payload,
+      })
+
+      expect(response.statusCode).toBe(409)
+      expect(response.json().error.code).toBe('attachment_file_exists')
+      expect(queries.some(text => text.includes('insert into app_files.objects'))).toBe(false)
+      await expect(readFile(existingPath, 'utf8')).resolves.toBe('original-medical-note')
+    } finally {
+      await app.close()
+      await rm(attachmentsDir, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('contract award file cleanup', () => {
